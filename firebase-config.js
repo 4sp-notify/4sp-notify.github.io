@@ -4,13 +4,13 @@
 // You can find this information in your Firebase project settings
 // (Project settings -> General -> Your apps -> Firebase SDK snippet -> Config)
 const firebaseConfig = {
-    apiKey: "YOUR_API_KEY",
-    authDomain: "YOUR_PROJECT_ID.firebaseapp.com",
-    projectId: "YOUR_PROJECT_ID",
-    storageBucket: "YOUR_PROJECT_ID.appspot.com",
-    messagingSenderId: "YOUR_MESSAGING_SENDER_ID",
-    appId: "YOUR_APP_ID",
-    // measurementId: "YOUR_MEASUREMENT_ID" // Optional, if you use Google Analytics
+  apiKey: "AIzaSyBeqn-t-e-hZhYV_6zh1UCvrk38HhYOZ7o",
+  authDomain: "foursimpleproblems.firebaseapp.com",
+  projectId: "foursimpleproblems",
+  storageBucket: "foursimpleproblems.firebasestorage.app",
+  messagingSenderId: "329009885873",
+  appId: "1:329009885873:web:4b907162188effc788e890",
+  measurementId: "G-9CQPE80MXD"
 };
 
 // Initialize Firebase
