@@ -27,7 +27,7 @@
       display: flex;
       flex-direction: column;
       border-right: 1px solid #444;
-      transition: width 0.3s ease;
+      transition: width 0.5s ease-in-out;
       position: relative;
     }
     .sidebar.collapsed {
@@ -44,6 +44,7 @@
       font-size: 1.2em;
       cursor: pointer;
       padding: 4px;
+      transition: transform 0.5s ease-in-out;
     }
     .sidebar.collapsed #toggleSidebar {
       transform: translateX(-50%) rotate(180deg);
@@ -84,7 +85,7 @@
       display: none;
     }
 
-    /* --- User Info --- */
+    /* --- User Info & Marquee --- */
     .user-info {
       text-align: center;
       margin: 60px 0 30px;
@@ -102,10 +103,14 @@
     .marquee-content {
       display: inline-block;
       padding-left: 100%;
+      transform: translateX(0);
+      animation: none;
+    }
+    .marquee-active {
       animation: scroll-left 12s linear infinite;
     }
-    .marquee-container:hover .marquee-content {
-      animation-play-state: paused;
+    .sidebar.collapsed .marquee-active {
+      animation-duration: 20s;
     }
     @keyframes scroll-left {
       0%   { transform: translateX(0); }
@@ -148,8 +153,6 @@
       margin-top: 60px;
       transition: all 0.3s ease;
     }
-
-    /* grid‐overlay appears in edit mode */
     .tiles.editing::before {
       content: '';
       position: absolute;
@@ -166,7 +169,6 @@
     .tiles.editing.dragging-over::before {
       opacity: 1;
     }
-
     .tile {
       position: relative;
       background-color: #fff;
@@ -201,7 +203,11 @@
 <body class="dashboard-page">
   <header class="main-header light-bg">
     <div class="container">
-      <div class="logo"><img src="../images/logo-dark.png" alt="4SP Logo"/></div>
+      <div class="logo">
+        <a href="../index.html">
+          <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer"/>
+        </a>
+      </div>
       <div class="auth-buttons">
         <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
         <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
@@ -212,6 +218,7 @@
   <div class="dashboard-container">
     <aside class="sidebar" id="sidebar">
       <button id="toggleSidebar">☰</button>
+
       <div class="user-info">
         <div class="marquee-container">
           <span id="userName" class="marquee-content username">Loading…</span>
@@ -220,6 +227,7 @@
           <span id="userEmail" class="marquee-content email">Loading…</span>
         </div>
       </div>
+
       <nav>
         <ul>
           <li><a href="dashboard.html" class="active"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
@@ -256,9 +264,9 @@
     const dbRef = () => db.collection('users').doc(firebase.auth().currentUser.uid);
     let editMode = false, dragged;
 
-    // 1) Redirect if not signed in
+    // Redirect if not signed in
     firebase.auth().onAuthStateChanged(async user => {
-      if (!user) return window.location.href = '../login.html';
+      if (!user) return location.href = '../login.html';
       document.getElementById('userEmail').textContent = user.email;
       const doc = await dbRef().get();
       document.getElementById('userName').textContent =
@@ -272,19 +280,24 @@
           if (tile) container.appendChild(tile);
         });
       }
+      updateMarquees();
     });
 
-    // 2) Logout
+    // Logout
     document.getElementById('logoutBtn').onclick =
     document.getElementById('signOutLink').onclick = () =>
       firebase.auth().signOut().then(()=>location.href='../login.html');
 
-    // 3) Sidebar toggle
-    document.getElementById('toggleSidebar').addEventListener('click', ()=>
-      document.getElementById('sidebar').classList.toggle('collapsed')
-    );
+    // Sidebar toggle
+    const toggleSidebarBtn = document.getElementById('toggleSidebar');
+    const sidebar = document.getElementById('sidebar');
+    const marqueeEls = document.querySelectorAll('.marquee-content');
+    toggleSidebarBtn.addEventListener('click', () => {
+      sidebar.classList.toggle('collapsed');
+      setTimeout(updateMarquees, 550);
+    });
 
-    // 4) Toggle edit mode
+    // Edit mode toggle
     document.getElementById('editDashboard').addEventListener('click', () => {
       editMode = !editMode;
       const tiles = document.getElementById('tilesContainer');
@@ -293,7 +306,7 @@
       if (!editMode) saveLayout();
     });
 
-    // 5) Drag & Drop with grid overlay
+    // Drag & Drop with grid overlay
     const container = document.getElementById('tilesContainer');
     container.addEventListener('dragstart', e => {
       if (!editMode) return e.preventDefault();
@@ -318,7 +331,6 @@
         if (!editMode) window.location.href = tile.dataset.id + '.html';
       });
     });
-
     function getDragAfterElement(container, x, y) {
       const draggableElements = [...container.querySelectorAll('.tile:not(.dragging)')];
       return draggableElements.reduce((closest, child) => {
@@ -328,7 +340,18 @@
       }, { offset: Infinity }).element;
     }
 
-    // 6) Persist layout
+    // Marquee logic
+    function updateMarquees() {
+      marqueeEls.forEach(el => {
+        const parent = el.parentElement;
+        const overflow = el.scrollWidth > parent.clientWidth;
+        const shouldScroll = sidebar.classList.contains('collapsed') || overflow;
+        el.classList.toggle('marquee-active', shouldScroll);
+      });
+    }
+    window.addEventListener('resize', updateMarquees);
+
+    // Save layout to Firestore
     function saveLayout() {
       const ids = [...container.children].map(t => t.dataset.id);
       dbRef().set({ dashboardLayout: ids }, { merge: true })
