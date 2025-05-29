@@ -17,7 +17,6 @@
       flex: 1;
       align-items: flex-start;
     }
-    /* Sidebar (same as dashboard) */
     .sidebar {
       width: 200px;
       background: #333;
@@ -60,7 +59,6 @@
     }
     .sidebar.collapsed nav a .label { display: none; }
 
-    /* Main content & sections */
     .main-content {
       flex: 1; padding: 40px; background: #f0f2f5; overflow-y: auto;
     }
@@ -74,11 +72,8 @@
       margin: 0 0 20px; font-size: 2em;
       border-bottom: 2px solid #eee; padding-bottom: 10px;
     }
-
-    /* Forms */
     form {
       display: flex; flex-direction: column; gap: 15px; margin-top: 10px;
-      position: relative;
     }
     form label {
       font-family: 'SecondaryFont', sans-serif;
@@ -102,28 +97,37 @@
       background: #c82333;
     }
 
-    /* Disabled overlay for both forms */
-    form.disabled::before {
+    /* --- Overlays & Transitions --- */
+    #password-form.disabled::before,
+    #delete-section.disabled::before {
       content: '';
       position: absolute;
       top: 0; left: 0; right: 0; bottom: 0;
       background: rgba(240,240,240,0.8);
-      border-radius: 10px;
+      border-radius: 16px;
       z-index: 5;
+      transition: opacity 0.4s ease;
     }
-    /* Message overlay specifically for delete */
-    #delete-form.disabled::after {
-      content: 'Please reauthenticate to enable deletion';
-      position: absolute;
-      top: 50%; left: 50%;
+    /* Specific message for delete */
+    #delete-section.disabled::after {
+      content: 'Reauthenticate to enable deletion';
+      position: absolute; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
       font-family: 'SecondaryFont', sans-serif;
-      font-weight: bold;
-      color: #555;
-      z-index: 6;
-      background: rgba(255,255,255,0.9);
-      padding: 8px 12px;
-      border-radius: 8px;
+      font-weight: bold; color: #555;
+      z-index: 6; background: rgba(255,255,255,0.9);
+      padding: 8px 12px; border-radius: 8px;
+      transition: opacity 0.4s ease;
+    }
+    /* Hide overlays when unlocked */
+    #password-form.disabled.hidden::before,
+    #delete-section.disabled.hidden::before {
+      opacity: 0;
+      pointer-events: none;
+    }
+    #delete-section.disabled.hidden::after {
+      opacity: 0;
+      pointer-events: none;
     }
   </style>
 </head>
@@ -131,7 +135,9 @@
   <header class="main-header light-bg">
     <div class="container">
       <div class="logo">
-        <a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer"/></a>
+        <a href="../index.html">
+          <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer"/>
+        </a>
       </div>
       <div class="auth-buttons">
         <button class="btn btn-login" onclick="location.href='../dashboard.html'">DASHBOARD</button>
@@ -163,7 +169,7 @@
         </form>
       </section>
 
-      <!-- Password (disabled for Google) -->
+      <!-- Password Section -->
       <section id="password-section">
         <h2>Change Password</h2>
         <form id="password-form" class="disabled">
@@ -175,18 +181,18 @@
         </form>
       </section>
 
-      <!-- Delete with overlay & reauth -->
-      <section id="delete-section">
+      <!-- Delete Section -->
+      <section id="delete-section" class="disabled">
         <h2>Delete Account</h2>
         <button id="reauthBtn" class="btn">Reauthenticate</button>
-        <form id="delete-form" class="disabled">
+        <form id="delete-form">
           <button type="button" class="delete" onclick="deleteAccount()">Delete Account</button>
         </form>
       </section>
     </main>
   </div>
 
-  <!-- Firebase & logic -->
+  <!-- Firebase & Logic -->
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
@@ -196,17 +202,13 @@
 
     firebase.auth().onAuthStateChanged(async user => {
       if (!user) return location.href = '../login.html';
-      // Prefill username
       const doc = await dbRef().get();
       if (doc.exists && doc.data().username) {
         document.getElementById('newUsername').value = doc.data().username;
       }
-      // If Google user, disable change-password
-      if (user.providerData.some(p=>p.providerId==='google.com')) {
-        document.getElementById('password-form').classList.add('disabled');
-      } else {
-        document.getElementById('password-form').classList.remove('disabled');
-      }
+      // Disable password if Google
+      document.getElementById('password-form')
+        .classList.toggle('disabled', user.providerData.some(p=>p.providerId==='google.com'));
     });
 
     // Logout
@@ -214,25 +216,27 @@
     document.getElementById('signOutLink').onclick = () =>
       firebase.auth().signOut().then(() => location.href = '../login.html');
 
-    // Sidebar toggle
+    // Toggle sidebar
     document.getElementById('toggleSidebar').addEventListener('click', () => {
       document.getElementById('sidebar').classList.toggle('collapsed');
     });
 
-    // Reauthenticate for delete
+    // Reauthenticate to unlock delete
     document.getElementById('reauthBtn').addEventListener('click', async () => {
       const user = firebase.auth().currentUser;
       const provider = new firebase.auth.GoogleAuthProvider();
       try {
         await user.reauthenticateWithPopup(provider);
-        document.getElementById('delete-form').classList.remove('disabled');
+        // fade out overlay
+        const deleteSection = document.getElementById('delete-section');
+        deleteSection.classList.add('hidden');
+        setTimeout(() => deleteSection.classList.remove('disabled hidden'), 400);
         document.getElementById('reauthBtn').style.display = 'none';
       } catch (e) {
         alert('Reauthentication failed: ' + e.message);
       }
     });
 
-    // Update username
     async function updateUsername() {
       const newName = document.getElementById('newUsername').value.trim();
       if (!newName) return alert('Username cannot be empty.');
@@ -240,7 +244,6 @@
       alert('Username updated!');
     }
 
-    // Change password
     async function changePassword() {
       const user = firebase.auth().currentUser;
       const oldP = document.getElementById('oldPassword').value;
@@ -256,7 +259,6 @@
       }
     }
 
-    // Delete account
     async function deleteAccount() {
       if (!confirm('Are you certain? This cannot be undone.')) return;
       const user = firebase.auth().currentUser;
