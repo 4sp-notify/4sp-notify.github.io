@@ -15,8 +15,8 @@
     .settings-container {
       display: flex;
       flex: 1;
+      align-items: flex-start; /* ensure sidebar sits at top */
     }
-    /* reuse the same collapsed-sidebar styles from dashboard */
     .sidebar {
       width: 200px;
       background: #333;
@@ -30,8 +30,7 @@
     }
     .sidebar.collapsed { width: 85px; }
     #toggleSidebar {
-      position: absolute;
-      top: 10px; left: 50%;
+      position: absolute; top: 10px; left: 50%;
       transform: translateX(-50%);
       background: none; border: none;
       color: #fff; font-size: 1.2em;
@@ -42,10 +41,7 @@
       transform: translateX(-50%) rotate(180deg);
     }
     .main-content {
-      flex: 1;
-      padding: 40px;
-      background: #f0f2f5;
-      overflow-y: auto;
+      flex: 1; padding: 40px; background: #f0f2f5; overflow-y: auto;
     }
     section {
       background: #fff;
@@ -53,67 +49,53 @@
       border-radius: 16px;
       box-shadow: 0 4px 20px rgba(0,0,0,0.05);
       margin-bottom: 30px;
+      position: relative;
     }
     section h2 {
       font-family: 'PrimaryFont', sans-serif;
-      margin-top: 0;
-      margin-bottom: 20px;
+      margin-top: 0; margin-bottom: 20px;
       font-size: 2em;
       border-bottom: 2px solid #eee;
       padding-bottom: 10px;
     }
     form {
-      display: flex;
-      flex-direction: column;
-      gap: 15px;
-      margin-top: 20px;
+      display: flex; flex-direction: column; gap: 15px; margin-top: 20px;
     }
     form label {
       font-family: 'SecondaryFont', sans-serif;
-      font-weight: bold;
-      color: #555;
+      font-weight: bold; color: #555;
     }
     form input {
-      padding: 12px;
-      border: 1px solid #ccc;
-      border-radius: 10px;
-      font-size: 1em;
-      font-family: 'SecondaryFont', sans-serif;
+      padding: 12px; border: 1px solid #ccc; border-radius: 10px;
+      font-size: 1em; font-family: 'SecondaryFont', sans-serif;
     }
     form button {
-      padding: 12px;
-      border: none;
-      border-radius: 10px;
-      background: #6720bd;
-      color: #fff;
-      font-size: 1.1em;
-      cursor: pointer;
-      font-family: 'PrimaryFont', sans-serif;
+      padding: 12px; border: none; border-radius: 10px;
+      background: #6720bd; color: #fff; font-size: 1.1em;
+      cursor: pointer; font-family: 'PrimaryFont', sans-serif;
       transition: background 0.3s;
     }
-    form button:hover {
-      background: #5a1aa8;
-    }
+    form button:hover { background: #5a1aa8; }
     form button.delete {
       background: #dc3545;
     }
     form button.delete:hover {
       background: #c82333;
     }
-    #password-form.disabled::before {
-      content: "Password changes for Google accounts are handled directly by Google.";
-      position: absolute;
-      top: 50%; left: 50%;
+
+    /* Disabled overlay for delete */
+    #delete-form.disabled::before {
+      content: 'Please reauthenticate to enable deletion';
+      position: absolute; top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      background: rgba(255,255,255,0.8);
-      padding: 10px;
+      background: rgba(255,255,255,0.9);
+      padding: 12px;
       border-radius: 8px;
       box-shadow: 0 2px 10px rgba(0,0,0,0.1);
       font-family: 'SecondaryFont', sans-serif;
       font-weight: bold;
       text-align: center;
-      width: 80%;
-      max-width: 300px;
+      width: 80%; max-width: 280px;
       z-index: 10;
     }
   </style>
@@ -144,6 +126,7 @@
     </aside>
 
     <main class="main-content">
+      <!-- Username first -->
       <section id="username-section">
         <h2>Edit Username</h2>
         <form id="username-form">
@@ -153,6 +136,7 @@
         </form>
       </section>
 
+      <!-- Then password -->
       <section id="password-section">
         <h2>Change Password</h2>
         <form id="password-form">
@@ -164,9 +148,11 @@
         </form>
       </section>
 
+      <!-- Delete with reauth -->
       <section id="delete-section">
         <h2>Delete Account</h2>
-        <form id="delete-form">
+        <button id="reauthBtn" class="btn">Reauthenticate</button>
+        <form id="delete-form" class="disabled">
           <button type="button" class="delete" onclick="deleteAccount()">Delete Account</button>
         </form>
       </section>
@@ -181,69 +167,82 @@
   <script>
     const dbRef = () => db.collection('users').doc(firebase.auth().currentUser.uid);
 
+    // Auth + initial UI
     firebase.auth().onAuthStateChanged(async user => {
       if (!user) return location.href = '../login.html';
-
-      // disable password form for Google accounts
-      const isGoogle = user.providerData.some(p => p.providerId==='google.com');
-      const pwForm = document.getElementById('password-form');
-      if (isGoogle) pwForm.classList.add('disabled');
-
-      // pref-fill username if stored
+      // Username prefill
       const doc = await dbRef().get();
       if (doc.exists && doc.data().username) {
         document.getElementById('newUsername').value = doc.data().username;
       }
+      // disable password form if Google
+      if (user.providerData.some(p => p.providerId === 'google.com')) {
+        document.getElementById('password-form').classList.add('disabled');
+      }
     });
 
+    // Logout
     document.getElementById('logoutBtn').onclick =
     document.getElementById('signOutLink').onclick = () =>
-      firebase.auth().signOut().then(() => location.href='../login.html');
+      firebase.auth().signOut().then(() => location.href = '../login.html');
 
+    // Sidebar toggle
+    document.getElementById('toggleSidebar').addEventListener('click', () => {
+      document.getElementById('sidebar').classList.toggle('collapsed');
+    });
+
+    // Reauthenticate button
+    document.getElementById('reauthBtn').addEventListener('click', async () => {
+      const user = firebase.auth().currentUser;
+      const provider = new firebase.auth.GoogleAuthProvider();
+      try {
+        await user.reauthenticateWithPopup(provider);
+        // unlock delete
+        document.getElementById('delete-form').classList.remove('disabled');
+        document.getElementById('reauthBtn').style.display = 'none';
+      } catch (e) {
+        alert('Reauthentication failed: ' + e.message);
+      }
+    });
+
+    // Update username
     async function updateUsername() {
       const newName = document.getElementById('newUsername').value.trim();
       if (!newName) return alert('Username cannot be empty.');
-      const user = firebase.auth().currentUser;
       await dbRef().update({ username: newName });
       alert('Username updated!');
     }
-
+    // Change password
     async function changePassword() {
       const user = firebase.auth().currentUser;
-      if (!user.providerData.some(p => p.providerId==='password')) {
-        return alert('Password change only available for email/password accounts.');
+      if (!user.providerData.some(p => p.providerId === 'password')) {
+        return alert('Only email/password accounts can change passwords here.');
       }
       const oldP = document.getElementById('oldPassword').value;
       const newP = document.getElementById('newPassword').value;
-      if (newP.length<6) return alert('New password too short.');
+      if (newP.length < 6) return alert('New password too short.');
       try {
         const cred = firebase.auth.EmailAuthProvider.credential(user.email, oldP);
         await user.reauthenticateWithCredential(cred);
         await user.updatePassword(newP);
         alert('Password changed!');
-        pwForm.reset();
       } catch (e) {
-        alert(e.message);
+        alert('Error: ' + e.message);
       }
     }
-
+    // Delete account
     async function deleteAccount() {
-      const user = firebase.auth().currentUser;
       if (!confirm('Are you sure? This cannot be undone.')) return;
+      const user = firebase.auth().currentUser;
       try {
         await dbRef().delete();
         await user.delete();
         alert('Account deleted');
         location.href = '../signup.html';
       } catch (e) {
-        alert(e.message);
+        alert('Error: ' + e.message);
       }
     }
-
-    // Toggle sidebar
-    document.getElementById('toggleSidebar').addEventListener('click', () => {
-      document.getElementById('sidebar').classList.toggle('collapsed');
-    });
   </script>
 </body>
 </html>
