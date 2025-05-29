@@ -6,7 +6,6 @@
   <title>4SP – Settings</title>
   <link rel="stylesheet" href="../css/style.css" />
   <style>
-    /* --- Reuse Dashboard Sidebar Styles --- */
     body.settings-page {
       display: flex;
       flex-direction: column;
@@ -16,8 +15,9 @@
     .settings-container {
       display: flex;
       flex: 1;
-      align-items: flex-start; /* sidebar hugs the top */
+      align-items: flex-start;
     }
+    /* Sidebar (same as dashboard) */
     .sidebar {
       width: 200px;
       background: #333;
@@ -60,7 +60,7 @@
     }
     .sidebar.collapsed nav a .label { display: none; }
 
-    /* --- Main Content --- */
+    /* Main content & sections */
     .main-content {
       flex: 1; padding: 40px; background: #f0f2f5; overflow-y: auto;
     }
@@ -71,13 +71,14 @@
     }
     section h2 {
       font-family: 'PrimaryFont', sans-serif;
-      margin: 0 0 20px;
-      font-size: 2em;
-      border-bottom: 2px solid #eee;
-      padding-bottom: 10px;
+      margin: 0 0 20px; font-size: 2em;
+      border-bottom: 2px solid #eee; padding-bottom: 10px;
     }
+
+    /* Forms */
     form {
       display: flex; flex-direction: column; gap: 15px; margin-top: 10px;
+      position: relative;
     }
     form label {
       font-family: 'SecondaryFont', sans-serif;
@@ -101,16 +102,28 @@
       background: #c82333;
     }
 
-    /* Overlay on disabled delete form */
-    #delete-form.disabled::before {
-      content: 'Reauthenticate to enable delete';
-      position: absolute; top: 50%; left: 50%;
+    /* Disabled overlay for both forms */
+    form.disabled::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(240,240,240,0.8);
+      border-radius: 10px;
+      z-index: 5;
+    }
+    /* Message overlay specifically for delete */
+    #delete-form.disabled::after {
+      content: 'Please reauthenticate to enable deletion';
+      position: absolute;
+      top: 50%; left: 50%;
       transform: translate(-50%, -50%);
-      background: rgba(255,255,255,0.9);
-      padding: 12px; border-radius: 8px;
       font-family: 'SecondaryFont', sans-serif;
-      font-weight: bold; text-align: center;
-      width: 80%; max-width: 260px; z-index: 10;
+      font-weight: bold;
+      color: #555;
+      z-index: 6;
+      background: rgba(255,255,255,0.9);
+      padding: 8px 12px;
+      border-radius: 8px;
     }
   </style>
 </head>
@@ -118,9 +131,7 @@
   <header class="main-header light-bg">
     <div class="container">
       <div class="logo">
-        <a href="../index.html">
-          <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer"/>
-        </a>
+        <a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer"/></a>
       </div>
       <div class="auth-buttons">
         <button class="btn btn-login" onclick="location.href='../dashboard.html'">DASHBOARD</button>
@@ -142,7 +153,7 @@
     </aside>
 
     <main class="main-content">
-      <!-- Edit Username -->
+      <!-- Username -->
       <section id="username-section">
         <h2>Edit Username</h2>
         <form id="username-form">
@@ -152,10 +163,10 @@
         </form>
       </section>
 
-      <!-- Change Password -->
+      <!-- Password (disabled for Google) -->
       <section id="password-section">
         <h2>Change Password</h2>
-        <form id="password-form">
+        <form id="password-form" class="disabled">
           <label for="oldPassword">Old Password</label>
           <input type="password" id="oldPassword" placeholder="Enter old password…" required/>
           <label for="newPassword">New Password</label>
@@ -164,7 +175,7 @@
         </form>
       </section>
 
-      <!-- Delete Account (requires Google reauth) -->
+      <!-- Delete with overlay & reauth -->
       <section id="delete-section">
         <h2>Delete Account</h2>
         <button id="reauthBtn" class="btn">Reauthenticate</button>
@@ -175,7 +186,7 @@
     </main>
   </div>
 
-  <!-- Firebase SDKs -->
+  <!-- Firebase & logic -->
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
@@ -183,16 +194,18 @@
   <script>
     const dbRef = () => db.collection('users').doc(firebase.auth().currentUser.uid);
 
-    // Redirect if not signed in; prefill username + handle Google users
     firebase.auth().onAuthStateChanged(async user => {
       if (!user) return location.href = '../login.html';
+      // Prefill username
       const doc = await dbRef().get();
       if (doc.exists && doc.data().username) {
         document.getElementById('newUsername').value = doc.data().username;
       }
-      // disable PW form for Google accounts
-      if (user.providerData.some(p => p.providerId === 'google.com')) {
+      // If Google user, disable change-password
+      if (user.providerData.some(p=>p.providerId==='google.com')) {
         document.getElementById('password-form').classList.add('disabled');
+      } else {
+        document.getElementById('password-form').classList.remove('disabled');
       }
     });
 
@@ -201,12 +214,12 @@
     document.getElementById('signOutLink').onclick = () =>
       firebase.auth().signOut().then(() => location.href = '../login.html');
 
-    // Toggle sidebar
+    // Sidebar toggle
     document.getElementById('toggleSidebar').addEventListener('click', () => {
       document.getElementById('sidebar').classList.toggle('collapsed');
     });
 
-    // Reauthenticate with Google to unlock delete form
+    // Reauthenticate for delete
     document.getElementById('reauthBtn').addEventListener('click', async () => {
       const user = firebase.auth().currentUser;
       const provider = new firebase.auth.GoogleAuthProvider();
@@ -230,9 +243,6 @@
     // Change password
     async function changePassword() {
       const user = firebase.auth().currentUser;
-      if (!user.providerData.some(p => p.providerId === 'password')) {
-        return alert('Only email/password accounts can change password here.');
-      }
       const oldP = document.getElementById('oldPassword').value;
       const newP = document.getElementById('newPassword').value;
       if (newP.length < 6) return alert('New password must be at least 6 characters.');
@@ -248,7 +258,7 @@
 
     // Delete account
     async function deleteAccount() {
-      if (!confirm('Are you certain? This action is irreversible.')) return;
+      if (!confirm('Are you certain? This cannot be undone.')) return;
       const user = firebase.auth().currentUser;
       try {
         await dbRef().delete();
