@@ -425,7 +425,7 @@
         <form class="settings-form" id="username-form">
           <div class="form-group">
             <label for="newUsername">New Username (4-12 characters)</label>
-            <input type="text" id="newUsername" placeholder="Enter your new username (letters, numbers, . ? ! @ # $ % &)..." required maxlength="12"/>
+            <input type="text" id="newUsername" placeholder="Enter your new username (letters, numbers, . ? ! @ # $ % & * -)..." required maxlength="12"/>
           </div>
           <button type="button" onclick="updateUsername()">Update Username</button>
         </form>
@@ -615,44 +615,64 @@
       }
     });
 
-    // Update username function with comprehensive validation
+    // Update username function with profanity filter integration
     async function updateUsername() {
-      const newName = document.getElementById('newUsername').value.trim();
+      const newNameRaw = document.getElementById('newUsername').value.trim();
       
       // Check if username is empty
-      if (!newName) {
+      if (!newNameRaw) {
         showMessage('error', 'Username cannot be empty.');
         return;
       }
       
       // Check minimum length requirement
-      if (newName.length < 4) {
+      if (newNameRaw.length < 4) {
         showMessage('error', 'Username must be at least 4 characters long.');
         return;
       }
       
       // Check maximum length requirement
-      if (newName.length > 12) {
+      if (newNameRaw.length > 12) {
         showMessage('error', 'Username cannot be longer than 12 characters.');
         return;
       }
       
-      // Define allowed characters: letters, numbers, and specific symbols
-      const allowedPattern = /^[a-zA-Z0-9.?!@#$%& -]*$/;      
+      // Define allowed characters: letters, numbers, specific symbols, and asterisk
+      // Added '\*' so that "*" and "**" are allowed
+      const allowedPattern = /^[a-zA-Z0-9.?!@#$%&\* -]*$/;
       // Check if username contains only allowed characters
-      if (!allowedPattern.test(newName)) {
-        showMessage('error', 'Username can only contain letters, numbers, and these symbols:  - . ? ! @ # $ % &');
+      if (!allowedPattern.test(newNameRaw)) {
+        showMessage('error', 'Username can only contain letters, numbers, and these symbols:  - . ? ! @ # $ % & *');
         return;
       }
       
       try {
-        // Update username in Firestore database
-        await dbRef().update({ username: newName });
+        // 1) Send the raw username to Purgomalum's API
+        const response = await fetch(
+          'https://www.purgomalum.com/service/json?text=' + encodeURIComponent(newNameRaw)
+        );
+        if (!response.ok) {
+          throw new Error('Profanity filter service unavailable.');
+        }
+        const data = await response.json();
+        const filteredName = data.result; // e.g. "****User***"
+
+        // 2) If profanity was found, filteredName will differ from newNameRaw
+        //    You can optionally notify the user that profanity was replaced.
+        if (filteredName !== newNameRaw) {
+          showMessage(
+            'error',
+            'Profanity detected and replaced: "' + filteredName + '"'
+          );
+        }
+
+        // 3) Update username in Firestore database using the filtered result
+        await dbRef().update({ username: filteredName });
         
-        // Update the sidebar display immediately for instant feedback
-        document.getElementById('userName').textContent = newName;
+        // 4) Update the sidebar display immediately for instant feedback
+        document.getElementById('userName').textContent = filteredName;
         updateMarquees();
-        
+
         showMessage('success', 'Username updated successfully!');
       } catch (error) {
         console.error('Username update failed:', error);
