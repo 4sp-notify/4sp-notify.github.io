@@ -260,7 +260,7 @@
       background: rgba(240, 240, 240, 0.8);
       border-radius: 12px;
       z-index: 5;
-      transition: opacity 0.4s ease;
+      transition: opacity 1s ease;
     }
 
     .settings-section.disabled::after {
@@ -277,22 +277,21 @@
       padding: 12px 20px;
       border-radius: 8px;
       box-shadow: 0 2px 8px rgba(0,0,0,0.1);
-      transition: opacity 0.4s ease;
+      transition: opacity 1s ease;
       text-align: center;
     }
 
-    .settings-section.disabled.hidden::before,
-    .settings-section.disabled.hidden::after {
+    .settings-section.disabled.fadeout::before,
+    .settings-section.disabled.fadeout::after {
       opacity: 0;
       pointer-events: none;
     }
 
-    /* --- Special Buttons (like reauthenticate) --- */
+    /* --- Reauthenticate Button in Bottom Right --- */
     .reauth-btn {
       position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
+      bottom: 20px;
+      right: 20px;
       z-index: 6;
       background: #6720bd !important;
       color: #fff !important;
@@ -302,13 +301,19 @@
       font-family: 'PrimaryFont', sans-serif;
       text-transform: uppercase;
       cursor: pointer;
-      transition: all 0.3s ease;
+      transition: all 1s ease;
+      font-size: 0.9em;
     }
 
     .reauth-btn:hover {
       background: #5a1aa8 !important;
-      transform: translate(-50%, -50%) translateY(-1px);
+      transform: translateY(-1px);
       box-shadow: 0 4px 12px rgba(103, 32, 189, 0.3);
+    }
+
+    .reauth-btn.fadeout {
+      opacity: 0;
+      pointer-events: none;
     }
 
     /* --- Success/Error Messages --- */
@@ -354,6 +359,13 @@
       .settings-section {
         padding: 20px;
         margin-bottom: 20px;
+      }
+
+      .reauth-btn {
+        bottom: 15px;
+        right: 15px;
+        font-size: 0.8em;
+        padding: 10px 16px;
       }
     }
   </style>
@@ -438,11 +450,11 @@
       </section>
 
       <!-- Delete Account Section -->
-      <section class="settings-section" id="delete-section" data-disabled-message="Reauthenticate to enable account deletion">
+      <section class="settings-section" id="delete-section" data-disabled-message="Reauthenticate with your Google account to enable account deletion">
         <h3>Delete Account</h3>
         <p><strong>Warning:</strong> This action is permanent and cannot be undone. All your data, settings, and account information will be permanently removed from our system.</p>
         
-        <button class="reauth-btn" id="reauthBtn">Reauthenticate</button>
+        <button class="reauth-btn" id="reauthBtn" style="display: none;">Reauthenticate</button>
         
         <form class="settings-form" id="delete-form">
           <button type="button" class="delete" onclick="deleteAccount()">Delete Account Permanently</button>
@@ -457,13 +469,17 @@
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
   <script src="../firebase-config.js"></script>
   <script>
+    // Global variables to track authentication state
+    let isGoogleAccount = false;
+    let isReauthenticated = false;
+    
     // Database reference helper
     const dbRef = () => db.collection('users').doc(firebase.auth().currentUser.uid);
     
     // Marquee elements for text scrolling
     const marqueeEls = document.querySelectorAll('.marquee-content');
 
-    // Authentication state management - identical to dashboard
+    // Authentication state management with improved delete account logic
     firebase.auth().onAuthStateChanged(async user => {
       if (!user) {
         return location.href = '../login.html';
@@ -485,14 +501,38 @@
         document.getElementById('newUsername').value = doc.data().username;
       }
       
-      // Disable password section for Google accounts
-      const isGoogleAccount = user.providerData.some(p => p.providerId === 'google.com');
+      // Check if user signed in with Google
+      isGoogleAccount = user.providerData.some(p => p.providerId === 'google.com');
+      
+      // Handle password section for Google accounts
       const passwordSection = document.getElementById('password-section');
       passwordSection.classList.toggle('disabled', isGoogleAccount);
+      
+      // Handle delete account section based on authentication method
+      setupDeleteAccountSection();
       
       // Update marquee animations
       updateMarquees();
     });
+
+    // Setup delete account section based on authentication method
+    function setupDeleteAccountSection() {
+      const deleteSection = document.getElementById('delete-section');
+      const reauthBtn = document.getElementById('reauthBtn');
+      
+      if (isGoogleAccount) {
+        // Google accounts need reauthentication - show overlay and button
+        deleteSection.classList.add('disabled');
+        deleteSection.setAttribute('data-disabled-message', 'Reauthenticate with your Google account to enable account deletion');
+        reauthBtn.style.display = 'block';
+        isReauthenticated = false;
+      } else {
+        // Email accounts don't need reauthentication - enable immediately
+        deleteSection.classList.remove('disabled');
+        reauthBtn.style.display = 'none';
+        isReauthenticated = true;
+      }
+    }
 
     // Logout functionality - identical to dashboard
     document.getElementById('logoutBtn').onclick =
@@ -525,26 +565,53 @@
     // Update marquees on window resize
     window.addEventListener('resize', updateMarquees);
 
-    // Reauthentication for account deletion
+    // Reauthentication for Google accounts only
     document.getElementById('reauthBtn').addEventListener('click', async () => {
       const user = firebase.auth().currentUser;
+      
+      // Only proceed if this is a Google account
+      if (!isGoogleAccount) {
+        showMessage('error', 'Reauthentication is not required for email accounts.');
+        return;
+      }
+      
       const provider = new firebase.auth.GoogleAuthProvider();
       
       try {
+        // Attempt reauthentication with Google
         await user.reauthenticateWithPopup(provider);
         
-        // Smooth transition to enable delete section
-        const deleteSection = document.getElementById('delete-section');
-        deleteSection.classList.add('hidden');
+        // Mark as reauthenticated
+        isReauthenticated = true;
         
+        // Start fade out animation for overlay and button
+        const deleteSection = document.getElementById('delete-section');
+        const reauthBtn = document.getElementById('reauthBtn');
+        
+        deleteSection.classList.add('fadeout');
+        reauthBtn.classList.add('fadeout');
+        
+        // After 1 second, completely remove disabled state
         setTimeout(() => {
-          deleteSection.classList.remove('disabled', 'hidden');
-        }, 400);
+          deleteSection.classList.remove('disabled', 'fadeout');
+          reauthBtn.style.display = 'none';
+          reauthBtn.classList.remove('fadeout');
+        }, 1000);
         
         showMessage('success', 'Reauthentication successful. You can now delete your account.');
       } catch (error) {
         console.error('Reauthentication failed:', error);
-        showMessage('error', 'Reauthentication failed: ' + error.message);
+        
+        let errorMessage = 'Reauthentication failed: ';
+        if (error.code === 'auth/popup-closed-by-user') {
+          errorMessage += 'Authentication popup was closed. Please try again.';
+        } else if (error.code === 'auth/cancelled-popup-request') {
+          errorMessage += 'Authentication was cancelled. Please try again.';
+        } else {
+          errorMessage += error.message;
+        }
+        
+        showMessage('error', errorMessage);
       }
     });
 
@@ -628,13 +695,19 @@
       }
     }
 
-    // Delete account function
+    // Delete account function with proper authentication checking
     async function deleteAccount() {
+      // Check if user needs to reauthenticate first
+      if (isGoogleAccount && !isReauthenticated) {
+        showMessage('error', 'Please reauthenticate with your Google account first.');
+        return;
+      }
+      
       // Double confirmation for this destructive action
-      const firstConfirm = confirm('Are you absolutely certain you want to delete your account? This action cannot be undone.');
+      const firstConfirm = confirm('Are you absolutely certain you want to delete your account? This action cannot be undone and will permanently remove all your data.');
       if (!firstConfirm) return;
       
-      const secondConfirm = confirm('This will permanently delete all your data. Type "DELETE" to confirm:');
+      const secondConfirm = confirm('Last chance! This will permanently delete everything. Are you sure you want to proceed?');
       if (!secondConfirm) return;
       
       const user = firebase.auth().currentUser;
@@ -646,7 +719,7 @@
         // Delete the authentication account
         await user.delete();
         
-        alert('Your account has been permanently deleted.');
+        alert('Your account has been permanently deleted. You will now be redirected to the signup page.');
         
         // Redirect to signup page
         location.href = '../signup.html';
@@ -655,7 +728,12 @@
         
         let errorMessage = 'Failed to delete account: ';
         if (error.code === 'auth/requires-recent-login') {
-          errorMessage += 'Please reauthenticate and try again.';
+          errorMessage += 'Your authentication has expired. Please reauthenticate and try again.';
+          // Reset reauthentication state for Google users
+          if (isGoogleAccount) {
+            isReauthenticated = false;
+            setupDeleteAccountSection();
+          }
         } else {
           errorMessage += error.message;
         }
