@@ -258,7 +258,7 @@
       border-radius: 10px;
     }
 
-    .dashboard-grid.editing.dragging-active::before {
+    .dashboard-grid.editing::before {
       opacity: 1;
     }
 
@@ -301,17 +301,28 @@
       border-color: rgba(103, 32, 189, 0.3);
     }
 
+    /* Edit Mode Specific Styles */
     .dashboard-grid.editing .dashboard-card {
       cursor: grab;
       border: 2px dashed rgba(103, 32, 189, 0.3);
+      animation: shake 0.5s cubic-bezier(.36,.07,.19,.97) infinite alternate;
+      transform-origin: center;
+      transition: transform 0.1s ease-out; /* For quick re-positioning */
+    }
+
+    .dashboard-grid.editing .dashboard-card:hover {
+      transform: scale(1.03); /* Subtle hover in edit mode */
+      box-shadow: 0 10px 35px rgba(103, 32, 189, 0.2);
     }
 
     .dashboard-card.dragging {
       opacity: 0.8;
-      transform: rotate(5deg) scale(1.05);
+      transform: rotate(2deg) scale(1.05) !important; /* !important to override shake */
       box-shadow: 0 20px 50px rgba(0,0,0,0.25);
       cursor: grabbing;
       z-index: 1000;
+      animation: none; /* Stop shaking when dragging */
+      transition: transform 0.2s ease-out, box-shadow 0.2s ease-out;
     }
 
     .card-header {
@@ -491,6 +502,44 @@
         opacity: 1;
       }
     }
+
+    @keyframes shake {
+      0% { transform: rotate(0deg); }
+      10% { transform: rotate(-0.5deg); }
+      20% { transform: rotate(0.5deg); }
+      30% { transform: rotate(0deg); }
+      40% { transform: rotate(-0.5deg); }
+      50% { transform: rotate(0.5deg); }
+      60% { transform: rotate(0deg); }
+      70% { transform: rotate(-0.5deg); }
+      80% { transform: rotate(0.5deg); }
+      90% { transform: rotate(0deg); }
+      100% { transform: rotate(0deg); }
+    }
+
+    /* Notification System */
+    .notification {
+      position: fixed;
+      top: 20px;
+      right: 20px;
+      padding: 12px 20px;
+      border-radius: 8px;
+      color: white;
+      font-weight: 600;
+      z-index: 10000;
+      transform: translateX(100%);
+      transition: transform 0.3s ease-in-out;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    }
+    .notification.success {
+      background: linear-gradient(135deg, #28a745, #20c997);
+    }
+    .notification.error {
+      background: linear-gradient(135deg, #dc3545, #e83e8c);
+    }
+    .notification.info {
+      background: linear-gradient(135deg, #6720bd, #8a2be2);
+    }
   </style>
 </head>
 
@@ -539,13 +588,13 @@
       <div class="dashboard-header">
         <h2 class="dashboard-title">Dashboard</h2>
         <div class="dashboard-controls">
-          <button id="addCardBtn" class="control-btn secondary">+ Add Card</button>
-          <button id="resetLayoutBtn" class="control-btn secondary">Reset Layout</button>
+          <button id="addCardBtn" class="control-btn secondary" style="display: none;">+ Add Card</button>
+          <button id="resetLayoutBtn" class="control-btn secondary" style="display: none;">Reset Layout</button>
           <button id="editDashboard" class="control-btn">Edit Layout</button>
         </div>
       </div>
 
-      <div class="quick-actions">
+      <div class="quick-actions" id="quickActions">
         <h3>Quick Actions</h3>
         <div class="action-buttons">
           <button class="action-btn" onclick="window.location.href='proxies.html'">
@@ -570,7 +619,7 @@
             <div class="card-icon">🛡️</div>
             <h4 class="card-title">Proxies</h4>
           </div>
-          <p class="card-description">Secure web browsing through encrypted proxy servers. Access blocked content safely and anonymously.</p>
+          <p class="card-description">Secure web Browse through encrypted proxy servers. Access blocked content safely and anonymously.</p>
           <div class="card-stats">
             <div class="stat-item">
               <span class="stat-value">24</span>
@@ -678,13 +727,12 @@
         </div>
       </div>
 
-      <p style="text-align: center; color: #666; margin-top: 40px; font-style: italic;">
-        Drag cards to rearrange your dashboard. Use "Edit Layout" to enter customization mode.
+      <p id="editModeHint" style="text-align: center; color: #666; margin-top: 40px; font-style: italic; display: none;">
+        Tap and hold a card to enter edit mode, then drag to rearrange. Tap 'Done' to save.
       </p>
     </main>
   </div>
 
-  <!-- Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
@@ -694,14 +742,19 @@
     const dbRef = () => db.collection('users').doc(firebase.auth().currentUser.uid);
     let editMode = false;
     let draggedElement = null;
-    let touchStartY = 0;
-    let touchStartX = 0;
-    
+    let dragGhost = null; // For the ghost image during drag
+    let initialX, initialY;
+    let currentX, currentY;
+    let activeCard = null; // The card currently being held down/dragged
+    let longPressTimer;
+
     const marqueeEls = document.querySelectorAll('.marquee-content');
     const dashboardGrid = document.getElementById('dashboardGrid');
     const editBtn = document.getElementById('editDashboard');
     const addCardBtn = document.getElementById('addCardBtn');
     const resetLayoutBtn = document.getElementById('resetLayoutBtn');
+    const quickActionsSection = document.getElementById('quickActions');
+    const editModeHint = document.getElementById('editModeHint');
 
     // Authentication and user data loading
     firebase.auth().onAuthStateChanged(async user => {
@@ -761,17 +814,7 @@
 
     // Enhanced edit mode functionality
     editBtn.addEventListener('click', () => {
-      editMode = !editMode;
-      dashboardGrid.classList.toggle('editing', editMode);
-      editBtn.textContent = editMode ? 'Save Layout' : 'Edit Layout';
-      editBtn.classList.toggle('secondary', editMode);
-      
-      if (editMode) {
-        showEditingHints();
-      } else {
-        hideEditingHints();
-        saveLayout();
-      }
+      toggleEditMode();
     });
 
     // Add card functionality (placeholder for future implementation)
@@ -783,158 +826,255 @@
     resetLayoutBtn.addEventListener('click', () => {
       if (confirm('Are you sure you want to reset your dashboard layout to default?')) {
         resetToDefaultLayout();
+        if (editMode) { // If in edit mode, save after reset
+          saveLayout();
+          toggleEditMode(); // Exit edit mode
+        }
       }
     });
 
-    // Enhanced drag and drop system
-    function initializeDragAndDrop() {
+    function toggleEditMode() {
+      editMode = !editMode;
+      dashboardGrid.classList.toggle('editing', editMode);
+      editBtn.textContent = editMode ? 'Done' : 'Edit Layout';
+      editBtn.classList.toggle('secondary', !editMode); // "Done" is primary
+      
+      // Toggle visibility of add/reset buttons and quick actions
+      addCardBtn.style.display = editMode ? 'inline-block' : 'none';
+      resetLayoutBtn.style.display = editMode ? 'inline-block' : 'none';
+      quickActionsSection.style.display = editMode ? 'none' : 'block';
+      editModeHint.style.display = editMode ? 'block' : 'none';
+
+      if (!editMode) {
+        saveLayout();
+      }
+      
+      // Update card states (shake/normal)
+      document.querySelectorAll('.dashboard-card').forEach(card => {
+        if (editMode) {
+          card.classList.remove('fade-in'); // Remove initial fade-in for consistent shake
+          card.style.animationDelay = ''; // Reset delay
+        } else {
+          card.style.animation = 'none'; // Stop shaking
+          card.classList.remove('dragging');
+        }
+      });
+    }
+
+    // Custom Drag and Drop for Apple-like behavior
+    function initializeCustomDragAndDrop() {
       const cards = document.querySelectorAll('.dashboard-card');
       
       cards.forEach(card => {
-        card.draggable = true;
-        
+        // Prevent default browser drag-and-drop
+        card.draggable = false;
+
         // Mouse events
-        card.addEventListener('dragstart', handleDragStart);
-        card.addEventListener('dragend', handleDragEnd);
-        
+        card.addEventListener('mousedown', handleMouseDown);
         // Touch events for mobile support
         card.addEventListener('touchstart', handleTouchStart, { passive: false });
-        card.addEventListener('touchmove', handleTouchMove, { passive: false });
-        card.addEventListener('touchend', handleTouchEnd);
         
-        // Click navigation (only when not in edit mode)
+        // Click navigation (only when not in edit mode and not dragging)
         card.addEventListener('click', (e) => {
-          if (!editMode && card.dataset.page) {
+          if (!editMode && !card.classList.contains('dragging') && card.dataset.page) {
             window.location.href = card.dataset.page;
           }
         });
       });
 
-      // Grid container events
-      dashboardGrid.addEventListener('dragover', handleDragOver);
-      dashboardGrid.addEventListener('drop', handleDrop);
+      // Global event listeners for drag operations
+      document.addEventListener('mousemove', handleMouseMove);
+      document.addEventListener('mouseup', handleMouseUp);
+      document.addEventListener('touchmove', handleTouchMove, { passive: false });
+      document.addEventListener('touchend', handleTouchEnd);
+      document.addEventListener('touchcancel', handleTouchEnd);
     }
 
-    function handleDragStart(e) {
-      if (!editMode) {
-        e.preventDefault();
-        return;
-      }
-      
-      draggedElement = e.target;
-      e.target.classList.add('dragging');
-      dashboardGrid.classList.add('dragging-active');
-      
-      // Set drag effect
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/html', e.target.outerHTML);
-    }
-
-    function handleDragEnd(e) {
-      if (draggedElement) {
-        draggedElement.classList.remove('dragging');
-        dashboardGrid.classList.remove('dragging-active');
-        draggedElement = null;
+    function handleMouseDown(e) {
+      if (editMode && e.button === 0) { // Only left click in edit mode
+        activeCard = e.currentTarget;
+        initialX = e.clientX;
+        initialY = e.clientY;
+        
+        longPressTimer = setTimeout(() => {
+          startDrag(activeCard, initialX, initialY);
+        }, 300); // Short delay to differentiate click from drag
+      } else if (!editMode && e.button === 0) {
+        // Handle normal click for navigation
+        const card = e.currentTarget;
+        if (card.dataset.page) {
+          window.location.href = card.dataset.page;
+        }
       }
     }
 
-    function handleDragOver(e) {
-      if (!editMode || !draggedElement) return;
-      e.preventDefault();
-      e.dataTransfer.dropEffect = 'move';
-    }
-
-    function handleDrop(e) {
-      e.preventDefault();
-      if (!editMode || !draggedElement) return;
-      
-      const afterElement = getDragAfterElement(dashboardGrid, e.clientY, e.clientX);
-      
-      if (afterElement == null) {
-        dashboardGrid.appendChild(draggedElement);
-      } else {
-        dashboardGrid.insertBefore(draggedElement, afterElement);
-      }
-      
-      // Visual feedback for successful drop
-      draggedElement.style.animation = 'none';
-      draggedElement.offsetHeight; // Trigger reflow
-      draggedElement.style.animation = 'fadeIn 0.3s ease-out';
-    }
-
-    // Touch event handlers for mobile drag-and-drop support
     function handleTouchStart(e) {
-      if (!editMode) return;
+      if (!editMode) {
+        // Implement long press to enter edit mode for touch
+        activeCard = e.currentTarget;
+        const touch = e.touches[0];
+        initialX = touch.clientX;
+        initialY = touch.clientY;
+
+        longPressTimer = setTimeout(() => {
+          if (!editMode) {
+            toggleEditMode(); // Enter edit mode on long press
+          }
+          startDrag(activeCard, initialX, initialY);
+        }, 500); // Longer delay for long press
+        e.preventDefault(); // Prevent scrolling while potential long-press
+      } else {
+        // If already in edit mode, start drag immediately
+        activeCard = e.currentTarget;
+        const touch = e.touches[0];
+        initialX = touch.clientX;
+        initialY = touch.clientY;
+        e.preventDefault(); // Prevent scrolling during drag
+        startDrag(activeCard, initialX, initialY);
+      }
+    }
+
+    function startDrag(card, clientX, clientY) {
+      if (!editMode) return; // Must be in edit mode to drag
+
+      activeCard = card;
+      activeCard.classList.add('dragging');
+      dashboardGrid.classList.add('dragging-active');
+      activeCard.style.zIndex = '1000'; // Bring to front
+
+      // Create a ghost image for dragging feedback
+      dragGhost = activeCard.cloneNode(true);
+      dragGhost.classList.add('dragging-ghost');
+      Object.assign(dragGhost.style, {
+        position: 'fixed',
+        pointerEvents: 'none',
+        opacity: '0.7',
+        zIndex: '9999',
+        width: activeCard.offsetWidth + 'px',
+        height: activeCard.offsetHeight + 'px',
+        transition: 'none', // No transition while dragging
+        transform: `translate(${clientX - activeCard.offsetWidth / 2}px, ${clientY - activeCard.offsetHeight / 2}px)`
+      });
+      document.body.appendChild(dragGhost);
       
-      const touch = e.touches[0];
-      touchStartX = touch.clientX;
-      touchStartY = touch.clientY;
-      
-      // Prevent default scrolling behavior
-      e.preventDefault();
-      
-      // Add visual feedback
-      e.target.style.transform = 'scale(1.05) rotate(2deg)';
-      e.target.style.zIndex = '1000';
-      e.target.style.transition = 'none';
+      // Hide the original card temporarily, or set opacity to 0
+      activeCard.style.opacity = '0';
+    }
+
+    function handleMouseMove(e) {
+      clearTimeout(longPressTimer); // Clear long press if mouse moves
+      if (!activeCard || !editMode) return;
+
+      currentX = e.clientX;
+      currentY = e.clientY;
+
+      if (dragGhost) {
+        dragGhost.style.transform = `translate(${currentX - dragGhost.offsetWidth / 2}px, ${currentY - dragGhost.offsetHeight / 2}px)`;
+      }
+
+      // Reorder cards based on drag position
+      const cards = [...dashboardGrid.querySelectorAll('.dashboard-card:not(.dragging)')];
+      let closestCard = null;
+      let minDistance = Infinity;
+
+      cards.forEach(card => {
+        const rect = card.getBoundingClientRect();
+        const distance = Math.sqrt(
+          Math.pow(currentX - (rect.left + rect.width / 2), 2) +
+          Math.pow(currentY - (rect.top + rect.height / 2), 2)
+        );
+
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestCard = card;
+        }
+      });
+
+      if (closestCard && closestCard !== activeCard) {
+        const activeRect = activeCard.getBoundingClientRect();
+        const closestRect = closestCard.getBoundingClientRect();
+
+        // Determine if we should insert before or after
+        // This is a simplified logic, for complex grids, more robust logic is needed
+        // For a grid, we want to swap positions more directly.
+        const activeIndex = Array.from(dashboardGrid.children).indexOf(activeCard);
+        const closestIndex = Array.from(dashboardGrid.children).indexOf(closestCard);
+
+        if (activeIndex < closestIndex) {
+          dashboardGrid.insertBefore(closestCard, activeCard);
+        } else {
+          dashboardGrid.insertBefore(activeCard, closestCard);
+        }
+      }
     }
 
     function handleTouchMove(e) {
-      if (!editMode) return;
-      
-      const touch = e.touches[0];
-      const currentX = touch.clientX;
-      const currentY = touch.clientY;
-      
-      // Calculate movement
-      const deltaX = currentX - touchStartX;
-      const deltaY = currentY - touchStartY;
-      
-      // Move the element
-      e.target.style.transform = `translate(${deltaX}px, ${deltaY}px) scale(1.05) rotate(2deg)`;
-      
-      e.preventDefault();
-    }
+      clearTimeout(longPressTimer); // Clear long press if touch moves
+      if (!activeCard || !editMode) return;
+      e.preventDefault(); // Prevent scrolling
 
-    function handleTouchEnd(e) {
-      if (!editMode) return;
+      const touch = e.touches[0];
+      currentX = touch.clientX;
+      currentY = touch.clientY;
+
+      if (dragGhost) {
+        dragGhost.style.transform = `translate(${currentX - dragGhost.offsetWidth / 2}px, ${currentY - dragGhost.offsetHeight / 2}px)`;
+      }
       
-      // Reset visual state
-      e.target.style.transform = '';
-      e.target.style.zIndex = '';
-      e.target.style.transition = '';
-      
-      // Find the element at the touch position
-      const touch = e.changedTouches[0];
-      const elementBelow = document.elementFromPoint(touch.clientX, touch.clientY);
-      
-      // Simple reordering logic for touch
-      if (elementBelow && elementBelow.classList.contains('dashboard-card') && elementBelow !== e.target) {
-        const rect1 = e.target.getBoundingClientRect();
-        const rect2 = elementBelow.getBoundingClientRect();
-        
-        if (rect1.top < rect2.top) {
-          dashboardGrid.insertBefore(e.target, elementBelow);
+      // Reorder logic for touch, similar to mousemove
+      const cards = [...dashboardGrid.querySelectorAll('.dashboard-card:not(.dragging)')];
+      let closestCard = null;
+      let minDistance = Infinity;
+
+      cards.forEach(card => {
+        const rect = card.getBoundingClientRect();
+        const distance = Math.sqrt(
+          Math.pow(currentX - (rect.left + rect.width / 2), 2) +
+          Math.pow(currentY - (rect.top + rect.height / 2), 2)
+        );
+
+        if (distance < minDistance) {
+          minDistance = distance;
+          closestCard = card;
+        }
+      });
+
+      if (closestCard && closestCard !== activeCard) {
+        const activeIndex = Array.from(dashboardGrid.children).indexOf(activeCard);
+        const closestIndex = Array.from(dashboardGrid.children).indexOf(closestCard);
+
+        if (activeIndex < closestIndex) {
+          dashboardGrid.insertBefore(closestCard, activeCard);
         } else {
-          dashboardGrid.insertBefore(e.target, elementBelow.nextSibling);
+          dashboardGrid.insertBefore(activeCard, closestCard);
         }
       }
     }
 
-    // Helper function to determine drop position
-    function getDragAfterElement(container, y, x) {
-      const draggableElements = [...container.querySelectorAll('.dashboard-card:not(.dragging)')];
-      
-      return draggableElements.reduce((closest, child) => {
-        const box = child.getBoundingClientRect();
-        const offset = y - box.top - box.height / 2;
+    function handleMouseUp() {
+      clearTimeout(longPressTimer);
+      endDrag();
+    }
+
+    function handleTouchEnd() {
+      clearTimeout(longPressTimer);
+      endDrag();
+    }
+
+    function endDrag() {
+      if (activeCard) {
+        activeCard.classList.remove('dragging');
+        activeCard.style.opacity = '1'; // Make original card visible again
+        activeCard.style.zIndex = ''; // Reset z-index
         
-        if (offset < 0 && offset > closest.offset) {
-          return { offset: offset, element: child };
-        } else {
-          return closest;
+        if (dragGhost) {
+          document.body.removeChild(dragGhost);
+          dragGhost = null;
         }
-      }, { offset: Number.NEGATIVE_INFINITY }).element;
+
+        dashboardGrid.classList.remove('dragging-active');
+        activeCard = null;
+      }
     }
 
     // Enhanced marquee functionality
@@ -1007,29 +1147,8 @@
     function resetToDefaultLayout() {
       const defaultOrder = ['proxies', 'soundboard', 'games', 'others', 'settings'];
       loadSavedLayout(defaultOrder);
-      saveLayout();
+      saveLayout(); // Automatically saves after reset
       showNotification('Layout reset to default', 'success');
-    }
-
-    // Visual feedback functions
-    function showEditingHints() {
-      // Add pulsing effect to editable cards
-      const cards = document.querySelectorAll('.dashboard-card');
-      cards.forEach((card, index) => {
-        setTimeout(() => {
-          card.style.animation = 'pulse 2s infinite';
-        }, index * 100);
-      });
-      
-      // Show helpful tooltip
-      showNotification('Drag cards to rearrange your dashboard', 'info', 3000);
-    }
-
-    function hideEditingHints() {
-      const cards = document.querySelectorAll('.dashboard-card');
-      cards.forEach(card => {
-        card.style.animation = '';
-      });
     }
 
     // Notification system
@@ -1037,29 +1156,6 @@
       const notification = document.createElement('div');
       notification.className = `notification ${type}`;
       notification.textContent = message;
-      
-      // Styling for the notification
-      Object.assign(notification.style, {
-        position: 'fixed',
-        top: '20px',
-        right: '20px',
-        padding: '12px 20px',
-        borderRadius: '8px',
-        color: 'white',
-        fontWeight: '600',
-        zIndex: '10000',
-        transform: 'translateX(100%)',
-        transition: 'transform 0.3s ease-in-out',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
-      });
-      
-      // Set background color based on type
-      const colors = {
-        success: 'linear-gradient(135deg, #28a745, #20c997)',
-        error: 'linear-gradient(135deg, #dc3545, #e83e8c)',
-        info: 'linear-gradient(135deg, #6720bd, #8a2be2)'
-      };
-      notification.style.background = colors[type] || colors.info;
       
       document.body.appendChild(notification);
       
@@ -1077,28 +1173,17 @@
       }, duration);
     }
 
-    // Pulse animation keyframes (added dynamically)
-    const pulseStyle = document.createElement('style');
-    pulseStyle.textContent = `
-      @keyframes pulse {
-        0% { box-shadow: 0 6px 30px rgba(103, 32, 189, 0.08); }
-        50% { box-shadow: 0 6px 30px rgba(103, 32, 189, 0.25); }
-        100% { box-shadow: 0 6px 30px rgba(103, 32, 189, 0.08); }
-      }
-    `;
-    document.head.appendChild(pulseStyle);
-
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
       // ESC to exit edit mode
       if (e.key === 'Escape' && editMode) {
-        editBtn.click();
+        toggleEditMode();
       }
       
       // Ctrl/Cmd + E to toggle edit mode
       if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
         e.preventDefault();
-        editBtn.click();
+        toggleEditMode();
       }
     });
 
@@ -1109,7 +1194,7 @@
 
     // Initialize everything when DOM is loaded
     document.addEventListener('DOMContentLoaded', () => {
-      initializeDragAndDrop();
+      initializeCustomDragAndDrop();
       
       // Add smooth scrolling for better UX
       document.documentElement.style.scrollBehavior = 'smooth';
@@ -1134,5 +1219,4 @@
     }
   </script>
 </body>
-</html></parameter>
-</invoke>
+</html>
