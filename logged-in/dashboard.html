@@ -234,7 +234,7 @@
     /* --- Dashboard Grid System --- */
     .dashboard-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      /* Initial grid-template-columns will be set by JS on load */
       gap: 25px;
       position: relative;
       transition: all 0.3s ease;
@@ -406,6 +406,38 @@
       font-weight: bold;
       text-transform: uppercase;
       letter-spacing: 0.5px;
+    }
+
+    /* Remove Card Button */
+    .remove-card-btn {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      background: #dc3545;
+      color: white;
+      border: none;
+      border-radius: 50%;
+      width: 28px;
+      height: 28px;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      font-size: 1.2em;
+      cursor: pointer;
+      opacity: 0;
+      visibility: hidden;
+      transition: opacity 0.2s ease, visibility 0.2s ease;
+      z-index: 10;
+    }
+
+    .dashboard-grid.editing .remove-card-btn {
+      opacity: 1;
+      visibility: visible;
+    }
+
+    .remove-card-btn:hover {
+      background: #c82333;
+      transform: scale(1.1);
     }
 
     /* --- Quick Actions Section --- */
@@ -673,10 +705,6 @@
       box-shadow: 0 8px 35px rgba(103, 32, 189, 0.1);
     }
 
-    .dashboard-grid.editing .dashboard-column-add {
-      display: flex; /* Only show in edit mode */
-    }
-
     /* Styles for Friends and Other Widgets */
     .friends-list-card {
       background: linear-gradient(135deg, #ffe0b2 0%, #ffd7a0 100%); /* Warm tones */
@@ -753,8 +781,9 @@
         <h2 class="dashboard-title">Dashboard</h2>
         <div class="dashboard-controls">
           <button id="addCardBtn" class="control-btn secondary" style="display: none;">+ Add Card</button>
-          <button id="resetLayoutBtn" class="control-btn secondary" style="display: none;">Reset Layout</button>
           <button id="addColumnBtn" class="control-btn secondary" style="display: none;">+ Add Column</button>
+          <button id="removeColumnBtn" class="control-btn secondary" style="display: none;">- Remove Column</button>
+          <button id="resetLayoutBtn" class="control-btn secondary" style="display: none;">Reset Layout</button>
           <button id="editDashboard" class="control-btn">Edit Layout</button>
         </div>
       </div>
@@ -777,8 +806,9 @@
         </div>
       </div>
 
-      <div class="dashboard-grid" id="dashboardGrid">
+      <div class="dashboard-grid" id="dashboardGrid" data-column-count="3">
         <div class="dashboard-card" data-id="proxies" data-page="proxies.html">
+          <button class="remove-card-btn" title="Remove Card">&times;</button>
           <div class="card-badge">Active</div>
           <div class="card-header">
             <div class="card-icon">🛡️</div>
@@ -802,6 +832,7 @@
         </div>
 
         <div class="dashboard-card" data-id="soundboard" data-page="soundboard.html">
+          <button class="remove-card-btn" title="Remove Card">&times;</button>
           <div class="card-badge">New</div>
           <div class="card-header">
             <div class="card-icon">🎵</div>
@@ -825,6 +856,7 @@
         </div>
 
         <div class="dashboard-card" data-id="games" data-page="games.html">
+          <button class="remove-card-btn" title="Remove Card">&times;</button>
           <div class="card-badge">Popular</div>
           <div class="card-header">
             <div class="card-icon">🎮</div>
@@ -848,6 +880,7 @@
         </div>
 
         <div class="dashboard-card" data-id="others" data-page="others.html">
+          <button class="remove-card-btn" title="Remove Card">&times;</button>
           <div class="card-header">
             <div class="card-icon">✨</div>
             <h4 class="card-title">Others</h4>
@@ -870,6 +903,7 @@
         </div>
 
         <div class="dashboard-card" data-id="settings" data-page="settings.html">
+          <button class="remove-card-btn" title="Remove Card">&times;</button>
           <div class="card-header">
             <div class="card-icon">⚙️</div>
             <h4 class="card-title">Settings</h4>
@@ -891,13 +925,10 @@
           </div>
         </div>
 
-        <div class="dashboard-column-add" id="addColumnPlaceholder" style="display: none;">
-          + Add Column
-        </div>
       </div>
 
       <p id="editModeHint" style="text-align: center; color: #666; margin-top: 40px; font-style: italic; display: none;">
-        Tap and hold a card to enter edit mode, then drag to rearrange. Tap 'Done' to save.
+        Tap and hold a card to enter edit mode, then drag to rearrange. Click 'Done' to save.
       </p>
     </main>
   </div>
@@ -934,6 +965,7 @@
   <script src="../firebase-config.js"></script>
   <script>
     // Enhanced dashboard functionality with improved drag-and-drop and layout management
+    const db = firebase.firestore(); // Ensure db is initialized
     const dbRef = () => db.collection('users').doc(firebase.auth().currentUser.uid);
     let editMode = false;
     let draggedElement = null;
@@ -942,6 +974,7 @@
     let currentX, currentY;
     let activeCard = null; // The card currently being held down/dragged
     let longPressTimer;
+    let currentColumnCount = 3; // Default starting columns
 
     const marqueeEls = document.querySelectorAll('.marquee-content');
     const dashboardGrid = document.getElementById('dashboardGrid');
@@ -949,12 +982,12 @@
     const addCardBtn = document.getElementById('addCardBtn');
     const resetLayoutBtn = document.getElementById('resetLayoutBtn');
     const addColumnBtn = document.getElementById('addColumnBtn'); // New button
+    const removeColumnBtn = document.getElementById('removeColumnBtn'); // New button
     const quickActionsSection = document.getElementById('quickActions');
     const editModeHint = document.getElementById('editModeHint');
     const addCardModal = document.getElementById('addCardModal');
     const closeModalBtn = addCardModal.querySelector('.close-button');
     const widgetOptionsContainer = addCardModal.querySelector('.widget-options');
-    const addColumnPlaceholder = document.getElementById('addColumnPlaceholder');
 
     // Authentication and user data loading
     firebase.auth().onAuthStateChanged(async user => {
@@ -972,9 +1005,12 @@
         document.getElementById('userName').textContent = 
           userData.username || user.displayName || 'Welcome User';
         
-        // Load saved dashboard layout
+        // Load saved dashboard layout and column count
         if (userData.dashboardLayout) {
-          loadSavedLayout(userData.dashboardLayout);
+          loadSavedLayout(userData.dashboardLayout, userData.columnCount);
+        } else {
+          // If no saved layout, load default cards and initial column count
+          resetToDefaultLayout();
         }
         
         updateMarquees();
@@ -989,6 +1025,7 @@
         
       } catch (error) {
         console.error('Error loading user data:', error);
+        showNotification('Failed to load dashboard data. Please refresh.', 'error');
       }
     });
 
@@ -1042,17 +1079,19 @@
       }
     });
 
-    // Add column functionality (conceptual)
+    // Add column functionality
     addColumnBtn.addEventListener('click', () => {
       addNewColumn();
     });
-    addColumnPlaceholder.addEventListener('click', () => {
-      addNewColumn();
+
+    // Remove column functionality
+    removeColumnBtn.addEventListener('click', () => {
+      removeLastColumn();
     });
 
     // Reset layout functionality
     resetLayoutBtn.addEventListener('click', () => {
-      if (confirm('Are you sure you want to reset your dashboard layout to default?')) {
+      if (confirm('Are you sure you want to reset your dashboard layout to default? This will remove all custom cards and columns.')) {
         resetToDefaultLayout();
         if (editMode) { // If in edit mode, save after reset
           saveLayout();
@@ -1069,11 +1108,17 @@
       
       // Toggle visibility of add/reset/column buttons and quick actions
       addCardBtn.style.display = editMode ? 'inline-block' : 'none';
+      addColumnBtn.style.display = editMode ? 'inline-block' : 'none';
+      removeColumnBtn.style.display = editMode ? 'inline-block' : 'none';
       resetLayoutBtn.style.display = editMode ? 'inline-block' : 'none';
-      addColumnBtn.style.display = editMode ? 'inline-block' : 'none'; // Show/hide new column button
       quickActionsSection.style.display = editMode ? 'none' : 'block';
       editModeHint.style.display = editMode ? 'block' : 'none';
-      addColumnPlaceholder.style.display = editMode ? 'flex' : 'none'; // Show/hide column placeholder
+
+      document.querySelectorAll('.remove-card-btn').forEach(btn => {
+          btn.style.opacity = editMode ? '1' : '0';
+          btn.style.visibility = editMode ? 'visible' : 'hidden';
+      });
+
 
       if (!editMode) {
         saveLayout();
@@ -1096,28 +1141,63 @@
       const cards = document.querySelectorAll('.dashboard-card');
       
       cards.forEach(card => {
+        // Remove existing listeners to prevent duplicates if re-called
+        card.removeEventListener('mousedown', handleMouseDown);
+        card.removeEventListener('touchstart', handleTouchStart);
+        card.removeEventListener('click', handleCardClick);
+
         // Prevent default browser drag-and-drop
         card.draggable = false;
 
-        // Mouse events
+        // Add new listeners
         card.addEventListener('mousedown', handleMouseDown);
-        // Touch events for mobile support
         card.addEventListener('touchstart', handleTouchStart, { passive: false });
-        
-        // Click navigation (only when not in edit mode and not dragging)
-        card.addEventListener('click', (e) => {
-          if (!editMode && !card.classList.contains('dragging') && card.dataset.page) {
-            window.location.href = card.dataset.page;
-          }
-        });
+        card.addEventListener('click', handleCardClick);
+
+        // Add remove button listener
+        const removeBtn = card.querySelector('.remove-card-btn');
+        if (removeBtn) {
+            removeBtn.removeEventListener('click', removeCardHandler); // Prevent duplicates
+            removeBtn.addEventListener('click', removeCardHandler);
+        }
       });
 
-      // Global event listeners for drag operations
+      // Global event listeners for drag operations (only once)
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
+      document.removeEventListener('touchcancel', handleTouchEnd);
+
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
       document.addEventListener('touchmove', handleTouchMove, { passive: false });
       document.addEventListener('touchend', handleTouchEnd);
       document.addEventListener('touchcancel', handleTouchEnd);
+    }
+
+    function handleCardClick(e) {
+        // Prevent navigation if in edit mode or if a drag operation just finished
+        if (editMode || draggedElement || activeCard) {
+            e.preventDefault();
+            e.stopImmediatePropagation(); // Stop propagation to prevent parent clicks
+            return;
+        }
+        // Normal navigation outside edit mode
+        const card = e.currentTarget;
+        if (card.dataset.page) {
+            window.location.href = card.dataset.page;
+        }
+    }
+
+    function removeCardHandler(e) {
+        e.stopPropagation(); // Prevent card click event from firing
+        if (editMode) {
+            const cardToRemove = e.currentTarget.closest('.dashboard-card');
+            if (cardToRemove && confirm(`Are you sure you want to remove this "${cardToRemove.querySelector('.card-title').textContent}" card?`)) {
+                removeCard(cardToRemove);
+            }
+        }
     }
 
     function handleMouseDown(e) {
@@ -1128,72 +1208,68 @@
         
         longPressTimer = setTimeout(() => {
           startDrag(activeCard, initialX, initialY);
-        }, 300); // Short delay to differentiate click from drag
+        }, 150); // Shorter delay to differentiate click from drag for a smoother start
       } else if (!editMode && e.button === 0) {
         // Handle normal click for navigation
-        const card = e.currentTarget;
-        if (card.dataset.page) {
-          window.location.href = card.dataset.page;
-        }
+        // Handled by handleCardClick now
       }
     }
 
     function handleTouchStart(e) {
-      if (!editMode) {
-        // Implement long press to enter edit mode for touch
+      if (e.touches.length === 1) { // Only handle single touch
         activeCard = e.currentTarget;
         const touch = e.touches[0];
         initialX = touch.clientX;
         initialY = touch.clientY;
 
+        // Long press to enter edit mode or start drag if already in edit mode
         longPressTimer = setTimeout(() => {
           if (!editMode) {
             toggleEditMode(); // Enter edit mode on long press
+            // Re-initialize drag and drop to apply shaking animation and remove button
+            initializeCustomDragAndDrop();
           }
           startDrag(activeCard, initialX, initialY);
         }, 500); // Longer delay for long press
-        e.preventDefault(); // Prevent scrolling while potential long-press
-      } else {
-        // If already in edit mode, start drag immediately
-        activeCard = e.currentTarget;
-        const touch = e.touches[0];
-        initialX = touch.clientX;
-        initialY = touch.clientY;
-        e.preventDefault(); // Prevent scrolling during drag
-        startDrag(activeCard, initialX, initialY);
+
+        e.preventDefault(); // Prevent default touch behavior (e.g., scrolling)
       }
     }
 
     function startDrag(card, clientX, clientY) {
-      if (!editMode) return; // Must be in edit mode to drag
+      if (!editMode || !card) return; // Ensure in edit mode and card is valid
 
-      activeCard = card;
-      activeCard.classList.add('dragging');
+      draggedElement = card; // Set the actual element being dragged
+      draggedElement.classList.add('dragging');
       dashboardGrid.classList.add('dragging-active');
-      activeCard.style.zIndex = '1000'; // Bring to front
+      draggedElement.style.zIndex = '1000'; // Bring to front
 
       // Create a ghost image for dragging feedback
-      dragGhost = activeCard.cloneNode(true);
+      dragGhost = draggedElement.cloneNode(true);
       dragGhost.classList.add('dragging-ghost');
+      // Hide remove button on ghost
+      const ghostRemoveBtn = dragGhost.querySelector('.remove-card-btn');
+      if (ghostRemoveBtn) ghostRemoveBtn.remove(); // Remove the remove button from ghost for clean look
+
       Object.assign(dragGhost.style, {
         position: 'fixed',
         pointerEvents: 'none',
         opacity: '0.7',
         zIndex: '9999',
-        width: activeCard.offsetWidth + 'px',
-        height: activeCard.offsetHeight + 'px',
+        width: draggedElement.offsetWidth + 'px',
+        height: draggedElement.offsetHeight + 'px',
         transition: 'none', // No transition while dragging
-        transform: `translate(${clientX - activeCard.offsetWidth / 2}px, ${clientY - activeCard.offsetHeight / 2}px)`
+        transform: `translate(${clientX - draggedElement.offsetWidth / 2}px, ${clientY - draggedElement.offsetHeight / 2}px)`
       });
       document.body.appendChild(dragGhost);
       
       // Hide the original card temporarily, or set opacity to 0
-      activeCard.style.opacity = '0';
+      draggedElement.style.opacity = '0';
     }
 
     function handleMouseMove(e) {
       clearTimeout(longPressTimer); // Clear long press if mouse moves
-      if (!activeCard || !editMode) return;
+      if (!draggedElement || !editMode) return;
 
       currentX = e.clientX;
       currentY = e.clientY;
@@ -1207,34 +1283,43 @@
       let closestCard = null;
       let minDistance = Infinity;
 
-      cards.forEach(card => {
+      // Find the card to swap with
+      for (const card of cards) {
         const rect = card.getBoundingClientRect();
+        const cardCenterX = rect.left + rect.width / 2;
+        const cardCenterY = rect.top + rect.height / 2;
+
         const distance = Math.sqrt(
-          Math.pow(currentX - (rect.left + rect.width / 2), 2) +
-          Math.pow(currentY - (rect.top + rect.height / 2), 2)
+          Math.pow(currentX - cardCenterX, 2) +
+          Math.pow(currentY - cardCenterY, 2)
         );
 
         if (distance < minDistance) {
           minDistance = distance;
           closestCard = card;
         }
-      });
+      }
 
-      if (closestCard && closestCard !== activeCard) {
-        const activeIndex = Array.from(dashboardGrid.children).indexOf(activeCard);
+      if (closestCard && closestCard !== draggedElement) {
+        // Perform swap
+        const draggedRect = draggedElement.getBoundingClientRect();
+        const closestRect = closestCard.getBoundingClientRect();
+
+        // Determine if dragging element is before or after closest
+        const draggedIndex = Array.from(dashboardGrid.children).indexOf(draggedElement);
         const closestIndex = Array.from(dashboardGrid.children).indexOf(closestCard);
 
-        if (activeIndex < closestIndex) {
-          dashboardGrid.insertBefore(closestCard, activeCard);
+        if (draggedIndex < closestIndex) {
+            dashboardGrid.insertBefore(closestCard, draggedElement);
         } else {
-          dashboardGrid.insertBefore(activeCard, closestCard);
+            dashboardGrid.insertBefore(draggedElement, closestCard);
         }
       }
     }
 
     function handleTouchMove(e) {
       clearTimeout(longPressTimer); // Clear long press if touch moves
-      if (!activeCard || !editMode) return;
+      if (!draggedElement || !editMode || e.touches.length !== 1) return;
       e.preventDefault(); // Prevent scrolling
 
       const touch = e.touches[0];
@@ -1250,27 +1335,30 @@
       let closestCard = null;
       let minDistance = Infinity;
 
-      cards.forEach(card => {
+      for (const card of cards) {
         const rect = card.getBoundingClientRect();
+        const cardCenterX = rect.left + rect.width / 2;
+        const cardCenterY = rect.top + rect.height / 2;
+
         const distance = Math.sqrt(
-          Math.pow(currentX - (rect.left + rect.width / 2), 2) +
-          Math.pow(currentY - (rect.top + rect.height / 2), 2)
+          Math.pow(currentX - cardCenterX, 2) +
+          Math.pow(currentY - cardCenterY, 2)
         );
 
         if (distance < minDistance) {
           minDistance = distance;
           closestCard = card;
         }
-      });
+      }
 
-      if (closestCard && closestCard !== activeCard) {
-        const activeIndex = Array.from(dashboardGrid.children).indexOf(activeCard);
+      if (closestCard && closestCard !== draggedElement) {
+        const draggedIndex = Array.from(dashboardGrid.children).indexOf(draggedElement);
         const closestIndex = Array.from(dashboardGrid.children).indexOf(closestCard);
 
-        if (activeIndex < closestIndex) {
-          dashboardGrid.insertBefore(closestCard, activeCard);
+        if (draggedIndex < closestIndex) {
+            dashboardGrid.insertBefore(closestCard, draggedElement);
         } else {
-          dashboardGrid.insertBefore(activeCard, closestCard);
+            dashboardGrid.insertBefore(draggedElement, closestCard);
         }
       }
     }
@@ -1286,10 +1374,10 @@
     }
 
     function endDrag() {
-      if (activeCard) {
-        activeCard.classList.remove('dragging');
-        activeCard.style.opacity = '1'; // Make original card visible again
-        activeCard.style.zIndex = ''; // Reset z-index
+      if (draggedElement) {
+        draggedElement.classList.remove('dragging');
+        draggedElement.style.opacity = '1'; // Make original card visible again
+        draggedElement.style.zIndex = ''; // Reset z-index
         
         if (dragGhost) {
           document.body.removeChild(dragGhost);
@@ -1297,8 +1385,9 @@
         }
 
         dashboardGrid.classList.remove('dragging-active');
-        activeCard = null;
+        draggedElement = null;
       }
+      activeCard = null; // Clear active card too
     }
 
     // Enhanced marquee functionality
@@ -1331,10 +1420,11 @@
             };
         });
 
-        await dbRef().update({
-          dashboardLayout: layout,
+        await dbRef().set({
+          dashboardLayout: cards, // Save array of card data
+          columnCount: currentColumnCount, // Save column count
           lastLayoutUpdate: firebase.firestore.FieldValue.serverTimestamp()
-        });
+        }, { merge: true }); // Use merge to avoid overwriting other user data
         
         // Show success feedback
         showNotification('Layout saved successfully!', 'success');
@@ -1345,45 +1435,158 @@
       }
     }
 
-    function loadSavedLayout(layout) {
-        // Rebuild cards from layout data, creating new elements if necessary
+    function loadSavedLayout(layout, savedColumnCount) {
         dashboardGrid.innerHTML = ''; // Clear existing cards
 
-        layout.forEach(cardData => {
-            const existingCard = document.querySelector(`.dashboard-card[data-id="${cardData.id}"]`);
-            if (existingCard) {
-                dashboardGrid.appendChild(existingCard);
-            } else {
-                // If card not found (e.g., new widget type), create it
-                const newCard = createCardElement(cardData.type, cardData.id);
-                if (newCard) {
-                    dashboardGrid.appendChild(newCard);
-                }
+        // First, add default cards to a temporary set
+        const defaultCardDefinitions = [
+            { id: 'proxies', type: 'standard', page: 'proxies.html', html: `
+                <div class="card-badge">Active</div>
+                <div class="card-header">
+                  <div class="card-icon">🛡️</div>
+                  <h4 class="card-title">Proxies</h4>
+                </div>
+                <p class="card-description">Secure web Browse through encrypted proxy servers. Access blocked content safely and anonymously.</p>
+                <div class="card-stats">
+                  <div class="stat-item"><span class="stat-value">24</span><span class="stat-label">Servers</span></div>
+                  <div class="stat-item"><span class="stat-value">99.9%</span><span class="stat-label">Uptime</span></div>
+                  <div class="stat-item"><span class="stat-value">Fast</span><span class="stat-label">Speed</span></div>
+                </div>`
+            },
+            { id: 'soundboard', type: 'standard', page: 'soundboard.html', html: `
+                <div class="card-badge">New</div>
+                <div class="card-header">
+                  <div class="card-icon">🎵</div>
+                  <h4 class="card-title">Soundboard</h4>
+                </div>
+                <p class="card-description">Interactive audio experience with a collection of sound effects, music, and audio clips for entertainment.</p>
+                <div class="card-stats">
+                  <div class="stat-item"><span class="stat-value">150+</span><span class="stat-label">Sounds</span></div>
+                  <div class="stat-item"><span class="stat-value">8</span><span class="stat-label">Categories</span></div>
+                  <div class="stat-item"><span class="stat-value">HD</span><span class="stat-label">Quality</span></div>
+                </div>`
+            },
+            { id: 'games', type: 'standard', page: 'games.html', html: `
+                <div class="card-badge">Popular</div>
+                <div class="card-header">
+                  <div class="card-icon">🎮</div>
+                  <h4 class="card-title">Games</h4>
+                </div>
+                <p class="card-description">Extensive collection of browser-based games including classics, puzzles, and modern titles for endless entertainment.</p>
+                <div class="card-stats">
+                  <div class="stat-item"><span class="stat-value">500+</span><span class="stat-label">Games</span></div>
+                  <div class="stat-item"><span class="stat-value">12</span><span class="stat-label">Genres</span></div>
+                  <div class="stat-item"><span class="stat-value">Free</span><span class="stat-label">Play</span></div>
+                </div>`
+            },
+            { id: 'others', type: 'standard', page: 'others.html', html: `
+                <div class="card-header">
+                  <div class="card-icon">✨</div>
+                  <h4 class="card-title">Others</h4>
+                </div>
+                <p class="card-description">Additional tools and utilities including calculators, converters, and other helpful applications for productivity.</p>
+                <div class="card-stats">
+                  <div class="stat-item"><span class="stat-value">25+</span><span class="stat-label">Tools</span></div>
+                  <div class="stat-item"><span class="stat-value">Daily</span><span class="stat-label">Updated</span></div>
+                  <div class="stat-item"><span class="stat-value">Useful</span><span class="stat-label">Features</span></div>
+                </div>`
+            },
+            { id: 'settings', type: 'standard', page: 'settings.html', html: `
+                <div class="card-header">
+                  <div class="card-icon">⚙️</div>
+                  <h4 class="card-title">Settings</h4>
+                </div>
+                <p class="card-description">Customize your experience with personal preferences, account management, and system configuration options.</p>
+                <div class="card-stats">
+                  <div class="stat-item"><span class="stat-value">Profile</span><span class="stat-label">Manage</span></div>
+                  <div class="stat-item"><span class="stat-value">Theme</span><span class="stat-label">Customize</span></div>
+                  <div class="stat-item"><span class="stat-value">Privacy</span><span class="stat-label">Control</span></div>
+                </div>`
             }
-        });
+        ];
 
-        // Add any default cards that might have been removed from layout
-        const defaultCardIds = ['proxies', 'soundboard', 'games', 'others', 'settings'];
-        defaultCardIds.forEach(id => {
-            if (!layout.some(cardData => cardData.id === id)) {
-                const defaultCard = document.querySelector(`.dashboard-card[data-id="${id}"]`);
-                if (defaultCard && !dashboardGrid.contains(defaultCard)) {
-                    dashboardGrid.appendChild(defaultCard);
+        const finalLayout = [];
+        const addedCardIds = new Set();
+
+        // Add cards from saved layout first
+        if (layout && Array.isArray(layout)) {
+            layout.forEach(cardData => {
+                if (!addedCardIds.has(cardData.id)) {
+                    const cardElement = createCardElement(cardData.type, cardData.id);
+                    if (cardElement) {
+                        dashboardGrid.appendChild(cardElement);
+                        finalLayout.push(cardData);
+                        addedCardIds.add(cardData.id);
+                    }
+                }
+            });
+        }
+
+        // Then, add any default cards that are missing from the saved layout
+        defaultCardDefinitions.forEach(defaultCard => {
+            if (!addedCardIds.has(defaultCard.id)) {
+                const cardElement = createCardElement(defaultCard.type, defaultCard.id);
+                if (cardElement) {
+                    // Check if it already exists in the DOM (e.g., if it was in the original HTML)
+                    const existingInDOM = document.querySelector(`.dashboard-card[data-id="${defaultCard.id}"]`);
+                    if (existingInDOM) {
+                        dashboardGrid.appendChild(existingInDOM);
+                    } else {
+                        dashboardGrid.appendChild(cardElement);
+                    }
+                    finalLayout.push({ id: defaultCard.id, type: defaultCard.type });
+                    addedCardIds.add(defaultCard.id);
                 }
             }
         });
-        initializeCustomDragAndDrop(); // Reinitialize drag/drop for new elements
+        
+        // Set column count
+        currentColumnCount = savedColumnCount || 3; // Default to 3 if not saved
+        dashboardGrid.style.gridTemplateColumns = `repeat(${currentColumnCount}, minmax(320px, 1fr))`;
+        dashboardGrid.dataset.columnCount = currentColumnCount;
+
+        initializeCustomDragAndDrop(); // Reinitialize drag/drop for all current elements
     }
 
     function createCardElement(type, id = `custom-card-${Date.now()}`) {
         let cardHTML = '';
         let cardClass = 'dashboard-card';
-        let cardPage = '#'; // Default page for custom cards
+        let cardPage = ''; // Default for custom cards
+
+        const cardElement = document.createElement('div');
+        cardElement.className = cardClass;
+        cardElement.dataset.id = id;
+        cardElement.dataset.type = type; // Store the type for persistence
+
+        // Add the remove button to all dynamically created cards
+        const removeButton = document.createElement('button');
+        removeButton.className = 'remove-card-btn';
+        removeButton.title = 'Remove Card';
+        removeButton.innerHTML = '&times;';
+        cardElement.appendChild(removeButton);
 
         switch (type) {
+            case 'standard': // For the default cards that come with specific pages
+                // If it's a standard card being created, its HTML is static within the base HTML
+                // We fetch the existing HTML if it's a standard card that was removed and re-added
+                const existingStandardCard = document.querySelector(`.dashboard-card[data-id="${id}"]`);
+                if (existingStandardCard) {
+                    // Clone the content excluding its remove button if it already existed in the original HTML
+                    const contentToClone = existingStandardCard.cloneNode(true);
+                    const existingRemoveBtn = contentToClone.querySelector('.remove-card-btn');
+                    if(existingRemoveBtn) existingRemoveBtn.remove(); // Remove the remove button from the cloned content
+                    cardHTML = contentToClone.innerHTML;
+                    cardPage = existingStandardCard.dataset.page || '';
+                } else {
+                    // This case should ideally not happen if default cards are handled correctly
+                    console.warn(`Attempted to create a standard card with id "${id}" but no matching existing HTML found.`);
+                    return null;
+                }
+                break;
             case 'friends-list':
                 cardClass += ' friends-list-card';
-                cardHTML = `
+                cardPage = '#'; // Custom cards don't have default pages
+                cardHTML += `
                     <div class="card-header">
                         <div class="card-icon">👥</div>
                         <h4 class="card-title">Friends List</h4>
@@ -1403,7 +1606,8 @@
                 break;
             case 'custom-link':
                 cardClass += ' others-widget-card'; // Reusing style for now
-                cardHTML = `
+                cardPage = '#';
+                cardHTML += `
                     <div class="card-header">
                         <div class="card-icon">🔗</div>
                         <h4 class="card-title">Custom Link</h4>
@@ -1419,7 +1623,8 @@
                 break;
             case 'notes':
                 cardClass += ' others-widget-card';
-                cardHTML = `
+                cardPage = '#';
+                cardHTML += `
                     <div class="card-header">
                         <div class="card-icon">📝</div>
                         <h4 class="card-title">Quick Notes</h4>
@@ -1435,7 +1640,8 @@
                 break;
             case 'weather':
                 cardClass += ' others-widget-card';
-                cardHTML = `
+                cardPage = '#';
+                cardHTML += `
                     <div class="card-header">
                         <div class="card-icon">☀️</div>
                         <h4 class="card-title">Weather</h4>
@@ -1458,30 +1664,40 @@
                 return null;
         }
 
-        const newCard = document.createElement('div');
-        newCard.className = cardClass;
-        newCard.dataset.id = id;
-        newCard.dataset.type = type; // Store the type for persistence
-        if (cardPage !== '#') {
-            newCard.dataset.page = cardPage;
-        }
-        newCard.innerHTML = cardHTML;
-        return newCard;
+        // Apply updated class to the element
+        cardElement.className = cardClass;
+        cardElement.dataset.page = cardPage;
+        // Append cardHTML *after* the remove button is added
+        cardElement.insertAdjacentHTML('beforeend', cardHTML);
+
+        return cardElement;
     }
 
     function addPlaceholderCard(type) {
         const newCard = createCardElement(type);
         if (newCard) {
             dashboardGrid.appendChild(newCard);
+            // Ensure remove button is visible if in edit mode
+            if (editMode) {
+                newCard.querySelector('.remove-card-btn').style.opacity = '1';
+                newCard.querySelector('.remove-card-btn').style.visibility = 'visible';
+            }
             initializeCustomDragAndDrop(); // Reinitialize for the new card
             showNotification(`${newCard.querySelector('.card-title').textContent} added!`, 'info');
+            saveLayout(); // Save layout immediately after adding
         }
+    }
+
+    function removeCard(cardElement) {
+        dashboardGrid.removeChild(cardElement);
+        showNotification(`${cardElement.querySelector('.card-title').textContent} removed!`, 'info');
+        saveLayout(); // Save layout immediately after removing
     }
 
 
     function resetToDefaultLayout() {
       // Define a default layout that includes default cards and their types
-      const defaultLayout = [
+      const defaultLayoutData = [
           { id: 'proxies', type: 'standard' },
           { id: 'soundboard', type: 'standard' },
           { id: 'games', type: 'standard' },
@@ -1489,22 +1705,34 @@
           { id: 'settings', type: 'standard' }
       ];
       
-      loadSavedLayout(defaultLayout); // Pass the default layout for loading
+      currentColumnCount = 3; // Reset to default 3 columns
+      loadSavedLayout(defaultLayoutData, currentColumnCount); // Pass the default layout for loading
       saveLayout(); // Automatically saves after reset
       showNotification('Layout reset to default', 'success');
     }
 
     function addNewColumn() {
-        const currentColumns = getComputedStyle(dashboardGrid).gridTemplateColumns.split(' ').length;
-        const newColumns = currentColumns + 1;
-        // This is a simplified approach. For real dynamic columns, you'd need to adjust
-        // grid-template-columns property or add a new container div.
-        // For demonstration, we'll just indicate a new column.
-        dashboardGrid.style.gridTemplateColumns = `repeat(${newColumns}, minmax(320px, 1fr))`;
-        showNotification(`New column added! Total: ${newColumns} columns.`, 'info');
+        if (currentColumnCount < 5) { // Limit maximum columns to 5 for reasonable layout
+            currentColumnCount++;
+            dashboardGrid.style.gridTemplateColumns = `repeat(${currentColumnCount}, minmax(320px, 1fr))`;
+            dashboardGrid.dataset.columnCount = currentColumnCount;
+            showNotification(`New column added! Total: ${currentColumnCount} columns.`, 'info');
+            saveLayout();
+        } else {
+            showNotification('Maximum 5 columns reached!', 'info');
+        }
+    }
 
-        // You might want to save this new column structure
-        saveLayout();
+    function removeLastColumn() {
+        if (currentColumnCount > 1) { // Ensure at least 1 column remains
+            currentColumnCount--;
+            dashboardGrid.style.gridTemplateColumns = `repeat(${currentColumnCount}, minmax(320px, 1fr))`;
+            dashboardGrid.dataset.columnCount = currentColumnCount;
+            showNotification(`Column removed! Total: ${currentColumnCount} columns.`, 'info');
+            saveLayout();
+        } else {
+            showNotification('Cannot remove more columns (minimum 1 required)!', 'info');
+        }
     }
 
     // Notification system
@@ -1550,6 +1778,8 @@
 
     // Initialize everything when DOM is loaded
     document.addEventListener('DOMContentLoaded', () => {
+      // Initial call to set column count for grid
+      dashboardGrid.style.gridTemplateColumns = `repeat(${currentColumnCount}, minmax(320px, 1fr))`;
       initializeCustomDragAndDrop();
       
       // Add smooth scrolling for better UX
