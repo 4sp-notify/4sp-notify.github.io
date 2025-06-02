@@ -503,8 +503,10 @@
     const OWNER_EMAILS = ["4simpleproblems@gmail.com", "belkwy30@minerva.sparcc.org"];
     let IS_OWNER_ACCOUNT = false;
 
-    let MAX_CLOUD_SAVES = 10; // Default values
-    let MAX_CLOUD_CHARS = 1000000;
+    const BASE_MAX_CLOUD_SAVES = 10;
+    const BASE_MAX_CLOUD_CHARS = 1000000;
+    let MAX_CLOUD_SAVES = BASE_MAX_CLOUD_SAVES;
+    let MAX_CLOUD_CHARS = BASE_MAX_CLOUD_CHARS;
 
 
     // --- DOM Elements ---
@@ -536,13 +538,13 @@
     // --- Utility Functions ---
     function updateCloudLimitUI() {
         if (IS_OWNER_ACCOUNT) {
-            cloudSlotsTotalEl.textContent = "∞";
-            cloudCharLimitDisplayEl.textContent = "∞";
-            MAX_CLOUD_SAVES = Infinity; 
-            MAX_CLOUD_CHARS = Infinity; 
+            MAX_CLOUD_SAVES = BASE_MAX_CLOUD_SAVES * 2; 
+            MAX_CLOUD_CHARS = BASE_MAX_CLOUD_CHARS * 2;
+            cloudSlotsTotalEl.textContent = MAX_CLOUD_SAVES;
+            cloudCharLimitDisplayEl.textContent = MAX_CLOUD_CHARS.toLocaleString();
         } else {
-            MAX_CLOUD_SAVES = 10; 
-            MAX_CLOUD_CHARS = 1000000; 
+            MAX_CLOUD_SAVES = BASE_MAX_CLOUD_SAVES; 
+            MAX_CLOUD_CHARS = BASE_MAX_CLOUD_CHARS; 
             cloudSlotsTotalEl.textContent = MAX_CLOUD_SAVES;
             cloudCharLimitDisplayEl.textContent = MAX_CLOUD_CHARS.toLocaleString();
         }
@@ -550,7 +552,7 @@
 
     function showStatusMessage(message, type = 'info', duration = 4000) {
         statusMessagesEl.textContent = message;
-        statusMessagesEl.className = '';
+        statusMessagesEl.className = ''; // Clear existing type classes
         statusMessagesEl.classList.add(`status-${type}`);
         statusMessagesEl.style.display = 'block';
         if (duration) {
@@ -574,7 +576,7 @@
     function updateMarquees() {
       marqueeEls.forEach(el => {
         el.classList.remove('marquee-active');
-        void el.offsetWidth;
+        void el.offsetWidth; // Trigger reflow to restart animation
         el.classList.add('marquee-active');
       });
     }
@@ -584,23 +586,26 @@
         if (toggleSidebarBtn && sidebar) {
             toggleSidebarBtn.addEventListener('click', () => {
                 sidebar.classList.toggle('collapsed');
-                setTimeout(updateMarquees, 550);
+                setTimeout(updateMarquees, 550); // Update after transition
             });
         }
         const navLinks = document.querySelectorAll('.sidebar nav a');
         navLinks.forEach(link => {
             link.classList.remove('active');
-            // Correctly identify the current page for "Others"
-            if (window.location.pathname.endsWith('others.html') || window.location.pathname.endsWith('notes.html')) { // Assuming notes.html is under 'others' concept
+            // Correctly identify the current page for "Others" or "Notes"
+            const currentPageName = window.location.pathname.split('/').pop();
+            if (currentPageName === 'notes.html' || (link.getAttribute('href') === 'others.html' && currentPageName === 'others.html') ) {
                  const othersLink = Array.from(navLinks).find(l => l.getAttribute('href') === 'others.html');
                  if (othersLink) othersLink.classList.add('active');
-            } else if (link.getAttribute('href') === window.location.pathname.split('/').pop()) {
+            } else if (link.getAttribute('href') === currentPageName) {
                  link.classList.add('active');
             }
         });
     });
      const handleLogout = () => {
-      firebase.auth().signOut().then(() => (location.href = '../login.html')).catch(error => {
+      firebase.auth().signOut().then(() => {
+          location.href = '../login.html'; // Redirect to login page
+      }).catch(error => {
           console.error('Logout error:', error);
           showStatusMessage('Logout error: ' + error.message, 'error');
         });
@@ -623,7 +628,7 @@
             showStatusMessage(`Error reading file "${file.name}".`, 'error');
         };
         reader.readAsText(file);
-        event.target.value = null;
+        event.target.value = null; // Reset file input
     }
 
     function handleExportNotes() {
@@ -633,7 +638,7 @@
             return;
         }
         let fileName = prompt("Enter filename (e.g., myNotes.txt, script.js):", "notes.txt");
-        if (!fileName) return;
+        if (!fileName) return; // User cancelled
         const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
         const link = document.createElement('a');
         link.href = URL.createObjectURL(blob);
@@ -657,7 +662,7 @@
 
     function loadLocalSave() {
         const localNotes = localStorage.getItem('notes_localCopy');
-        if (localNotes) {
+        if (localNotes !== null) { // Check for null explicitly, as empty string is a valid note
             notesTextArea.value = localNotes;
             updateCharacterCount();
         }
@@ -672,7 +677,6 @@
         if (showLoadingMessageInList) {
             cloudSavesListEl.innerHTML = '<li class="loading-item">Loading...</li>';
         }
-        // refreshCloudSavesBtn.innerHTML = '⏳'; // Changed to class toggle
         refreshCloudSavesBtn.classList.add('refreshing');
         refreshCloudSavesBtn.disabled = true;
 
@@ -684,7 +688,6 @@
             cloudSaveSlotsUsedEl.textContent = '0';
             cloudCharCountUsedEl.textContent = '0';
             isRefreshingCloudSaves = false;
-            // refreshCloudSavesBtn.innerHTML = '🔄'; // Changed to class toggle
             refreshCloudSavesBtn.classList.remove('refreshing');
             refreshCloudSavesBtn.disabled = false;
             return;
@@ -696,7 +699,6 @@
                  cloudSavesListEl.innerHTML = '<li>Error: User reference not found for cloud saves.</li>';
             }
             isRefreshingCloudSaves = false;
-            // refreshCloudSavesBtn.innerHTML = '🔄'; // Changed to class toggle
             refreshCloudSavesBtn.classList.remove('refreshing');
             refreshCloudSavesBtn.disabled = false;
             return;
@@ -704,81 +706,75 @@
 
         try {
             const docSnap = await docRef.get();
-            cloudSavesListEl.innerHTML = '';
+            cloudSavesListEl.innerHTML = ''; // Clear previous entries before loading or showing messages
 
-            if (docSnap && typeof docSnap.exists === 'boolean') {
-                if (docSnap.exists) {
-                    const data = docSnap.data();
-                    const saves = data.cloudSaves || [];
-                    let totalChars = 0;
+            if (docSnap && typeof docSnap.exists === 'boolean' && docSnap.exists) {
+                const data = docSnap.data();
+                const saves = data && data.cloudSaves ? data.cloudSaves : [];
+                let totalChars = 0;
 
-                    if (saves.length === 0) {
-                        cloudSavesListEl.innerHTML = '<li>No cloud saves yet.</li>';
+                if (saves.length === 0) {
+                    cloudSavesListEl.innerHTML = '<li>No cloud saves yet.</li>';
+                }
+
+                // Sort saves by timestamp, newest first
+                saves.sort((a, b) => {
+                    const timeA = a.timestamp && typeof a.timestamp.toDate === 'function' ? a.timestamp.toDate().getTime() : (a.timestamp && a.timestamp.seconds ? a.timestamp.seconds * 1000 : 0);
+                    const timeB = b.timestamp && typeof b.timestamp.toDate === 'function' ? b.timestamp.toDate().getTime() : (b.timestamp && b.timestamp.seconds ? b.timestamp.seconds * 1000 : 0);
+                    return timeB - timeA;
+                });
+
+                saves.forEach((save, index) => {
+                    totalChars += save.charCount || 0;
+                    const li = document.createElement('li');
+                    
+                    let saveDate = 'N/A';
+                    if (save.timestamp) {
+                        if (typeof save.timestamp.toDate === 'function') { // Firestore Timestamp object
+                            saveDate = save.timestamp.toDate().toLocaleString();
+                        } else if (save.timestamp.seconds) { // Serialized Timestamp (e.g., from JSON or older saves)
+                            saveDate = new Date(save.timestamp.seconds * 1000).toLocaleString();
+                        } else if (save.timestamp instanceof Date) { // JavaScript Date object (should be rare if consistently saved)
+                            saveDate = save.timestamp.toLocaleString();
+                        }
                     }
 
-                    saves.sort((a, b) => {
-                        const timeA = a.timestamp && typeof a.timestamp.toDate === 'function' ? a.timestamp.toDate().getTime() : 0;
-                        const timeB = b.timestamp && typeof b.timestamp.toDate === 'function' ? b.timestamp.toDate().getTime() : 0;
-                        return timeB - timeA;
-                    });
-
-                    saves.forEach((save, index) => {
-                        totalChars += save.charCount || 0;
-                        const li = document.createElement('li');
-                        
-                        let saveDate = 'N/A';
-                        if (save.timestamp) {
-                            if (typeof save.timestamp.toDate === 'function') {
-                                saveDate = save.timestamp.toDate().toLocaleString();
-                            } else if (save.timestamp.seconds) {
-                                saveDate = new Date(save.timestamp.seconds * 1000).toLocaleString();
-                            } else if (save.timestamp instanceof Date) {
-                                saveDate = save.timestamp.toLocaleString();
-                            }
-                        }
-
-                        li.innerHTML = `
-                            <div class="save-info">
-                                <span class="save-name">${save.name || `Save ${index + 1}`}</span>
-                                <div class="save-details">
-                                    Chars: ${(save.charCount || 0).toLocaleString()} | Size: ${bytesToSize(new Blob([save.content || '']).size)} | Saved: <span class="math-inline">\{saveDate\}
-</div\>
-</div\>
-<div class\="save\-actions"\>
-<button class\="open\-save\-btn" data\-index\="</span>{index}">Open</button>
-                                <button class="delete-save-btn" data-index="${index}">Delete</button>
+                    li.innerHTML = `
+                        <div class="save-info">
+                            <span class="save-name">${save.name || `Save ${index + 1}`}</span>
+                            <div class="save-details">
+                                Chars: ${(save.charCount || 0).toLocaleString()} | Size: ${bytesToSize(new Blob([save.content || '']).size)} | Saved: ${saveDate}
                             </div>
-                        `;
-                        cloudSavesListEl.appendChild(li);
-                    });
+                        </div>
+                        <div class="save-actions">
+                            <button class="open-save-btn" data-index="${index}">Open</button>
+                            <button class="delete-save-btn" data-index="${index}">Delete</button>
+                        </div>
+                    `;
+                    cloudSavesListEl.appendChild(li);
+                });
 
-                    cloudSaveSlotsUsedEl.textContent = saves.length;
-                    cloudCharCountUsedEl.textContent = totalChars.toLocaleString();
+                cloudSaveSlotsUsedEl.textContent = saves.length;
+                cloudCharCountUsedEl.textContent = totalChars.toLocaleString();
 
-                    cloudSavesListEl.querySelectorAll('.open-save-btn').forEach(btn => {
-                        btn.addEventListener('click', (e) => openCloudSave(parseInt(e.target.dataset.index)));
-                    });
-                    cloudSavesListEl.querySelectorAll('.delete-save-btn').forEach(btn => {
-                        btn.addEventListener('click', (e) => deleteCloudSave(parseInt(e.target.dataset.index)));
-                    });
-                } else {
-                    cloudSavesListEl.innerHTML = '<li>No cloud save data found. Start saving!</li>';
-                    cloudSaveSlotsUsedEl.textContent = '0';
-                    cloudCharCountUsedEl.textContent = '0';
-                }
-            } else {
-                console.warn("refreshCloudSavesDisplay: docSnap is invalid. docSnap:", docSnap);
-                cloudSavesListEl.innerHTML = '<li>Could not load cloud save data.</li>';
+                // Add event listeners after elements are in the DOM
+                cloudSavesListEl.querySelectorAll('.open-save-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => openCloudSave(parseInt(e.target.dataset.index)));
+                });
+                cloudSavesListEl.querySelectorAll('.delete-save-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => deleteCloudSave(parseInt(e.target.dataset.index)));
+                });
+            } else { // docSnap doesn't exist or is invalid
+                cloudSavesListEl.innerHTML = '<li>No cloud save data found. Start saving!</li>';
                 cloudSaveSlotsUsedEl.textContent = '0';
                 cloudCharCountUsedEl.textContent = '0';
             }
         } catch (error) {
             console.error("Error in refreshCloudSavesDisplay:", error);
             showStatusMessage('Error fetching cloud saves: ' + error.message, 'error');
-            cloudSavesListEl.innerHTML = `<li>Error loading saves.</li>`;
+            cloudSavesListEl.innerHTML = `<li>Error loading saves. Check console.</li>`;
         } finally {
             isRefreshingCloudSaves = false;
-            // refreshCloudSavesBtn.innerHTML = '🔄'; // Changed to class toggle
             refreshCloudSavesBtn.classList.remove('refreshing');
             refreshCloudSavesBtn.disabled = false;
         }
@@ -815,30 +811,34 @@
                         currentTotalChars = cloudSaves.reduce((sum, s) => sum + (s.charCount || 0), 0);
                     }
                 }
-
-                if (!IS_OWNER_ACCOUNT) { 
-                    if (cloudSaves.length >= MAX_CLOUD_SAVES) {
-                        throw new Error(`Cloud save limit of ${MAX_CLOUD_SAVES} slots reached. Please delete an existing save.`);
-                    }
-                    if (currentTotalChars + charCountToSave > MAX_CLOUD_CHARS) {
-                        throw new Error(`Saving this note would exceed the total character limit of ${MAX_CLOUD_CHARS.toLocaleString()}.`);
-                    }
+                // Using MAX_CLOUD_SAVES and MAX_CLOUD_CHARS which are now owner-aware
+                if (cloudSaves.length >= MAX_CLOUD_SAVES) {
+                    throw new Error(`Cloud save limit of ${MAX_CLOUD_SAVES} slots reached. Please delete an existing save.`);
                 }
-
+                if (currentTotalChars + charCountToSave > MAX_CLOUD_CHARS) {
+                    throw new Error(`Saving this note would exceed the total character limit of ${MAX_CLOUD_CHARS.toLocaleString()}. Current: ${currentTotalChars.toLocaleString()}, Adding: ${charCountToSave.toLocaleString()}`);
+                }
+                
                 const newSave = {
                     name: saveName,
                     content: contentToSave,
                     charCount: charCountToSave,
-                    timestamp: new Date() 
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp() // Use server timestamp
                 };
                 cloudSaves.push(newSave);
                 
-                transaction.set(docRef, { cloudSaves }, { merge: true });
+                // Firestore rule for non-owners limits cloudSaves.size() <= 10.
+                // Owners bypass this in the rule. Client enforces its MAX_CLOUD_SAVES.
+                if (docSnap.exists) {
+                    transaction.update(docRef, { cloudSaves });
+                } else {
+                    transaction.set(docRef, { cloudSaves });
+                }
             });
 
             showStatusMessage(`"${saveName}" sent to cloud for saving!`, 'success');
             cloudSaveNameEl.value = '';
-            await refreshCloudSavesDisplay(false);
+            await refreshCloudSavesDisplay(false); // Refresh list without full loading message
 
         } catch (error) {
             console.error("Error saving to cloud:", error);
@@ -857,14 +857,14 @@
         const currentLocalNotes = localStorage.getItem('notes_localCopy');
         const currentEditorContent = notesTextArea.value;
         let unsavedChanges = false;
-        if (currentLocalNotes !== null) {
-            if (currentEditorContent !== currentLocalNotes) unsavedChanges = true;
-        } else {
-            if (currentEditorContent.trim() !== "") unsavedChanges = true;
+
+        // Check for unsaved changes more reliably
+        if (currentEditorContent !== (localStorage.getItem(`cloud_save_opened_content_${currentUser.uid}`) || currentLocalNotes || "")) {
+             unsavedChanges = true;
         }
         
         if (unsavedChanges) {
-             if (!confirm("You have unsaved changes in the editor. Are you sure you want to open a cloud save and overwrite them? Consider saving locally first.")) {
+             if (!confirm("You have unsaved changes in the editor. Are you sure you want to open a cloud save and overwrite them? Consider saving locally or to the cloud first.")) {
                 return;
             }
         }
@@ -876,20 +876,22 @@
             if (docSnap.exists) {
                 const data = docSnap.data();
                 let saves = data.cloudSaves || [];
+                // Ensure consistent sort order with display
                 saves.sort((a, b) => {
-                    const timeA = a.timestamp && typeof a.timestamp.toDate === 'function' ? a.timestamp.toDate().getTime() : 0;
-                    const timeB = b.timestamp && typeof b.timestamp.toDate === 'function' ? b.timestamp.toDate().getTime() : 0;
+                    const timeA = a.timestamp && typeof a.timestamp.toDate === 'function' ? a.timestamp.toDate().getTime() : (a.timestamp && a.timestamp.seconds ? a.timestamp.seconds * 1000 : 0);
+                    const timeB = b.timestamp && typeof b.timestamp.toDate === 'function' ? b.timestamp.toDate().getTime() : (b.timestamp && b.timestamp.seconds ? b.timestamp.seconds * 1000 : 0);
                     return timeB - timeA;
                 });
 
                 if (saves[index]) {
                     notesTextArea.value = saves[index].content;
-                    cloudSaveNameEl.value = saves[index].name;
+                    cloudSaveNameEl.value = saves[index].name; // Pre-fill name for potential re-save
                     updateCharacterCount();
-                    localStorage.setItem('notes_localCopy', saves[index].content); // Also update local copy when opening from cloud
-                    showStatusMessage(`Opened "${saves[index].name}" from cloud. Also updated local copy.`, 'success');
+                    localStorage.setItem('notes_localCopy', saves[index].content); // Update local backup
+                    localStorage.setItem(`cloud_save_opened_content_${currentUser.uid}`, saves[index].content); // Track opened content
+                    showStatusMessage(`Opened "${saves[index].name}" from cloud. Also updated local browser copy.`, 'success');
                 } else {
-                    showStatusMessage('Selected save not found.', 'warning');
+                    showStatusMessage('Selected save not found. It might have been deleted.', 'warning');
                 }
             } else {
                 showStatusMessage('No cloud data found to open from.', 'warning');
@@ -908,15 +910,16 @@
         
         const docRef = userNotesDocRef();
         if (!docRef) return;
+
+        let saveNameToDelete = `Save at index ${index}`;
         try {
-            let saveNameToDelete = `Save at index ${index}`;
-            // Get the name before confirming for a better message
+            // Get the name before confirming for a better message, ensuring consistent sort
             const initialDocSnap = await docRef.get();
             if (initialDocSnap.exists) {
                 let initialSaves = initialDocSnap.data().cloudSaves || [];
                  initialSaves.sort((a, b) => {
-                    const timeA = a.timestamp && typeof a.timestamp.toDate === 'function' ? a.timestamp.toDate().getTime() : 0;
-                    const timeB = b.timestamp && typeof b.timestamp.toDate === 'function' ? b.timestamp.toDate().getTime() : 0;
+                    const timeA = a.timestamp && typeof a.timestamp.toDate === 'function' ? a.timestamp.toDate().getTime() : (a.timestamp && a.timestamp.seconds ? a.timestamp.seconds * 1000 : 0);
+                    const timeB = b.timestamp && typeof b.timestamp.toDate === 'function' ? b.timestamp.toDate().getTime() : (b.timestamp && b.timestamp.seconds ? b.timestamp.seconds * 1000 : 0);
                     return timeB - timeA;
                 });
                 if (initialSaves[index] && initialSaves[index].name) {
@@ -933,10 +936,10 @@
                 if (!docSnap.exists) throw new Error("User data not found for deletion.");
 
                 let cloudSaves = docSnap.data().cloudSaves || [];
-                // Re-sort within transaction to ensure consistent indexing if multiple deletes happen quickly (though unlikely for UI)
+                // Re-sort within transaction to ensure consistent indexing
                 cloudSaves.sort((a, b) => {
-                    const timeA = a.timestamp && typeof a.timestamp.toDate === 'function' ? a.timestamp.toDate().getTime() : 0;
-                    const timeB = b.timestamp && typeof b.timestamp.toDate === 'function' ? b.timestamp.toDate().getTime() : 0;
+                    const timeA = a.timestamp && typeof a.timestamp.toDate === 'function' ? a.timestamp.toDate().getTime() : (a.timestamp && a.timestamp.seconds ? a.timestamp.seconds * 1000 : 0);
+                    const timeB = b.timestamp && typeof b.timestamp.toDate === 'function' ? b.timestamp.toDate().getTime() : (b.timestamp && b.timestamp.seconds ? b.timestamp.seconds * 1000 : 0);
                     return timeB - timeA;
                 });
 
@@ -947,7 +950,7 @@
             });
             
             showStatusMessage(`Cloud save ${saveNameToDelete} deleted successfully.`, 'success');
-            await refreshCloudSavesDisplay(false);
+            await refreshCloudSavesDisplay(false); // Refresh list
 
         } catch (error) {
             console.error("Error deleting cloud save:", error);
@@ -962,7 +965,7 @@
 
         if (user) {
             IS_OWNER_ACCOUNT = OWNER_EMAILS.includes(user.email);
-            updateCloudLimitUI();
+            updateCloudLimitUI(); // Update limits based on owner status
 
             if (sidebarUserEmailEl) sidebarUserEmailEl.textContent = user.email;
 
@@ -978,24 +981,28 @@
                     }
                 } catch (error) {
                     console.error("Error fetching user profile for username:", error);
-                    if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0];
+                    if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0]; // Fallback
                 }
             } else {
-                if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0];
+                if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0]; // Fallback
             }
             
-            loadLocalSave();
-            await refreshCloudSavesDisplay(true);
-        } else {
+            loadLocalSave(); // Load any locally saved notes first
+            await refreshCloudSavesDisplay(true); // Then refresh cloud saves
+        } else { // User is logged out
             IS_OWNER_ACCOUNT = false;
-            updateCloudLimitUI(); 
+            updateCloudLimitUI(); // Reset limits to default
 
             if (sidebarUserNameEl) sidebarUserNameEl.textContent = 'Not Logged In';
             if (sidebarUserEmailEl) sidebarUserEmailEl.textContent = 'Please log in';
             cloudSavesListEl.innerHTML = '<li>Please log in to manage cloud saves.</li>';
-            showStatusMessage('Please log in to use cloud features.', 'warning', null);
+            cloudSaveSlotsUsedEl.textContent = '0';
+            cloudCharCountUsedEl.textContent = '0';
+            // notesTextArea.value = ''; // Optionally clear text area on logout
+            // charCountEl.textContent = '0';
+            showStatusMessage('Please log in to use cloud features and sync notes.', 'info', null); // Persistent message
         }
-        updateMarquees();
+        updateMarquees(); // Update marquees regardless of login state
     });
 
 
@@ -1007,7 +1014,9 @@
     saveCloudBtn.addEventListener('click', handleCloudSave);
     refreshCloudSavesBtn.addEventListener('click', () => refreshCloudSavesDisplay(true));
 
-    updateCharacterCount(); // Initial call
+    // Initial call on page load
+    updateCharacterCount(); 
+    updateCloudLimitUI(); // Set initial UI for limits before auth state change
 
   </script>
 </body>
