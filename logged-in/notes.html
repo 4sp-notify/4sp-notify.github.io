@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>4SP - Notes</title>
-  <link rel="stylesheet" href="../css/style.css" /> <style>
+  <link rel="stylesheet" href="../css/style.css" />
+  <style>
     /* --- Dashboard Layout (Copied from previous dashboard for consistency) --- */
     body.dashboard-page {
       display: flex;
@@ -567,78 +568,84 @@
         }
         const docRef = userNotesDocRef();
         if (!docRef) {
-            console.error("Document reference is null for refreshCloudSavesDisplay.");
-            cloudSavesListEl.innerHTML = '<li>Error: User reference not found.</li>';
+            console.error("refreshCloudSavesDisplay: docRef is null. Current user might be invalid or not set.");
+            cloudSavesListEl.innerHTML = '<li>Error: User reference not found for cloud saves.</li>';
             return;
         }
 
         try {
             const docSnap = await docRef.get();
-            // For debugging, you can uncomment the next line:
-            // console.log("docSnap:", docSnap, "docSnap.exists (type):", typeof docSnap.exists);
+            // console.log("refreshCloudSavesDisplay - docSnap:", docSnap); // For debugging what docSnap is
+            // console.log("refreshCloudSavesDisplay - typeof docSnap.exists:", typeof docSnap.exists);
 
-            cloudSavesListEl.innerHTML = '';
+            cloudSavesListEl.innerHTML = ''; // Clear previous list
 
-            if (docSnap && typeof docSnap.exists === 'function' && docSnap.exists()) {
-                const data = docSnap.data();
-                const saves = data.cloudSaves || [];
-                let totalChars = 0;
+            // Standard check for Firebase compat DocumentSnapshot
+            if (docSnap && docSnap.exists) { // Note: docSnap.exists is a boolean property in compat SDK, not a function
+                                            // The error "docSnap.exists is not a function" means it's being called like one.
+                                            // The screenshot showed docSnap._delegate.exists as a function.
+                                            // For compat, it should be `docSnap.exists` (boolean)
+                                            // Let's assume the screenshot's console output structure is key.
+                                            // If `docSnap.exists` is a boolean (compat style):
+                if (docSnap.exists) { // Check the boolean property
+                    const data = docSnap.data(); // data() is a function
+                    const saves = data.cloudSaves || [];
+                    let totalChars = 0;
 
-                if (saves.length === 0) {
-                    cloudSavesListEl.innerHTML = '<li>No cloud saves yet.</li>';
-                }
-
-                saves.forEach((save, index) => {
-                    totalChars += save.charCount || 0;
-                    const li = document.createElement('li');
-                    
-                    let saveDate = 'N/A';
-                    if (save.timestamp) {
-                        if (typeof save.timestamp.toDate === 'function') { // Firestore Timestamp object
-                            saveDate = save.timestamp.toDate().toLocaleDateString();
-                        } else if (save.timestamp.seconds) { // Object with seconds (less common for serverTimestamp)
-                            saveDate = new Date(save.timestamp.seconds * 1000).toLocaleDateString();
-                        }
+                    if (saves.length === 0) {
+                        cloudSavesListEl.innerHTML = '<li>No cloud saves yet.</li>';
                     }
 
-                    li.innerHTML = `
-                        <div class="save-info">
-                            <span class="save-name">${save.name || `Save ${index + 1}`}</span>
-                            <div class="save-details">
-                                Chars: ${(save.charCount || 0).toLocaleString()} | Size: ${bytesToSize(new Blob([save.content || '']).size)} | Saved: ${saveDate}
+                    saves.forEach((save, index) => {
+                        totalChars += save.charCount || 0;
+                        const li = document.createElement('li');
+                        
+                        let saveDate = 'N/A';
+                        if (save.timestamp) { // save.timestamp will be a Firestore Timestamp object
+                            if (typeof save.timestamp.toDate === 'function') {
+                                saveDate = save.timestamp.toDate().toLocaleDateString();
+                            } else if (save.timestamp.seconds) { // Fallback just in case
+                                saveDate = new Date(save.timestamp.seconds * 1000).toLocaleDateString();
+                            }
+                        }
+
+                        li.innerHTML = `
+                            <div class="save-info">
+                                <span class="save-name">${save.name || `Save ${index + 1}`}</span>
+                                <div class="save-details">
+                                    Chars: ${(save.charCount || 0).toLocaleString()} | Size: ${bytesToSize(new Blob([save.content || '']).size)} | Saved: ${saveDate}
+                                </div>
                             </div>
-                        </div>
-                        <div class="save-actions">
-                            <button class="open-save-btn" data-index="${index}">Open</button>
-                            <button class="delete-save-btn" data-index="${index}">Delete</button>
-                        </div>
-                    `;
-                    cloudSavesListEl.appendChild(li);
-                });
+                            <div class="save-actions">
+                                <button class="open-save-btn" data-index="${index}">Open</button>
+                                <button class="delete-save-btn" data-index="${index}">Delete</button>
+                            </div>
+                        `;
+                        cloudSavesListEl.appendChild(li);
+                    });
 
-                cloudSaveSlotsUsedEl.textContent = saves.length;
-                cloudCharCountUsedEl.textContent = totalChars.toLocaleString();
+                    cloudSaveSlotsUsedEl.textContent = saves.length;
+                    cloudCharCountUsedEl.textContent = totalChars.toLocaleString();
 
-                cloudSavesListEl.querySelectorAll('.open-save-btn').forEach(btn => {
-                    btn.addEventListener('click', (e) => openCloudSave(parseInt(e.target.dataset.index)));
-                });
-                cloudSavesListEl.querySelectorAll('.delete-save-btn').forEach(btn => {
-                    btn.addEventListener('click', (e) => deleteCloudSave(parseInt(e.target.dataset.index)));
-                });
-
-            } else {
-                cloudSavesListEl.innerHTML = '<li>No cloud save data found. Start saving!</li>';
+                    cloudSavesListEl.querySelectorAll('.open-save-btn').forEach(btn => {
+                        btn.addEventListener('click', (e) => openCloudSave(parseInt(e.target.dataset.index)));
+                    });
+                    cloudSavesListEl.querySelectorAll('.delete-save-btn').forEach(btn => {
+                        btn.addEventListener('click', (e) => deleteCloudSave(parseInt(e.target.dataset.index)));
+                    });
+                } else { // docSnap.exists is false
+                    cloudSavesListEl.innerHTML = '<li>No cloud save data found. Start saving!</li>';
+                    cloudSaveSlotsUsedEl.textContent = '0';
+                    cloudCharCountUsedEl.textContent = '0';
+                }
+            } else { // docSnap is null, undefined, or doesn't have the 'exists' property as expected
+                console.warn("refreshCloudSavesDisplay: docSnap is invalid or 'exists' property not found. docSnap:", docSnap);
+                cloudSavesListEl.innerHTML = '<li>Could not load cloud save data.</li>';
                 cloudSaveSlotsUsedEl.textContent = '0';
                 cloudCharCountUsedEl.textContent = '0';
-                if (docSnap && typeof docSnap.exists !== 'function') {
-                    console.warn("docSnap.exists is not a function. Current docSnap value:", docSnap);
-                     showStatusMessage('Internal error: Could not verify cloud save data structure.', 'error');
-                } else if (!docSnap) {
-                     console.warn("docSnap is undefined or null after get().");
-                }
             }
         } catch (error) {
-            console.error("Error fetching cloud saves (inside catch):", error);
+            console.error("Error in refreshCloudSavesDisplay:", error);
             showStatusMessage('Error fetching cloud saves: ' + error.message, 'error');
             cloudSavesListEl.innerHTML = `<li>Error loading saves.</li>`;
         }
@@ -654,18 +661,26 @@
         const charCountToSave = contentToSave.length;
 
         const docRef = userNotesDocRef();
-        if (!docRef) return;
+        if (!docRef) {
+            showStatusMessage('Error: Cannot get user reference for cloud save.', 'error');
+            return;
+        }
 
         try {
             await firebase.firestore().runTransaction(async (transaction) => {
-                const docSnap = await transaction.get(docRef);
+                const docSnap = await transaction.get(docRef); // docSnap in a transaction IS a DocumentSnapshot
                 let cloudSaves = [];
                 let currentTotalChars = 0;
 
-                if (docSnap.exists()) { // docSnap from a transaction IS a DocumentSnapshot
-                    cloudSaves = docSnap.data().cloudSaves || [];
-                    currentTotalChars = cloudSaves.reduce((sum, s) => sum + (s.charCount || 0), 0);
+                // For DocumentSnapshot from a transaction, .exists is a boolean property
+                if (docSnap.exists) {
+                    const data = docSnap.data(); // .data() is a function
+                    if (data) { // Ensure data is not undefined
+                        cloudSaves = data.cloudSaves || [];
+                        currentTotalChars = cloudSaves.reduce((sum, s) => sum + (s.charCount || 0), 0);
+                    }
                 }
+                // If doc doesn't exist, cloudSaves remains [] and currentTotalChars 0, which is fine.
 
                 if (cloudSaves.length >= MAX_CLOUD_SAVES) {
                     throw new Error(`Cloud save limit of ${MAX_CLOUD_SAVES} slots reached. Please delete an existing save.`);
@@ -681,17 +696,12 @@
                     timestamp: firebase.firestore.FieldValue.serverTimestamp()
                 };
                 cloudSaves.push(newSave);
-                // Optional: sort saves by timestamp if desired, e.g., newest first
-                // cloudSaves.sort((a,b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0)); 
-                // ServerTimestamp will be null until server processes it, so client-side sort post-save is better.
-
+                
                 transaction.set(docRef, { cloudSaves }, { merge: true });
             });
 
             showStatusMessage(`"${saveName}" sent to cloud for saving!`, 'success');
             cloudSaveNameEl.value = '';
-            // Refresh might show old data until server timestamp is processed, or it might re-order.
-            // For simplicity, refresh. Consider more sophisticated UI for "pending" state.
             await refreshCloudSavesDisplay();
 
         } catch (error) {
@@ -707,17 +717,11 @@
         }
         const currentLocalNotes = localStorage.getItem('notes_localCopy');
         const currentEditorContent = notesTextArea.value;
-
-        // Check if editor has content different from last local save OR if there's no local save but editor isn't empty
         let unsavedChanges = false;
-        if (currentLocalNotes !== null) { // There is a local save
-            if (currentEditorContent !== currentLocalNotes) {
-                unsavedChanges = true;
-            }
-        } else { // No local save exists
-            if (currentEditorContent.trim() !== "") { // Editor has content
-                unsavedChanges = true;
-            }
+        if (currentLocalNotes !== null) {
+            if (currentEditorContent !== currentLocalNotes) unsavedChanges = true;
+        } else {
+            if (currentEditorContent.trim() !== "") unsavedChanges = true;
         }
         
         if (unsavedChanges) {
@@ -727,15 +731,16 @@
         }
 
         const docRef = userNotesDocRef();
+        if (!docRef) return;
         try {
             const docSnap = await docRef.get();
-            if (docSnap.exists()) {
-                const saves = docSnap.data().cloudSaves || [];
+            if (docSnap.exists) { // .exists is boolean for compat
+                const data = docSnap.data(); // .data() is function
+                const saves = data.cloudSaves || [];
                 if (saves[index]) {
                     notesTextArea.value = saves[index].content;
                     cloudSaveNameEl.value = saves[index].name;
                     updateCharacterCount();
-                    // After opening, also update local storage to reflect this new state
                     localStorage.setItem('notes_localCopy', saves[index].content);
                     showStatusMessage(`Opened "${saves[index].name}" from cloud. Also updated local copy.`, 'success');
                 } else {
@@ -757,14 +762,15 @@
         }
         
         const docRef = userNotesDocRef();
+        if (!docRef) return;
         try {
-            // First, get the name of the save to confirm with the user
-            const initialDocSnap = await docRef.get();
-            let saveNameToDelete = `Save ${index + 1}`;
-            if (initialDocSnap.exists()) {
-                const saves = initialDocSnap.data().cloudSaves || [];
-                if (saves[index] && saves[index].name) {
-                    saveNameToDelete = `"${saves[index].name}"`;
+            let saveNameToDelete = `Save ${index + 1}`; // Default name
+            const initialDocSnap = await docRef.get(); // Get current data to find the name
+            if (initialDocSnap.exists) {
+                const initialData = initialDocSnap.data();
+                const initialSaves = initialData.cloudSaves || [];
+                if (initialSaves[index] && initialSaves[index].name) {
+                    saveNameToDelete = `"${initialSaves[index].name}"`;
                 }
             }
 
@@ -774,9 +780,10 @@
 
             await firebase.firestore().runTransaction(async (transaction) => {
                 const docSnap = await transaction.get(docRef);
-                if (!docSnap.exists()) throw new Error("User data not found for deletion.");
+                if (!docSnap.exists) throw new Error("User data not found for deletion.");
 
-                let cloudSaves = docSnap.data().cloudSaves || [];
+                const data = docSnap.data();
+                let cloudSaves = data.cloudSaves || [];
                 if (index < 0 || index >= cloudSaves.length) throw new Error("Invalid save index for deletion.");
                 
                 cloudSaves.splice(index, 1);
@@ -803,16 +810,13 @@
             if (userNameDisplay) userNameDisplay.textContent = user.displayName || user.email.split('@')[0];
             if (userEmailDisplay) userEmailDisplay.textContent = user.email;
             
-            loadLocalSave(); // Load local notes first
-            await refreshCloudSavesDisplay(); // Then load cloud saves
+            loadLocalSave();
+            await refreshCloudSavesDisplay();
         } else {
             if (userNameDisplay) userNameDisplay.textContent = 'Not Logged In';
             if (userEmailDisplay) userEmailDisplay.textContent = 'Please log in';
             cloudSavesListEl.innerHTML = '<li>Please log in to manage cloud saves.</li>';
             showStatusMessage('Please log in to use cloud features.', 'warning', null);
-            // Clear textarea if user logs out and there was local content? Optional.
-            // notesTextArea.value = ""; 
-            // updateCharacterCount();
         }
         updateMarquees();
     });
@@ -825,9 +829,7 @@
     saveLocalBtn.addEventListener('click', handleLocalSave);
     saveCloudBtn.addEventListener('click', handleCloudSave);
 
-    // Initial character count and load local save
     updateCharacterCount();
-    // loadLocalSave(); // Moved to onAuthStateChanged to ensure it runs after potential user data is available or cleared
 
   </script>
 </body>
