@@ -469,7 +469,7 @@
       box-shadow: 0 8px 25px rgba(103, 32, 189, 0.3);
     }
 
-    /* --- Add Card Modal Styles --- */
+    /* --- Add/Edit Card Modal Styles --- */
     .modal {
       display: none;
       position: fixed;
@@ -673,6 +673,34 @@
       background-color: #5a6268;
     }
 
+    /* --- Forecast (Schedule Layout) --- */
+    .forecast-large {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .forecast-row {
+      display: grid;
+      grid-template-columns: 1fr auto auto;
+      align-items: center;
+      font-size: 0.85em;
+      border-bottom: 1px solid #eee;
+      padding: 4px 0;
+    }
+    .schedule-day {
+      font-weight: bold;
+      color: #333;
+    }
+    .schedule-icon {
+      font-size: 1.2em;
+      text-align: center;
+    }
+    .schedule-temp {
+      color: #555;
+      text-align: right;
+    }
+
     /* --- Responsive Design --- */
     @media (max-width: 768px) {
       .dashboard-grid {
@@ -803,8 +831,8 @@
       </div>
 
       <div class="dashboard-grid" id="dashboardGrid">
-        <!-- Large Tile Weather Card (spans 2 columns) -->
-        <div class="dashboard-card" data-card-type="large" data-id="large_weather_1" data-template-id="weather_large_widget">
+        <!-- Weather Card (1-tile tall) -->
+        <div class="dashboard-card" data-card-type="full" data-id="weather_widget" data-template-id="weather_widget">
           <div class="card-header">
             <div class="card-icon">🌦️</div>
             <h4 class="card-title">Weekly Weather Forecast</h4>
@@ -820,9 +848,9 @@
                 <span class="temp-large">--°</span>
                 <span class="condition-large">Loading...</span>
                 <div class="details-large">
-                  <p>Feels like: --°</p>
-                  <p>Humidity: --% | Wind: --</p>
-                  <p>Location: <span class="location-large">--</span></p>
+                  <p>Wind: --</p>
+                  <p>Humidity: --%</p>
+                  <p>Location: --</p>
                 </div>
               </div>
             </div>
@@ -830,8 +858,7 @@
             <small style="text-align:center; display:block; margin-top:auto; color:#aaa; font-size:0.7em;">Weather by Open-Meteo.com</small>
           </div>
         </div>
-
-        <!-- All 40 “Convenient Card” widgets will be injected here by JavaScript -->
+        <!-- The 40 custom convenience cards will be injected here by JavaScript -->
       </div>
 
       <p style="text-align: center; color: #666; margin-top: 40px; font-style: italic;">
@@ -933,15 +960,16 @@
       99: { description: "Thunderstorm with heavy hail", icon: "⛈️" },
     };
 
-    // --- Card Templates (weather + generic convenient) ---
+    // --- Card Templates ---
     const availableCardTemplates = [
+      // Weather card
       {
-        templateId: 'weather_large_widget',
+        templateId: 'weather_widget',
         title: 'Weekly Weather Forecast',
         icon: '🌦️',
         description: '7-day weather forecast from Open-Meteo.',
         category: 'info',
-        type: 'large',
+        type: 'full',
         configOptions: [
           { name: 'use_current_location', label: 'Use Current Location', type: 'button', buttonText: '📍 Use My Current Location' },
           { name: 'location_label', label: 'Location Label', type: 'text', defaultValue: 'Massillon, OH', placeholder: 'e.g., Home or New York' },
@@ -1014,16 +1042,16 @@
               const daily = data.daily;
               for (let i = 0; i < daily.time.length; i++) {
                 const dayCodeInfo = WMO_CODES[daily.weathercode[i]] || { description: "Unknown", icon: "❓" };
-                const dayDiv = document.createElement('div');
-                dayDiv.classList.add('forecast-day');
                 const date = new Date(daily.time[i]);
                 const dayName = i === 0 ? "Today" : date.toLocaleDateString(undefined, { weekday: 'short' });
-                dayDiv.innerHTML = `
-                  <span class="day-name">${dayName}</span>
-                  <span class="icon">${dayCodeInfo.icon}</span>
-                  <span class="temps">${Math.round(daily.temperature_2m_max[i])}°/${Math.round(daily.temperature_2m_min[i])}°</span>
+                const dayRow = document.createElement('div');
+                dayRow.classList.add('forecast-row');
+                dayRow.innerHTML = `
+                  <span class="schedule-day">${dayName}</span>
+                  <span class="schedule-icon">${dayCodeInfo.icon}</span>
+                  <span class="schedule-temp">${Math.round(daily.temperature_2m_max[i])}°/${Math.round(daily.temperature_2m_min[i])}°</span>
                 `;
-                forecastEl.appendChild(dayDiv);
+                forecastEl.appendChild(dayRow);
               }
             } catch (error) {
               console.error("Weather fetch error:", error);
@@ -1041,7 +1069,7 @@
                   );
                   cardElement.dataset[`configLatitude`] = position.coords.latitude.toFixed(4);
                   cardElement.dataset[`configLongitude`] = position.coords.longitude.toFixed(4);
-                  cardElement.querySelector(`#config_weather_large_widget_location_label`).value = "Current Location";
+                  cardElement.querySelector(`#config_weather_widget_location_label`).value = "Current Location";
                   fetchWeatherData(position.coords.latitude, position.coords.longitude, config.units);
                 } catch (err) {
                   console.warn(`Could not get location: ${err.message}`);
@@ -1059,21 +1087,363 @@
           }
         }
       },
+      // Generic custom_card template
       {
-        templateId: 'convenient_card',
-        title: 'Convenient Card',
+        templateId: 'custom_card',
+        title: 'Custom Card',
         icon: '📌',
-        description: 'Custom content area.',
+        description: 'Utility card.',
         category: 'tools',
         type: 'full',
-        contentGenerator: (config, cardNumber) => `
-          <p class="card-description">
-            Description for Convenient Card ${cardNumber}.
-          </p>
+        contentGenerator: (config) => `
+          <p class="card-description">${config.description || ''}</p>
         `,
         onMount: (cardElement, config) => {
-          // empty stub; each card’s onclick calls its own function
+          if (config.innerHTML) {
+            // If custom innerHTML provided, inject it
+            const wrapper = cardElement.querySelector('.card-content-inner');
+            wrapper.innerHTML = config.innerHTML;
+          }
+          if (config.functionName && typeof window[config.functionName] === 'function') {
+            cardElement.onclick = (e) => {
+              // Prevent navigation when clicking interactive elements
+              if (
+                e.target.tagName === 'BUTTON' ||
+                e.target.closest('button') ||
+                e.target.tagName === 'TEXTAREA' ||
+                e.target.tagName === 'INPUT' ||
+                e.target.closest('a') ||
+                e.target.closest('iframe')
+              ) {
+                return;
+              }
+              window[config.functionName](cardElement);
+            };
+          }
         }
+      }
+    ];
+
+    // --- Definitions for the 40 custom convenience cards ---
+    const customCardDefinitions = [
+      {
+        id: 'quick_notes',
+        title: 'Quick Notes',
+        icon: '📝',
+        description: 'Jot down and save quick notes.',
+        functionName: 'quickNotesFunction',
+        innerHTML: `
+          <textarea id="quick_notes_textarea" placeholder="Type your notes here..." style="width:100%; height:120px; border:1px solid #ccc; border-radius:5px; padding:8px; font-size:0.9em;"></textarea>
+          <button id="quick_notes_save_btn" style="margin-top:8px; background:#6720bd; color:#fff; border:none; padding:8px 12px; border-radius:5px; cursor:pointer;">Save Note</button>
+        `
+      },
+      {
+        id: 'dictionary',
+        title: 'Dictionary Lookup',
+        icon: '📖',
+        description: 'Look up word definitions.',
+        functionName: 'dictionaryFunction',
+        innerHTML: `
+          <input id="dictionary_input" type="text" placeholder="Enter a word..." style="width:100%; padding:8px; border:1px solid #ccc; border-radius:5px; margin-bottom:8px;"/>
+          <button id="dictionary_lookup_btn" style="background:#6720bd; color:#fff; border:none; padding:8px 12px; border-radius:5px; cursor:pointer;">Lookup</button>
+          <div id="dictionary_result" style="margin-top:10px; font-size:0.9em; color:#333;"></div>
+        `
+      },
+      {
+        id: 'calculator',
+        title: 'Calculator',
+        icon: '🧮',
+        description: 'Basic arithmetic calculator.',
+        functionName: 'calculatorFunction',
+        innerHTML: `
+          <input id="calc_display" type="text" readonly style="width:100%; padding:8px; border:1px solid #ccc; border-radius:5px; font-size:1.1em; margin-bottom:8px;"/>
+          <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:5px;">
+            <button class="calc-btn">7</button>
+            <button class="calc-btn">8</button>
+            <button class="calc-btn">9</button>
+            <button class="calc-btn">/</button>
+            <button class="calc-btn">4</button>
+            <button class="calc-btn">5</button>
+            <button class="calc-btn">6</button>
+            <button class="calc-btn">*</button>
+            <button class="calc-btn">1</button>
+            <button class="calc-btn">2</button>
+            <button class="calc-btn">3</button>
+            <button class="calc-btn">-</button>
+            <button class="calc-btn">0</button>
+            <button class="calc-btn">.</button>
+            <button class="calc-btn">=</button>
+            <button class="calc-btn">+</button>
+          </div>
+        `
+      },
+      {
+        id: 'unit_converter',
+        title: 'Unit Converter',
+        icon: '🔄',
+        description: 'Convert units (length, weight).',
+        functionName: 'unitConverterFunction',
+        innerHTML: `
+          <select id="uc_from" style="width:48%; padding:6px; margin-right:4%; border:1px solid #ccc; border-radius:5px;">
+            <option value="m_to_ft">Meters → Feet</option>
+            <option value="kg_to_lb">Kilograms → Pounds</option>
+          </select>
+          <input id="uc_input" type="number" placeholder="Value" style="width:48%; padding:6px; border:1px solid #ccc; border-radius:5px;"/>
+          <button id="uc_convert_btn" style="margin-top:8px; background:#6720bd; color:#fff; border:none; padding:8px 12px; border-radius:5px; cursor:pointer;">Convert</button>
+          <div id="uc_result" style="margin-top:10px; font-size:0.9em; color:#333;"></div>
+        `
+      },
+      {
+        id: 'bored_tools',
+        title: 'Boredom Tools',
+        icon: '🎲',
+        description: 'Random fun activities.',
+        functionName: 'boredToolsFunction'
+      },
+      {
+        id: 'timer',
+        title: 'Timer',
+        icon: '⏱️',
+        description: 'Set a countdown timer.',
+        functionName: 'timerFunction'
+      },
+      {
+        id: 'pomodoro',
+        title: 'Pomodoro Timer',
+        icon: '🍅',
+        description: 'Work/break timer.',
+        functionName: 'pomodoroFunction'
+      },
+      {
+        id: 'todo_list',
+        title: 'To-Do List',
+        icon: '✅',
+        description: 'Manage your tasks.',
+        functionName: 'todoListFunction'
+      },
+      {
+        id: 'calendar',
+        title: 'Calendar',
+        icon: '📅',
+        description: 'View a calendar.',
+        functionName: 'calendarFunction'
+      },
+      {
+        id: 'random_joke',
+        title: 'Random Joke',
+        icon: '🤣',
+        description: 'Get a random joke.',
+        functionName: 'randomJokeFunction'
+      },
+      {
+        id: 'random_quote',
+        title: 'Random Quote',
+        icon: '💬',
+        description: 'Get an inspirational quote.',
+        functionName: 'randomQuoteFunction'
+      },
+      {
+        id: 'stock_ticker',
+        title: 'Stock Ticker',
+        icon: '💹',
+        description: 'Check stock prices.',
+        functionName: 'stockTickerFunction'
+      },
+      {
+        id: 'currency_converter',
+        title: 'Currency Converter',
+        icon: '💱',
+        description: 'Convert currencies.',
+        functionName: 'currencyConverterFunction'
+      },
+      {
+        id: 'bmi_calculator',
+        title: 'BMI Calculator',
+        icon: '⚖️',
+        description: 'Calculate Body Mass Index.',
+        functionName: 'bmiCalculatorFunction'
+      },
+      {
+        id: 'periodic_table',
+        title: 'Periodic Table',
+        icon: '🧪',
+        description: 'View chemical elements.',
+        functionName: 'periodicTableFunction'
+      },
+      {
+        id: 'flashcards',
+        title: 'Flashcards',
+        icon: '🃏',
+        description: 'Study with flashcards.',
+        functionName: 'flashcardsFunction'
+      },
+      {
+        id: 'stopwatch',
+        title: 'Stopwatch',
+        icon: '⏲️',
+        description: 'Count up time.',
+        functionName: 'stopwatchFunction'
+      },
+      {
+        id: 'countdown_timer',
+        title: 'Countdown Timer',
+        icon: '⏳',
+        description: 'Set countdowns.',
+        functionName: 'countdownTimerFunction'
+      },
+      {
+        id: 'markdown_previewer',
+        title: 'Markdown Previewer',
+        icon: '🖋️',
+        description: 'Render Markdown live.',
+        functionName: 'markdownPreviewerFunction'
+      },
+      {
+        id: 'json_formatter',
+        title: 'JSON Formatter',
+        icon: '📑',
+        description: 'Format JSON data.',
+        functionName: 'jsonFormatterFunction'
+      },
+      {
+        id: 'color_picker',
+        title: 'Color Picker',
+        icon: '🎨',
+        description: 'Pick and copy colors.',
+        functionName: 'colorPickerFunction'
+      },
+      {
+        id: 'qr_generator',
+        title: 'QR Code Generator',
+        icon: '🧬',
+        description: 'Generate QR codes.',
+        functionName: 'qrGeneratorFunction'
+      },
+      {
+        id: 'lorem_ipsum',
+        title: 'Lorem Ipsum',
+        icon: '✍️',
+        description: 'Generate placeholder text.',
+        functionName: 'loremIpsumFunction'
+      },
+      {
+        id: 'translate',
+        title: 'Translator',
+        icon: '🌐',
+        description: 'Translate text between languages.',
+        functionName: 'translateFunction'
+      },
+      {
+        id: 'world_clock',
+        title: 'World Clock',
+        icon: '🌍',
+        description: 'View multiple time zones.',
+        functionName: 'worldClockFunction'
+      },
+      {
+        id: 'tip_calculator',
+        title: 'Tip Calculator',
+        icon: '💡',
+        description: 'Calculate tips for meals.',
+        functionName: 'tipCalculatorFunction'
+      },
+      {
+        id: 'mortgage_calculator',
+        title: 'Mortgage Calculator',
+        icon: '🏠',
+        description: 'Estimate mortgage payments.',
+        functionName: 'mortgageCalculatorFunction'
+      },
+      {
+        id: 'age_calculator',
+        title: 'Age Calculator',
+        icon: '🎂',
+        description: 'Calculate age from birthdate.',
+        functionName: 'ageCalculatorFunction'
+      },
+      {
+        id: 'timezone_converter',
+        title: 'Timezone Converter',
+        icon: '⏰',
+        description: 'Convert between time zones.',
+        functionName: 'timezoneConverterFunction'
+      },
+      {
+        id: 'spell_checker',
+        title: 'Spell Checker',
+        icon: '🔡',
+        description: 'Check spelling of text.',
+        functionName: 'spellCheckerFunction'
+      },
+      {
+        id: 'password_generator',
+        title: 'Password Generator',
+        icon: '🔒',
+        description: 'Generate secure passwords.',
+        functionName: 'passwordGeneratorFunction'
+      },
+      {
+        id: 'text_to_speech',
+        title: 'Text-to-Speech',
+        icon: '🎙️',
+        description: 'Convert text into audio.',
+        functionName: 'textToSpeechFunction'
+      },
+      {
+        id: 'speech_to_text',
+        title: 'Speech-to-Text',
+        icon: '🗣️',
+        description: 'Transcribe your voice.',
+        functionName: 'speechToTextFunction'
+      },
+      {
+        id: 'tic_tac_toe',
+        title: 'Tic Tac Toe',
+        icon: '❌',
+        description: 'Play Tic Tac Toe game.',
+        functionName: 'ticTacToeFunction'
+      },
+      {
+        id: 'sudoku',
+        title: 'Sudoku',
+        icon: '🔢',
+        description: 'Play Sudoku (stub).',
+        functionName: 'sudokuFunction'
+      },
+      {
+        id: 'dice_roller',
+        title: 'Dice Roller',
+        icon: '🎲',
+        description: 'Roll random dice.',
+        functionName: 'diceRollerFunction'
+      },
+      {
+        id: 'fortune_cookie',
+        title: 'Fortune Cookie',
+        icon: '🍪',
+        description: 'Get a random fortune.',
+        functionName: 'fortuneCookieFunction'
+      },
+      {
+        id: 'emoji_picker',
+        title: 'Emoji Picker',
+        icon: '🙂',
+        description: 'Pick emojis to copy.',
+        functionName: 'emojiPickerFunction'
+      },
+      {
+        id: 'color_hex_converter',
+        title: 'Color Hex Converter',
+        icon: '#️⃣',
+        description: 'Convert colors to hex codes.',
+        functionName: 'colorHexConverterFunction'
+      },
+      {
+        id: 'random_fact',
+        title: 'Random Fact',
+        icon: '🧠',
+        description: 'Get a random fact.',
+        functionName: 'randomFactFunction'
       }
     ];
 
@@ -1090,19 +1460,21 @@
         const userData = doc.exists ? doc.data() : {};
         document.getElementById('userName').textContent = userData.username || user.displayName || 'Welcome User';
 
-        // Generate all cards (weather + 40 convenient) dynamically
+        // Clear and recreate cards
         dashboardGrid.innerHTML = '';
-        addCardToDashboard('weather_large_widget', {
+
+        // 1. Weather Card
+        addCardToDashboard('weather_widget', {
           latitude: '40.7909',
           longitude: '-81.5218',
           location_label: 'Massillon, OH',
           units: 'imperial'
-        }, 'large_weather_1');
+        }, 'weather_widget');
 
-        // Create 40 convenient cards, each with its own ID
-        for (let i = 1; i <= 40; i++) {
-          addConvenientCard(i);
-        }
+        // 2. Create each custom convenience card
+        customCardDefinitions.forEach(def => {
+          addCustomCard(def);
+        });
 
         updateMarquees();
         setTimeout(() => {
@@ -1111,6 +1483,7 @@
             card.classList.add('fade-in');
           });
         }, 300);
+
       } catch (error) {
         console.error('Error loading user data:', error);
       }
@@ -1128,15 +1501,15 @@
     function resetToDefaultLayout(doConfirmAndSave = true) {
       if (doConfirmAndSave && !confirm('Are you sure you want to reset to default? All custom cards will be removed.')) return;
       dashboardGrid.innerHTML = '';
-      addCardToDashboard('weather_large_widget', {
+      addCardToDashboard('weather_widget', {
         latitude: '40.7909',
         longitude: '-81.5218',
         location_label: 'Massillon, OH',
         units: 'imperial'
-      }, 'large_weather_1');
-      for (let i = 1; i <= 40; i++) {
-        addConvenientCard(i);
-      }
+      }, 'weather_widget');
+      customCardDefinitions.forEach(def => {
+        addCustomCard(def);
+      });
       if (doConfirmAndSave) {
         saveLayout();
         alert('Layout has been reset to default.');
@@ -1150,13 +1523,13 @@
     });
 
     // --- Create / Mount Card DOM ---
-    function createCardDOMElement(template, config, cardIdToUse, cardNumber = null) {
+    function createCardDOMElement(template, config, cardIdToUse) {
       const newCard = document.createElement('div');
       const newCardId = cardIdToUse || `custom_${template.templateId}_${Date.now()}`;
       newCard.classList.add('dashboard-card');
       newCard.dataset.id = newCardId;
       newCard.dataset.templateId = template.templateId;
-      newCard.dataset.cardType = template.type || 'full';
+      newCard.dataset.cardType = config.type === 'large' ? 'large' : 'full';
 
       // Store config in data-attributes
       if (template.configOptions) {
@@ -1169,17 +1542,29 @@
           }
         });
       }
+      // For custom cards: title, icon, description, functionName, innerHTML
+      if (template.templateId === 'custom_card') {
+        if (config.title) newCard.dataset.customTitle = config.title;
+        if (config.icon) newCard.dataset.customIcon = config.icon;
+        if (config.description) newCard.dataset.customDescription = config.description;
+        if (config.functionName) newCard.dataset.functionName = config.functionName;
+        if (config.innerHTML) newCard.dataset.innerHTML = config.innerHTML;
+      }
 
       // Header
       const header = document.createElement('div');
       header.classList.add('card-header');
       const iconEl = document.createElement('div');
       iconEl.classList.add('card-icon');
-      iconEl.textContent = template.icon;
+      if (template.templateId === 'custom_card') {
+        iconEl.textContent = config.icon || template.icon;
+      } else {
+        iconEl.textContent = template.icon;
+      }
       const titleEl = document.createElement('h4');
       titleEl.classList.add('card-title');
-      if (template.templateId === 'convenient_card' && cardNumber) {
-        titleEl.textContent = `Convenient Card ${cardNumber}`;
+      if (template.templateId === 'custom_card') {
+        titleEl.textContent = config.title || template.title;
       } else {
         titleEl.textContent = template.title;
       }
@@ -1196,8 +1581,8 @@
       // Content
       const contentWrapper = document.createElement('div');
       contentWrapper.classList.add('card-content-inner');
-      if (template.templateId === 'convenient_card' && cardNumber) {
-        contentWrapper.innerHTML = template.contentGenerator(config, cardNumber);
+      if (template.templateId === 'custom_card') {
+        contentWrapper.innerHTML = template.contentGenerator(config);
       } else {
         contentWrapper.innerHTML = template.contentGenerator(config);
       }
@@ -1205,11 +1590,10 @@
       newCard.appendChild(header);
       newCard.appendChild(contentWrapper);
 
-      // Attach onclick to invoke each card’s separate function
-      if (template.templateId === 'convenient_card' && cardNumber) {
-        newCard.setAttribute('onclick', `convenientCard${cardNumber}Function()`);
-      } else if (template.templateId === 'weather_large_widget') {
-        // no onclick needed for weather; can be extended if desired
+      // Attach onclick for custom functions (onMount will override)
+      if (template.templateId === 'custom_card' && config.functionName) {
+        // initial placeholder, actual onclick set in onMount
+        newCard.setAttribute('onclick', `return false;`);
       }
 
       // Mount widget logic if provided
@@ -1228,12 +1612,89 @@
       makeCardInteractive(cardDom);
     }
 
-    function addConvenientCard(cardNumber) {
-      const template = availableCardTemplates.find(t => t.templateId === 'convenient_card');
+    function addCustomCard(def) {
+      const template = availableCardTemplates.find(t => t.templateId === 'custom_card');
       if (!template) return;
-      const cardDom = createCardDOMElement(template, {}, `convenient_card_${cardNumber}`, cardNumber);
+      const config = {
+        title: def.title,
+        icon: def.icon,
+        description: def.description,
+        functionName: def.functionName,
+        innerHTML: def.innerHTML || '',
+        type: 'full'
+      };
+      const cardDom = createCardDOMElement(template, config, def.id);
       dashboardGrid.appendChild(cardDom);
       makeCardInteractive(cardDom);
+
+      // If this card has interactive elements, set up event listeners
+      if (def.id === 'quick_notes') {
+        const textarea = cardDom.querySelector('#quick_notes_textarea');
+        const saveBtn = cardDom.querySelector('#quick_notes_save_btn');
+        // Load saved notes
+        const saved = localStorage.getItem('quick_notes_content') || '';
+        textarea.value = saved;
+        saveBtn.addEventListener('click', () => {
+          localStorage.setItem('quick_notes_content', textarea.value);
+          alert('Note saved!');
+        });
+      }
+      if (def.id === 'dictionary') {
+        const inputEl = cardDom.querySelector('#dictionary_input');
+        const lookupBtn = cardDom.querySelector('#dictionary_lookup_btn');
+        const resultDiv = cardDom.querySelector('#dictionary_result');
+        lookupBtn.addEventListener('click', async () => {
+          const word = inputEl.value.trim();
+          if (!word) return;
+          resultDiv.textContent = 'Looking up...';
+          try {
+            const response = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${word}`);
+            if (!response.ok) throw new Error('Word not found');
+            const data = await response.json();
+            const meaning = data[0].meanings[0].definitions[0].definition;
+            resultDiv.innerHTML = `<strong>${word}:</strong> ${meaning}`;
+          } catch (err) {
+            resultDiv.textContent = 'Definition not found.';
+          }
+        });
+      }
+      if (def.id === 'calculator') {
+        const display = cardDom.querySelector('#calc_display');
+        const buttons = cardDom.querySelectorAll('.calc-btn');
+        buttons.forEach(btn => {
+          btn.addEventListener('click', () => {
+            const val = btn.textContent;
+            if (val === '=') {
+              try {
+                display.value = eval(display.value) || '';
+              } catch {
+                display.value = 'Error';
+              }
+            } else {
+              display.value += val;
+            }
+          });
+        });
+      }
+      if (def.id === 'unit_converter') {
+        const fromSel = cardDom.querySelector('#uc_from');
+        const inputEl = cardDom.querySelector('#uc_input');
+        const btn = cardDom.querySelector('#uc_convert_btn');
+        const resultDiv = cardDom.querySelector('#uc_result');
+        btn.addEventListener('click', () => {
+          const val = parseFloat(inputEl.value);
+          if (isNaN(val)) return;
+          const mode = fromSel.value;
+          let converted;
+          if (mode === 'm_to_ft') {
+            converted = (val * 3.28084).toFixed(2) + ' ft';
+          } else if (mode === 'kg_to_lb') {
+            converted = (val * 2.20462).toFixed(2) + ' lb';
+          }
+          resultDiv.textContent = converted;
+        });
+      }
+      // For other cards, stubbed functions can be filled in by their functionName later
     }
 
     function makeCardInteractive(cardElement) {
@@ -1260,6 +1721,14 @@
               config[opt.name] = opt.defaultValue;
             }
           });
+        }
+        if (templateId === 'custom_card') {
+          // Populate custom config
+          config.title = cardElement.dataset.customTitle;
+          config.icon = cardElement.dataset.customIcon;
+          config.description = cardElement.dataset.customDescription;
+          config.functionName = cardElement.dataset.functionName;
+          config.innerHTML = cardElement.dataset.innerHTML;
         }
         template.onMount(cardElement, config);
       }
@@ -1493,21 +1962,82 @@
       }
     });
 
-    // --- Add/Edit Card Modal Logic (kept as-is) ---
-    const originalConfigureCardAddBtnHandler = function() {
-      if (!currentCardToConfigure) return;
-      const configValues = {};
-      if (currentCardToConfigure.configOptions) {
-        currentCardToConfigure.configOptions.forEach(opt => {
-          if (opt.type !== 'button') {
-            const inputEl = document.getElementById(`config_${currentCardToConfigure.templateId}_${opt.name}`);
-            if (inputEl) configValues[opt.name] = inputEl.type === 'checkbox' ? inputEl.checked : inputEl.value;
-          }
+    // --- Add/Edit Card Modal Logic (kept as-is for future expansion) ---
+    let currentCardToConfigure = null;
+    function openAddCardModal() {
+      modalTitle.textContent = 'Add New Card';
+      modalCardSelectionView.innerHTML = '';
+      modalCardConfigureView.style.display = 'none';
+      // Populate selection view with customCardDefinitions
+      customCardDefinitions.forEach(def => {
+        const mini = document.createElement('div');
+        mini.classList.add('mini-card');
+        mini.dataset.templateId = 'custom_card';
+        mini.dataset.cardId = def.id;
+        mini.innerHTML = `
+          <span class="icon">${def.icon}</span>
+          <h4>${def.title}</h4>
+          <p style="font-size:0.75em; color:#555;">${def.description}</p>
+        `;
+        mini.addEventListener('click', () => {
+          openConfigureModal(def);
         });
-      }
-      addCardToDashboard(currentCardToConfigure.templateId, configValues);
-    };
-    // ( ... rest of the modal logic remains unchanged ... )
+        modalCardSelectionView.appendChild(mini);
+      });
+      modalCardSelectionView.style.display = 'grid';
+      addCardModal.style.display = 'block';
+    }
+    function openConfigureModal(def) {
+      currentCardToConfigure = def;
+      modalCardSelectionView.style.display = 'none';
+      modalCardConfigureView.style.display = 'block';
+      configureCardTitle.textContent = `Add “${def.title}” to Dashboard`;
+      configureCardOptionsContainer.innerHTML = `
+        <div class="config-option">
+          <label for="config_cardTitle">Title</label>
+          <input type="text" id="config_cardTitle" value="${def.title}" />
+        </div>
+        <div class="config-option">
+          <label for="config_cardIcon">Icon</label>
+          <input type="text" id="config_cardIcon" value="${def.icon}" />
+        </div>
+        <div class="config-option">
+          <label for="config_cardSize">Size</label>
+          <select id="config_cardSize">
+            <option value="full">Normal</option>
+            <option value="large">Large</option>
+          </select>
+        </div>
+        <div class="config-option">
+          <label for="config_cardDescription">Description</label>
+          <textarea id="config_cardDescription">${def.description}</textarea>
+        </div>
+      `;
+    }
+    closeModalBtn.addEventListener('click', () => addCardModal.style.display = 'none');
+    configureCardBackBtn.addEventListener('click', () => {
+      modalCardConfigureView.style.display = 'none';
+      modalCardSelectionView.style.display = 'grid';
+    });
+    configureCardAddBtn.addEventListener('click', () => {
+      if (!currentCardToConfigure) return;
+      const title = document.getElementById('config_cardTitle').value.trim();
+      const icon = document.getElementById('config_cardIcon').value.trim();
+      const size = document.getElementById('config_cardSize').value;
+      const desc = document.getElementById('config_cardDescription').value.trim();
+      const def = currentCardToConfigure;
+      addCustomCard({
+        id: `${def.id}_${Date.now()}`,
+        title,
+        icon,
+        description: desc,
+        functionName: def.functionName,
+        innerHTML: def.innerHTML || '',
+      });
+      addCardModal.style.display = 'none';
+      saveLayout();
+    });
+    addCardBtnElement.addEventListener('click', openAddCardModal);
 
     // --- Save Layout to Firestore ---
     async function saveLayout() {
@@ -1520,7 +2050,18 @@
           templateId: card.dataset.templateId,
           config: (() => {
             const template = availableCardTemplates.find(t => t.templateId === card.dataset.templateId);
-            if (!template || !template.configOptions) return {};
+            if (!template) return {};
+            if (template.templateId === 'custom_card') {
+              return {
+                title: card.dataset.customTitle,
+                icon: card.dataset.customIcon,
+                description: card.dataset.customDescription,
+                functionName: card.dataset.functionName,
+                innerHTML: card.dataset.innerHTML,
+                type: card.dataset.cardType
+              };
+            }
+            if (!template.configOptions) return {};
             const cfg = {};
             template.configOptions.forEach(opt => {
               const key = `config${opt.name.charAt(0).toUpperCase() + opt.name.slice(1)}`;
@@ -1538,49 +2079,202 @@
       }
     }
 
-    // --- Separate Functions for Each Convenient Card (1–40) ---
-    // You can override or extend any of these later.
-    function convenientCard1Function() { console.log('Convenient Card 1 clicked'); }
-    function convenientCard2Function() { console.log('Convenient Card 2 clicked'); }
-    function convenientCard3Function() { console.log('Convenient Card 3 clicked'); }
-    function convenientCard4Function() { console.log('Convenient Card 4 clicked'); }
-    function convenientCard5Function() { console.log('Convenient Card 5 clicked'); }
-    function convenientCard6Function() { console.log('Convenient Card 6 clicked'); }
-    function convenientCard7Function() { console.log('Convenient Card 7 clicked'); }
-    function convenientCard8Function() { console.log('Convenient Card 8 clicked'); }
-    function convenientCard9Function() { console.log('Convenient Card 9 clicked'); }
-    function convenientCard10Function() { console.log('Convenient Card 10 clicked'); }
-    function convenientCard11Function() { console.log('Convenient Card 11 clicked'); }
-    function convenientCard12Function() { console.log('Convenient Card 12 clicked'); }
-    function convenientCard13Function() { console.log('Convenient Card 13 clicked'); }
-    function convenientCard14Function() { console.log('Convenient Card 14 clicked'); }
-    function convenientCard15Function() { console.log('Convenient Card 15 clicked'); }
-    function convenientCard16Function() { console.log('Convenient Card 16 clicked'); }
-    function convenientCard17Function() { console.log('Convenient Card 17 clicked'); }
-    function convenientCard18Function() { console.log('Convenient Card 18 clicked'); }
-    function convenientCard19Function() { console.log('Convenient Card 19 clicked'); }
-    function convenientCard20Function() { console.log('Convenient Card 20 clicked'); }
-    function convenientCard21Function() { console.log('Convenient Card 21 clicked'); }
-    function convenientCard22Function() { console.log('Convenient Card 22 clicked'); }
-    function convenientCard23Function() { console.log('Convenient Card 23 clicked'); }
-    function convenientCard24Function() { console.log('Convenient Card 24 clicked'); }
-    function convenientCard25Function() { console.log('Convenient Card 25 clicked'); }
-    function convenientCard26Function() { console.log('Convenient Card 26 clicked'); }
-    function convenientCard27Function() { console.log('Convenient Card 27 clicked'); }
-    function convenientCard28Function() { console.log('Convenient Card 28 clicked'); }
-    function convenientCard29Function() { console.log('Convenient Card 29 clicked'); }
-    function convenientCard30Function() { console.log('Convenient Card 30 clicked'); }
-    function convenientCard31Function() { console.log('Convenient Card 31 clicked'); }
-    function convenientCard32Function() { console.log('Convenient Card 32 clicked'); }
-    function convenientCard33Function() { console.log('Convenient Card 33 clicked'); }
-    function convenientCard34Function() { console.log('Convenient Card 34 clicked'); }
-    function convenientCard35Function() { console.log('Convenient Card 35 clicked'); }
-    function convenientCard36Function() { console.log('Convenient Card 36 clicked'); }
-    function convenientCard37Function() { console.log('Convenient Card 37 clicked'); }
-    function convenientCard38Function() { console.log('Convenient Card 38 clicked'); }
-    function convenientCard39Function() { console.log('Convenient Card 39 clicked'); }
-    function convenientCard40Function() { console.log('Convenient Card 40 clicked'); }
+    // --- Separate Functions for Each Custom Card ---
 
+    // 1. Quick Notes
+    function quickNotesFunction(cardElement) {
+      // Focus the textarea
+      const ta = cardElement.querySelector('#quick_notes_textarea');
+      if (ta) ta.focus();
+    }
+
+    // 2. Dictionary Lookup (handled by onMount)
+    function dictionaryFunction(cardElement) {
+      const inp = cardElement.querySelector('#dictionary_input');
+      if (inp) inp.focus();
+    }
+
+    // 3. Calculator (handled by onMount)
+    function calculatorFunction(cardElement) {
+      const disp = cardElement.querySelector('#calc_display');
+      if (disp) disp.focus();
+    }
+
+    // 4. Unit Converter (handled by onMount)
+    function unitConverterFunction(cardElement) {
+      const sel = cardElement.querySelector('#uc_from');
+      if (sel) sel.focus();
+    }
+
+    // 5. Boredom Tools
+    function boredToolsFunction() {
+      alert('Here are some random boredom tools! (stub)');
+    }
+    // 6. Timer
+    function timerFunction() {
+      alert('Timer functionality coming soon! (stub)');
+    }
+    // 7. Pomodoro Timer
+    function pomodoroFunction() {
+      alert('Pomodoro Timer functionality coming soon! (stub)');
+    }
+    // 8. To-Do List
+    function todoListFunction() {
+      alert('To-Do List functionality coming soon! (stub)');
+    }
+    // 9. Calendar
+    function calendarFunction() {
+      alert('Calendar functionality coming soon! (stub)');
+    }
+    // 10. Random Joke
+    function randomJokeFunction() {
+      alert('Why don’t scientists trust atoms? Because they make up everything! 🤣');
+    }
+    // 11. Random Quote
+    function randomQuoteFunction() {
+      alert('“The only way to do great work is to love what you do.” – Steve Jobs');
+    }
+    // 12. Stock Ticker
+    function stockTickerFunction() {
+      alert('Stock Ticker functionality coming soon! (stub)');
+    }
+    // 13. Currency Converter
+    function currencyConverterFunction() {
+      alert('Currency Converter functionality coming soon! (stub)');
+    }
+    // 14. BMI Calculator
+    function bmiCalculatorFunction() {
+      alert('BMI Calculator functionality coming soon! (stub)');
+    }
+    // 15. Periodic Table
+    function periodicTableFunction() {
+      alert('Periodic Table functionality coming soon! (stub)');
+    }
+    // 16. Flashcards
+    function flashcardsFunction() {
+      alert('Flashcards functionality coming soon! (stub)');
+    }
+    // 17. Stopwatch
+    function stopwatchFunction() {
+      alert('Stopwatch functionality coming soon! (stub)');
+    }
+    // 18. Countdown Timer
+    function countdownTimerFunction() {
+      alert('Countdown Timer functionality coming soon! (stub)');
+    }
+    // 19. Markdown Previewer
+    function markdownPreviewerFunction() {
+      alert('Markdown Previewer functionality coming soon! (stub)');
+    }
+    // 20. JSON Formatter
+    function jsonFormatterFunction() {
+      alert('JSON Formatter functionality coming soon! (stub)');
+    }
+    // 21. Color Picker
+    function colorPickerFunction() {
+      alert('Color Picker functionality coming soon! (stub)');
+    }
+    // 22. QR Code Generator
+    function qrGeneratorFunction() {
+      alert('QR Code Generator functionality coming soon! (stub)');
+    }
+    // 23. Lorem Ipsum
+    function loremIpsumFunction() {
+      alert('Lorem Ipsum functionality coming soon! (stub)');
+    }
+    // 24. Translator
+    function translateFunction() {
+      alert('Translator functionality coming soon! (stub)');
+    }
+    // 25. World Clock
+    function worldClockFunction() {
+      alert('World Clock functionality coming soon! (stub)');
+    }
+    // 26. Tip Calculator
+    function tipCalculatorFunction() {
+      alert('Tip Calculator functionality coming soon! (stub)');
+    }
+    // 27. Mortgage Calculator
+    function mortgageCalculatorFunction() {
+      alert('Mortgage Calculator functionality coming soon! (stub)');
+    }
+    // 28. Age Calculator
+    function ageCalculatorFunction() {
+      alert('Age Calculator functionality coming soon! (stub)');
+    }
+    // 29. Timezone Converter
+    function timezoneConverterFunction() {
+      alert('Timezone Converter functionality coming soon! (stub)');
+    }
+    // 30. Spell Checker
+    function spellCheckerFunction() {
+      alert('Spell Checker functionality coming soon! (stub)');
+    }
+    // 31. Password Generator
+    function passwordGeneratorFunction() {
+      alert('Password Generator functionality coming soon! (stub)');
+    }
+    // 32. Text-to-Speech
+    function textToSpeechFunction() {
+      alert('Text-to-Speech functionality coming soon! (stub)');
+    }
+    // 33. Speech-to-Text
+    function speechToTextFunction() {
+      alert('Speech-to-Text functionality coming soon! (stub)');
+    }
+    // 34. Tic Tac Toe
+    function ticTacToeFunction() {
+      alert('Tic Tac Toe functionality coming soon! (stub)');
+    }
+    // 35. Sudoku
+    function sudokuFunction() {
+      alert('Sudoku functionality coming soon! (stub)');
+    }
+    // 36. Dice Roller
+    function diceRollerFunction() {
+      const roll = Math.floor(Math.random() * 6) + 1;
+      alert(`You rolled a ${roll}! 🎲`);
+    }
+    // 37. Fortune Cookie
+    function fortuneCookieFunction() {
+      const fortunes = [
+        "You will have a great day!",
+        "A surprise is waiting for you around the corner.",
+        "Embrace the journey, not just the destination.",
+        "Fortune favors the bold."
+      ];
+      const pick = fortunes[Math.floor(Math.random() * fortunes.length)];
+      alert(`🍪 ${pick}`);
+    }
+    // 38. Emoji Picker
+    function emojiPickerFunction() {
+      const emojis = ["😀","😂","🥰","😎","🤩","😜","😢","😡","😴","👍","👏","🙏"];
+      const pick = emojis[Math.floor(Math.random() * emojis.length)];
+      prompt("Copy this emoji:", pick);
+    }
+    // 39. Color Hex Converter
+    function colorHexConverterFunction() {
+      const color = prompt("Enter an RGB value (e.g. 255,0,0):");
+      if (!color) return;
+      const parts = color.split(',').map(n => parseInt(n));
+      if (parts.length !== 3 || parts.some(isNaN)) {
+        alert('Invalid input.');
+        return;
+      }
+      const hex = '#' + parts.map(n => n.toString(16).padStart(2, '0')).join('').toUpperCase();
+      prompt("Hex code:", hex);
+    }
+    // 40. Random Fact
+    function randomFactFunction() {
+      const facts = [
+        "Honey never spoils.",
+        "Bananas are berries, but strawberries aren’t.",
+        "A day on Venus is longer than a year on Venus.",
+        "Octopuses have three hearts."
+      ];
+      const pick = facts[Math.floor(Math.random() * facts.length)];
+      alert(pick);
+    }
   </script>
 </body>
 </html>
