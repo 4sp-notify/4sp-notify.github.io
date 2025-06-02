@@ -564,7 +564,7 @@
         <div class="countdown-form-section">
             <h3>Create New Countdown</h3>
             <div class="countdown-controls">
-                <input type="text" id="countdownNameInput" placeholder="Event Name (e.g., New Year's Day)">
+                <input type="text" id="countdownNameInput" placeholder="Event Name (e.g., New Year's Day)" maxlength="149">
                 <input type="datetime-local" id="countdownDateInput">
                 <div id="customDateTrigger" class="custom-date-trigger" tabindex="0">Select Date & Time</div>
                 <button id="addCountdownBtn">Add Countdown</button>
@@ -666,7 +666,7 @@
 
     function showStatusMessage(message, type = 'info', duration = 4000) {
         statusMessagesEl.textContent = message;
-        statusMessagesEl.className = '';
+        statusMessagesEl.className = ''; // Clear existing status classes
         statusMessagesEl.classList.add(`status-${type}`);
         statusMessagesEl.style.display = 'block';
         if (duration) {
@@ -685,7 +685,7 @@
     function updateMarquees() {
       marqueeEls.forEach(el => {
         el.classList.remove('marquee-active');
-        void el.offsetWidth;
+        void el.offsetWidth; // Trigger reflow to restart animation
         el.classList.add('marquee-active');
       });
     }
@@ -742,10 +742,20 @@
                     dayCell.classList.remove('selected');
                 } else {
                     calendarSelectedDate = new Date(calendarCurrentYear, calendarCurrentMonth, day);
-                    // Update time if already set in inputs, otherwise default to noon
-                    calendarSelectedDate.setHours(parseInt(calendarHourInput.value) || 12);
-                    calendarSelectedDate.setMinutes(parseInt(calendarMinuteInput.value) || 0);
+                    // Update time if already set in inputs, otherwise default to current time or noon
+                    const currentHour = parseInt(calendarHourInput.value);
+                    const currentMinute = parseInt(calendarMinuteInput.value);
 
+                    if (!isNaN(currentHour) && !isNaN(currentMinute)) {
+                        calendarSelectedDate.setHours(currentHour, currentMinute);
+                    } else {
+                        const nowForTime = new Date();
+                        calendarSelectedDate.setHours(nowForTime.getHours(), nowForTime.getMinutes());
+                         // Update inputs if they were empty
+                        if(isNaN(currentHour)) calendarHourInput.value = padToTwo(nowForTime.getHours());
+                        if(isNaN(currentMinute)) calendarMinuteInput.value = padToTwo(nowForTime.getMinutes());
+                    }
+                    
                     // Remove 'selected' from previously selected cell
                     const prevSelected = calendarDaysGridEl.querySelector('.day-cell.selected');
                     if (prevSelected) prevSelected.classList.remove('selected');
@@ -761,15 +771,17 @@
         
         calendarCurrentYear = dateToInit.getFullYear();
         calendarCurrentMonth = dateToInit.getMonth();
+
         if (initialDate || countdownDateInputEl.value) { 
             calendarSelectedDate = new Date(dateToInit); 
             calendarHourInput.value = padToTwo(calendarSelectedDate.getHours());
             calendarMinuteInput.value = padToTwo(calendarSelectedDate.getMinutes());
-        } else {
-            calendarSelectedDate = null; 
+        } else { // Setting a new date, not editing an existing one
+            calendarSelectedDate = null; // No day cell selected initially for a brand new entry
             const now = new Date(); 
-            calendarHourInput.value = padToTwo(now.getHours());
-            calendarMinuteInput.value = padToTwo(0); // Default to :00 minutes for new selections
+            // Default to current time, rounded to nearest 00 for minutes for new selection
+            calendarHourInput.value = padToTwo(now.getHours()); 
+            calendarMinuteInput.value = padToTwo(0); 
         }
 
         renderCustomCalendar();
@@ -822,6 +834,12 @@
 
         calendarSelectedDate.setHours(hour, minute, 0, 0); 
 
+        // Check if selected date/time is in the past
+        if (calendarSelectedDate.getTime() <= Date.now()) {
+            showStatusMessage('Please select a future date and time.', 'warning', 4000);
+            return;
+        }
+
         const year = calendarSelectedDate.getFullYear();
         const month = padToTwo(calendarSelectedDate.getMonth() + 1);
         const day = padToTwo(calendarSelectedDate.getDate());
@@ -842,14 +860,17 @@
         if (this.value.length > 2) this.value = this.value.slice(0,2);
         const numVal = parseInt(this.value);
         if (numVal > 23) this.value = "23";
-        else if (numVal < 0) this.value = "00";
+        else if (numVal < 0 && this.value.length > 0) this.value = "00"; // Allow empty for placeholder
     });
     calendarMinuteInput.addEventListener('input', function() {
         if (this.value.length > 2) this.value = this.value.slice(0,2);
         const numVal = parseInt(this.value);
         if (numVal > 59) this.value = "59";
-        else if (numVal < 0) this.value = "00";
+        else if (numVal < 0 && this.value.length > 0) this.value = "00"; // Allow empty for placeholder
     });
+    calendarHourInput.addEventListener('blur', function() { if(this.value.length === 1) this.value = padToTwo(parseInt(this.value)); if(this.value === "") this.value = "00";});
+    calendarMinuteInput.addEventListener('blur', function() { if(this.value.length === 1) this.value = padToTwo(parseInt(this.value)); if(this.value === "") this.value = "00";});
+
 
     cancelCalendarBtn.addEventListener('click', closeCustomCalendar);
     // --- End Custom Calendar Logic ---
@@ -861,31 +882,42 @@
         if (toggleSidebarBtn && sidebar) {
             toggleSidebarBtn.addEventListener('click', () => {
                 sidebar.classList.toggle('collapsed');
-                setTimeout(updateMarquees, 550);
+                setTimeout(updateMarquees, 550); // Wait for transition
             });
         }
+        // Ensure correct nav link is active
         const navLinks = document.querySelectorAll('.sidebar nav a');
+        const currentPage = window.location.pathname.split('/').pop();
         navLinks.forEach(link => {
             link.classList.remove('active');
-            if (link.getAttribute('href') === 'others.html') {
+            if (link.getAttribute('href') === currentPage || (currentPage === 'others.html' && link.getAttribute('href') === 'others.html')) { // Example, adjust if needed
                  link.classList.add('active');
             }
         });
         
+        // Initialize custom date trigger text if datetime-local has a value on load
         if (countdownDateInputEl.value) {
             try {
                 const d = new Date(countdownDateInputEl.value);
-                customDateTriggerEl.textContent = d.toLocaleString([], {
-                    year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
-                });
-                customDateTriggerEl.classList.add('has-value');
-            } catch (e) { /* Do nothing */ }
+                if (!isNaN(d.getTime())) { // Check if date is valid
+                    customDateTriggerEl.textContent = d.toLocaleString([], {
+                        year: 'numeric', month: 'long', day: 'numeric', hour: '2-digit', minute: '2-digit'
+                    });
+                    customDateTriggerEl.classList.add('has-value');
+                } else {
+                    customDateTriggerEl.textContent = 'Select Date & Time';
+                    customDateTriggerEl.classList.remove('has-value');
+                }
+            } catch (e) { 
+                customDateTriggerEl.textContent = 'Select Date & Time';
+                customDateTriggerEl.classList.remove('has-value');
+            }
         }
     });
 
     const handleLogout = () => {
       firebase.auth().signOut().then(() => {
-          location.href = '../login.html';
+          window.location.href = '../login.html'; // Redirect to login page
       }).catch(error => {
           console.error('Logout error:', error);
           showStatusMessage('Logout error: ' + error.message, 'error');
@@ -899,29 +931,33 @@
         const seconds = Math.floor((timeDiff / 1000) % 60);
         const minutes = Math.floor((timeDiff / (1000 * 60)) % 60);
         const hours = Math.floor((timeDiff / (1000 * 60 * 60)) % 24);
-        const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24) % 30.436875); 
+        const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24) % 30.436875); // Average days in month
         const months = Math.floor(timeDiff / (1000 * 60 * 60 * 24 * 30.436875) % 12);
-        const years = Math.floor(timeDiff / (1000 * 60 * 60 * 24 * 365.25));
+        const years = Math.floor(timeDiff / (1000 * 60 * 60 * 24 * 365.25)); // Account for leap years
+        
         let parts = [];
         if (years > 0) parts.push(`${years}y`);
         if (months > 0) parts.push(`${months}m`);
         if (days > 0) parts.push(`${days}d`);
         if (hours > 0) parts.push(`${hours}h`);
         if (minutes > 0) parts.push(`${minutes}min`);
-        if (seconds >= 0 && parts.length < 5) parts.push(`${seconds}s`);
-        return parts.slice(0, 6).join(' ') || "0s";
+        if (seconds >= 0 && parts.length < 5) parts.push(`${seconds}s`); // Show seconds if space or if it's the only unit
+        
+        return parts.slice(0, 5).join(' ') || "0s"; // Show up to 5 largest units, or 0s if very short
     }
 
     function startCountdownTimer(countdownId, targetDateISO, timerElement) {
-        if (activeTimers[countdownId]) {
+        if (activeTimers[countdownId]) { // Clear existing timer for this ID if any
             clearInterval(activeTimers[countdownId]);
         }
         const targetTime = new Date(targetDateISO).getTime();
+
         const updateTimer = () => {
             const now = new Date().getTime();
             const timeDifference = targetTime - now;
             timerElement.textContent = formatTimeRemaining(timeDifference);
-            const listItem = timerElement.closest('li');
+            
+            const listItem = timerElement.closest('li'); // Get parent li
             if (timeDifference <= 0) {
                 clearInterval(activeTimers[countdownId]);
                 delete activeTimers[countdownId];
@@ -930,8 +966,8 @@
                  if(listItem) listItem.classList.remove('reached');
             }
         };
-        updateTimer();
-        activeTimers[countdownId] = setInterval(updateTimer, 1000);
+        updateTimer(); // Initial call to display immediately
+        activeTimers[countdownId] = setInterval(updateTimer, 1000); // Update every second
     }
     
     function stopAllTimers() {
@@ -941,13 +977,14 @@
 
     let isRefreshingCountdowns = false;
     function sortCountdowns(countdownsArray) {
+        // Sort by targetDate, ascending (soonest first)
         return countdownsArray.sort((a, b) => new Date(a.targetDate).getTime() - new Date(b.targetDate).getTime());
     }
 
     async function refreshCountdownsDisplay(showLoadingMessageInList = true) {
         if (isRefreshingCountdowns) return;
         isRefreshingCountdowns = true;
-        stopAllTimers();
+        stopAllTimers(); // Stop existing timers before re-rendering
 
         if (showLoadingMessageInList) {
             countdownsListEl.innerHTML = '<li class="loading-item">Loading countdowns...</li>';
@@ -963,14 +1000,15 @@
             isRefreshingCountdowns = false;
             refreshCountdownsBtn.classList.remove('refreshing');
             refreshCountdownsBtn.disabled = false;
+            addCountdownBtn.disabled = true; // Disable add button if not logged in
             return;
         }
 
         const docRef = userCountdownsDocRef();
         if (!docRef) {
-            console.error("refreshCountdownsDisplay: docRef is null.");
+            console.error("refreshCountdownsDisplay: docRef is null for the current user.");
             if (showLoadingMessageInList || countdownsListEl.innerHTML.includes('Loading...')) {
-                countdownsListEl.innerHTML = '<li>Error: User reference not found.</li>';
+                countdownsListEl.innerHTML = '<li>Error: User reference not found. Try logging out and back in.</li>';
             }
             isRefreshingCountdowns = false;
             refreshCountdownsBtn.classList.remove('refreshing');
@@ -980,24 +1018,33 @@
 
         try {
             const docSnap = await docRef.get();
-            countdownsListEl.innerHTML = ''; 
+            countdownsListEl.innerHTML = ''; // Clear current list or loading message
 
+            let countdowns = [];
             if (docSnap && typeof docSnap.exists === 'boolean' && docSnap.exists) {
                 const data = docSnap.data();
-                let countdowns = data && data.items ? data.items : [];
-                countdowns = sortCountdowns(countdowns);
-
-                if (countdowns.length === 0) {
-                    countdownsListEl.innerHTML = '<li>No countdowns yet. Add one above!</li>';
+                if (data && data.items && Array.isArray(data.items)) {
+                    countdowns = data.items;
                 }
+            }
+            
+            countdowns = sortCountdowns(countdowns); // Sort before displaying
 
+            if (countdowns.length === 0) {
+                countdownsListEl.innerHTML = '<li>No countdowns yet. Add one above!</li>';
+            } else {
                 countdowns.forEach(cd => {
+                    if (!cd.id || !cd.targetDate || !cd.name) { // Basic validation for robustness
+                        console.warn("Skipping invalid countdown item:", cd);
+                        return;
+                    }
                     const li = document.createElement('li');
                     li.dataset.countdownId = cd.id;
                     const targetDate = new Date(cd.targetDate);
                     const formattedTargetDate = targetDate.toLocaleString([], {
                         year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit'
                     });
+
                     li.innerHTML = `
                         <div class="countdown-item-header">
                             <span class="countdown-name">${cd.name || 'Untitled Countdown'}</span>
@@ -1013,23 +1060,24 @@
                     const timerElement = li.querySelector(`#timer-${cd.id}`);
                     startCountdownTimer(cd.id, cd.targetDate, timerElement);
                 });
-                countdownSlotsUsedEl.textContent = countdowns.length;
-                addCountdownBtn.disabled = countdowns.length >= MAX_COUNTDOWNS;
-                countdownsListEl.querySelectorAll('.edit-countdown-btn').forEach(btn => {
-                    btn.addEventListener('click', (e) => handleEditCountdown(e.target.dataset.id));
-                });
-                countdownsListEl.querySelectorAll('.delete-countdown-btn').forEach(btn => {
-                    btn.addEventListener('click', (e) => handleDeleteCountdown(e.target.dataset.id));
-                });
-            } else {
-                countdownsListEl.innerHTML = '<li>No countdowns saved. Create your first one!</li>';
-                countdownSlotsUsedEl.textContent = '0';
-                addCountdownBtn.disabled = false;
             }
+            countdownSlotsUsedEl.textContent = countdowns.length;
+            addCountdownBtn.disabled = countdowns.length >= MAX_COUNTDOWNS;
+
+            // Add event listeners after items are in the DOM
+            countdownsListEl.querySelectorAll('.edit-countdown-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => handleEditCountdown(e.target.dataset.id));
+            });
+            countdownsListEl.querySelectorAll('.delete-countdown-btn').forEach(btn => {
+                btn.addEventListener('click', (e) => handleDeleteCountdown(e.target.dataset.id));
+            });
+
         } catch (error) {
-            console.error("Error in refreshCountdownsDisplay:", error);
+            console.error("Error refreshing countdowns display:", error);
             showStatusMessage('Error fetching countdowns: ' + error.message, 'error');
-            countdownsListEl.innerHTML = `<li>Error loading countdowns. Check console.</li>`;
+            if (countdownsListEl.innerHTML === '' || countdownsListEl.innerHTML.includes('Loading...')) {
+                countdownsListEl.innerHTML = `<li>Error loading countdowns. Please try again.</li>`;
+            }
         } finally {
             isRefreshingCountdowns = false;
             refreshCountdownsBtn.classList.remove('refreshing');
@@ -1047,21 +1095,29 @@
 
         if (!name) {
             showStatusMessage('Please enter a name for your countdown.', 'warning');
+            countdownNameInputEl.focus();
             return;
+        }
+        if (name.length >= 150) { // Corresponds to Firestore rule item.name.size() < 150
+             showStatusMessage('Event name must be less than 150 characters.', 'warning');
+             countdownNameInputEl.focus();
+             return;
         }
         if (!targetDateISOFromInput) { 
             showStatusMessage('Please select a valid date and time using the picker.', 'warning');
+            customDateTriggerEl.focus();
             return;
         }
         const targetTime = new Date(targetDateISOFromInput).getTime();
         if (isNaN(targetTime) || targetTime <= Date.now()) {
             showStatusMessage('Please select a future date and time.', 'warning');
+            customDateTriggerEl.focus();
             return;
         }
 
         const docRef = userCountdownsDocRef();
         if (!docRef) {
-            showStatusMessage('Error: Cannot get user reference.', 'error');
+            showStatusMessage('Error: Cannot get user reference. Please try logging in again.', 'error');
             return;
         }
         addCountdownBtn.textContent = 'Adding...';
@@ -1071,77 +1127,105 @@
             await firebase.firestore().runTransaction(async (transaction) => {
                 const docSnap = await transaction.get(docRef);
                 let countdowns = [];
-                if (docSnap.exists) {
-                    const data = docSnap.data();
-                    countdowns = data.items || [];
+                if (docSnap.exists && docSnap.data() && docSnap.data().items) {
+                    countdowns = docSnap.data().items;
                 }
                 if (countdowns.length >= MAX_COUNTDOWNS) {
-                    throw new Error(`Countdown limit of ${MAX_COUNTDOWNS} reached.`);
+                    // This specific error message will be caught by the generic catch block below
+                    throw new Error(`Countdown limit of ${MAX_COUNTDOWNS} reached. Please delete an existing countdown to add a new one.`);
                 }
                 const newCountdown = {
                     id: generateUUID(),
                     name: name,
-                    targetDate: new Date(targetDateISOFromInput).toISOString(),
-                    createdAt: firebase.firestore.Timestamp.now() // Firestore Timestamp from client
+                    targetDate: new Date(targetDateISOFromInput).toISOString(), // Store as ISO string
+                    createdAt: firebase.firestore.Timestamp.now() // Firestore Timestamp
                 };
                 countdowns.push(newCountdown);
-                transaction.set(docRef, { items: countdowns }, { merge: true });
+                transaction.set(docRef, { items: countdowns }, { merge: true }); // Use merge:true if doc might not exist or to only update 'items'
             });
             showStatusMessage(`Countdown "${name}" added successfully!`, 'success');
             countdownNameInputEl.value = '';
             countdownDateInputEl.value = ''; 
             customDateTriggerEl.textContent = 'Select Date & Time'; 
             customDateTriggerEl.classList.remove('has-value');
-            await refreshCountdownsDisplay(false);
+            await refreshCountdownsDisplay(false); // Refresh without full list loading message
         } catch (error) {
             console.error("Error adding countdown:", error);
-            showStatusMessage(`Error adding countdown: ${error.message}`, 'error', 6000);
+            // Provide more specific feedback if it's a known issue
+            if (error.message.includes("Countdown limit")) {
+                showStatusMessage(error.message, 'warning', 6000);
+            } else if (error.code === "permission-denied" || (error.message && error.message.toLowerCase().includes("permission"))) {
+                 showStatusMessage('Error adding countdown: Permission denied. This could be due to invalid data (e.g. name too long) or a server rule. Please check your input and try again.', 'error', 8000);
+            }
+            else {
+                showStatusMessage(`Error adding countdown: ${error.message}`, 'error', 6000);
+            }
         } finally {
             addCountdownBtn.textContent = 'Add Countdown';
-            // Refresh will enable/disable based on count by calling refreshCountdownsDisplay
+            // Re-enable button based on current count after potential add/fail
+            const currentCount = parseInt(countdownSlotsUsedEl.textContent) || 0;
+            addCountdownBtn.disabled = currentCount >= MAX_COUNTDOWNS || !currentUser;
         }
     }
 
     async function handleEditCountdown(countdownId) {
-        if (!currentUser) return;
+        if (!currentUser) {
+            showStatusMessage('Please log in to edit countdowns.', 'info'); return;
+        }
         const docRef = userCountdownsDocRef();
         if (!docRef) return;
 
         try {
             const docSnap = await docRef.get();
-            if (!docSnap.exists) throw new Error("User data not found.");
+            if (!docSnap.exists || !docSnap.data() || !docSnap.data().items) {
+                 showStatusMessage('Could not find countdown data to edit.', 'error');
+                 return;
+            }
             
-            let countdowns = docSnap.data().items || [];
+            let countdowns = docSnap.data().items;
             const countdownIndex = countdowns.findIndex(cd => cd.id === countdownId);
             if (countdownIndex === -1) {
-                showStatusMessage('Countdown not found for editing.', 'error');
+                showStatusMessage('Countdown not found for editing. It might have been deleted.', 'error');
+                await refreshCountdownsDisplay(false); // Refresh list if item is missing
                 return;
             }
             const currentCountdown = countdowns[countdownIndex];
             
-            const newName = prompt("Enter new name for the countdown:", currentCountdown.name);
+            const newName = prompt("Enter new name for the countdown (max 149 chars):", currentCountdown.name);
             if (newName === null) return; // User cancelled name edit
+            if (newName.trim() === "") {
+                showStatusMessage('Countdown name cannot be empty.', 'warning'); return;
+            }
+            if (newName.trim().length >= 150) {
+                showStatusMessage('Countdown name must be less than 150 characters.', 'warning'); return;
+            }
 
-            // For date editing, ideally, we would re-use the custom picker.
-            // This requires a more involved UI flow for "edit mode".
-            // For now, using a prompt for the date for simplicity of this example.
-            // The user would need to input in YYYY-MM-DDTHH:MM format.
-            const newDateStr = prompt(`Enter new date and time (current: ${currentCountdown.targetDate.substring(0,16)} YYYY-MM-DDTHH:MM):`, currentCountdown.targetDate.substring(0,16));
+            // For date editing, prompt for simplicity, or open the custom calendar in an "edit mode"
+            // For now, prompt with current date and time format.
+            const currentTargetDate = new Date(currentCountdown.targetDate);
+            const formattedCurrentDateTime = `${currentTargetDate.getFullYear()}-${padToTwo(currentTargetDate.getMonth() + 1)}-${padToTwo(currentTargetDate.getDate())}T${padToTwo(currentTargetDate.getHours())}:${padToTwo(currentTargetDate.getMinutes())}`;
+            
+            const newDateStr = prompt(`Enter new date and time (YYYY-MM-DDTHH:MM):`, formattedCurrentDateTime);
             if (newDateStr === null) return; 
 
             const newTargetDate = new Date(newDateStr);
-            if (isNaN(newTargetDate.getTime()) || newTargetDate.getTime() <= Date.now()) {
-                 showStatusMessage('Invalid or past date. Please enter a future date and time in YYYY-MM-DDTHH:MM format.', 'warning', 5000);
+            if (isNaN(newTargetDate.getTime())) {
+                 showStatusMessage('Invalid date format. Please use YYYY-MM-DDTHH:MM.', 'warning', 5000);
                  return;
             }
-
-            if (newName.trim() === currentCountdown.name && newTargetDate.toISOString() === currentCountdown.targetDate) {
+            if (newTargetDate.getTime() <= Date.now()) {
+                 showStatusMessage('Please select a future date and time.', 'warning', 5000);
+                 return;
+            }
+            
+            const trimmedNewName = newName.trim();
+            if (trimmedNewName === currentCountdown.name && newTargetDate.toISOString() === currentCountdown.targetDate) {
                 showStatusMessage('No changes made.', 'info');
                 return;
             }
 
-            currentCountdown.name = newName.trim() || 'Untitled Countdown';
-            currentCountdown.targetDate = newTargetDate.toISOString();
+            countdowns[countdownIndex].name = trimmedNewName;
+            countdowns[countdownIndex].targetDate = newTargetDate.toISOString();
             // currentCountdown.createdAt remains unchanged.
             
             await docRef.update({ items: countdowns });
@@ -1150,7 +1234,11 @@
 
         } catch (error) {
             console.error("Error updating countdown:", error);
-            showStatusMessage(`Error updating: ${error.message}`, 'error');
+            if (error.code === "permission-denied" || (error.message && error.message.toLowerCase().includes("permission"))) {
+                 showStatusMessage('Error updating countdown: Permission denied. Check data validity (e.g., name length).', 'error', 8000);
+            } else {
+                showStatusMessage(`Error updating countdown: ${error.message}`, 'error');
+            }
         }
     }
 
@@ -1160,33 +1248,54 @@
         }
         const docRef = userCountdownsDocRef();
         if (!docRef) return;
+
         let countdownName = "this countdown"; 
         try {
-            const tempDocSnap = await docRef.get();
-            if (tempDocSnap.exists) {
-                const tempCountdowns = tempDocSnap.data().items || [];
-                const found = tempCountdowns.find(cd => cd.id === countdownId);
-                if (found) countdownName = `"${found.name}"`;
+            // Optimistically find the name for the confirm dialog
+            const listItem = document.querySelector(`li[data-countdown-id="${countdownId}"] .countdown-name`);
+            if (listItem && listItem.textContent) {
+                countdownName = `"${listItem.textContent}"`;
+            } else { // Fallback if not found in DOM, fetch from DB (less optimal for just a name)
+                const tempDocSnap = await docRef.get();
+                if (tempDocSnap.exists && tempDocSnap.data() && tempDocSnap.data().items) {
+                    const tempCountdowns = tempDocSnap.data().items;
+                    const found = tempCountdowns.find(cd => cd.id === countdownId);
+                    if (found) countdownName = `"${found.name}"`;
+                }
             }
+
             if (!confirm(`Are you sure you want to delete ${countdownName}? This action cannot be undone.`)) return;
             
             await firebase.firestore().runTransaction(async (transaction) => {
                 const docSnap = await transaction.get(docRef);
-                if (!docSnap.exists) throw new Error("User data not found.");
-                let countdowns = docSnap.data().items || [];
+                if (!docSnap.exists || !docSnap.data() || !docSnap.data().items) {
+                    throw new Error("User data or countdowns list not found.");
+                }
+                let countdowns = docSnap.data().items;
+                const initialLength = countdowns.length;
                 const updatedCountdowns = countdowns.filter(cd => cd.id !== countdownId);
+                if (updatedCountdowns.length === initialLength) {
+                    // Item was not found, maybe already deleted by another client/tab
+                    console.warn("Countdown to delete not found in the database list:", countdownId);
+                    throw new Error("Countdown not found, it might have already been deleted.");
+                }
                 transaction.update(docRef, { items: updatedCountdowns });
             });
             
             showStatusMessage(`Countdown ${countdownName} deleted.`, 'success');
-            if (activeTimers[countdownId]) {
+            if (activeTimers[countdownId]) { // Stop timer for the deleted item
                 clearInterval(activeTimers[countdownId]);
                 delete activeTimers[countdownId];
             }
-            await refreshCountdownsDisplay(false);
+            await refreshCountdownsDisplay(false); // Refresh list without full loading message
         } catch (error) {
             console.error("Error deleting countdown:", error);
-            showStatusMessage(`Error deleting: ${error.message}`, 'error');
+             if (error.message.includes("Countdown not found")) {
+                showStatusMessage(error.message, 'warning');
+            } else {
+                showStatusMessage(`Error deleting: ${error.message}`, 'error');
+            }
+            await refreshCountdownsDisplay(false); // Ensure list consistency even on error
         }
     }
 
@@ -1195,7 +1304,8 @@
         stopAllTimers(); 
         if (user) {
             IS_OWNER_ACCOUNT = OWNER_EMAILS.includes(user.email);
-            updateCountdownLimitUI();
+            updateCountdownLimitUI(); // Update based on owner status
+
             if (sidebarUserEmailEl) sidebarUserEmailEl.textContent = user.email;
             const userProfRef = userProfileDocRef();
             if (userProfRef) {
@@ -1209,29 +1319,33 @@
                     }
                 } catch (error) {
                     console.error("Error fetching user profile:", error);
-                    if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0];
+                    if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0]; // Fallback
                 }
-            } else {
+            } else { // Fallback if userProfileDocRef somehow null (shouldn't happen if currentUser is set)
                 if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0];
             }
-            await refreshCountdownsDisplay(true);
-            addCountdownBtn.disabled = (parseInt(countdownSlotsUsedEl.textContent) || 0) >= MAX_COUNTDOWNS;
-        } else { 
+            await refreshCountdownsDisplay(true); // Initial load with loading message
+            // addCountdownBtn.disabled will be set by refreshCountdownsDisplay
+        } else { // No user logged in
             IS_OWNER_ACCOUNT = false;
             updateCountdownLimitUI();
             if (sidebarUserNameEl) sidebarUserNameEl.textContent = 'Not Logged In';
             if (sidebarUserEmailEl) sidebarUserEmailEl.textContent = 'Please log in';
             countdownsListEl.innerHTML = '<li>Please log in to manage your countdowns.</li>';
             countdownSlotsUsedEl.textContent = '0';
-            showStatusMessage('Please log in to use Anticipate countdown features.', 'info', null); 
-            addCountdownBtn.disabled = true; 
+            // showStatusMessage('Please log in to use Anticipate countdown features.', 'info', null); // Persist until dismissed or logged in
+            addCountdownBtn.disabled = true; // Definitely disabled if no user
         }
-        updateMarquees();
+        updateMarquees(); // Update marquees after user info potentially changes width
     });
 
     addCountdownBtn.addEventListener('click', handleAddCountdown);
-    refreshCountdownsBtn.addEventListener('click', () => refreshCountdownsDisplay(true));
-    updateCountdownLimitUI();
+    refreshCountdownsBtn.addEventListener('click', () => refreshCountdownsDisplay(true)); // Force loading message on manual refresh
+    
+    // Initial UI setup
+    updateCountdownLimitUI(); 
+    addCountdownBtn.disabled = true; // Initially disabled until auth state known & count fetched
+
   </script>
 </body>
 </html>
