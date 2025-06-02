@@ -336,7 +336,7 @@
         line-height: 1.4;
         flex-shrink: 0;
         padding-left: 12px;
-        /* margin-left: auto; Removed to keep it closer to main info */
+        /* margin-left: auto; Removed */
         border-left: 1px solid rgba(103, 32, 189, 0.1);
     }
     .current-weather-details-aside p {
@@ -461,35 +461,38 @@
         overflow: auto;
         background-color: rgba(0,0,0,0.6);
         font-family: 'PrimaryFont', sans-serif;
-
         visibility: hidden;
         opacity: 0;
-        /* transform: translateY(20px) scale(0.98); Removed for fade-only */
-        transition: opacity 0.25s ease-out, visibility 0s linear 0.25s;
+        transition: opacity 0.25s ease-out, visibility 0s linear 0.25s; /* Fade only */
     }
     .modal.modal-open {
         visibility: visible;
         opacity: 1;
-        /* transform: translateY(0) scale(1); Removed for fade-only */
-        transition: opacity 0.25s ease-out, visibility 0s linear 0s;
+        transition: opacity 0.25s ease-out, visibility 0s linear 0s; /* Fade only */
     }
     .modal-content {
         background-color: #fefefe;
-        padding: 15px 20px; /* More compact padding */
+        padding: 15px 20px;
         border: 1px solid #bbb;
         width: 90%;
-        max-width: 460px; /* Adjusted max-width */
-        border-radius: 12px; /* Slightly smaller radius */
-        box-shadow: 0 5px 20px rgba(0,0,0,0.2); /* Softened shadow */
+        max-width: 460px;
+        border-radius: 12px;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.2);
         position: relative;
         color: #333;
+        /* Added subtle scale to content for a slight pop, works with fade of backdrop */
+        transform: scale(0.95);
+        transition: transform 0.25s ease-out;
+    }
+    .modal.modal-open .modal-content {
+        transform: scale(1);
     }
     .modal-close-btn {
         color: #aaa;
         position: absolute;
-        top: 8px; /* Adjusted */
-        right: 12px; /* Adjusted */
-        font-size: 26px; /* Adjusted */
+        top: 8px;
+        right: 12px;
+        font-size: 26px;
     }
     .modal-close-btn:hover,
     .modal-close-btn:focus {
@@ -497,36 +500,36 @@
         text-decoration: none;
         cursor: pointer;
     }
-    .modal-content h3 { /* Date/Day title */
+    .modal-content h3 {
         margin-top: 0;
         color: #6720bd;
-        border-bottom: 1px solid #f0f0f0; /* Lighter border */
-        padding-bottom: 8px; /* Compact */
-        margin-bottom: 12px; /* Compact */
-        font-size: 1.3em; /* Compact */
+        border-bottom: 1px solid #f0f0f0;
+        padding-bottom: 8px;
+        margin-bottom: 12px;
+        font-size: 1.3em;
     }
     .modal-weather-main {
         display: flex;
         align-items: center;
-        gap: 10px; /* Compact */
-        margin-bottom: 12px; /* Compact */
+        gap: 10px;
+        margin-bottom: 12px;
     }
     .modal-icon-large {
-        font-size: 2.5em; /* Compact */
+        font-size: 2.5em;
         color: #6720bd;
     }
     #modalWeatherDesc {
-        font-size: 1.0em; /* Compact */
+        font-size: 1.0em;
         font-weight: 500;
     }
     .modal-content p {
-        font-size: 0.85em; /* Compact */
-        line-height: 1.4; /* Compact */
-        margin: 4px 0; /* Compact */
+        font-size: 0.85em;
+        line-height: 1.4;
+        margin: 4px 0;
     }
     .modal-content p strong {
         color: #444;
-        min-width: 120px; /* Adjusted */
+        min-width: 120px;
         display: inline-block;
     }
 
@@ -721,7 +724,6 @@
             return 'N/A';
         }
     }
-
     function formatDaylightDuration(totalSeconds) {
         if (totalSeconds === null || totalSeconds === undefined || totalSeconds === 'N/A' || isNaN(totalSeconds)) return 'N/A';
         const hours = Math.floor(totalSeconds / 3600);
@@ -734,6 +736,34 @@
         const val = Math.floor((degrees / 22.5) + 0.5);
         const arr = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
         return arr[(val % 16)];
+    }
+
+    async function fetchCityName(lat, lon) { // For reverse geocoding
+        const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`;
+        const fallbackLabel = `Lat: ${parseFloat(lat).toFixed(2)}, Lon: ${parseFloat(lon).toFixed(2)}`;
+        try {
+            const response = await fetch(nominatimUrl, { headers: { 'Accept': 'application/json' } });
+            if (!response.ok) {
+                console.warn(`Nominatim API error: ${response.status}`);
+                return fallbackLabel;
+            }
+            const data = await response.json();
+            if (data && data.address) {
+                const addr = data.address;
+                const city = addr.city || addr.town || addr.village || addr.hamlet || '';
+                const state = addr.state || '';
+                const country = addr.country || '';
+                if (city && state && (country === "United States" || country === "USA")) return `${city}, ${state}`;
+                if (city && country) return `${city}, ${country}`;
+                if (city) return city;
+                if (country) return country; // Fallback to just country if nothing else
+                return fallbackLabel;
+            }
+            return fallbackLabel;
+        } catch (error) {
+            console.error("Error fetching city name:", error);
+            return fallbackLabel;
+        }
     }
 
 
@@ -840,7 +870,7 @@
               if (feelsLikeValueEl) feelsLikeValueEl.textContent = `${Math.round(cw.apparent_temperature)}${tempSuffix}`;
               if (humidityValueEl) humidityValueEl.textContent = `${cw.relative_humidity_2m}%`;
               if (windValueEl) windValueEl.textContent = `${Math.round(cw.wind_speed_10m)}${speedSuffix}`;
-              if (locationDisplayEl) locationDisplayEl.textContent = locationLabel; // Use the passed locationLabel directly
+              if (locationDisplayEl) locationDisplayEl.textContent = locationLabel;
 
               forecastEl.innerHTML = '';
               fullDailyForecastData = data.daily;
@@ -899,13 +929,14 @@
             currentIconEl.textContent = '📍';
             currentConditionEl.textContent = 'Locating...';
             if (locationDisplayEl) locationDisplayEl.textContent = 'Acquiring location...';
+
             if (navigator.geolocation) {
               navigator.geolocation.getCurrentPosition(
                 async (position) => {
-                  const newLat = position.coords.latitude; // Keep as number for toFixed
+                  const newLat = position.coords.latitude;
                   const newLon = position.coords.longitude;
-                  const newLocationLabel = `Lat: ${newLat.toFixed(2)}, Lon: ${newLon.toFixed(2)}`;
-                  await actualFetchAndDisplayWeather(newLat.toString(), newLon.toString(), config.units, newLocationLabel);
+                  const cityNameLabel = await fetchCityName(newLat, newLon); // Fetch city name or fallback
+                  await actualFetchAndDisplayWeather(newLat.toString(), newLon.toString(), config.units, cityNameLabel);
                 },
                 async (error) => {
                   console.warn(`Geolocation error (${error.code}): ${error.message}`);
