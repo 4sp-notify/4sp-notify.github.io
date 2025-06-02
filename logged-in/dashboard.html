@@ -268,6 +268,23 @@
       overflow: hidden;
       text-overflow: ellipsis;
     }
+    .weather-refresh-btn { /* Style for the new refresh button */
+        background: none;
+        border: none;
+        color: #6720bd;
+        font-size: 1.1em; /* Adjusted for better visibility */
+        cursor: pointer;
+        margin-left: auto; /* Pushes it to the right */
+        padding: 0 5px;   /* Minimal padding */
+        line-height: 1;   /* Align icon nicely */
+    }
+    .weather-refresh-btn:hover {
+        color: #8a2be2;
+    }
+    .weather-refresh-btn:disabled {
+        cursor: not-allowed;
+        opacity: 0.5;
+    }
 
     .card-content-inner { /* Wrapper for content inside card */
         flex-grow: 1;
@@ -536,44 +553,55 @@
     // --- Card Templates ---
     const availableCardTemplates = [
       {
-        templateId: 'weather_large_widget', title: 'Weekly Weather Forecast', icon: '🌦️', type: 'large',
-        config: { // Default config, no UI for changing these in this version
+        templateId: 'weather_large_widget', title: 'Weather Forecast', icon: '🌦️', type: 'large', // Title updated slightly
+        config: { // Default config
             location_label: 'Massillon, OH', latitude: '40.7909', longitude: '-81.5218', units: 'imperial'
         },
-        contentGenerator: (config) => `
-          <div class="weather-large-content">
-            <div class="current-weather-large">
-              <span class="weather-icon-large">⏳</span>
-              <div>
-                <span class="temp-large">--°</span>
-                <span class="condition-large">Loading...</span>
-                <div class="details-large">
-                  <p>Feels like: --°</p>
-                  <p>Humidity: --% | Wind: --</p>
-                  <p>Location: <span class="location-large">${config.location_label || 'N/A'}</span></p>
+        contentGenerator: function(config) { // Made into a function to access template props if needed
+            return `
+              <div class="weather-large-content">
+                <div class="current-weather-large">
+                  <span class="weather-icon-large">⏳</span>
+                  <div>
+                    <span class="temp-large">--°</span>
+                    <span class="condition-large">Loading...</span>
+                    <div class="details-large">
+                      <p>Feels like: --°</p>
+                      <p>Humidity: --% | Wind: --</p>
+                      <p>Location: <span class="location-large">${config.location_label || 'N/A'}</span></p>
+                    </div>
+                  </div>
                 </div>
+                <div class="forecast-large"></div>
+                <small style="text-align:center; display:block; margin-top:auto; color:#aaa; font-size:0.7em;">Weather by Open-Meteo.com</small>
               </div>
-            </div>
-            <div class="forecast-large"></div>
-            <small style="text-align:center; display:block; margin-top:auto; color:#aaa; font-size:0.7em;">Weather by Open-Meteo.com</small>
-          </div>
-        `,
+            `;
+        },
         onMount: async (cardElement, config) => {
           const forecastEl = cardElement.querySelector('.forecast-large');
           const currentIconEl = cardElement.querySelector('.current-weather-large .weather-icon-large');
           const currentTempEl = cardElement.querySelector('.current-weather-large .temp-large');
           const currentConditionEl = cardElement.querySelector('.current-weather-large .condition-large');
-          const currentDetailsEl = cardElement.querySelector('.current-weather-large .details-large p:nth-child(2)'); // Target humidity/wind p
+          const feelsLikeEl = cardElement.querySelector('.current-weather-large .details-large p:first-child');
+          const currentDetailsEl = cardElement.querySelector('.current-weather-large .details-large p:nth-child(2)');
           const locationDisplayEl = cardElement.querySelector('.current-weather-large .location-large');
+          const refreshBtn = cardElement.querySelector('.weather-refresh-btn'); // Get refresh button from header
 
-          const displayError = (message) => {
-            currentConditionEl.textContent = message; currentIconEl.textContent = '⚠️'; currentTempEl.textContent = '';
+          const displayErrorInCard = (message) => {
+            currentConditionEl.textContent = message; currentIconEl.textContent = '⚠️'; currentTempEl.textContent = '--°';
+            feelsLikeEl.textContent = 'Feels like: --°';
+            currentDetailsEl.textContent = 'Humidity: --% | Wind: --';
+            if(locationDisplayEl) locationDisplayEl.textContent = "Error";
             forecastEl.innerHTML = `<p style="color:red; text-align:center; font-size:0.9em;">${message}</p>`;
+            if (refreshBtn) refreshBtn.disabled = false;
           };
 
-          async function fetchWeatherData(lat, lon, units = 'imperial', locationLabel) {
+          async function actualFetchAndDisplayWeather(lat, lon, units, locationLabel) {
+            if (refreshBtn) refreshBtn.disabled = true;
+            currentIconEl.textContent = '⏳';
+            currentConditionEl.textContent = 'Fetching...';
+
             try {
-              currentConditionEl.textContent = 'Fetching...'; currentIconEl.textContent = '⏳';
               const tempUnitParam = units === 'metric' ? 'celsius' : 'fahrenheit';
               const windSpeedUnitParam = units === 'metric' ? 'kmh' : 'mph';
               const apiUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&temperature_unit=${tempUnitParam}&wind_speed_unit=${windSpeedUnitParam}&timezone=auto&forecast_days=7`;
@@ -589,10 +617,9 @@
               currentTempEl.textContent = `${Math.round(cw.temperature_2m)}${tempSuffix}`;
               currentIconEl.textContent = cwCodeInfo.icon;
               currentConditionEl.textContent = cwCodeInfo.description;
-              cardElement.querySelector('.current-weather-large .details-large p:first-child').textContent = `Feels like: ${Math.round(cw.apparent_temperature)}${tempSuffix}`;
+              feelsLikeEl.textContent = `Feels like: ${Math.round(cw.apparent_temperature)}${tempSuffix}`;
               currentDetailsEl.textContent = `Humidity: ${cw.relative_humidity_2m}% | Wind: ${Math.round(cw.wind_speed_10m)}${speedSuffix}`;
               if (locationDisplayEl) locationDisplayEl.textContent = locationLabel || `Lat: ${parseFloat(lat).toFixed(2)}, Lon: ${parseFloat(lon).toFixed(2)}`;
-
 
               forecastEl.innerHTML = '';
               const daily = data.daily;
@@ -601,7 +628,6 @@
                 const dayDiv = document.createElement('div');
                 dayDiv.classList.add('forecast-day');
                 const date = new Date(daily.time[i]);
-                // Adjusting for timezone to get correct day name
                 const dayName = i === 0 ? "Today" : date.toLocaleDateString(undefined, { weekday: 'short', timeZone: data.timezone });
                 dayDiv.innerHTML = `
                   <span class="day-name">${dayName}</span>
@@ -611,13 +637,47 @@
                 forecastEl.appendChild(dayDiv);
               }
             } catch (error) {
-              console.error("Weather fetch error:", error);
-              displayError(error.message || "Could not fetch weather.");
+              console.error("Weather API fetch error:", error);
+              displayErrorInCard(error.message || "Could not fetch weather.");
+            } finally {
+                if (refreshBtn) refreshBtn.disabled = false;
             }
           }
-          if (config.latitude && config.longitude) {
-            fetchWeatherData(config.latitude, config.longitude, config.units, config.location_label);
-          } else { displayError("Location not set."); }
+
+          async function updateWeather() {
+            if (refreshBtn) refreshBtn.disabled = true;
+            currentIconEl.textContent = '📍'; // Locating icon
+            currentConditionEl.textContent = 'Locating...';
+            if (locationDisplayEl) locationDisplayEl.textContent = 'Acquiring location...';
+
+
+            if (navigator.geolocation) {
+              navigator.geolocation.getCurrentPosition(
+                async (position) => {
+                  const newLat = position.coords.latitude.toString();
+                  const newLon = position.coords.longitude.toString();
+                  // showNotification("Location acquired.", "success", 2000); // Optional, can be noisy
+                  await actualFetchAndDisplayWeather(newLat, newLon, config.units, "Current Location");
+                },
+                async (error) => {
+                  console.warn(`Geolocation error (${error.code}): ${error.message}`);
+                  showNotification(`Geolocation failed: ${error.message}. Using default location.`, 'error', 4000);
+                  await actualFetchAndDisplayWeather(config.latitude, config.longitude, config.units, config.location_label);
+                },
+                { timeout: 10000, enableHighAccuracy: false }
+              );
+            } else {
+              showNotification("Geolocation not available. Using default location.", "info", 4000);
+              await actualFetchAndDisplayWeather(config.latitude, config.longitude, config.units, config.location_label);
+            }
+          }
+
+          if (refreshBtn) {
+            refreshBtn.addEventListener('click', updateWeather);
+          }
+
+          updateWeather(); // Initial fetch
+          setInterval(updateWeather, 30 * 60 * 1000); // Refresh every 30 minutes
         }
       },
       {
@@ -660,21 +720,29 @@
                 const minutes = Math.floor(totalSeconds / 60).toString().padStart(2, '0');
                 const seconds = (totalSeconds % 60).toString().padStart(2, '0');
                 const tenths = Math.floor((ms % 1000) / 100).toString();
-                return `${minutes}:${seconds}:${tenths}`;
+                return `${minutes}:${seconds}.${tenths}`; // Corrected format
             }
             function updateDisplay() { display.textContent = formatTime(elapsedTime + (startTime ? Date.now() - startTime : 0)); }
 
             startBtn.addEventListener('click', () => {
                 if (!intervalId) {
-                    startTime = Date.now();
-                    intervalId = setInterval(() => { elapsedTime += Date.now() - startTime; startTime = Date.now(); updateDisplay(); }, 100);
+                    startTime = Date.now() - (elapsedTime % 100); // Adjust for tenths continuity
+                    elapsedTime = elapsedTime - (elapsedTime % 100); // Align elapsed time
+                    intervalId = setInterval(() => {
+                         const now = Date.now();
+                         elapsedTime += (now - startTime);
+                         startTime = now;
+                         updateDisplay();
+                    }, 100);
                     startBtn.style.display = 'none'; stopBtn.style.display = 'inline-block';
                 }
             });
             stopBtn.addEventListener('click', () => {
                 if (intervalId) {
-                    clearInterval(intervalId); intervalId = null;
-                    elapsedTime += Date.now() - startTime; startTime = null;
+                    clearInterval(intervalId);
+                    elapsedTime += (Date.now() - startTime); // Capture remaining time
+                    intervalId = null; startTime = null;
+                    updateDisplay(); // Final update
                     startBtn.style.display = 'inline-block'; stopBtn.style.display = 'none';
                 }
             });
@@ -683,6 +751,7 @@
                 elapsedTime = 0; startTime = null; updateDisplay();
                 startBtn.style.display = 'inline-block'; stopBtn.style.display = 'none';
             });
+            display.textContent = formatTime(0); // Initial display
         }
       },
       {
@@ -710,7 +779,7 @@
             const resetBtn = cardElement.querySelector('button[data-action="reset"]');
 
             let intervalId, targetTime, remainingTime = 0;
-            let initialH = 0, initialM = 5, initialS = 0;
+            let initialH = 0, initialM = 5, initialS = 0; // Default initial values
 
             function formatTime(ms) {
                 if (ms < 0) ms = 0;
@@ -721,33 +790,65 @@
                 return `${hours}:${minutes}:${seconds}`;
             }
 
-            function updateInputDisplay() { display.textContent = formatTime( (parseInt(hInput.value)*3600 + parseInt(mInput.value)*60 + parseInt(sInput.value)) * 1000); }
-            [hInput, mInput, sInput].forEach(input => input.addEventListener('input', updateInputDisplay));
-
-            function startTimer() {
-                if (intervalId) clearInterval(intervalId);
+            function parseInputsToMs() {
                 const h = parseInt(hInput.value) || 0;
                 const m = parseInt(mInput.value) || 0;
                 const s = parseInt(sInput.value) || 0;
-                const totalMs = (h * 3600 + m * 60 + s) * 1000;
+                return (h * 3600 + m * 60 + s) * 1000;
+            }
 
-                if (totalMs <= 0) return;
+            function updateInputDisplay() {
+                display.textContent = formatTime(parseInputsToMs());
+            }
+            [hInput, mInput, sInput].forEach(input => {
+                input.addEventListener('input', () => {
+                    if (!intervalId) { // Only update display from inputs if timer is not running
+                        remainingTime = parseInputsToMs(); // Keep remainingTime in sync with inputs when paused/reset
+                        updateInputDisplay();
+                    }
+                });
+                input.addEventListener('blur', () => { // Ensure valid numbers on blur
+                    if (input.id === 'timer-m' || input.id === 'timer-s') {
+                        if (parseInt(input.value) > 59) input.value = 59;
+                        if (parseInt(input.value) < 0) input.value = 0;
+                    }
+                    if (parseInt(input.value) < 0) input.value = 0;
+                    if (!intervalId) {
+                         remainingTime = parseInputsToMs();
+                         updateInputDisplay();
+                    }
+                });
+            });
 
-                remainingTime = remainingTime > 0 ? remainingTime : totalMs; // Use paused time or new time
+
+            function startTimer() {
+                if (intervalId) clearInterval(intervalId); // Clear any existing interval
+
+                if(remainingTime <= 0) { // If starting fresh or from 0, parse inputs
+                    remainingTime = parseInputsToMs();
+                }
+
+                if (remainingTime <= 0) { // If still 0 after parsing (e.g. all inputs are 0)
+                    showNotification("Please set a timer duration.", "info");
+                    return;
+                }
+
                 targetTime = Date.now() + remainingTime;
-                
+
                 intervalId = setInterval(() => {
                     remainingTime = targetTime - Date.now();
                     if (remainingTime <= 0) {
                         clearInterval(intervalId); intervalId = null;
                         remainingTime = 0;
                         display.textContent = formatTime(0);
-                        alert('Timer Finished!');
+                        showNotification('Timer Finished!', 'success');
+                        try { new Audio('https://interactive-examples.mdn.mozilla.net/media/cc0-audio/bell-ringing-01.mp3').play(); } catch(e) { console.warn("Audio notification failed", e); }
                         startBtn.style.display = 'inline-block'; pauseBtn.style.display = 'none';
+                        [hInput, mInput, sInput].forEach(inp => inp.disabled = false);
                         return;
                     }
                     display.textContent = formatTime(remainingTime);
-                }, 200);
+                }, 200); // Update display roughly 5 times a second
                 startBtn.style.display = 'none'; pauseBtn.style.display = 'inline-block';
                 [hInput, mInput, sInput].forEach(inp => inp.disabled = true);
             }
@@ -756,19 +857,23 @@
             pauseBtn.addEventListener('click', () => {
                 if (intervalId) {
                     clearInterval(intervalId); intervalId = null;
-                    // remainingTime is already updated by the interval
+                    // remainingTime is already up-to-date from the last interval tick
                     startBtn.style.display = 'inline-block'; pauseBtn.style.display = 'none';
+                    [hInput, mInput, sInput].forEach(inp => inp.disabled = false); // Allow editing inputs when paused
                 }
             });
             resetBtn.addEventListener('click', () => {
                 if (intervalId) { clearInterval(intervalId); intervalId = null; }
-                hInput.value = initialH; mInput.value = initialM; sInput.value = initialS;
-                remainingTime = 0;
-                updateInputDisplay();
+                hInput.value = initialH; mInput.value = initialM; sInput.value = initialS; // Reset to default initial values
+                remainingTime = parseInputsToMs(); // Update remainingTime based on reset inputs
+                updateInputDisplay(); // Update display based on reset inputs
                 startBtn.style.display = 'inline-block'; pauseBtn.style.display = 'none';
                 [hInput, mInput, sInput].forEach(inp => inp.disabled = false);
             });
-            updateInputDisplay(); // Initial display
+            // Set initial values and display
+            hInput.value = initialH; mInput.value = initialM; sInput.value = initialS;
+            remainingTime = parseInputsToMs();
+            updateInputDisplay();
         }
       },
       {
@@ -805,7 +910,7 @@
             const userNameDisplay = cardElement.querySelector('#welcomeUserName');
             const dateDisplay = cardElement.querySelector('#welcomeDate');
             const globalUserName = document.getElementById('userName').textContent;
-            
+
             userNameDisplay.textContent = (globalUserName && globalUserName !== "Loading…") ? globalUserName : (firebase.auth().currentUser?.displayName || 'User');
             dateDisplay.textContent = new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' });
         }
@@ -820,31 +925,31 @@
       document.getElementById('userEmail').textContent = user.email;
       try {
         const userDocRef = dbRef();
-        if (!userDocRef) return; // Should not happen if user is logged in
+        if (!userDocRef) return;
         const doc = await userDocRef.get();
         const userData = doc.exists ? doc.data() : {};
-        userNameEl.textContent = userData.username || user.displayName || 'Welcome User'; // Global username
-        
-        setupFixedDashboardLayout(); // Load the fixed layout
+        userNameEl.textContent = userData.username || user.displayName || 'Welcome User';
+
+        setupFixedDashboardLayout();
         updateMarquees();
 
-        setTimeout(() => { // Staggered fade-in for cards
+        setTimeout(() => {
           document.querySelectorAll('.dashboard-card').forEach((card, index) => {
             card.style.animationDelay = `${index * 0.08}s`;
             card.classList.add('fade-in');
           });
-        }, 100); // Slight delay for elements to be in DOM
+        }, 100);
 
       } catch (error) {
         console.error('Error loading user data:', error);
-        setupFixedDashboardLayout(); // Fallback to fixed layout on error
+        setupFixedDashboardLayout(); // Fallback
       }
     });
 
     function updateMarquees() {
       marqueeEls.forEach(el => {
         el.classList.remove('marquee-active');
-        void el.offsetWidth; // Trigger reflow
+        void el.offsetWidth;
         el.classList.add('marquee-active');
       });
     }
@@ -852,11 +957,10 @@
     function createCardDOMElement(template) {
       const newCard = document.createElement('div');
       newCard.classList.add('dashboard-card');
-      newCard.dataset.id = `${template.templateId}_${Date.now()}`; // Unique ID for potential keying
+      newCard.dataset.id = `${template.templateId}_${Date.now()}`;
       newCard.dataset.templateId = template.templateId;
       newCard.dataset.cardType = template.type || 'full';
 
-      // Header
       const header = document.createElement('div');
       header.classList.add('card-header');
       const iconEl = document.createElement('div');
@@ -865,22 +969,28 @@
       const titleEl = document.createElement('h4');
       titleEl.classList.add('card-title');
       titleEl.textContent = template.title;
-      // No card header actions (edit/delete buttons)
 
       header.appendChild(iconEl);
       header.appendChild(titleEl);
 
-      // Content
+      // Add refresh button for weather widget specifically
+      if (template.templateId === 'weather_large_widget') {
+        const refreshButton = document.createElement('button');
+        refreshButton.className = 'weather-refresh-btn';
+        refreshButton.title = 'Refresh Weather & Location';
+        refreshButton.innerHTML = '🔄';
+        header.appendChild(refreshButton);
+      }
+
+
       const contentWrapper = document.createElement('div');
-      contentWrapper.classList.add('card-content-inner'); // Added wrapper
+      contentWrapper.classList.add('card-content-inner');
       contentWrapper.innerHTML = template.contentGenerator(template.config || {});
 
       newCard.appendChild(header);
       newCard.appendChild(contentWrapper);
 
-      // Mount widget logic if provided
       if (template.onMount && typeof template.onMount === 'function') {
-        // Defer onMount slightly to ensure card is in DOM for queries
         setTimeout(() => template.onMount(newCard, template.config || {}), 0);
       }
       return newCard;
@@ -895,11 +1005,9 @@
       const cardDom = createCardDOMElement(template);
       dashboardGrid.appendChild(cardDom);
     }
-    
-    function setupFixedDashboardLayout() {
-        dashboardGrid.innerHTML = ''; // Clear existing cards
 
-        // Add the 7 widgets in desired order
+    function setupFixedDashboardLayout() {
+        dashboardGrid.innerHTML = '';
         addCardToDashboard('weather_large_widget');
         addCardToDashboard('clock_widget');
         addCardToDashboard('stopwatch_widget');
@@ -909,8 +1017,6 @@
         addCardToDashboard('welcome_widget');
     }
 
-
-    // --- Notifications (can be kept if used by widgets, e.g. timer) ---
     function showNotification(message, type = 'info', duration = 3000) {
       const notification = document.createElement('div');
       notification.className = `notification ${type}`;
@@ -935,16 +1041,11 @@
       }, duration);
     }
 
-    // --- Event Listeners & Initializers ---
     window.addEventListener('resize', () => { setTimeout(updateMarquees, 300); });
     document.addEventListener('DOMContentLoaded', () => {
       document.documentElement.style.scrollBehavior = 'smooth';
-      // Preload logo if it was relevant, otherwise remove
-      // const imagesToPreload = ['../images/logo-dark.png'];
-      // imagesToPreload.forEach(src => { (new Image()).src = src; });
     });
 
-    // --- Logout & Sidebar Toggle ---
     const handleLogout = () => {
       firebase.auth().signOut().then(() => (location.href = '../login.html')).catch(error => console.error('Logout error:', error));
     };
@@ -955,7 +1056,7 @@
     const sidebar = document.getElementById('sidebar');
     toggleSidebarBtn.addEventListener('click', () => {
       sidebar.classList.toggle('collapsed');
-      setTimeout(updateMarquees, 550); // Update marquees after transition
+      setTimeout(updateMarquees, 550);
     });
 
   </script>
