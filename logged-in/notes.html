@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>4SP - Notes</title>
+  <title>4SP - NOTES</title>
   <link rel="stylesheet" href="../css/style.css" />
   <style>
     /* --- Dashboard Layout (Copied from previous dashboard for consistency) --- */
@@ -568,27 +568,18 @@
         }
         const docRef = userNotesDocRef();
         if (!docRef) {
-            console.error("refreshCloudSavesDisplay: docRef is null. Current user might be invalid or not set.");
+            console.error("refreshCloudSavesDisplay: docRef is null.");
             cloudSavesListEl.innerHTML = '<li>Error: User reference not found for cloud saves.</li>';
             return;
         }
 
         try {
             const docSnap = await docRef.get();
-            // console.log("refreshCloudSavesDisplay - docSnap:", docSnap); // For debugging what docSnap is
-            // console.log("refreshCloudSavesDisplay - typeof docSnap.exists:", typeof docSnap.exists);
+            cloudSavesListEl.innerHTML = '';
 
-            cloudSavesListEl.innerHTML = ''; // Clear previous list
-
-            // Standard check for Firebase compat DocumentSnapshot
-            if (docSnap && docSnap.exists) { // Note: docSnap.exists is a boolean property in compat SDK, not a function
-                                            // The error "docSnap.exists is not a function" means it's being called like one.
-                                            // The screenshot showed docSnap._delegate.exists as a function.
-                                            // For compat, it should be `docSnap.exists` (boolean)
-                                            // Let's assume the screenshot's console output structure is key.
-                                            // If `docSnap.exists` is a boolean (compat style):
-                if (docSnap.exists) { // Check the boolean property
-                    const data = docSnap.data(); // data() is a function
+            if (docSnap && typeof docSnap.exists === 'boolean') { // For compat, .exists is a boolean property
+                if (docSnap.exists) {
+                    const data = docSnap.data(); // .data() is a function
                     const saves = data.cloudSaves || [];
                     let totalChars = 0;
 
@@ -601,11 +592,14 @@
                         const li = document.createElement('li');
                         
                         let saveDate = 'N/A';
-                        if (save.timestamp) { // save.timestamp will be a Firestore Timestamp object
+                        if (save.timestamp) {
+                            // Firestore Timestamp objects (from new Date() or serverTimestamp()) have toDate()
                             if (typeof save.timestamp.toDate === 'function') {
                                 saveDate = save.timestamp.toDate().toLocaleDateString();
-                            } else if (save.timestamp.seconds) { // Fallback just in case
+                            } else if (save.timestamp.seconds) { // Fallback for older data or plain objects
                                 saveDate = new Date(save.timestamp.seconds * 1000).toLocaleDateString();
+                            } else if (save.timestamp instanceof Date) { // If somehow it's still a JS Date
+                                saveDate = save.timestamp.toLocaleDateString();
                             }
                         }
 
@@ -638,8 +632,8 @@
                     cloudSaveSlotsUsedEl.textContent = '0';
                     cloudCharCountUsedEl.textContent = '0';
                 }
-            } else { // docSnap is null, undefined, or doesn't have the 'exists' property as expected
-                console.warn("refreshCloudSavesDisplay: docSnap is invalid or 'exists' property not found. docSnap:", docSnap);
+            } else {
+                console.warn("refreshCloudSavesDisplay: docSnap is invalid or 'exists' property not found or not boolean. docSnap:", docSnap);
                 cloudSavesListEl.innerHTML = '<li>Could not load cloud save data.</li>';
                 cloudSaveSlotsUsedEl.textContent = '0';
                 cloudCharCountUsedEl.textContent = '0';
@@ -668,19 +662,17 @@
 
         try {
             await firebase.firestore().runTransaction(async (transaction) => {
-                const docSnap = await transaction.get(docRef); // docSnap in a transaction IS a DocumentSnapshot
+                const docSnap = await transaction.get(docRef);
                 let cloudSaves = [];
                 let currentTotalChars = 0;
 
-                // For DocumentSnapshot from a transaction, .exists is a boolean property
-                if (docSnap.exists) {
-                    const data = docSnap.data(); // .data() is a function
-                    if (data) { // Ensure data is not undefined
+                if (docSnap.exists) { // .exists is boolean here
+                    const data = docSnap.data();
+                    if (data) {
                         cloudSaves = data.cloudSaves || [];
                         currentTotalChars = cloudSaves.reduce((sum, s) => sum + (s.charCount || 0), 0);
                     }
                 }
-                // If doc doesn't exist, cloudSaves remains [] and currentTotalChars 0, which is fine.
 
                 if (cloudSaves.length >= MAX_CLOUD_SAVES) {
                     throw new Error(`Cloud save limit of ${MAX_CLOUD_SAVES} slots reached. Please delete an existing save.`);
@@ -693,7 +685,7 @@
                     name: saveName,
                     content: contentToSave,
                     charCount: charCountToSave,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                    timestamp: new Date() // Use client-side JS Date object. Firestore converts this to its Timestamp.
                 };
                 cloudSaves.push(newSave);
                 
@@ -715,6 +707,7 @@
             showStatusMessage('Please log in to open cloud saves.', 'info');
             return;
         }
+        // ... (rest of the unsaved changes check remains the same)
         const currentLocalNotes = localStorage.getItem('notes_localCopy');
         const currentEditorContent = notesTextArea.value;
         let unsavedChanges = false;
@@ -734,8 +727,8 @@
         if (!docRef) return;
         try {
             const docSnap = await docRef.get();
-            if (docSnap.exists) { // .exists is boolean for compat
-                const data = docSnap.data(); // .data() is function
+            if (docSnap.exists) {
+                const data = docSnap.data();
                 const saves = data.cloudSaves || [];
                 if (saves[index]) {
                     notesTextArea.value = saves[index].content;
@@ -764,8 +757,8 @@
         const docRef = userNotesDocRef();
         if (!docRef) return;
         try {
-            let saveNameToDelete = `Save ${index + 1}`; // Default name
-            const initialDocSnap = await docRef.get(); // Get current data to find the name
+            let saveNameToDelete = `Save ${index + 1}`;
+            const initialDocSnap = await docRef.get();
             if (initialDocSnap.exists) {
                 const initialData = initialDocSnap.data();
                 const initialSaves = initialData.cloudSaves || [];
