@@ -240,7 +240,7 @@
         padding: 15px;
         border: 1px solid #ddd;
         border-radius: 8px;
-        font-family: 'Roboto', sans-serif; /* User updated font */
+        font-family: 'Roboto', sans-serif;
         font-size: 1em;
         line-height: 1.6;
         resize: vertical;
@@ -327,18 +327,17 @@
         padding: 10px;
         border-bottom: 1px solid #f0f0f0;
         font-size: 0.9em;
-        /* Animation applied here */
         animation: fadeInListItem 0.4s ease-out forwards;
     }
-    #cloudSavesList li.loading-item { /* Style for the "Loading..." item */
+    #cloudSavesList li.loading-item {
         text-align: center;
         color: #777;
         font-style: italic;
         padding: 20px;
-        animation: none; /* No fade-in for the loading text itself */
-        border-bottom: none; /* No border for loading item */
+        animation: none;
+        border-bottom: none;
     }
-    #cloudSavesList li:last-child:not(.loading-item) { /* No border for the last actual save item */
+    #cloudSavesList li:last-child:not(.loading-item) {
         border-bottom: none;
     }
     .save-info { flex-grow: 1; }
@@ -384,7 +383,7 @@
     }
 
     /* Animation for fade-in */
-    .fade-in { animation: fadeInGeneral 0.5s ease-out; } /* Renamed to avoid conflict */
+    .fade-in { animation: fadeInGeneral 0.5s ease-out; }
     @keyframes fadeInGeneral { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     
     .slide-in { animation: slideIn 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
@@ -394,7 +393,7 @@
     @keyframes fadeInListItem {
         from {
             opacity: 0;
-            transform: translateY(8px); /* Slight upward movement */
+            transform: translateY(8px);
         }
         to {
             opacity: 1;
@@ -443,7 +442,8 @@
       </nav>
     </aside>
 
-    <main class="main-content fade-in"> <div class="dashboard-header">
+    <main class="main-content fade-in">
+      <div class="dashboard-header">
         <h2 class="dashboard-title">NOTES</h2>
       </div>
 
@@ -464,8 +464,8 @@
                 <button id="refreshCloudSavesBtn" title="Refresh Cloud Saves">🔄</button>
             </div>
             <div class="cloud-stats">
-                Slots: <span id="cloudSaveSlotsUsed">0</span>/10 |
-                Characters: <span id="cloudCharCountUsed">0</span>/<span id="cloudCharLimit">1,000,000</span>
+                Slots: <span id="cloudSaveSlotsUsed">0</span>/<span id="cloudSlotsTotal">10</span> |
+                Characters: <span id="cloudCharCountUsed">0</span>/<span id="cloudCharLimitDisplay">1,000,000</span>
             </div>
             <div class="cloud-save-controls">
                 <input type="text" id="cloudSaveName" placeholder="Enter save name for cloud">
@@ -484,8 +484,12 @@
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
   <script src="../firebase-config.js"></script>
   <script>
-    const MAX_CLOUD_SAVES = 10;
-    const MAX_CLOUD_CHARS = 1000000;
+    const OWNER_EMAILS = ["4simpleproblems@gmail.com", "belkwy30@minerva.sparcc.org"];
+    let IS_OWNER_ACCOUNT = false;
+
+    let MAX_CLOUD_SAVES = 10; // Default values
+    let MAX_CLOUD_CHARS = 1000000;
+
 
     // --- DOM Elements ---
     const notesTextArea = document.getElementById('notesTextArea');
@@ -497,19 +501,38 @@
     const cloudSaveNameEl = document.getElementById('cloudSaveName');
     const cloudSavesListEl = document.getElementById('cloudSavesList');
     const cloudSaveSlotsUsedEl = document.getElementById('cloudSaveSlotsUsed');
+    const cloudSlotsTotalEl = document.getElementById('cloudSlotsTotal'); // Added
     const cloudCharCountUsedEl = document.getElementById('cloudCharCountUsed');
-    const cloudCharLimitEl = document.getElementById('cloudCharLimit');
+    const cloudCharLimitDisplayEl = document.getElementById('cloudCharLimitDisplay'); // Renamed from cloudCharLimitEl
     const refreshCloudSavesBtn = document.getElementById('refreshCloudSavesBtn');
-    cloudCharLimitEl.textContent = MAX_CLOUD_CHARS.toLocaleString();
     const statusMessagesEl = document.getElementById('statusMessages');
     const marqueeEls = document.querySelectorAll('.marquee-content');
+    const sidebarUserNameEl = document.getElementById('userName'); // For sidebar
+    const sidebarUserEmailEl = document.getElementById('userEmail'); // For sidebar
+
 
     // --- Firebase Refs ---
     let currentUser = null;
     const userNotesDocRef = () => currentUser ? firebase.firestore().collection('notesApp').doc(currentUser.uid) : null;
+    const userProfileDocRef = () => currentUser ? firebase.firestore().collection('users').doc(currentUser.uid) : null; // For fetching username
 
 
     // --- Utility Functions ---
+    function updateCloudLimitUI() {
+        if (IS_OWNER_ACCOUNT) {
+            cloudSlotsTotalEl.textContent = "∞";
+            cloudCharLimitDisplayEl.textContent = "∞";
+            // Also update internal limits for logic if needed, though checks will bypass them
+            MAX_CLOUD_SAVES = Infinity; // Effectively
+            MAX_CLOUD_CHARS = Infinity; // Effectively
+        } else {
+            MAX_CLOUD_SAVES = 10; // Reset to default if not owner
+            MAX_CLOUD_CHARS = 1000000; // Reset to default
+            cloudSlotsTotalEl.textContent = MAX_CLOUD_SAVES;
+            cloudCharLimitDisplayEl.textContent = MAX_CLOUD_CHARS.toLocaleString();
+        }
+    }
+
     function showStatusMessage(message, type = 'info', duration = 4000) {
         statusMessagesEl.textContent = message;
         statusMessagesEl.className = '';
@@ -635,7 +658,7 @@
 
 
         if (!currentUser) {
-             if (showLoadingMessageInList || cloudSavesListEl.innerHTML.includes('Loading...')) { // Clear loading message if it was shown
+             if (showLoadingMessageInList || cloudSavesListEl.innerHTML.includes('Loading...')) {
                 cloudSavesListEl.innerHTML = '<li>Login to see cloud saves.</li>';
              }
              cloudSaveSlotsUsedEl.textContent = '0';
@@ -659,7 +682,7 @@
 
         try {
             const docSnap = await docRef.get();
-            cloudSavesListEl.innerHTML = ''; // Clear previous list / "Loading..." message
+            cloudSavesListEl.innerHTML = '';
 
             if (docSnap && typeof docSnap.exists === 'boolean') {
                 if (docSnap.exists) {
@@ -770,11 +793,13 @@
                     }
                 }
 
-                if (cloudSaves.length >= MAX_CLOUD_SAVES) {
-                    throw new Error(`Cloud save limit of ${MAX_CLOUD_SAVES} slots reached. Please delete an existing save.`);
-                }
-                if (currentTotalChars + charCountToSave > MAX_CLOUD_CHARS) {
-                    throw new Error(`Saving this note would exceed the total character limit of ${MAX_CLOUD_CHARS.toLocaleString()}.`);
+                if (!IS_OWNER_ACCOUNT) { // Apply limits only if not an owner
+                    if (cloudSaves.length >= MAX_CLOUD_SAVES) {
+                        throw new Error(`Cloud save limit of ${MAX_CLOUD_SAVES} slots reached. Please delete an existing save.`);
+                    }
+                    if (currentTotalChars + charCountToSave > MAX_CLOUD_CHARS) {
+                        throw new Error(`Saving this note would exceed the total character limit of ${MAX_CLOUD_CHARS.toLocaleString()}.`);
+                    }
                 }
 
                 const newSave = {
@@ -909,18 +934,40 @@
     // --- Authentication & Initial Load ---
     firebase.auth().onAuthStateChanged(async user => {
         currentUser = user;
-        const userNameDisplay = document.getElementById('userName');
-        const userEmailDisplay = document.getElementById('userEmail');
 
         if (user) {
-            if (userNameDisplay) userNameDisplay.textContent = user.displayName || user.email.split('@')[0];
-            if (userEmailDisplay) userEmailDisplay.textContent = user.email;
+            IS_OWNER_ACCOUNT = OWNER_EMAILS.includes(user.email);
+            updateCloudLimitUI(); // Update UI based on owner status
+
+            if (sidebarUserEmailEl) sidebarUserEmailEl.textContent = user.email;
+
+            // Fetch and set username from 'users' collection for the sidebar
+            const userProfRef = userProfileDocRef(); // Use the new ref for user profile
+            if (userProfRef) {
+                try {
+                    const userProfileSnap = await userProfRef.get();
+                    if (userProfileSnap.exists) {
+                        const userProfileData = userProfileSnap.data();
+                        if (sidebarUserNameEl) sidebarUserNameEl.textContent = userProfileData.username || user.displayName || user.email.split('@')[0];
+                    } else {
+                        if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0]; // Fallback
+                    }
+                } catch (error) {
+                    console.error("Error fetching user profile for username:", error);
+                    if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0]; // Fallback
+                }
+            } else {
+                 if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0]; // Fallback if no ref
+            }
             
             loadLocalSave();
             await refreshCloudSavesDisplay(true);
         } else {
-            if (userNameDisplay) userNameDisplay.textContent = 'Not Logged In';
-            if (userEmailDisplay) userEmailDisplay.textContent = 'Please log in';
+            IS_OWNER_ACCOUNT = false; // Reset owner status
+            updateCloudLimitUI(); // Reset UI limits
+
+            if (sidebarUserNameEl) sidebarUserNameEl.textContent = 'Not Logged In';
+            if (sidebarUserEmailEl) sidebarUserEmailEl.textContent = 'Please log in';
             cloudSavesListEl.innerHTML = '<li>Please log in to manage cloud saves.</li>';
             showStatusMessage('Please log in to use cloud features.', 'warning', null);
         }
@@ -936,7 +983,7 @@
     saveCloudBtn.addEventListener('click', handleCloudSave);
     refreshCloudSavesBtn.addEventListener('click', () => refreshCloudSavesDisplay(true));
 
-    updateCharacterCount();
+    updateCharacterCount(); // Initial call
 
   </script>
 </body>
