@@ -462,13 +462,16 @@
         // Load sounds from JSON for the playlist creation/edit form
         async function loadSoundsForForm() {
             try {
-                const response = await fetch('../SoundboardSN.json');
-                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+                const response = await fetch('../SoundboardSN.json'); // Ensure this path is correct
+                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status} - Failed to fetch SoundboardSN.json.`);
                 allSoundsData = await response.json();
+                 if (Object.keys(allSoundsData).length === 0) {
+                    console.warn("SoundboardSN.json loaded but is empty or has no sound categories.");
+                }
             } catch (error) {
                 console.error("Error loading SoundboardSN.json:", error);
-                if(playlistSoundSelector) playlistSoundSelector.innerHTML = `<p style="color:var(--v4-error-color);">Error loading sounds for selection.</p>`;
-                showStatus("Could not load sounds data.", "error");
+                if(playlistSoundSelector) playlistSoundSelector.innerHTML = `<p style="color:var(--v4-error-color);">Error loading sounds for selection. Please check file path and format.</p>`;
+                showStatus("Critical: Could not load sounds data. Playlist creation/editing will be affected.", "error", 5000);
             }
         }
 
@@ -488,6 +491,11 @@
             playlistSoundSelector.innerHTML = ''; // Clear previous sounds
             const categoryIcons = {"NormalSounds": "😊", "ExplicitSounds": "😈"};
             let soundAvailableOverall = false;
+
+            if (Object.keys(allSoundsData).length === 0) {
+                 playlistSoundSelector.innerHTML = `<p style="color:var(--v4-error-color);">No sounds loaded. Cannot select sounds.</p>`;
+                 return;
+            }
 
             for (const categoryKey in allSoundsData) {
                 if (!allSoundsData.hasOwnProperty(categoryKey) || !Array.isArray(allSoundsData[categoryKey])) continue;
@@ -516,7 +524,6 @@
                         const checkboxEl = document.createElement('input');
                         checkboxEl.type = 'checkbox';
                         checkboxEl.value = JSON.stringify(soundObject);
-                        // Check if this sound is in the currently selected list for the modal
                         checkboxEl.checked = selectedSoundObjectsInModal.some(s => s.filename === soundObject.filename && s.category === soundObject.category);
                         checkboxEl.addEventListener('change', handleSoundSelectionChangeInModal);
 
@@ -526,8 +533,10 @@
                     });
                 }
             }
-            if (!soundAvailableOverall) {
-                 playlistSoundSelector.innerHTML = searchTerm ? `<p>No sounds match "${searchTerm}".</p>`: (Object.keys(allSoundsData).length === 0 ? `<p>No sounds loaded.</p>` : `<p>No sounds available.</p>`);
+            if (!soundAvailableOverall && searchTerm) {
+                 playlistSoundSelector.innerHTML = `<p>No sounds match "${searchTerm}".</p>`;
+            } else if (!soundAvailableOverall && !searchTerm) {
+                playlistSoundSelector.innerHTML = `<p>No sounds found in the loaded data.</p>`;
             }
         }
 
@@ -539,18 +548,18 @@
         // "Create New Playlist" button opens the modal
         createPlaylistBtn.addEventListener('click', () => {
             modalTitle.textContent = 'Create New Playlist';
-            playlistForm.reset(); // Clear any previous data
-            playlistIdStore.value = ''; // Ensure no ID is set for creation
-            selectedSoundObjectsInModal = []; // Reset selected sounds
-            renderSoundSelector(''); // Render all sounds for selection
-            updateSelectedSoundsCount(); // Update count (should be 0)
+            playlistForm.reset(); 
+            playlistIdStore.value = ''; 
+            selectedSoundObjectsInModal = []; 
+            renderSoundSelector(''); 
+            updateSelectedSoundsCount(); 
             playlistModal.style.display = 'block';
-            playlistNameInput.focus(); // Focus on the name field
+            playlistNameInput.focus(); 
         });
 
         // Close modal functionality
         closePlaylistModalBtn.addEventListener('click', () => playlistModal.style.display = 'none');
-        window.addEventListener('click', (event) => { // Also close if clicking outside modal content
+        window.addEventListener('click', (event) => { 
             if (event.target == playlistModal) {
                 playlistModal.style.display = 'none';
             }
@@ -564,39 +573,44 @@
             const name = playlistNameInput.value.trim();
             const description = playlistDescriptionInput.value.trim();
             const isPrivate = playlistForm.elements.playlistPrivacy.value === 'private';
-            const sounds = selectedSoundObjectsInModal; // Get selected sounds
+            const sounds = selectedSoundObjectsInModal; 
 
             if (!name) { showStatus("Playlist name is required.", "error"); playlistNameInput.focus(); return; }
-            if (sounds.length === 0) { showStatus("Please select at least one sound for the playlist.", "error"); return; }
+            if (sounds.length === 0 && Object.keys(allSoundsData).length > 0) { // Only require sounds if sounds were available to select
+                 showStatus("Please select at least one sound for the playlist.", "error"); return; 
+            } else if (sounds.length === 0 && Object.keys(allSoundsData).length === 0) {
+                showStatus("Warning: No sounds selected because no sounds are available. Creating playlist without sounds.", "info", 4000);
+            }
+
 
             const playlistData = {
                 name,
                 description,
-                sounds, // Array of {category, filename, displayName}
+                sounds, 
                 isPrivate,
                 creatorId: currentUser.uid,
-                creatorUsername: currentUsername, // Denormalized for easier display
-                updatedAt: firebase.firestore.FieldValue.serverTimestamp() // Server timestamp for updates
+                creatorUsername: currentUsername, 
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             };
 
-            const existingId = playlistIdStore.value; // ID from hidden input if editing
+            const existingId = playlistIdStore.value; 
             savePlaylistBtn.disabled = true; savePlaylistBtn.textContent = 'Saving...';
 
             try {
-                if (existingId) { // Editing existing playlist
+                if (existingId) { 
                     await db.collection('playlists').doc(existingId).update(playlistData);
                     showStatus("Playlist updated successfully!", "success");
-                } else { // Creating new playlist
-                    playlistData.id = generatePlaylistId(); // Generate and store a new ID
-                    playlistData.createdAt = firebase.firestore.FieldValue.serverTimestamp(); // Server timestamp for creation
+                } else { 
+                    playlistData.id = generatePlaylistId(); 
+                    playlistData.createdAt = firebase.firestore.FieldValue.serverTimestamp(); 
                     await db.collection('playlists').doc(playlistData.id).set(playlistData);
                     showStatus("Playlist created successfully!", "success");
                 }
-                playlistModal.style.display = 'none'; // Close modal on success
-                loadPlaylists(); // Refresh the displayed list of playlists
+                playlistModal.style.display = 'none'; 
+                loadPlaylists(); 
             } catch (error) {
                 console.error("Error saving playlist:", error);
-                showStatus("Error saving playlist: " + error.message, "error");
+                showStatus("Error saving playlist: " + error.message + ". Check console and Firestore rules.", "error", 5000);
             } finally {
                 savePlaylistBtn.disabled = false; savePlaylistBtn.textContent = 'Save Playlist';
             }
@@ -605,13 +619,13 @@
         // Load and display playlists from Firestore
         async function loadPlaylists() {
             if (!currentUser) { playlistsContainer.innerHTML = '<p>Please log in to see playlists.</p>'; return; }
-            playlistsContainer.innerHTML = '<p>Loading playlists...</p>'; // Loading indicator
+            playlistsContainer.innerHTML = '<p>Loading playlists...</p>'; 
 
             try {
                 let query = db.collection('playlists').orderBy('updatedAt', 'desc');
                 if (currentView === 'my-playlists') {
                     query = query.where('creatorId', '==', currentUser.uid);
-                } else { // public-playlists
+                } else { 
                     query = query.where('isPrivate', '==', false);
                 }
 
@@ -623,20 +637,20 @@
                     return;
                 }
 
-                playlistsContainer.innerHTML = ''; // Clear previous list
+                playlistsContainer.innerHTML = ''; 
                 snapshot.forEach(doc => {
                     const playlist = doc.data();
-                    const playlistIdToUse = playlist.id || doc.id; // Use stored ID or doc ID as fallback
+                    const playlistIdToUse = playlist.id || doc.id; 
                     if (!playlistIdToUse) {
                         console.warn("Playlist document missing ID:", doc.ref.path, playlist);
-                        return; // Skip rendering if no usable ID
+                        return; 
                     }
                     renderPlaylistCard(playlist, playlistIdToUse);
                 });
             } catch (error) {
                 console.error("Error loading playlists:", error);
-                playlistsContainer.innerHTML = `<p style="color:var(--v4-error-color);">Error loading playlists: ${error.message}</p>`;
-                showStatus("Failed to load playlists.", "error");
+                playlistsContainer.innerHTML = `<p style="color:var(--v4-error-color);">Error loading playlists: ${error.message}. Check console and Firestore rules/indexes.</p>`;
+                showStatus("Failed to load playlists. Check console.", "error", 5000);
             }
         }
 
@@ -647,7 +661,7 @@
             const desc = document.createElement('p'); desc.className = 'desc'; desc.textContent = playlist.description || 'No description.'; card.appendChild(desc);
             const chips = document.createElement('div'); chips.className = 'info-chips';
             chips.innerHTML = `<span class="info-chip">${playlist.sounds.length} Sound${playlist.sounds.length !== 1 ? 's' : ''}</span> <span class="info-chip ${playlist.isPrivate ? 'private' : 'public'}">${playlist.isPrivate ? 'Private' : 'Public'}</span>`;
-            if (currentView === 'public-playlists' && playlist.creatorUsername && playlist.creatorId !== currentUser.uid) { // Show creator for public if not self
+            if (currentView === 'public-playlists' && playlist.creatorUsername && playlist.creatorId !== currentUser.uid) {
                  chips.innerHTML += `<span class="info-chip">By: ${playlist.creatorUsername}</span>`;
             }
             card.appendChild(chips);
@@ -655,12 +669,12 @@
             const openBtn = document.createElement('button'); openBtn.textContent = 'Open'; openBtn.className = 'control-button-v4 action-button-v4';
             openBtn.onclick = () => window.location.href = `playlist-view.html?viewid=${playlistId}`; actionsDiv.appendChild(openBtn);
 
-            if (playlist.creatorId === currentUser.uid) { // Owner actions
+            if (playlist.creatorId === currentUser.uid) { 
                 const editBtn = document.createElement('button'); editBtn.textContent = 'Edit'; editBtn.className = 'control-button-v4 action-button-v4';
                 editBtn.onclick = () => openEditPlaylistForm(playlistId); actionsDiv.appendChild(editBtn);
                 const deleteBtn = document.createElement('button'); deleteBtn.textContent = 'Delete'; deleteBtn.className = 'control-button-v4 action-button-v4 delete';
                 deleteBtn.onclick = () => deletePlaylist(playlistId, playlist.name); actionsDiv.appendChild(deleteBtn);
-            } else if (!playlist.isPrivate) { // Non-owner actions for public playlists
+            } else if (!playlist.isPrivate) { 
                 const remixBtn = document.createElement('button'); remixBtn.textContent = 'Remix'; remixBtn.className = 'control-button-v4 action-button-v4';
                 remixBtn.onclick = () => remixPlaylist(playlistId); actionsDiv.appendChild(remixBtn);
             }
@@ -669,6 +683,9 @@
 
         // Open the modal to edit an existing playlist
         async function openEditPlaylistForm(playlistId) {
+            if (Object.keys(allSoundsData).length === 0) {
+                showStatus("Sound data not loaded. Cannot edit playlist sounds.", "error", 4000);
+            }
             try {
                 const doc = await db.collection('playlists').doc(playlistId).get();
                 if (!doc.exists) { showStatus("Playlist not found for editing.", "error"); return; }
@@ -677,18 +694,18 @@
 
                 modalTitle.textContent = 'Edit Playlist';
                 playlistForm.reset();
-                playlistIdStore.value = playlistId; // Store ID for update
+                playlistIdStore.value = playlistId; 
                 playlistNameInput.value = playlist.name;
                 playlistDescriptionInput.value = playlist.description;
                 playlistForm.elements.playlistPrivacy.value = playlist.isPrivate ? 'private' : 'public';
-                selectedSoundObjectsInModal = [...playlist.sounds]; // Load existing sounds
-                renderSoundSelector(''); // Render sounds, auto-checking selected ones
+                selectedSoundObjectsInModal = [...playlist.sounds]; 
+                renderSoundSelector(''); 
                 updateSelectedSoundsCount();
                 playlistModal.style.display = 'block';
                 playlistNameInput.focus();
             } catch (error) {
                 console.error("Error fetching playlist for edit:", error);
-                showStatus("Failed to load playlist for editing.", "error");
+                showStatus("Failed to load playlist for editing. Check console.", "error", 5000);
             }
         }
 
@@ -698,30 +715,33 @@
             try {
                 await db.collection('playlists').doc(playlistId).delete();
                 showStatus(`Playlist "${playlistName}" deleted successfully.`, "success");
-                loadPlaylists(); // Refresh list
+                loadPlaylists(); 
             } catch (error) {
                 console.error("Error deleting playlist:", error);
-                showStatus(`Error deleting playlist: ${error.message}`, "error");
+                showStatus(`Error deleting playlist: ${error.message}. Check console.`, "error", 5000);
             }
         }
 
         // Open the modal to remix a public playlist
         async function remixPlaylist(playlistId) {
+            if (Object.keys(allSoundsData).length === 0) {
+                showStatus("Sound data not loaded. Cannot remix playlist sounds.", "error", 4000);
+            }
              try {
                 const doc = await db.collection('playlists').doc(playlistId).get();
                 if (!doc.exists) { showStatus("Playlist to remix not found.", "error"); return; }
                 const playlistToRemix = doc.data();
-                if (playlistToRemix.isPrivate && playlistToRemix.creatorId !== currentUser.uid) { // Allow owner to "remix" their own private if desired, but not others'
+                if (playlistToRemix.isPrivate && playlistToRemix.creatorId !== currentUser.uid) { 
                     showStatus("Cannot remix another user's private playlist.", "error"); return;
                 }
 
                 modalTitle.textContent = 'Remix Playlist';
                 playlistForm.reset();
-                playlistIdStore.value = ''; // This will be a new playlist
+                playlistIdStore.value = ''; 
                 playlistNameInput.value = `${playlistToRemix.name} (remix)`;
                 playlistDescriptionInput.value = playlistToRemix.description;
-                playlistForm.elements.playlistPrivacy.value = 'private'; // Default remixed playlist to private
-                selectedSoundObjectsInModal = [...playlistToRemix.sounds]; // Copy sounds
+                playlistForm.elements.playlistPrivacy.value = 'private'; 
+                selectedSoundObjectsInModal = [...playlistToRemix.sounds]; 
                 renderSoundSelector('');
                 updateSelectedSoundsCount();
                 playlistModal.style.display = 'block';
@@ -729,45 +749,51 @@
                 playlistNameInput.focus();
             } catch (error) {
                 console.error("Error preparing playlist for remix:", error);
-                showStatus("Failed to prepare playlist for remixing.", "error");
+                showStatus("Failed to prepare playlist for remixing. Check console.", "error", 5000);
             }
         }
 
-        // Check URL parameters on page load (e.g., for edit/remix links from playlist-view.html)
+        // Check URL parameters on page load
         async function processUrlParametersAndLoadPlaylists() {
             const urlParams = new URLSearchParams(window.location.search);
             const editId = urlParams.get('edit');
             const remixId = urlParams.get('remix');
             let actionTakenViaUrl = false;
 
-            // Ensure allSoundsData is loaded before attempting to open modals that need it
-            if (Object.keys(allSoundsData).length === 0 && (editId || remixId)) {
-                 console.log("Waiting for sounds data to load before processing URL params...");
-                 // This function is already called after `await loadSoundsForForm()`, so allSoundsData should be ready.
+            // Ensure allSoundsData is available before trying to open modals that depend on it
+            if ((editId || remixId) && Object.keys(allSoundsData).length === 0) {
+                console.warn("processUrlParameters: Sound data not yet loaded. Waiting briefly or re-check loadSoundsForForm.");
+                // loadSoundsForForm should have been awaited, but as a fallback:
+                await loadSoundsForForm(); // Re-ensure or wait
+                if (Object.keys(allSoundsData).length === 0) {
+                    showStatus("Cannot process edit/remix link: Sound data failed to load.", "error", 5000);
+                    loadPlaylists(); // Load playlists anyway
+                    return;
+                }
             }
-
+            
             if (editId) {
-                await openEditPlaylistForm(editId); // Make sure this function is async if it does async work before modal display
+                await openEditPlaylistForm(editId); 
                 actionTakenViaUrl = true;
             } else if (remixId) {
-                await remixPlaylist(remixId); // Make sure this function is async
+                await remixPlaylist(remixId); 
                 actionTakenViaUrl = true;
             }
 
             if (actionTakenViaUrl) {
-                // Clean URL parameters after processing to avoid re-triggering on refresh
                 window.history.replaceState({}, document.title, window.location.pathname);
             }
             
-            // Load playlists regardless, so the main view is populated
-            // If a modal was opened by URL params, this loads in the background.
-            loadPlaylists();
+            if (!actionTakenViaUrl) { // Only load playlists if a modal wasn't opened by URL params
+                loadPlaylists();
+            } else { // If modal opened, still good to load playlists in background for when modal closes
+                loadPlaylists();
+            }
         }
 
-        // Initial call when DOM is ready and user is authenticated
         document.addEventListener('DOMContentLoaded', () => {
-            // Auth state change listener handles the main initialization flow
-            setTimeout(updateMarquees, 600); // Initial marquee update
+            // Auth state change listener handles the main initialization flow including first load of playlists
+            setTimeout(updateMarquees, 600);
         });
     </script>
 </body>
