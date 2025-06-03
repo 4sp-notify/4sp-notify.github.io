@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>4SP - View Playlist</title>
+    <link rel="stylesheet" href="../css/style.css"> <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="../firebase-config.js"></script>
+
+    <style>
+        /* V4 Theme Base (Reused and adapted) */
+        :root {
+            --v4-bg-gradient: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
+            --v4-card-bg: #fff;
+            --v4-text-primary: #333;
+            --v4-text-secondary: #555;
+            --v4-purple-accent: #6720bd;
+            --v4-purple-accent-darker: #5a1aa8;
+            --v4-purple-gradient: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+            --v4-border-light: #ddd;
+            --v4-border-softer: #eee;
+            --v4-input-bg: #f8f9fa;
+            --v4-input-border: #ccc;
+            --v4-error-color: #721c24;
+            --v4-success-color: #155724;
+            --v4-info-color: #004085;
+            --v4-font-primary: 'PrimaryFont', sans-serif;
+            --v4-font-secondary: 'SecondaryFont', sans-serif;
+        }
+
+        body.playlist-view-page {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            margin: 0;
+            font-family: var(--v4-font-primary);
+            background: var(--v4-bg-gradient);
+            color: var(--v4-text-primary);
+            line-height: 1.6;
+        }
+
+        .playlist-view-container-wrapper { display: flex; flex: 1; overflow: hidden; }
+
+        /* Sidebar Styles (Consistent with V4 theme) */
+        .sidebar {
+            width: 200px;
+            background: linear-gradient(180deg, #333 0%, #2a2a2a 100%);
+            color: #fff; padding: 20px 10px; display: flex; flex-direction: column;
+            border-right: 1px solid #444;
+            transition: width 0.5s ease-in-out;
+            position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }
+        .sidebar.collapsed { width: 85px; }
+        #toggleSidebar {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            background: none; border: none; color: #fff; font-size: 1.2em;
+            cursor: pointer; padding: 4px; transition: transform 0.5s ease-in-out;
+        }
+        .sidebar.collapsed #toggleSidebar { transform: translateX(-50%) rotate(180deg); }
+        .user-info {
+            text-align: center; margin: 60px 0 30px; border-bottom: 1px solid #555;
+            padding-bottom: 20px; overflow: visible;
+        }
+        .marquee-container {
+            overflow: hidden; white-space: nowrap; position: relative;
+            width: 100%; height: 1.8em; line-height: 1.8em;
+        }
+        .marquee-content { display: inline-block; padding-left: 100%; transform: translateX(0); animation: none; line-height: 1.8em; }
+        .marquee-active { animation: scroll-left-playlist-view 12s linear infinite; }
+        .sidebar.collapsed .marquee-active { animation-duration: 20s; }
+        @keyframes scroll-left-playlist-view { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+        .user-info .username { font-family: var(--v4-font-primary); font-size: 1.3em; margin-bottom: 8px; line-height: 0.2em; font-weight: bold;}
+        .user-info .email { font-family: var(--v4-font-secondary); font-size: 0.9em; color: #bbb; }
+        .sidebar nav ul { list-style: none; padding: 0; margin: 60px 0 0; }
+        .sidebar nav li { margin-bottom: 10px; }
+        .sidebar nav a {
+            display: flex; align-items: center; padding: 12px 15px; color: #fff;
+            text-decoration: none; border-radius: 8px; transition: all 0.3s ease;
+            font-family: var(--v4-font-primary); text-transform: uppercase;
+            position: relative; overflow: hidden; font-size: 1em;
+        }
+        .sidebar nav a.active, .sidebar nav a:hover {
+            background: var(--v4-purple-gradient);
+            transform: translateX(5px); color: #fff;
+        }
+        .sidebar nav a .icon { font-size: 1.2em; width: 24px; text-align: center; }
+        .sidebar nav a .label { margin-left: 10px; white-space: nowrap; }
+        .sidebar.collapsed nav a { justify-content: center; padding: 10px 0; }
+        .sidebar.collapsed nav a .label { display: none; }
+        .sidebar.collapsed nav a .icon { margin-right: 0; margin-left:0; }
+
+        /* Main Content Area */
+        .main-playlist-view-content {
+            flex: 1; padding: 30px;
+            background: var(--v4-bg-gradient);
+            overflow-y: auto; display: flex; flex-direction: column;
+        }
+        .playlist-view-header {
+            background: var(--v4-card-bg);
+            padding: 25px 35px; border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            margin-bottom: 25px;
+            border: 1px solid rgba(103, 32, 189, 0.1);
+        }
+        #playlistViewName {
+            font-size: 2.4em; font-weight: bold;
+            background: var(--v4-purple-gradient);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; text-fill-color: transparent;
+            margin-bottom: 10px;
+        }
+        #playlistViewCreator { font-size: 0.95em; color: var(--v4-text-secondary); margin-bottom: 5px; }
+        #playlistViewCreator .owner-tag { font-weight: bold; color: var(--v4-purple-accent); }
+        #playlistViewPrivacy { font-size: 0.9em; color: var(--v4-text-secondary); margin-bottom: 15px; font-style: italic; }
+        #playlistViewDescription {
+            font-size: 1em; color: var(--v4-text-primary);
+            margin-bottom: 20px; padding: 15px; background-color: var(--v4-input-bg);
+            border-radius: 8px; border: 1px solid var(--v4-border-softer);
+        }
+        .playlist-view-actions { margin-top: 15px; display: flex; gap: 10px; }
+
+        .control-button-v4 {
+            padding: 10px 18px; background: var(--v4-purple-gradient);
+            color: white; border: none; border-radius: 8px; cursor: pointer;
+            font-family: var(--v4-font-primary); font-size: 0.95em;
+            text-transform: uppercase; transition: all 0.25s ease;
+            box-shadow: 0 2px 8px rgba(103, 32, 189, 0.3);
+        }
+        .control-button-v4:hover {
+            background: linear-gradient(135deg, var(--v4-purple-accent-darker) 0%, #7923c8 100%);
+            transform: translateY(-1px); box-shadow: 0 4px 12px rgba(103, 32, 189, 0.5);
+        }
+         .control-button-v4.secondary {
+            background: var(--v4-input-bg); color: var(--v4-purple-accent);
+            border: 1px solid var(--v4-purple-accent);
+        }
+        .control-button-v4.secondary:hover {
+            background: #e9ecef;
+        }
+
+
+        .playlist-sounds-list-container {
+            background: var(--v4-card-bg); padding: 25px; border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.07); margin-bottom: 25px;
+        }
+        .playlist-sounds-list-container h4 {
+            font-size: 1.4em; color: var(--v4-purple-accent); margin-top: 0; margin-bottom: 20px;
+            padding-bottom: 10px; border-bottom: 1px solid var(--v4-border-light);
+        }
+        #soundItemsContainer { display: flex; flex-direction: column; gap: 12px; }
+
+        .sound-item-v4 {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 12px 18px; background-color: var(--v4-input-bg);
+            border: 1px solid var(--v4-border-softer); border-radius: 8px;
+            transition: background-color 0.2s;
+        }
+        .sound-item-v4:hover { background-color: #e9ecef; }
+        .sound-item-v4 .sound-info { display: flex; flex-direction: column; }
+        .sound-item-v4 .sound-name { font-size: 1.05em; color: var(--v4-text-primary); font-weight: 500; }
+        .sound-item-v4 .sound-category-chip {
+            font-size: 0.75em; background-color: var(--v4-border-light); color: var(--v4-text-secondary);
+            padding: 3px 8px; border-radius: 10px; margin-top: 4px; display: inline-block;
+        }
+        .play-sound-btn { font-size: 0.85em !important; padding: 8px 15px !important; }
+        .play-sound-btn.playing {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%) !important; /* Red for stop */
+        }
+
+
+        .playlist-playback-controls {
+            background: var(--v4-card-bg); padding: 20px 25px; border-radius: 15px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.07);
+        }
+        .playlist-playback-controls .control-group { margin-top: 15px; }
+        .playlist-playback-controls label {
+            font-family: var(--v4-font-secondary); font-size: 0.9em;
+            color: var(--v4-text-secondary); margin-bottom: 6px; display: block;
+        }
+        .playlist-playback-controls input[type="range"] {
+            -webkit-appearance: none; appearance: none; width: 100%; height: 8px;
+            background: var(--v4-border-light); outline: none; border-radius: 5px;
+        }
+        .playlist-playback-controls input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 18px; height: 18px;
+            background: var(--v4-purple-accent); cursor: pointer; border-radius: 50%;
+        }
+        .playlist-playback-controls input[type="range"]::-moz-range-thumb {
+            width: 18px; height: 18px; background: var(--v4-purple-accent);
+            cursor: pointer; border-radius: 50%; border: none;
+        }
+        .stop-all-btn-v4 {
+            background: linear-gradient(135deg, #c82333 0%, #b01e2c 100%); /* Red gradient */
+            padding: 10px 18px; color: white; border: none; border-radius: 8px; cursor: pointer;
+            font-family: var(--v4-font-primary); font-size: 0.95em; text-transform: uppercase;
+            transition: all 0.25s ease; box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+            width: 100%; margin-bottom: 15px;
+        }
+         .stop-all-btn-v4:hover {
+            background: linear-gradient(135deg, #b01e2c 0%, #9a1a25 100%);
+            transform: translateY(-1px); box-shadow: 0 4px 12px rgba(220, 53, 69, 0.5);
+        }
+
+
+        /* Status Message (reused) */
+        .status-message-v4 {
+            display: none; padding: 15px 25px; margin: 20px auto; border-radius: 12px;
+            font-size: 0.95em; text-align: center; min-width: 300px; max-width: 600px;
+            width: auto; font-family: var(--v4-font-primary, 'PrimaryFont', sans-serif);
+            text-transform: uppercase; border: 1px solid transparent;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1); color: white;
+        }
+        .status-message-v4.fade-in { display: block; animation: fadeInV4View 0.3s ease forwards; }
+        .status-message-v4.fade-out { animation: fadeOutV4View 0.3s ease forwards; }
+        .status-message-v4.success { background: linear-gradient(135deg, #1c7430, #155724); border-color: #104d1e; }
+        .status-message-v4.error { background: linear-gradient(135deg, #8f262a, #721c24); border-color: #5f171e; }
+        .status-message-v4.info { background: var(--v4-purple-gradient); border-color: var(--v4-purple-accent-darker); }
+
+        @keyframes fadeInV4View { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeOutV4View { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(10px); } }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .sidebar { width: 100%; height: auto; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid #333; padding: 5px; }
+            .sidebar.collapsed { width: 100%; } .sidebar .user-info { display: none; }
+            .sidebar nav { width: 100%; }
+            .sidebar nav ul { flex-direction: row; margin: 0; justify-content: center; width: 100%; }
+            .sidebar nav li { margin-bottom: 0; margin-right: 5px; }
+            .sidebar nav a { padding: 8px 10px; font-size: 0.9em;}
+            #toggleSidebar { display: none; }
+            .playlist-view-container-wrapper { flex-direction: column; }
+            .main-playlist-view-content { padding: 15px; }
+            #playlistViewName { font-size: 1.8em; }
+            .playlist-view-header, .playlist-sounds-list-container, .playlist-playback-controls { padding: 20px; }
+        }
+    </style>
+</head>
+<body class="playlist-view-page">
+
+    <header class="main-header light-bg">
+        <div class="container">
+            <div class="logo">
+                <a href="../index.html">
+                    <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer;"/>
+                </a>
+            </div>
+            <div class="auth-buttons">
+                <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="logoutBtnHeader" class="btn btn-login">LOG OUT</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="playlist-view-container-wrapper">
+        <aside class="sidebar slide-in" id="sidebar">
+            <button id="toggleSidebar">☰</button>
+            <div class="user-info">
+                <div class="marquee-container"> <span id="userName" class="marquee-content username">Loading…</span> </div>
+                <div class="marquee-container"> <span id="userEmail" class="marquee-content email">Loading…</span> </div>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
+                    <li><a href="proxies.html"><span class="icon">🛡️</span><span class="label">Proxies</span></a></li>
+                    <li><a href="soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
+                    <li><a href="playlists.html" class="active"><span class="icon">🎶</span><span class="label">Playlists</span></a></li>
+                    <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
+                    <li><a href="others.html"><span class="icon">✨</span><span class="label">Others</span></a></li>
+                    <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                    <li><a href="#" id="signOutLinkSidebar"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-playlist-view-content">
+            <div id="playlistDetailContainer">
+                <div class="playlist-view-header">
+                    <h1 id="playlistViewName">Loading Playlist...</h1>
+                    <p id="playlistViewCreator"></p>
+                    <p id="playlistViewPrivacy"></p>
+                    <div id="playlistViewDescription"></div>
+                    <div class="playlist-view-actions" id="playlistViewActionsContainer">
+                        </div>
+                </div>
+
+                <div class="playlist-sounds-list-container">
+                    <h4>Sounds in this Playlist (<span id="playlistSoundCount">0</span>)</h4>
+                    <div id="soundItemsContainer">
+                        <p>Loading sounds...</p>
+                    </div>
+                </div>
+
+                <div class="playlist-playback-controls">
+                     <button id="stopAllPlaylistSoundsBtn" class="stop-all-btn-v4">Stop All Sounds</button>
+                    <div class="control-group">
+                        <label for="masterPlaylistVolumeSlider">Master Volume: <span id="masterPlaylistVolumeValue">100%</span></label>
+                        <input type="range" id="masterPlaylistVolumeSlider" min="0" max="1" step="0.01" value="1">
+                    </div>
+                </div>
+            </div>
+            <div class="status-message-v4" id="statusMessage"></div>
+        </main>
+    </div>
+
+    <script>
+        // --- V4 Standard Setup (Auth, Sidebar, User Info) ---
+        const marqueeEls = document.querySelectorAll('.marquee-content');
+        let currentUser = null;
+        let currentUsername = 'User'; // Default username
+
+        firebase.auth().onAuthStateChanged(async user => {
+            if (!user) {
+                window.location.href = '../login.html';
+            } else {
+                currentUser = user;
+                const userEmailEl = document.getElementById('userEmail');
+                const userNameEl = document.getElementById('userName');
+
+                if (userEmailEl) userEmailEl.textContent = user.email;
+
+                if (userNameEl) {
+                    try {
+                        const userDocRef = firebase.firestore().collection('users').doc(user.uid);
+                        const doc = await userDocRef.get();
+                        currentUsername = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User');
+                        userNameEl.textContent = currentUsername;
+                    } catch (error) {
+                        userNameEl.textContent = 'User'; console.error("Error fetching username:", error);
+                    }
+                }
+                updateMarquees();
+                initializePlaylistView(); // Load playlist after user is confirmed
+            }
+        });
+
+        document.getElementById('logoutBtnHeader').addEventListener('click', () => {
+            firebase.auth().signOut().then(() => { window.location.href = '../login.html'; });
+        });
+        document.getElementById('signOutLinkSidebar').addEventListener('click', (e) => {
+            e.preventDefault();
+            firebase.auth().signOut().then(() => { window.location.href = '../login.html'; });
+        });
+
+        const sidebar = document.getElementById('sidebar');
+        const toggleSidebarBtn = document.getElementById('toggleSidebar');
+        if (toggleSidebarBtn && sidebar) {
+            toggleSidebarBtn.addEventListener('click', () => {
+                sidebar.classList.toggle('collapsed');
+                setTimeout(updateMarquees, 550);
+            });
+        }
+        function updateMarquees() { /* ... (same as playlists.html) ... */
+            marqueeEls.forEach(el => {
+                if (!el || !el.parentElement) return;
+                const parent = el.parentElement; const overflow = el.scrollWidth > parent.clientWidth;
+                const shouldScroll = sidebar.classList.contains('collapsed') || (overflow && !sidebar.classList.contains('collapsed'));
+                el.classList.toggle('marquee-active', shouldScroll);
+                if (!overflow && !sidebar.classList.contains('collapsed')) { el.classList.remove('marquee-active');}
+            });
+        }
+        window.addEventListener('resize', updateMarquees);
+        // --- End V4 Standard Setup ---
+
+        // --- Playlist View Specific Logic ---
+        const db = firebase.firestore();
+        const statusMessageEl = document.getElementById('statusMessage');
+        let statusMessageTimeout = null;
+
+        const playlistViewNameEl = document.getElementById('playlistViewName');
+        const playlistViewCreatorEl = document.getElementById('playlistViewCreator');
+        const playlistViewPrivacyEl = document.getElementById('playlistViewPrivacy');
+        const playlistViewDescriptionEl = document.getElementById('playlistViewDescription');
+        const playlistSoundCountEl = document.getElementById('playlistSoundCount');
+        const soundItemsContainerEl = document.getElementById('soundItemsContainer');
+        const playlistViewActionsContainerEl = document.getElementById('playlistViewActionsContainer');
+
+        // Sound Playback
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const globalGainNode = audioContext.createGain();
+        globalGainNode.connect(audioContext.destination);
+        let playingAudios = []; // To store { audioElement, sourceNode, gainNode, buttonElement, soundDetails }
+
+        const masterVolumeSlider = document.getElementById('masterPlaylistVolumeSlider');
+        const masterVolumeValueDisplay = document.getElementById('masterPlaylistVolumeValue');
+        const stopAllSoundsBtn = document.getElementById('stopAllPlaylistSoundsBtn');
+
+        masterVolumeSlider.addEventListener('input', (e) => {
+            const volume = parseFloat(e.target.value);
+            masterVolumeValueDisplay.textContent = `${Math.round(volume * 100)}%`;
+            globalGainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+            localStorage.setItem('masterPlaylistViewVolume', volume.toString());
+        });
+        stopAllSoundsBtn.addEventListener('click', stopAllActiveSounds);
+
+
+        function showStatus(message, type = 'info', duration = 3000) { /* ... (same as playlists.html) ... */
+            if (statusMessageTimeout) clearTimeout(statusMessageTimeout);
+            statusMessageEl.textContent = message;
+            statusMessageEl.className = 'status-message-v4 ' + type;
+            statusMessageEl.style.display = 'block';
+            statusMessageEl.classList.remove('fade-out');
+            statusMessageEl.classList.add('fade-in');
+            statusMessageTimeout = setTimeout(() => {
+                statusMessageEl.classList.remove('fade-in');
+                statusMessageEl.classList.add('fade-out');
+                setTimeout(() => { statusMessageEl.style.display = 'none'; statusMessageEl.classList.remove('fade-out');}, 300);
+            }, duration);
+        }
+
+        function cleanUrlIfNecessary() {
+            const urlParams = new URLSearchParams(window.location.search);
+            if (urlParams.has('owner')) {
+                urlParams.delete('owner');
+                const newQueryString = urlParams.toString();
+                const newUrl = newQueryString ? `${window.location.pathname}?${newQueryString}` : window.location.pathname;
+                window.history.replaceState({}, document.title, newUrl);
+            }
+        }
+
+        function getPlaylistIdFromUrl() {
+            const urlParams = new URLSearchParams(window.location.search);
+            return urlParams.get('viewid');
+        }
+
+        async function initializePlaylistView() {
+            cleanUrlIfNecessary();
+            const playlistId = getPlaylistIdFromUrl();
+
+            if (!playlistId) {
+                playlistViewNameEl.textContent = 'Playlist Not Found';
+                soundItemsContainerEl.innerHTML = '<p>No playlist ID provided in the URL.</p>';
+                showStatus("No playlist ID specified.", "error");
+                return;
+            }
+
+            if (!currentUser) {
+                 showStatus("Please log in to view playlists.", "error");
+                 // Potentially redirect or wait for auth state change to re-trigger
+                 return;
+            }
+
+            try {
+                const playlistDoc = await db.collection('playlists').doc(playlistId).get();
+
+                if (!playlistDoc.exists) {
+                    playlistViewNameEl.textContent = 'Playlist Not Found';
+                    soundItemsContainerEl.innerHTML = `<p>The playlist with ID "${playlistId}" does not exist.</p>`;
+                    showStatus("Playlist not found.", "error");
+                    return;
+                }
+
+                const playlistData = playlistDoc.data();
+
+                // Check privacy
+                if (playlistData.isPrivate && playlistData.creatorId !== currentUser.uid) {
+                    playlistViewNameEl.textContent = 'Access Denied';
+                    playlistViewDescriptionEl.textContent = 'This playlist is private and you do not have permission to view it.';
+                    soundItemsContainerEl.innerHTML = '';
+                    playlistViewPrivacyEl.textContent = '';
+                    playlistViewCreatorEl.textContent = '';
+                    showStatus("Access denied to this private playlist.", "error");
+                    return;
+                }
+
+                renderPlaylistDetails(playlistData, playlistId);
+
+            } catch (error) {
+                console.error("Error fetching playlist:", error);
+                playlistViewNameEl.textContent = 'Error Loading Playlist';
+                soundItemsContainerEl.innerHTML = '<p>Could not load playlist details.</p>';
+                showStatus(`Error fetching playlist: ${error.message}`, "error");
+            }
+        }
+
+        function renderPlaylistDetails(playlist, playlistId) {
+            document.title = `4SP - ${playlist.name}`;
+            playlistViewNameEl.textContent = playlist.name;
+            playlistViewDescriptionEl.textContent = playlist.description || 'No description provided.';
+            playlistViewPrivacyEl.textContent = playlist.isPrivate ? 'Status: Private Playlist' : 'Status: Public Playlist';
+
+            let creatorText = `Created by: ${playlist.creatorUsername || 'Unknown User'}`;
+            if (playlist.creatorId === currentUser.uid) {
+                creatorText += ` <span class="owner-tag">(You)</span>`;
+            }
+            playlistViewCreatorEl.innerHTML = creatorText;
+
+            playlistSoundCountEl.textContent = playlist.sounds.length;
+            soundItemsContainerEl.innerHTML = ''; // Clear previous
+
+            if (playlist.sounds && playlist.sounds.length > 0) {
+                playlist.sounds.forEach(soundDetail => {
+                    const itemDiv = document.createElement('div');
+                    itemDiv.className = 'sound-item-v4';
+
+                    const infoDiv = document.createElement('div');
+                    infoDiv.className = 'sound-info';
+
+                    const nameSpan = document.createElement('span');
+                    nameSpan.className = 'sound-name';
+                    nameSpan.textContent = soundDetail.displayName;
+                    infoDiv.appendChild(nameSpan);
+
+                    const categorySpan = document.createElement('span');
+                    categorySpan.className = 'sound-category-chip';
+                    categorySpan.textContent = soundDetail.category.replace(/([A-Z])/g, ' $1').trim();
+                    infoDiv.appendChild(categorySpan);
+
+                    itemDiv.appendChild(infoDiv);
+
+                    const playBtn = document.createElement('button');
+                    playBtn.className = 'control-button-v4 play-sound-btn';
+                    playBtn.textContent = 'Play';
+                    playBtn.dataset.soundInfo = JSON.stringify(soundDetail); // Store full details
+                    playBtn.addEventListener('click', handlePlaySoundClick);
+                    itemDiv.appendChild(playBtn);
+
+                    soundItemsContainerEl.appendChild(itemDiv);
+                });
+            } else {
+                soundItemsContainerEl.innerHTML = '<p>This playlist has no sounds yet.</p>';
+            }
+
+            // Action buttons
+            playlistViewActionsContainerEl.innerHTML = ''; // Clear old buttons
+            if (playlist.creatorId === currentUser.uid) {
+                const editBtn = document.createElement('button');
+                editBtn.textContent = 'Edit This Playlist';
+                editBtn.className = 'control-button-v4';
+                // Link back to playlists.html, which can handle opening the edit modal
+                editBtn.onclick = () => { window.location.href = `playlists.html?edit=${playlistId}`; };
+                playlistViewActionsContainerEl.appendChild(editBtn);
+            } else if (!playlist.isPrivate) { // Public playlist by someone else
+                const remixBtn = document.createElement('button');
+                remixBtn.textContent = 'Remix This Playlist';
+                remixBtn.className = 'control-button-v4 secondary';
+                 // Link back to playlists.html, which can handle opening the remix modal
+                remixBtn.onclick = () => { window.location.href = `playlists.html?remix=${playlistId}`; };
+                playlistViewActionsContainerEl.appendChild(remixBtn);
+            }
+        }
+
+        function handlePlaySoundClick(event) {
+            const buttonElement = event.currentTarget;
+            const soundDetails = JSON.parse(buttonElement.dataset.soundInfo);
+
+            const existingAudioObj = playingAudios.find(audio => audio.soundDetails.filename === soundDetails.filename && audio.soundDetails.category === soundDetails.category && !audio.audioElement.paused);
+
+            if (existingAudioObj) { // If sound is already playing, stop it
+                fadeOutAndStopSingle(existingAudioObj);
+            } else { // Play new sound
+                playSound(soundDetails, buttonElement);
+            }
+        }
+
+        function playSound(soundDetails, buttonElement) {
+            if (audioContext.state === 'suspended') audioContext.resume();
+
+            const soundPath = `../Sounds/${soundDetails.filename}`;
+            const audioElement = new Audio(soundPath);
+            audioElement.volume = 1; // Individual volume is 1, master is via gainNode
+
+            const sourceNode = audioContext.createMediaElementSource(audioElement);
+            const gainNode = audioContext.createGain(); // Individual gain for potential future effects, not strictly needed if only master vol
+            sourceNode.connect(gainNode);
+            gainNode.connect(globalGainNode); // Connect to master volume control
+
+            const audioObj = { audioElement, sourceNode, gainNode, buttonElement, soundDetails };
+            playingAudios.push(audioObj);
+
+            audioElement.play()
+                .then(() => {
+                    buttonElement.textContent = 'Stop';
+                    buttonElement.classList.add('playing');
+                })
+                .catch(e => {
+                    console.error("Error playing sound:", soundPath, e);
+                    showStatus(`ERROR PLAYING: ${soundDetails.displayName}`, 'error');
+                    removeAudioObject(audioObj);
+                });
+
+            audioElement.onended = () => {
+                buttonElement.textContent = 'Play';
+                buttonElement.classList.remove('playing');
+                removeAudioObject(audioObj);
+            };
+        }
+
+        function removeAudioObject(audioObj) {
+            playingAudios = playingAudios.filter(obj => obj !== audioObj);
+             if (audioObj.sourceNode) audioObj.sourceNode.disconnect();
+             if (audioObj.gainNode) audioObj.gainNode.disconnect();
+        }
+
+        function fadeOutAndStopSingle(audioObj) {
+            const { audioElement, buttonElement } = audioObj;
+            if (!audioElement) return;
+
+            // Simple stop without fade for now in playlist view
+            audioElement.pause();
+            audioElement.currentTime = 0;
+            if (buttonElement) {
+                buttonElement.textContent = 'Play';
+                buttonElement.classList.remove('playing');
+            }
+            removeAudioObject(audioObj);
+        }
+
+        function stopAllActiveSounds() {
+            [...playingAudios].forEach(audioObj => fadeOutAndStopSingle(audioObj));
+            // playingAudios should be empty after this due to removeAudioObject in fadeOutAndStopSingle
+            showStatus('All sounds stopped.', 'info');
+        }
+
+
+        document.addEventListener('DOMContentLoaded', () => {
+             // Load saved volume if any
+            const savedVolume = localStorage.getItem('masterPlaylistViewVolume');
+            if (savedVolume !== null) {
+                const volume = parseFloat(savedVolume);
+                masterVolumeSlider.value = volume;
+                masterVolumeValueDisplay.textContent = `${Math.round(volume * 100)}%`;
+                globalGainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+            }
+            // Auth will trigger initial load of playlist data
+            // updateMarquees can be called after content is potentially loaded or sidebar state changes
+            setTimeout(updateMarquees, 600);
+        });
+
+    </script>
+</body>
+</html>
