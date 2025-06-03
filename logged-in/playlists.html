@@ -256,7 +256,23 @@
         @keyframes fadeOutV4 { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(10px); } }
 
         /* Responsive adjustments */
-        @media (max-width: 768px) { /* ... (same as previous) ... */ }
+        @media (max-width: 768px) {
+            .sidebar { width: 100%; height: auto; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid #333; padding: 5px; }
+            .sidebar.collapsed { width: 100%; } .sidebar .user-info { display: none; }
+            .sidebar nav { width: 100%; }
+            .sidebar nav ul { flex-direction: row; margin: 0; justify-content: center; width: 100%; }
+            .sidebar nav li { margin-bottom: 0; margin-right: 5px; }
+            .sidebar nav a { padding: 8px 10px; font-size: 0.9em;}
+            .sidebar nav a .icon { margin-right: 5px; font-size: 1em;}
+            #toggleSidebar { display: none; }
+            .playlists-container-wrapper { flex-direction: column; }
+            .main-playlists-content { padding: 15px; }
+            .playlists-title-v4 { font-size: 1.8em; }
+            .playlists-grid { grid-template-columns: 1fr; }
+            .modal-content-v4 { margin: 5% auto; padding: 20px; width: 95%; }
+            .status-message-v4 { min-width: 90%; padding: 10px 15px; font-size: 0.9em; }
+        }
+
     </style>
 </head>
 <body class="playlists-page">
@@ -341,40 +357,63 @@
         const marqueeEls = document.querySelectorAll('.marquee-content');
         let currentUser = null;
         let currentUsername = 'User';
-        const db = firebase.firestore();
+        const db = firebase.firestore(); // Firestore instance
 
+        // Firebase Auth State Change Listener
         firebase.auth().onAuthStateChanged(async user => {
-            if (!user) { window.location.href = '../login.html'; }
-            else {
+            if (!user) {
+                window.location.href = '../login.html'; // Redirect if not logged in
+            } else {
                 currentUser = user;
+                // Populate user info in sidebar
                 document.getElementById('userEmail').textContent = user.email;
                 try {
-                    const doc = await db.collection('users').doc(user.uid).get();
+                    const userDocRef = db.collection('users').doc(user.uid);
+                    const doc = await userDocRef.get();
                     currentUsername = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User');
                     document.getElementById('userName').textContent = currentUsername;
-                } catch (error) { document.getElementById('userName').textContent = 'User'; console.error("Error fetching username:", error); }
-                updateMarquees();
-                await loadSoundsForForm(); // Ensure sounds are globally available
-                processUrlParametersAndLoadPlaylists(); // Handles URL params and then loads playlists
+                } catch (error) {
+                    document.getElementById('userName').textContent = 'User'; // Fallback
+                    console.error("Error fetching username:", error);
+                }
+                updateMarquees(); // Adjust marquee text scrolling
+                await loadSoundsForForm(); // Load available sounds for the modal
+                processUrlParametersAndLoadPlaylists(); // Check URL for edit/remix actions and load playlists
             }
         });
 
-        document.getElementById('logoutBtnHeader').addEventListener('click', () => firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }));
-        document.getElementById('signOutLinkSidebar').addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
+        // Sidebar Toggle & Marquee Logic
+        const sidebar = document.getElementById('sidebar');
         document.getElementById('toggleSidebar').addEventListener('click', () => {
-            document.getElementById('sidebar').classList.toggle('collapsed');
-            setTimeout(updateMarquees, 550);
+            sidebar.classList.toggle('collapsed');
+            setTimeout(updateMarquees, 550); // Sync with CSS transition
         });
-        function updateMarquees() { marqueeEls.forEach(el => { if (!el || !el.parentElement) return; const p = el.parentElement; el.classList.toggle('marquee-active', sidebar.classList.contains('collapsed') || (el.scrollWidth > p.clientWidth && !sidebar.classList.contains('collapsed'))); if (el.scrollWidth <= p.clientWidth && !sidebar.classList.contains('collapsed')) el.classList.remove('marquee-active');}); }
+        function updateMarquees() {
+            marqueeEls.forEach(el => {
+                if (!el || !el.parentElement) return;
+                const parent = el.parentElement;
+                const isOverflowing = el.scrollWidth > parent.clientWidth;
+                const isSidebarCollapsed = sidebar.classList.contains('collapsed');
+                el.classList.toggle('marquee-active', isSidebarCollapsed || isOverflowing);
+                if (!isOverflowing && !isSidebarCollapsed) {
+                    el.classList.remove('marquee-active');
+                }
+            });
+        }
         window.addEventListener('resize', updateMarquees);
 
+        // Logout Buttons
+        document.getElementById('logoutBtnHeader').addEventListener('click', () => firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }));
+        document.getElementById('signOutLinkSidebar').addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
+
+        // DOM Element References for Playlist Functionality
         const playlistsContainer = document.getElementById('playlistsContainer');
         const createPlaylistBtn = document.getElementById('createPlaylistBtn');
         const playlistModal = document.getElementById('playlistModal');
         const closePlaylistModalBtn = document.getElementById('closePlaylistModalBtn');
         const playlistForm = document.getElementById('playlistForm');
         const modalTitle = document.getElementById('modalTitle');
-        const playlistIdStore = document.getElementById('playlistIdStore');
+        const playlistIdStore = document.getElementById('playlistIdStore'); // Hidden input for playlist ID during edit
         const playlistNameInput = document.getElementById('playlistName');
         const playlistDescriptionInput = document.getElementById('playlistDescription');
         const playlistSoundSelector = document.getElementById('playlistSoundSelector');
@@ -383,10 +422,12 @@
         const statusMessageEl = document.getElementById('statusMessage');
         const savePlaylistBtn = document.getElementById('savePlaylistBtn');
         let statusMessageTimeout = null;
-        let allSoundsData = {};
-        let selectedSoundObjectsInModal = [];
-        let currentView = 'my-playlists';
 
+        let allSoundsData = {}; // Stores all available sounds from SoundboardSN.json
+        let selectedSoundObjectsInModal = []; // Tracks currently selected sound objects in the modal form
+        let currentView = 'my-playlists'; // To toggle between 'my-playlists' and 'public-playlists'
+
+        // Tab Switching
         document.getElementById('myPlaylistsTab').addEventListener('click', () => switchTab('my-playlists'));
         document.getElementById('publicPlaylistsTab').addEventListener('click', () => switchTab('public-playlists'));
 
@@ -394,166 +435,339 @@
             currentView = tabName;
             document.getElementById('myPlaylistsTab').classList.toggle('active', tabName === 'my-playlists');
             document.getElementById('publicPlaylistsTab').classList.toggle('active', tabName === 'public-playlists');
-            loadPlaylists();
+            loadPlaylists(); // Reload playlists for the new tab
         }
 
-        function showStatus(message, type = 'info', duration = 3000) { /* ... (same as previous) ... */ clearTimeout(statusMessageTimeout); statusMessageEl.textContent = message; statusMessageEl.className = 'status-message-v4 ' + type; statusMessageEl.style.display = 'block'; statusMessageEl.classList.remove('fade-out'); statusMessageEl.classList.add('fade-in'); statusMessageTimeout = setTimeout(() => { statusMessageEl.classList.remove('fade-in'); statusMessageEl.classList.add('fade-out'); setTimeout(() => { statusMessageEl.style.display = 'none'; statusMessageEl.classList.remove('fade-out'); }, 300); }, duration); }
-        function generatePlaylistId(length = 15) { const c='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'; let r=''; for(let i=0;i<length;i++)r+=c.charAt(Math.floor(Math.random()*c.length)); return r; }
+        // Utility to show status messages
+        function showStatus(message, type = 'info', duration = 3000) {
+            clearTimeout(statusMessageTimeout);
+            statusMessageEl.textContent = message;
+            statusMessageEl.className = 'status-message-v4 ' + type; // Applies .success, .error, or .info
+            statusMessageEl.style.display = 'block';
+            statusMessageEl.classList.remove('fade-out'); statusMessageEl.classList.add('fade-in');
+            statusMessageTimeout = setTimeout(() => {
+                statusMessageEl.classList.remove('fade-in'); statusMessageEl.classList.add('fade-out');
+                setTimeout(() => { statusMessageEl.style.display = 'none'; statusMessageEl.classList.remove('fade-out'); }, 300);
+            }, duration);
+        }
 
+        // Generate a random 15-character ID for new playlists
+        function generatePlaylistId(length = 15) {
+            const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            let result = '';
+            for (let i = 0; i < length; i++) result += chars.charAt(Math.floor(Math.random() * chars.length));
+            return result;
+        }
+
+        // Load sounds from JSON for the playlist creation/edit form
         async function loadSoundsForForm() {
             try {
                 const response = await fetch('../SoundboardSN.json');
                 if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
                 allSoundsData = await response.json();
-            } catch (error) { console.error("Error loading SoundboardSN.json:", error); if(playlistSoundSelector) playlistSoundSelector.innerHTML = `<p style="color:var(--v4-error-color);">Error loading sounds.</p>`; }
+            } catch (error) {
+                console.error("Error loading SoundboardSN.json:", error);
+                if(playlistSoundSelector) playlistSoundSelector.innerHTML = `<p style="color:var(--v4-error-color);">Error loading sounds for selection.</p>`;
+                showStatus("Could not load sounds data.", "error");
+            }
         }
 
+        // Update the list of selected sounds in the modal and the count display
         function handleSoundSelectionChangeInModal() {
-            selectedSoundObjectsInModal = Array.from(playlistSoundSelector.querySelectorAll('input[type="checkbox"]:checked')).map(cb => JSON.parse(cb.value));
+            selectedSoundObjectsInModal = Array.from(playlistSoundSelector.querySelectorAll('input[type="checkbox"]:checked'))
+                                             .map(cb => JSON.parse(cb.value));
             updateSelectedSoundsCount();
         }
-        function updateSelectedSoundsCount() { selectedSoundsCountEl.textContent = `(${selectedSoundObjectsInModal.length} selected)`; }
 
+        function updateSelectedSoundsCount() {
+            selectedSoundsCountEl.textContent = `(${selectedSoundObjectsInModal.length} selected)`;
+        }
+
+        // Render the sound selection interface inside the modal
         function renderSoundSelector(searchTerm = '') {
-            playlistSoundSelector.innerHTML = '';
-            const categoryIcons = {"NormalSounds": "😊", "ExplicitSounds": "😈"}; let soundAvailable = false;
+            playlistSoundSelector.innerHTML = ''; // Clear previous sounds
+            const categoryIcons = {"NormalSounds": "😊", "ExplicitSounds": "😈"};
+            let soundAvailableOverall = false;
+
             for (const categoryKey in allSoundsData) {
                 if (!allSoundsData.hasOwnProperty(categoryKey) || !Array.isArray(allSoundsData[categoryKey])) continue;
-                const filteredSounds = allSoundsData[categoryKey].filter(f => f.replace(/\.mp3$/i,'').replace(/_/g,' ').toLowerCase().includes(searchTerm.toLowerCase())).sort();
+
+                const categoryName = categoryKey.replace(/([A-Z])/g, ' $1').trim(); // Format category name
+                const icon = categoryIcons[categoryKey] || '🎵';
+
+                const filteredSounds = allSoundsData[categoryKey].filter(filename => {
+                    const displayName = filename.replace(/\.mp3$/i, '').replace(/_/g, ' ');
+                    return displayName.toLowerCase().includes(searchTerm.toLowerCase());
+                }).sort();
+
                 if (filteredSounds.length > 0) {
-                    soundAvailable = true;
-                    const catTitle = document.createElement('h5'); catTitle.className = 'category-title-modal'; catTitle.innerHTML = `<span class="category-icon-v4">${categoryIcons[categoryKey]||'🎵'}</span> ${categoryKey.replace(/([A-Z])/g,' $1').trim()}`; playlistSoundSelector.appendChild(catTitle);
+                    soundAvailableOverall = true;
+                    const categoryTitleEl = document.createElement('h5');
+                    categoryTitleEl.className = 'category-title-modal';
+                    categoryTitleEl.innerHTML = `<span class="category-icon-v4">${icon}</span> ${categoryName}`;
+                    playlistSoundSelector.appendChild(categoryTitleEl);
+
                     filteredSounds.forEach(filename => {
                         const displayName = filename.replace(/\.mp3$/i, '').replace(/_/g, ' ');
                         const soundObject = { category: categoryKey, filename: filename, displayName: displayName };
-                        const label = document.createElement('label'); label.className = 'sound-checkbox-label';
-                        const checkbox = document.createElement('input'); checkbox.type = 'checkbox'; checkbox.value = JSON.stringify(soundObject);
-                        checkbox.checked = selectedSoundObjectsInModal.some(s => s.filename === soundObject.filename && s.category === soundObject.category);
-                        checkbox.addEventListener('change', handleSoundSelectionChangeInModal);
-                        label.appendChild(checkbox); label.appendChild(document.createTextNode(` ${displayName}`)); playlistSoundSelector.appendChild(label);
+
+                        const labelEl = document.createElement('label');
+                        labelEl.className = 'sound-checkbox-label';
+                        const checkboxEl = document.createElement('input');
+                        checkboxEl.type = 'checkbox';
+                        checkboxEl.value = JSON.stringify(soundObject);
+                        // Check if this sound is in the currently selected list for the modal
+                        checkboxEl.checked = selectedSoundObjectsInModal.some(s => s.filename === soundObject.filename && s.category === soundObject.category);
+                        checkboxEl.addEventListener('change', handleSoundSelectionChangeInModal);
+
+                        labelEl.appendChild(checkboxEl);
+                        labelEl.appendChild(document.createTextNode(` ${displayName}`));
+                        playlistSoundSelector.appendChild(labelEl);
                     });
                 }
             }
-            if (!soundAvailable) playlistSoundSelector.innerHTML = searchTerm ? `<p>No sounds match "${searchTerm}".</p>`: `<p>No sounds loaded or available.</p>`;
+            if (!soundAvailableOverall) {
+                 playlistSoundSelector.innerHTML = searchTerm ? `<p>No sounds match "${searchTerm}".</p>`: (Object.keys(allSoundsData).length === 0 ? `<p>No sounds loaded.</p>` : `<p>No sounds available.</p>`);
+            }
         }
 
-        playlistSoundSearchInput.addEventListener('input', (e) => renderSoundSelector(e.target.value));
-
-        createPlaylistBtn.addEventListener('click', () => {
-            modalTitle.textContent = 'Create Playlist'; playlistForm.reset(); playlistIdStore.value = '';
-            selectedSoundObjectsInModal = []; renderSoundSelector(''); updateSelectedSoundsCount();
-            playlistModal.style.display = 'block'; playlistNameInput.focus();
+        // Filter sounds in modal based on search input
+        playlistSoundSearchInput.addEventListener('input', (e) => {
+            renderSoundSelector(e.target.value.toLowerCase());
         });
-        closePlaylistModalBtn.addEventListener('click', () => playlistModal.style.display = 'none');
-        window.addEventListener('click', (event) => { if (event.target == playlistModal) playlistModal.style.display = 'none'; });
 
+        // "Create New Playlist" button opens the modal
+        createPlaylistBtn.addEventListener('click', () => {
+            modalTitle.textContent = 'Create New Playlist';
+            playlistForm.reset(); // Clear any previous data
+            playlistIdStore.value = ''; // Ensure no ID is set for creation
+            selectedSoundObjectsInModal = []; // Reset selected sounds
+            renderSoundSelector(''); // Render all sounds for selection
+            updateSelectedSoundsCount(); // Update count (should be 0)
+            playlistModal.style.display = 'block';
+            playlistNameInput.focus(); // Focus on the name field
+        });
+
+        // Close modal functionality
+        closePlaylistModalBtn.addEventListener('click', () => playlistModal.style.display = 'none');
+        window.addEventListener('click', (event) => { // Also close if clicking outside modal content
+            if (event.target == playlistModal) {
+                playlistModal.style.display = 'none';
+            }
+        });
+
+        // Handle playlist form submission (Create or Update)
         playlistForm.addEventListener('submit', async (e) => {
-            e.preventDefault(); if (!currentUser) { showStatus("Log in to save playlists.", "error"); return; }
+            e.preventDefault();
+            if (!currentUser) { showStatus("You must be logged in to save a playlist.", "error"); return; }
+
             const name = playlistNameInput.value.trim();
             const description = playlistDescriptionInput.value.trim();
             const isPrivate = playlistForm.elements.playlistPrivacy.value === 'private';
-            const sounds = selectedSoundObjectsInModal;
+            const sounds = selectedSoundObjectsInModal; // Get selected sounds
 
-            if (!name) { showStatus("Playlist name is required.", "error"); return; }
-            if (sounds.length === 0) { showStatus("Select at least one sound.", "error"); return; }
+            if (!name) { showStatus("Playlist name is required.", "error"); playlistNameInput.focus(); return; }
+            if (sounds.length === 0) { showStatus("Please select at least one sound for the playlist.", "error"); return; }
 
-            const playlistData = { name, description, sounds, isPrivate, creatorId: currentUser.uid, creatorUsername: currentUsername, updatedAt: firebase.firestore.FieldValue.serverTimestamp() };
-            const existingId = playlistIdStore.value;
+            const playlistData = {
+                name,
+                description,
+                sounds, // Array of {category, filename, displayName}
+                isPrivate,
+                creatorId: currentUser.uid,
+                creatorUsername: currentUsername, // Denormalized for easier display
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp() // Server timestamp for updates
+            };
+
+            const existingId = playlistIdStore.value; // ID from hidden input if editing
             savePlaylistBtn.disabled = true; savePlaylistBtn.textContent = 'Saving...';
+
             try {
-                if (existingId) {
+                if (existingId) { // Editing existing playlist
                     await db.collection('playlists').doc(existingId).update(playlistData);
-                    showStatus("Playlist updated!", "success");
-                } else {
-                    playlistData.id = generatePlaylistId(); playlistData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+                    showStatus("Playlist updated successfully!", "success");
+                } else { // Creating new playlist
+                    playlistData.id = generatePlaylistId(); // Generate and store a new ID
+                    playlistData.createdAt = firebase.firestore.FieldValue.serverTimestamp(); // Server timestamp for creation
                     await db.collection('playlists').doc(playlistData.id).set(playlistData);
-                    showStatus("Playlist created!", "success");
+                    showStatus("Playlist created successfully!", "success");
                 }
-                playlistModal.style.display = 'none'; loadPlaylists();
-            } catch (error) { console.error("Error saving playlist:", error); showStatus("Error saving: " + error.message, "error"); }
-            finally { savePlaylistBtn.disabled = false; savePlaylistBtn.textContent = 'Save Playlist'; }
+                playlistModal.style.display = 'none'; // Close modal on success
+                loadPlaylists(); // Refresh the displayed list of playlists
+            } catch (error) {
+                console.error("Error saving playlist:", error);
+                showStatus("Error saving playlist: " + error.message, "error");
+            } finally {
+                savePlaylistBtn.disabled = false; savePlaylistBtn.textContent = 'Save Playlist';
+            }
         });
 
-        async function loadPlaylists() { /* ... (same as previous, ensure playlistIdToUse is robust) ... */
-            if (!currentUser) { playlistsContainer.innerHTML = '<p>Log in to see playlists.</p>'; return; }
-            playlistsContainer.innerHTML = '<p>Loading playlists...</p>';
+        // Load and display playlists from Firestore
+        async function loadPlaylists() {
+            if (!currentUser) { playlistsContainer.innerHTML = '<p>Please log in to see playlists.</p>'; return; }
+            playlistsContainer.innerHTML = '<p>Loading playlists...</p>'; // Loading indicator
+
             try {
                 let query = db.collection('playlists').orderBy('updatedAt', 'desc');
-                query = currentView === 'my-playlists' ? query.where('creatorId', '==', currentUser.uid) : query.where('isPrivate', '==', false);
+                if (currentView === 'my-playlists') {
+                    query = query.where('creatorId', '==', currentUser.uid);
+                } else { // public-playlists
+                    query = query.where('isPrivate', '==', false);
+                }
+
                 const snapshot = await query.get();
-                if (snapshot.empty) { playlistsContainer.innerHTML = currentView === 'my-playlists' ? '<p>No playlists yet. Create one!</p>' : '<p>No public playlists.</p>'; return; }
-                playlistsContainer.innerHTML = '';
-                snapshot.forEach(doc => { const p = doc.data(); renderPlaylistCard(p, p.id || doc.id); });
-            } catch (error) { console.error("Error loading playlists:", error); playlistsContainer.innerHTML = `<p style="color:var(--v4-error-color);">Error: ${error.message}</p>`; }
+                if (snapshot.empty) {
+                    playlistsContainer.innerHTML = currentView === 'my-playlists' ?
+                        '<p>You haven\'t created any playlists yet. Click "Create New Playlist" to start!</p>' :
+                        '<p>No public playlists found yet.</p>';
+                    return;
+                }
+
+                playlistsContainer.innerHTML = ''; // Clear previous list
+                snapshot.forEach(doc => {
+                    const playlist = doc.data();
+                    const playlistIdToUse = playlist.id || doc.id; // Use stored ID or doc ID as fallback
+                    if (!playlistIdToUse) {
+                        console.warn("Playlist document missing ID:", doc.ref.path, playlist);
+                        return; // Skip rendering if no usable ID
+                    }
+                    renderPlaylistCard(playlist, playlistIdToUse);
+                });
+            } catch (error) {
+                console.error("Error loading playlists:", error);
+                playlistsContainer.innerHTML = `<p style="color:var(--v4-error-color);">Error loading playlists: ${error.message}</p>`;
+                showStatus("Failed to load playlists.", "error");
+            }
         }
 
-        function renderPlaylistCard(playlist, playlistId) { /* ... (same as previous, ensure openBtn uses playlistId) ... */
+        // Render a single playlist card
+        function renderPlaylistCard(playlist, playlistId) {
             const card = document.createElement('div'); card.className = 'playlist-card-v4'; card.dataset.playlistId = playlistId;
             const title = document.createElement('h3'); title.textContent = playlist.name; card.appendChild(title);
             const desc = document.createElement('p'); desc.className = 'desc'; desc.textContent = playlist.description || 'No description.'; card.appendChild(desc);
             const chips = document.createElement('div'); chips.className = 'info-chips';
-            chips.innerHTML = `<span class="info-chip">${playlist.sounds.length} Sound${playlist.sounds.length!==1?'s':''}</span> <span class="info-chip ${playlist.isPrivate?'private':'public'}">${playlist.isPrivate?'Private':'Public'}</span>`;
-            if(currentView === 'public-playlists' && playlist.creatorUsername) chips.innerHTML += `<span class="info-chip">By: ${playlist.creatorUsername}</span>`;
-            card.appendChild(chips);
-            const actions = document.createElement('div'); actions.className = 'actions';
-            const openBtn = document.createElement('button'); openBtn.textContent='Open'; openBtn.className='control-button-v4 action-button-v4'; openBtn.onclick=()=>window.location.href=`playlist-view.html?viewid=${playlistId}`; actions.appendChild(openBtn);
-            if(playlist.creatorId === currentUser.uid) {
-                const editBtn = document.createElement('button'); editBtn.textContent='Edit'; editBtn.className='control-button-v4 action-button-v4'; editBtn.onclick=()=>openEditPlaylistForm(playlistId); actions.appendChild(editBtn);
-                const delBtn = document.createElement('button'); delBtn.textContent='Delete'; delBtn.className='control-button-v4 action-button-v4 delete'; delBtn.onclick=()=>deletePlaylist(playlistId, playlist.name); actions.appendChild(delBtn);
-            } else if (!playlist.isPrivate) {
-                const remixBtn = document.createElement('button'); remixBtn.textContent='Remix'; remixBtn.className='control-button-v4 action-button-v4'; remixBtn.onclick=()=>remixPlaylist(playlistId); actions.appendChild(remixBtn);
+            chips.innerHTML = `<span class="info-chip">${playlist.sounds.length} Sound${playlist.sounds.length !== 1 ? 's' : ''}</span> <span class="info-chip ${playlist.isPrivate ? 'private' : 'public'}">${playlist.isPrivate ? 'Private' : 'Public'}</span>`;
+            if (currentView === 'public-playlists' && playlist.creatorUsername && playlist.creatorId !== currentUser.uid) { // Show creator for public if not self
+                 chips.innerHTML += `<span class="info-chip">By: ${playlist.creatorUsername}</span>`;
             }
-            card.appendChild(actions); playlistsContainer.appendChild(card);
+            card.appendChild(chips);
+            const actionsDiv = document.createElement('div'); actionsDiv.className = 'actions';
+            const openBtn = document.createElement('button'); openBtn.textContent = 'Open'; openBtn.className = 'control-button-v4 action-button-v4';
+            openBtn.onclick = () => window.location.href = `playlist-view.html?viewid=${playlistId}`; actionsDiv.appendChild(openBtn);
+
+            if (playlist.creatorId === currentUser.uid) { // Owner actions
+                const editBtn = document.createElement('button'); editBtn.textContent = 'Edit'; editBtn.className = 'control-button-v4 action-button-v4';
+                editBtn.onclick = () => openEditPlaylistForm(playlistId); actionsDiv.appendChild(editBtn);
+                const deleteBtn = document.createElement('button'); deleteBtn.textContent = 'Delete'; deleteBtn.className = 'control-button-v4 action-button-v4 delete';
+                deleteBtn.onclick = () => deletePlaylist(playlistId, playlist.name); actionsDiv.appendChild(deleteBtn);
+            } else if (!playlist.isPrivate) { // Non-owner actions for public playlists
+                const remixBtn = document.createElement('button'); remixBtn.textContent = 'Remix'; remixBtn.className = 'control-button-v4 action-button-v4';
+                remixBtn.onclick = () => remixPlaylist(playlistId); actionsDiv.appendChild(remixBtn);
+            }
+            card.appendChild(actionsDiv); playlistsContainer.appendChild(card);
         }
 
-        async function openEditPlaylistForm(playlistId) { /* ... (same as previous, ensure selectedSoundObjectsInModal is set correctly) ... */
+        // Open the modal to edit an existing playlist
+        async function openEditPlaylistForm(playlistId) {
             try {
-                const doc = await db.collection('playlists').doc(playlistId).get(); if (!doc.exists) { showStatus("Playlist not found.", "error"); return; }
-                const p = doc.data(); modalTitle.textContent = 'Edit Playlist'; playlistForm.reset(); playlistIdStore.value = playlistId;
-                playlistNameInput.value = p.name; playlistDescriptionInput.value = p.description;
-                playlistForm.elements.playlistPrivacy.value = p.isPrivate ? 'private' : 'public';
-                selectedSoundObjectsInModal = [...p.sounds]; renderSoundSelector(''); updateSelectedSoundsCount();
-                playlistModal.style.display = 'block'; playlistNameInput.focus();
-            } catch (e) { console.error("Error fetching for edit:", e); showStatus("Failed to load for edit.", "error"); }
+                const doc = await db.collection('playlists').doc(playlistId).get();
+                if (!doc.exists) { showStatus("Playlist not found for editing.", "error"); return; }
+                const playlist = doc.data();
+                if (playlist.creatorId !== currentUser.uid) { showStatus("You can only edit your own playlists.", "error"); return;}
+
+                modalTitle.textContent = 'Edit Playlist';
+                playlistForm.reset();
+                playlistIdStore.value = playlistId; // Store ID for update
+                playlistNameInput.value = playlist.name;
+                playlistDescriptionInput.value = playlist.description;
+                playlistForm.elements.playlistPrivacy.value = playlist.isPrivate ? 'private' : 'public';
+                selectedSoundObjectsInModal = [...playlist.sounds]; // Load existing sounds
+                renderSoundSelector(''); // Render sounds, auto-checking selected ones
+                updateSelectedSoundsCount();
+                playlistModal.style.display = 'block';
+                playlistNameInput.focus();
+            } catch (error) {
+                console.error("Error fetching playlist for edit:", error);
+                showStatus("Failed to load playlist for editing.", "error");
+            }
         }
 
-        async function deletePlaylist(playlistId, name) { /* ... (same as previous) ... */ if(!confirm(`Delete "${name}"?`))return; try{await db.collection('playlists').doc(playlistId).delete();showStatus(`"${name}" deleted.`, "success");loadPlaylists();}catch(e){console.error("Err del:",e);showStatus("Err del: "+e.message,"error");}}
-        async function remixPlaylist(playlistId) { /* ... (same as previous, ensure selectedSoundObjectsInModal is set correctly) ... */
+        // Delete a playlist
+        async function deletePlaylist(playlistId, playlistName) {
+            if (!confirm(`Are you sure you want to delete the playlist "${playlistName}"? This action cannot be undone.`)) return;
             try {
-                const doc = await db.collection('playlists').doc(playlistId).get(); if (!doc.exists) { showStatus("Remix source not found.", "error"); return; }
-                const p = doc.data(); if (p.isPrivate && p.creatorId !== currentUser.uid) { showStatus("Cannot remix other's private playlist.", "error"); return; }
-                modalTitle.textContent = 'Remix Playlist'; playlistForm.reset(); playlistIdStore.value = '';
-                playlistNameInput.value = `${p.name} (remix)`; playlistDescriptionInput.value = p.description;
-                playlistForm.elements.playlistPrivacy.value = 'private'; // Default remix to private
-                selectedSoundObjectsInModal = [...p.sounds]; renderSoundSelector(''); updateSelectedSoundsCount();
-                playlistModal.style.display = 'block'; showStatus(`Remixing "${p.name}". Save when ready.`, "info", 4000); playlistNameInput.focus();
-            } catch (e) { console.error("Err remix prep:", e); showStatus("Failed to prep remix.", "error"); }
+                await db.collection('playlists').doc(playlistId).delete();
+                showStatus(`Playlist "${playlistName}" deleted successfully.`, "success");
+                loadPlaylists(); // Refresh list
+            } catch (error) {
+                console.error("Error deleting playlist:", error);
+                showStatus(`Error deleting playlist: ${error.message}`, "error");
+            }
         }
 
+        // Open the modal to remix a public playlist
+        async function remixPlaylist(playlistId) {
+             try {
+                const doc = await db.collection('playlists').doc(playlistId).get();
+                if (!doc.exists) { showStatus("Playlist to remix not found.", "error"); return; }
+                const playlistToRemix = doc.data();
+                if (playlistToRemix.isPrivate && playlistToRemix.creatorId !== currentUser.uid) { // Allow owner to "remix" their own private if desired, but not others'
+                    showStatus("Cannot remix another user's private playlist.", "error"); return;
+                }
+
+                modalTitle.textContent = 'Remix Playlist';
+                playlistForm.reset();
+                playlistIdStore.value = ''; // This will be a new playlist
+                playlistNameInput.value = `${playlistToRemix.name} (remix)`;
+                playlistDescriptionInput.value = playlistToRemix.description;
+                playlistForm.elements.playlistPrivacy.value = 'private'; // Default remixed playlist to private
+                selectedSoundObjectsInModal = [...playlistToRemix.sounds]; // Copy sounds
+                renderSoundSelector('');
+                updateSelectedSoundsCount();
+                playlistModal.style.display = 'block';
+                showStatus(`Remixing "${playlistToRemix.name}". Adjust details and save as a new playlist.`, "info", 5000);
+                playlistNameInput.focus();
+            } catch (error) {
+                console.error("Error preparing playlist for remix:", error);
+                showStatus("Failed to prepare playlist for remixing.", "error");
+            }
+        }
+
+        // Check URL parameters on page load (e.g., for edit/remix links from playlist-view.html)
         async function processUrlParametersAndLoadPlaylists() {
             const urlParams = new URLSearchParams(window.location.search);
             const editId = urlParams.get('edit');
             const remixId = urlParams.get('remix');
-            let actionTaken = false;
+            let actionTakenViaUrl = false;
 
-            if (editId && allSoundsData) { // Ensure sounds data is loaded before opening modal
-                await openEditPlaylistForm(editId); // Make it await if it becomes async due to db call for full data
-                actionTaken = true;
-            } else if (remixId && allSoundsData) {
-                await remixPlaylist(remixId); // Make it await
-                actionTaken = true;
+            // Ensure allSoundsData is loaded before attempting to open modals that need it
+            if (Object.keys(allSoundsData).length === 0 && (editId || remixId)) {
+                 console.log("Waiting for sounds data to load before processing URL params...");
+                 // This function is already called after `await loadSoundsForForm()`, so allSoundsData should be ready.
             }
 
-            if (actionTaken) {
-                window.history.replaceState({}, document.title, window.location.pathname); // Clean URL
+            if (editId) {
+                await openEditPlaylistForm(editId); // Make sure this function is async if it does async work before modal display
+                actionTakenViaUrl = true;
+            } else if (remixId) {
+                await remixPlaylist(remixId); // Make sure this function is async
+                actionTakenViaUrl = true;
             }
-            // Always load playlists, regardless of modal, so the background is up-to-date.
+
+            if (actionTakenViaUrl) {
+                // Clean URL parameters after processing to avoid re-triggering on refresh
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+            
+            // Load playlists regardless, so the main view is populated
+            // If a modal was opened by URL params, this loads in the background.
             loadPlaylists();
         }
 
+        // Initial call when DOM is ready and user is authenticated
         document.addEventListener('DOMContentLoaded', () => {
-            // Auth will trigger initial data loads and URL processing.
-            setTimeout(updateMarquees, 600); // For sidebar marquee
+            // Auth state change listener handles the main initialization flow
+            setTimeout(updateMarquees, 600); // Initial marquee update
         });
     </script>
 </body>
