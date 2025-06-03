@@ -1,0 +1,925 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>4SP - Playlists</title>
+    <link rel="stylesheet" href="../css/style.css"> <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="../firebase-config.js"></script>
+
+    <style>
+        /* V4 Theme Base (White & Purple, adapted from soundboard.html) */
+        :root {
+            --v4-bg-gradient: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
+            --v4-card-bg: #fff;
+            --v4-text-primary: #333;
+            --v4-text-secondary: #555;
+            --v4-purple-accent: #6720bd;
+            --v4-purple-accent-darker: #5a1aa8;
+            --v4-purple-gradient: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+            --v4-border-light: #ddd;
+            --v4-border-softer: #eee;
+            --v4-input-bg: #f8f9fa;
+            --v4-input-border: #ccc;
+            --v4-error-color: #721c24;
+            --v4-error-bg: #f8d7da;
+            --v4-success-color: #155724;
+            --v4-success-bg: #d4edda;
+            --v4-info-color: #004085;
+            --v4-info-bg: #cce5ff;
+            --v4-font-primary: 'PrimaryFont', sans-serif; /* Define these fonts in style.css or import them */
+            --v4-font-secondary: 'SecondaryFont', sans-serif;
+        }
+
+        body.playlists-page {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            margin: 0;
+            font-family: var(--v4-font-primary);
+            background: var(--v4-bg-gradient); /* Changed from background-color */
+            color: var(--v4-text-primary);
+            line-height: 1.6;
+        }
+
+        .playlists-container-wrapper { display: flex; flex: 1; overflow: hidden; }
+
+        /* Sidebar Styles (Consistent with V4 dashboard.html/settings.html) */
+        .sidebar {
+            width: 200px;
+            background: linear-gradient(180deg, #333 0%, #2a2a2a 100%);
+            color: #fff; padding: 20px 10px; display: flex; flex-direction: column;
+            border-right: 1px solid #444;
+            transition: width 0.5s ease-in-out;
+            position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }
+        .sidebar.collapsed { width: 85px; }
+        #toggleSidebar {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            background: none; border: none; color: #fff; font-size: 1.2em;
+            cursor: pointer; padding: 4px; transition: transform 0.5s ease-in-out;
+        }
+        .sidebar.collapsed #toggleSidebar { transform: translateX(-50%) rotate(180deg); }
+        .user-info {
+            text-align: center; margin: 60px 0 30px; border-bottom: 1px solid #555;
+            padding-bottom: 20px; overflow: visible;
+        }
+        .marquee-container {
+            overflow: hidden; white-space: nowrap; position: relative;
+            width: 100%; height: 1.8em; line-height: 1.8em;
+        }
+        .marquee-content { display: inline-block; padding-left: 100%; transform: translateX(0); animation: none; line-height: 1.8em; }
+        .marquee-active { animation: scroll-left-playlists 12s linear infinite; } /* Renamed animation */
+        .sidebar.collapsed .marquee-active { animation-duration: 20s; }
+        @keyframes scroll-left-playlists { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+
+        .user-info .username { font-family: var(--v4-font-primary); font-size: 1.3em; margin-bottom: 8px; line-height: 0.2em; font-weight: bold;}
+        .user-info .email { font-family: var(--v4-font-secondary); font-size: 0.9em; color: #bbb; }
+        .sidebar nav ul { list-style: none; padding: 0; margin: 60px 0 0; }
+        .sidebar nav li { margin-bottom: 10px; }
+        .sidebar nav a {
+            display: flex; align-items: center; padding: 12px 15px; color: #fff;
+            text-decoration: none; border-radius: 8px; transition: all 0.3s ease;
+            font-family: var(--v4-font-primary); text-transform: uppercase;
+            position: relative; overflow: hidden; font-size: 1em;
+        }
+        .sidebar nav a::before {
+            content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            transition: left 0.5s;
+        }
+        .sidebar nav a:hover::before { left: 100%; }
+        .sidebar nav a.active, .sidebar nav a:hover {
+            background: var(--v4-purple-gradient);
+            transform: translateX(5px); color: #fff;
+        }
+        .sidebar nav a .icon {
+            font-size: 1.2em; width: 24px; text-align: center;
+        }
+        .sidebar nav a .label {
+            margin-left: 10px;
+            white-space: nowrap;
+        }
+        .sidebar.collapsed nav a { justify-content: center; padding: 10px 0; }
+        .sidebar.collapsed nav a .label { display: none; }
+        .sidebar.collapsed nav a .icon { margin-right: 0; margin-left:0; }
+
+        /* Main Content Area - V4 Light Theme */
+        .main-playlists-content {
+            flex: 1; padding: 30px;
+            background: var(--v4-bg-gradient);
+            overflow-y: auto; display: flex; flex-direction: column;
+        }
+        .playlists-header-v4 {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 25px;
+            background: var(--v4-card-bg);
+            padding: 20px 30px; border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            border: 1px solid rgba(103, 32, 189, 0.1);
+        }
+        .playlists-title-v4 {
+            font-size: 2.2em; font-weight: bold;
+            background: var(--v4-purple-gradient);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; text-fill-color: transparent;
+        }
+
+        .control-button-v4 {
+            padding: 10px 18px; background: var(--v4-purple-gradient);
+            color: white; border: none; border-radius: 8px; cursor: pointer;
+            font-family: var(--v4-font-primary); font-size: 0.95em;
+            text-transform: uppercase; transition: all 0.25s ease;
+            box-shadow: 0 2px 8px rgba(103, 32, 189, 0.3);
+        }
+        .control-button-v4:hover {
+            background: linear-gradient(135deg, var(--v4-purple-accent-darker) 0%, #7923c8 100%);
+            transform: translateY(-1px); box-shadow: 0 4px 12px rgba(103, 32, 189, 0.5);
+        }
+        .action-button-v4 { /* For open, edit, delete, remix */
+            padding: 6px 12px; font-size: 0.8em; margin: 0 5px;
+            background-color: var(--v4-input-bg); color: var(--v4-text-secondary);
+            border: 1px solid var(--v4-input-border);
+        }
+        .action-button-v4:hover { background-color: #e9ecef; border-color: var(--v4-purple-accent); color: var(--v4-purple-accent);}
+        .action-button-v4.delete { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb;}
+        .action-button-v4.delete:hover { background-color: #f5c6cb; color: #721c24; border-color: #721c24;}
+
+
+        /* Playlist Tabs */
+        .playlist-tabs {
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            border-bottom: 2px solid var(--v4-border-light);
+        }
+        .tab-button {
+            padding: 10px 20px;
+            cursor: pointer;
+            border: none;
+            background-color: transparent;
+            font-family: var(--v4-font-primary);
+            font-size: 1em;
+            color: var(--v4-text-secondary);
+            border-bottom: 3px solid transparent;
+            transition: color 0.3s, border-bottom-color 0.3s;
+        }
+        .tab-button:hover {
+            color: var(--v4-purple-accent);
+        }
+        .tab-button.active {
+            color: var(--v4-purple-accent);
+            border-bottom-color: var(--v4-purple-accent);
+            font-weight: bold;
+        }
+
+        /* Playlists Grid & Cards */
+        .playlists-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .playlist-card-v4 {
+            background: var(--v4-card-bg);
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.07);
+            border: 1px solid var(--v4-border-softer);
+            display: flex;
+            flex-direction: column;
+            transition: transform 0.2s ease, box-shadow 0.2s ease;
+        }
+        .playlist-card-v4:hover {
+            transform: translateY(-3px);
+            box-shadow: 0 6px 20px rgba(0,0,0,0.1);
+        }
+        .playlist-card-v4 h3 {
+            font-size: 1.3em; color: var(--v4-purple-accent); margin-top: 0; margin-bottom: 10px;
+            font-family: var(--v4-font-primary);
+        }
+        .playlist-card-v4 p {
+            font-size: 0.9em; color: var(--v4-text-secondary); margin-bottom: 8px;
+            font-family: var(--v4-font-secondary);
+            flex-grow: 1;
+            max-height: 60px; /* Limit description height */
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .playlist-card-v4 .info-chips {
+            display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px;
+        }
+        .info-chip {
+            background-color: var(--v4-input-bg); color: var(--v4-text-secondary);
+            padding: 4px 10px; border-radius: 15px; font-size: 0.75em;
+            border: 1px solid var(--v4-border-softer);
+        }
+        .info-chip.public { background-color: #d4edda; color: #155724; border-color: #c3e6cb;}
+        .info-chip.private { background-color: #f8d7da; color: #721c24; border-color: #f5c6cb;}
+        .playlist-card-v4 .actions {
+            margin-top: auto; /* Pushes actions to the bottom */
+            padding-top: 10px;
+            border-top: 1px solid var(--v4-border-softer);
+            display: flex;
+            justify-content: flex-end;
+        }
+
+
+        /* Modal Styles */
+        .modal-v4 {
+            display: none; position: fixed; z-index: 1001;
+            left: 0; top: 0; width: 100%; height: 100%;
+            overflow: auto; background-color: rgba(0,0,0,0.6);
+            animation: fadeInModalV4 0.3s ease forwards;
+        }
+        .modal-content-v4 {
+            background-color: var(--v4-card-bg); margin: 8% auto;
+            padding: 25px 35px; border-radius: 15px;
+            width: 90%; max-width: 700px;
+            box-shadow: 0 5px 25px rgba(0,0,0,0.15);
+            position: relative;
+        }
+        .close-btn-v4 {
+            color: #aaa; float: right; font-size: 28px; font-weight: bold;
+            position: absolute; top: 15px; right: 25px;
+        }
+        .close-btn-v4:hover, .close-btn-v4:focus { color: var(--v4-text-primary); text-decoration: none; cursor: pointer; }
+
+        .modal-content-v4 h3 {
+            font-size: 1.8em; color: var(--v4-purple-accent); margin-bottom: 20px;
+            text-align: center; font-family: var(--v4-font-primary);
+        }
+        .form-group-v4 { margin-bottom: 20px; }
+        .form-group-v4 label {
+            display: block; margin-bottom: 8px; color: var(--v4-text-secondary);
+            font-family: var(--v4-font-secondary); font-size: 0.95em; font-weight: 500;
+        }
+        .form-group-v4 input[type="text"],
+        .form-group-v4 textarea,
+        .form-group-v4 select {
+            width: 100%; padding: 12px 15px; background-color: var(--v4-input-bg);
+            border: 1px solid var(--v4-input-border); border-radius: 8px;
+            color: var(--v4-text-primary); font-size: 1em; outline: none;
+            font-family: var(--v4-font-secondary);
+        }
+        .form-group-v4 input[type="text"]:focus,
+        .form-group-v4 textarea:focus,
+        .form-group-v4 select:focus {
+            border-color: var(--v4-purple-accent);
+            box-shadow: 0 0 0 3px rgba(103, 32, 189, 0.15);
+        }
+        .form-group-v4 textarea { min-height: 80px; resize: vertical; }
+        .form-group-v4 input[type="radio"] { margin-right: 5px; accent-color: var(--v4-purple-accent); }
+        .form-group-v4 label input[type="radio"] { margin-right: 10px;} /* For radio button groups */
+
+        #playlistSoundSearch { margin-bottom: 10px; }
+        .sound-selector-grid-v4 {
+            max-height: 300px; overflow-y: auto; padding: 10px;
+            border: 1px solid var(--v4-border-light); border-radius: 8px;
+            background-color: var(--v4-input-bg);
+        }
+        .sound-selector-grid-v4 .category-title-modal {
+            font-size: 1.1em; color: var(--v4-purple-accent);
+            margin-top: 15px; margin-bottom: 8px; padding-bottom: 5px;
+            border-bottom: 1px solid var(--v4-border-softer);
+        }
+        .sound-selector-grid-v4 label {
+            display: block; padding: 8px 10px; margin-bottom: 5px;
+            border-radius: 6px; cursor: pointer;
+            transition: background-color 0.2s;
+            font-size: 0.9em; color: var(--v4-text-primary);
+        }
+        .sound-selector-grid-v4 label:hover { background-color: #e9ecef; }
+        .sound-selector-grid-v4 input[type="checkbox"] { margin-right: 10px; transform: scale(1.1); accent-color: var(--v4-purple-accent); }
+
+
+        /* Status Message */
+        .status-message-v4 {
+            display: none; padding: 15px 25px; margin: 20px auto; border-radius: 12px;
+            font-size: 0.95em; text-align: center; min-width: 300px; max-width: 600px;
+            width: auto; font-family: var(--v4-font-primary, 'PrimaryFont', sans-serif);
+            text-transform: uppercase; border: 1px solid transparent;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1); color: white;
+        }
+        .status-message-v4.fade-in { display: block; animation: fadeInV4 0.3s ease forwards; }
+        .status-message-v4.fade-out { animation: fadeOutV4 0.3s ease forwards; }
+        .status-message-v4.success { background: linear-gradient(135deg, #1c7430, #155724); border-color: #104d1e; }
+        .status-message-v4.error { background: linear-gradient(135deg, #8f262a, #721c24); border-color: #5f171e; }
+        .status-message-v4.info { background: var(--v4-purple-gradient); border-color: var(--v4-purple-accent-darker); }
+
+        @keyframes fadeInModalV4 { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeInV4 { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeOutV4 { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(10px); } }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .sidebar { width: 100%; height: auto; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid #333; padding: 5px; }
+            .sidebar.collapsed { width: 100%; } .sidebar .user-info { display: none; }
+            .sidebar nav { width: 100%; }
+            .sidebar nav ul { flex-direction: row; margin: 0; justify-content: center; width: 100%; }
+            .sidebar nav li { margin-bottom: 0; margin-right: 5px; }
+            .sidebar nav a { padding: 8px 10px; font-size: 0.9em;}
+            .sidebar nav a .icon { margin-right: 5px; font-size: 1em;}
+            #toggleSidebar { display: none; }
+            .playlists-container-wrapper { flex-direction: column; }
+            .main-playlists-content { padding: 15px; }
+            .playlists-title-v4 { font-size: 1.8em; }
+            .playlists-grid { grid-template-columns: 1fr; }
+            .modal-content-v4 { margin: 5% auto; padding: 20px; width: 95%; }
+            .status-message-v4 { min-width: 90%; padding: 10px 15px; font-size: 0.9em; }
+        }
+
+    </style>
+</head>
+<body class="playlists-page">
+
+    <header class="main-header light-bg">
+        <div class="container">
+            <div class="logo">
+                <a href="../index.html">
+                    <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer;"/>
+                </a>
+            </div>
+            <div class="auth-buttons">
+                <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="logoutBtnHeader" class="btn btn-login">LOG OUT</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="playlists-container-wrapper">
+        <aside class="sidebar slide-in" id="sidebar">
+            <button id="toggleSidebar">☰</button>
+            <div class="user-info">
+                <div class="marquee-container"> <span id="userName" class="marquee-content username">Loading…</span> </div>
+                <div class="marquee-container"> <span id="userEmail" class="marquee-content email">Loading…</span> </div>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
+                    <li><a href="proxies.html"><span class="icon">🛡️</span><span class="label">Proxies</span></a></li>
+                    <li><a href="soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
+                    <li><a href="playlists.html" class="active"><span class="icon">🎶</span><span class="label">Playlists</span></a></li>
+                    <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
+                    <li><a href="others.html"><span class="icon">✨</span><span class="label">Others</span></a></li>
+                    <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                    <li><a href="#" id="signOutLinkSidebar"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-playlists-content">
+            <div class="playlists-header-v4">
+                <h1 class="playlists-title-v4">Playlists</h1>
+                <button id="createPlaylistBtn" class="control-button-v4">Create New Playlist</button>
+            </div>
+
+            <div class="playlist-tabs">
+                <button class="tab-button active" id="myPlaylistsTab" data-tab="my-playlists">My Playlists</button>
+                <button class="tab-button" id="publicPlaylistsTab" data-tab="public-playlists">Public Playlists</button>
+            </div>
+
+            <div class="status-message-v4" id="statusMessage"></div>
+
+            <div id="playlistsContainer" class="playlists-grid">
+                <p>Loading playlists...</p>
+            </div>
+        </main>
+    </div>
+
+    <div id="playlistModal" class="modal-v4">
+        <div class="modal-content-v4">
+            <span class="close-btn-v4" id="closePlaylistModalBtn">&times;</span>
+            <h3 id="modalTitle">Create Playlist</h3>
+            <form id="playlistForm">
+                <input type="hidden" id="playlistIdStore"> <div class="form-group-v4">
+                    <label for="playlistName">Playlist Name:</label>
+                    <input type="text" id="playlistName" required>
+                </div>
+                <div class="form-group-v4">
+                    <label for="playlistDescription">Description:</label>
+                    <textarea id="playlistDescription"></textarea>
+                </div>
+                <div class="form-group-v4">
+                    <label>Privacy:</label>
+                    <div>
+                        <label><input type="radio" name="playlistPrivacy" value="private" checked> Private (Only you can see and edit)</label>
+                    </div>
+                    <div>
+                        <label><input type="radio" name="playlistPrivacy" value="public"> Public (Anyone with the link can view, others can remix)</label>
+                    </div>
+                </div>
+                <div class="form-group-v4">
+                    <h4>Select Sounds: <span id="selectedSoundsCount">(0 selected)</span></h4>
+                    <input type="text" id="playlistSoundSearch" placeholder="Search sounds in list...">
+                    <div id="playlistSoundSelector" class="sound-selector-grid-v4">
+                        <p>Loading sounds for selection...</p>
+                    </div>
+                </div>
+                <button type="submit" class="control-button-v4" id="savePlaylistBtn">Save Playlist</button>
+            </form>
+        </div>
+    </div>
+
+    <script>
+        // --- V4 Standard Setup (Auth, Sidebar, User Info) ---
+        const marqueeEls = document.querySelectorAll('.marquee-content');
+        let currentUser = null;
+        let currentUsername = 'User';
+
+        firebase.auth().onAuthStateChanged(async user => {
+            if (!user) {
+                window.location.href = '../login.html';
+            } else {
+                currentUser = user;
+                const userEmailEl = document.getElementById('userEmail');
+                const userNameEl = document.getElementById('userName');
+
+                if (userEmailEl) userEmailEl.textContent = user.email;
+
+                if (userNameEl) {
+                    try {
+                        const userDocRef = firebase.firestore().collection('users').doc(user.uid);
+                        const doc = await userDocRef.get();
+                        currentUsername = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User');
+                        userNameEl.textContent = currentUsername;
+                    } catch (error) {
+                        userNameEl.textContent = 'User';
+                        console.error("Error fetching username:", error);
+                    }
+                }
+                updateMarquees();
+                loadSoundsForForm(); // Load sounds after user is confirmed
+                loadPlaylists(); // Load playlists after user is confirmed
+            }
+        });
+
+        document.getElementById('logoutBtnHeader').addEventListener('click', () => {
+            firebase.auth().signOut().then(() => { window.location.href = '../login.html'; });
+        });
+        const signOutLinkSidebar = document.getElementById('signOutLinkSidebar');
+        if(signOutLinkSidebar) {
+            signOutLinkSidebar.addEventListener('click', (e) => {
+                e.preventDefault();
+                firebase.auth().signOut().then(() => { window.location.href = '../login.html'; });
+            });
+        }
+
+        const sidebar = document.getElementById('sidebar');
+        const toggleSidebarBtn = document.getElementById('toggleSidebar');
+        if (toggleSidebarBtn && sidebar) {
+            toggleSidebarBtn.addEventListener('click', () => {
+                sidebar.classList.toggle('collapsed');
+                setTimeout(updateMarquees, 550); // Match transition duration
+            });
+        }
+
+        function updateMarquees() {
+            marqueeEls.forEach(el => {
+                if (!el || !el.parentElement) return;
+                const parent = el.parentElement;
+                const overflow = el.scrollWidth > parent.clientWidth;
+                const shouldScroll = sidebar.classList.contains('collapsed') || (overflow && !sidebar.classList.contains('collapsed'));
+                el.classList.toggle('marquee-active', shouldScroll);
+                if (!overflow && !sidebar.classList.contains('collapsed')) {
+                    el.classList.remove('marquee-active');
+                }
+            });
+        }
+        window.addEventListener('resize', updateMarquees);
+        // --- End V4 Standard Setup ---
+
+
+        // --- Playlist Page Specific Logic ---
+        const db = firebase.firestore();
+        const playlistsContainer = document.getElementById('playlistsContainer');
+        const createPlaylistBtn = document.getElementById('createPlaylistBtn');
+        const playlistModal = document.getElementById('playlistModal');
+        const closePlaylistModalBtn = document.getElementById('closePlaylistModalBtn');
+        const playlistForm = document.getElementById('playlistForm');
+        const modalTitle = document.getElementById('modalTitle');
+        const playlistIdStore = document.getElementById('playlistIdStore');
+        const playlistNameInput = document.getElementById('playlistName');
+        const playlistDescriptionInput = document.getElementById('playlistDescription');
+        const playlistSoundSelector = document.getElementById('playlistSoundSelector');
+        const playlistSoundSearchInput = document.getElementById('playlistSoundSearch');
+        const selectedSoundsCountEl = document.getElementById('selectedSoundsCount');
+        const statusMessageEl = document.getElementById('statusMessage');
+        let statusMessageTimeout = null;
+        let allSoundsData = {}; // To store sounds from SoundboardSN.json
+
+        const myPlaylistsTab = document.getElementById('myPlaylistsTab');
+        const publicPlaylistsTab = document.getElementById('publicPlaylistsTab');
+        let currentView = 'my-playlists'; // 'my-playlists' or 'public-playlists'
+
+        myPlaylistsTab.addEventListener('click', () => switchTab('my-playlists'));
+        publicPlaylistsTab.addEventListener('click', () => switchTab('public-playlists'));
+
+        function switchTab(tabName) {
+            currentView = tabName;
+            myPlaylistsTab.classList.toggle('active', tabName === 'my-playlists');
+            publicPlaylistsTab.classList.toggle('active', tabName === 'public-playlists');
+            loadPlaylists();
+        }
+
+        function showStatus(message, type = 'info', duration = 3000) {
+            if (statusMessageTimeout) clearTimeout(statusMessageTimeout);
+            statusMessageEl.textContent = message;
+            statusMessageEl.className = 'status-message-v4 ' + type;
+            statusMessageEl.style.display = 'block';
+            statusMessageEl.classList.remove('fade-out');
+            statusMessageEl.classList.add('fade-in');
+            statusMessageTimeout = setTimeout(() => {
+                statusMessageEl.classList.remove('fade-in');
+                statusMessageEl.classList.add('fade-out');
+                setTimeout(() => {
+                    statusMessageEl.style.display = 'none';
+                    statusMessageEl.classList.remove('fade-out');
+                }, 300);
+            }, duration);
+        }
+
+        function generatePlaylistId(length = 15) {
+            const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+            let result = '';
+            for (let i = 0; i < length; i++) {
+                result += characters.charAt(Math.floor(Math.random() * characters.length));
+            }
+            return result;
+        }
+
+        async function loadSoundsForForm() {
+            try {
+                const response = await fetch('../SoundboardSN.json');
+                if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+                allSoundsData = await response.json();
+                renderSoundSelector(allSoundsData);
+            } catch (error) {
+                console.error("Error loading SoundboardSN.json for playlist form:", error);
+                playlistSoundSelector.innerHTML = `<p style="color:var(--v4-error-color);">Error loading sounds for selection.</p>`;
+            }
+        }
+
+        function renderSoundSelector(soundData, searchTerm = '') {
+            playlistSoundSelector.innerHTML = '';
+            const categoryIcons = {"NormalSounds": "😊", "ExplicitSounds": "😈"};
+            let soundAvailable = false;
+
+            for (const categoryKey in soundData) {
+                if (soundData.hasOwnProperty(categoryKey) && Array.isArray(soundData[categoryKey])) {
+                    const categoryName = categoryKey.replace(/([A-Z])/g, ' $1').trim();
+                    const icon = categoryIcons[categoryKey] || '🎵';
+
+                    const filteredSounds = soundData[categoryKey].filter(filename => {
+                        const displayName = filename.replace(/\.mp3$/i, '').replace(/_/g, ' ');
+                        return displayName.toLowerCase().includes(searchTerm.toLowerCase());
+                    }).sort();
+
+                    if (filteredSounds.length > 0) {
+                        soundAvailable = true;
+                        const categoryTitle = document.createElement('h5');
+                        categoryTitle.className = 'category-title-modal';
+                        categoryTitle.innerHTML = `<span class="category-icon-v4">${icon}</span> ${categoryName}`;
+                        playlistSoundSelector.appendChild(categoryTitle);
+
+                        filteredSounds.forEach(filename => {
+                            const displayName = filename.replace(/\.mp3$/i, '').replace(/_/g, ' ');
+                            const soundPath = `../Sounds/${filename}`; // Path not stored, but good for reference
+                            const soundObject = { category: categoryKey, filename: filename, displayName: displayName };
+
+                            const label = document.createElement('label');
+                            const checkbox = document.createElement('input');
+                            checkbox.type = 'checkbox';
+                            checkbox.value = JSON.stringify(soundObject);
+                            checkbox.dataset.soundName = displayName; // For search
+                            checkbox.addEventListener('change', updateSelectedSoundsCount);
+
+                            label.appendChild(checkbox);
+                            label.appendChild(document.createTextNode(` ${displayName}`));
+                            playlistSoundSelector.appendChild(label);
+                        });
+                    }
+                }
+            }
+            if (!soundAvailable && searchTerm) {
+                 playlistSoundSelector.innerHTML = `<p>No sounds match "${searchTerm}".</p>`;
+            } else if (!soundAvailable && !searchTerm) {
+                 playlistSoundSelector.innerHTML = `<p>No sounds loaded.</p>`;
+            }
+            updateSelectedSoundsCount();
+        }
+
+        playlistSoundSearchInput.addEventListener('input', (e) => {
+            renderSoundSelector(allSoundsData, e.target.value);
+            // Re-check currently selected sounds if modal is open for editing
+            if (playlistModal.style.display === 'block' && playlistIdStore.value) {
+                const formCheckboxes = playlistSoundSelector.querySelectorAll('input[type="checkbox"]');
+                const currentSelected = Array.from(playlistForm.querySelectorAll('#playlistSoundSelector input[type="checkbox"]:checked'))
+                                        .map(cb => JSON.parse(cb.value));
+
+                formCheckboxes.forEach(cb => {
+                    const soundObj = JSON.parse(cb.value);
+                    if (currentSelected.some(s => s.filename === soundObj.filename && s.category === soundObj.category)) {
+                        cb.checked = true;
+                    }
+                });
+                updateSelectedSoundsCount();
+            }
+        });
+
+        function updateSelectedSoundsCount() {
+            const count = playlistSoundSelector.querySelectorAll('input[type="checkbox"]:checked').length;
+            selectedSoundsCountEl.textContent = `(${count} selected)`;
+        }
+
+        createPlaylistBtn.addEventListener('click', () => {
+            modalTitle.textContent = 'Create Playlist';
+            playlistForm.reset();
+            playlistIdStore.value = '';
+            renderSoundSelector(allSoundsData, ''); // Reset sound selector and search
+            updateSelectedSoundsCount();
+            playlistModal.style.display = 'block';
+        });
+
+        closePlaylistModalBtn.addEventListener('click', () => {
+            playlistModal.style.display = 'none';
+        });
+
+        window.addEventListener('click', (event) => {
+            if (event.target == playlistModal) {
+                playlistModal.style.display = 'none';
+            }
+        });
+
+        playlistForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            if (!currentUser) {
+                showStatus("You must be logged in to save a playlist.", "error");
+                return;
+            }
+
+            const name = playlistNameInput.value.trim();
+            const description = playlistDescriptionInput.value.trim();
+            const isPrivate = playlistForm.elements.playlistPrivacy.value === 'private';
+            const selectedSoundElements = Array.from(playlistSoundSelector.querySelectorAll('input[type="checkbox"]:checked'));
+            const sounds = selectedSoundElements.map(el => JSON.parse(el.value));
+
+            if (!name) {
+                showStatus("Playlist name is required.", "error");
+                return;
+            }
+            if (sounds.length === 0) {
+                showStatus("Please select at least one sound for the playlist.", "error");
+                return;
+            }
+
+            const playlistData = {
+                name,
+                description,
+                sounds, // Array of {category, filename, displayName}
+                isPrivate,
+                creatorId: currentUser.uid,
+                creatorUsername: currentUsername, // Store for easier display
+                updatedAt: firebase.firestore.FieldValue.serverTimestamp()
+            };
+
+            const existingId = playlistIdStore.value;
+            try {
+                document.getElementById('savePlaylistBtn').disabled = true;
+                document.getElementById('savePlaylistBtn').textContent = 'Saving...';
+
+                if (existingId) { // Editing existing playlist
+                    await db.collection('playlists').doc(existingId).update(playlistData);
+                    showStatus("Playlist updated successfully!", "success");
+                } else { // Creating new playlist
+                    playlistData.id = generatePlaylistId();
+                    playlistData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
+                    await db.collection('playlists').doc(playlistData.id).set(playlistData);
+                    showStatus("Playlist created successfully!", "success");
+                }
+                playlistModal.style.display = 'none';
+                loadPlaylists(); // Refresh list
+            } catch (error) {
+                console.error("Error saving playlist:", error);
+                showStatus("Error saving playlist: " + error.message, "error");
+            } finally {
+                 document.getElementById('savePlaylistBtn').disabled = false;
+                 document.getElementById('savePlaylistBtn').textContent = 'Save Playlist';
+            }
+        });
+
+        async function loadPlaylists() {
+            if (!currentUser) {
+                playlistsContainer.innerHTML = '<p>Please log in to see playlists.</p>';
+                return;
+            }
+            playlistsContainer.innerHTML = '<p>Loading playlists...</p>';
+
+            try {
+                let query;
+                if (currentView === 'my-playlists') {
+                    query = db.collection('playlists')
+                              .where('creatorId', '==', currentUser.uid)
+                              .orderBy('updatedAt', 'desc');
+                } else { // public-playlists
+                    query = db.collection('playlists')
+                              .where('isPrivate', '==', false)
+                              .orderBy('updatedAt', 'desc');
+                }
+
+                const snapshot = await query.get();
+                if (snapshot.empty) {
+                    if (currentView === 'my-playlists') {
+                        playlistsContainer.innerHTML = '<p>You haven\'t created any playlists yet. Click "Create New Playlist" to start!</p>';
+                    } else {
+                        playlistsContainer.innerHTML = '<p>No public playlists found yet.</p>';
+                    }
+                    return;
+                }
+
+                playlistsContainer.innerHTML = ''; // Clear previous
+                snapshot.forEach(doc => {
+                    const playlist = doc.data();
+                    // playlist.id might be undefined if it was just created and serverTimestamp is resolving
+                    // use doc.id if playlist.id is not set in the doc itself after creation
+                    const playlistId = playlist.id || doc.id;
+                    renderPlaylistCard(playlist, playlistId);
+                });
+
+            } catch (error) {
+                console.error("Error loading playlists:", error);
+                playlistsContainer.innerHTML = `<p style="color:var(--v4-error-color);">Error loading playlists: ${error.message}</p>`;
+                showStatus("Failed to load playlists.", "error");
+            }
+        }
+
+        function renderPlaylistCard(playlist, playlistId) {
+            const card = document.createElement('div');
+            card.className = 'playlist-card-v4';
+            card.dataset.playlistId = playlistId;
+
+            const title = document.createElement('h3');
+            title.textContent = playlist.name;
+
+            const description = document.createElement('p');
+            description.textContent = playlist.description || 'No description.';
+
+            const infoChips = document.createElement('div');
+            infoChips.className = 'info-chips';
+
+            const soundCountChip = document.createElement('span');
+            soundCountChip.className = 'info-chip';
+            soundCountChip.textContent = `${playlist.sounds.length} Sound${playlist.sounds.length !== 1 ? 's' : ''}`;
+            infoChips.appendChild(soundCountChip);
+
+            const privacyChip = document.createElement('span');
+            privacyChip.className = `info-chip ${playlist.isPrivate ? 'private' : 'public'}`;
+            privacyChip.textContent = playlist.isPrivate ? 'Private' : 'Public';
+            infoChips.appendChild(privacyChip);
+
+            if (currentView === 'public-playlists' && playlist.creatorUsername) {
+                 const creatorChip = document.createElement('span');
+                 creatorChip.className = 'info-chip';
+                 creatorChip.textContent = `By: ${playlist.creatorUsername}`;
+                 infoChips.appendChild(creatorChip);
+            }
+
+
+            const actionsDiv = document.createElement('div');
+            actionsDiv.className = 'actions';
+
+            const openBtn = document.createElement('button');
+            openBtn.textContent = 'Open';
+            openBtn.className = 'control-button-v4 action-button-v4';
+            openBtn.onclick = () => window.location.href = `playlist-view.html?viewid=${playlistId}`;
+            actionsDiv.appendChild(openBtn);
+
+            if (playlist.creatorId === currentUser.uid) {
+                const editBtn = document.createElement('button');
+                editBtn.textContent = 'Edit';
+                editBtn.className = 'control-button-v4 action-button-v4';
+                editBtn.onclick = () => openEditPlaylistForm(playlistId);
+                actionsDiv.appendChild(editBtn);
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = 'Delete';
+                deleteBtn.className = 'control-button-v4 action-button-v4 delete';
+                deleteBtn.onclick = () => deletePlaylist(playlistId, playlist.name);
+                actionsDiv.appendChild(deleteBtn);
+            } else if (!playlist.isPrivate) { // Public playlist by someone else
+                const remixBtn = document.createElement('button');
+                remixBtn.textContent = 'Remix';
+                remixBtn.className = 'control-button-v4 action-button-v4';
+                remixBtn.onclick = () => remixPlaylist(playlistId);
+                actionsDiv.appendChild(remixBtn);
+            }
+
+            card.appendChild(title);
+            card.appendChild(description);
+            card.appendChild(infoChips);
+            card.appendChild(actionsDiv);
+            playlistsContainer.appendChild(card);
+        }
+
+        async function openEditPlaylistForm(playlistId) {
+            try {
+                const doc = await db.collection('playlists').doc(playlistId).get();
+                if (!doc.exists) {
+                    showStatus("Playlist not found.", "error");
+                    return;
+                }
+                const playlist = doc.data();
+
+                modalTitle.textContent = 'Edit Playlist';
+                playlistForm.reset(); // Clear previous form data
+                renderSoundSelector(allSoundsData, ''); // Reset sound selector and search
+
+                playlistIdStore.value = playlistId;
+                playlistNameInput.value = playlist.name;
+                playlistDescriptionInput.value = playlist.description;
+                playlistForm.elements.playlistPrivacy.value = playlist.isPrivate ? 'private' : 'public';
+
+                // Check the sounds that are part of this playlist
+                const formCheckboxes = playlistSoundSelector.querySelectorAll('input[type="checkbox"]');
+                formCheckboxes.forEach(checkbox => {
+                    const soundInForm = JSON.parse(checkbox.value);
+                    if (playlist.sounds.some(s => s.filename === soundInForm.filename && s.category === soundInForm.category)) {
+                        checkbox.checked = true;
+                    }
+                });
+                updateSelectedSoundsCount();
+                playlistModal.style.display = 'block';
+
+            } catch (error) {
+                console.error("Error fetching playlist for edit:", error);
+                showStatus("Failed to load playlist for editing.", "error");
+            }
+        }
+
+        async function deletePlaylist(playlistId, playlistName) {
+            if (!confirm(`Are you sure you want to delete the playlist "${playlistName}"? This action cannot be undone.`)) {
+                return;
+            }
+            try {
+                await db.collection('playlists').doc(playlistId).delete();
+                showStatus(`Playlist "${playlistName}" deleted successfully.`, "success");
+                loadPlaylists(); // Refresh list
+            } catch (error) {
+                console.error("Error deleting playlist:", error);
+                showStatus(`Error deleting playlist: ${error.message}`, "error");
+            }
+        }
+
+        async function remixPlaylist(playlistId) {
+             try {
+                const doc = await db.collection('playlists').doc(playlistId).get();
+                if (!doc.exists) {
+                    showStatus("Playlist to remix not found.", "error");
+                    return;
+                }
+                const playlistToRemix = doc.data();
+
+                if (playlistToRemix.isPrivate) {
+                    showStatus("Cannot remix a private playlist.", "error");
+                    return;
+                }
+
+                modalTitle.textContent = 'Remix Playlist';
+                playlistForm.reset();
+                renderSoundSelector(allSoundsData, ''); // Reset sound selector
+
+                playlistIdStore.value = ''; // This will be a new playlist
+                playlistNameInput.value = `${playlistToRemix.name} (remix)`;
+                playlistDescriptionInput.value = playlistToRemix.description;
+                // Default new remixed playlist to private, user can change
+                playlistForm.elements.playlistPrivacy.value = 'private';
+
+
+                const formCheckboxes = playlistSoundSelector.querySelectorAll('input[type="checkbox"]');
+                formCheckboxes.forEach(checkbox => {
+                    const soundInForm = JSON.parse(checkbox.value);
+                    if (playlistToRemix.sounds.some(s => s.filename === soundInForm.filename && s.category === soundInForm.category)) {
+                        checkbox.checked = true;
+                    }
+                });
+                updateSelectedSoundsCount();
+                playlistModal.style.display = 'block';
+                showStatus(`Remixing "${playlistToRemix.name}". Adjust details and save.`, "info", 5000);
+
+            } catch (error) {
+                console.error("Error preparing playlist for remix:", error);
+                showStatus("Failed to prepare playlist for remixing.", "error");
+            }
+        }
+
+
+        // Initial load
+        document.addEventListener('DOMContentLoaded', () => {
+            // Auth will trigger initial load of playlists and sounds
+            // Make sure sidebar marquee is updated after initial content render if needed
+            setTimeout(updateMarquees, 600); // A bit longer to ensure layout is stable
+        });
+
+    </script>
+</body>
+</html>
