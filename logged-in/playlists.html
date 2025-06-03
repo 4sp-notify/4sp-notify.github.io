@@ -39,7 +39,7 @@
             min-height: 100vh;
             margin: 0;
             font-family: var(--v4-font-primary);
-            background: var(--v4-bg-gradient); /* Changed from background-color */
+            background: var(--v4-bg-gradient);
             color: var(--v4-text-primary);
             line-height: 1.6;
         }
@@ -71,7 +71,7 @@
             width: 100%; height: 1.8em; line-height: 1.8em;
         }
         .marquee-content { display: inline-block; padding-left: 100%; transform: translateX(0); animation: none; line-height: 1.8em; }
-        .marquee-active { animation: scroll-left-playlists 12s linear infinite; } /* Renamed animation */
+        .marquee-active { animation: scroll-left-playlists 12s linear infinite; }
         .sidebar.collapsed .marquee-active { animation-duration: 20s; }
         @keyframes scroll-left-playlists { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
 
@@ -205,6 +205,7 @@
             max-height: 60px; /* Limit description height */
             overflow: hidden;
             text-overflow: ellipsis;
+            display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; /* For multiline ellipsis */
         }
         .playlist-card-v4 .info-chips {
             display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 15px;
@@ -222,6 +223,8 @@
             border-top: 1px solid var(--v4-border-softer);
             display: flex;
             justify-content: flex-end;
+            flex-wrap: wrap; /* Allow buttons to wrap if many */
+            gap: 5px;
         }
 
 
@@ -260,7 +263,7 @@
             width: 100%; padding: 12px 15px; background-color: var(--v4-input-bg);
             border: 1px solid var(--v4-input-border); border-radius: 8px;
             color: var(--v4-text-primary); font-size: 1em; outline: none;
-            font-family: var(--v4-font-secondary);
+            font-family: var(--v4-font-secondary); box-sizing: border-box;
         }
         .form-group-v4 input[type="text"]:focus,
         .form-group-v4 textarea:focus,
@@ -269,8 +272,9 @@
             box-shadow: 0 0 0 3px rgba(103, 32, 189, 0.15);
         }
         .form-group-v4 textarea { min-height: 80px; resize: vertical; }
-        .form-group-v4 input[type="radio"] { margin-right: 5px; accent-color: var(--v4-purple-accent); }
-        .form-group-v4 label input[type="radio"] { margin-right: 10px;} /* For radio button groups */
+        .form-group-v4 .radio-group label { display: inline-flex; align-items: center; margin-right: 15px; font-weight: normal;}
+        .form-group-v4 input[type="radio"] { margin-right: 5px; accent-color: var(--v4-purple-accent); transform: scale(1.1);}
+
 
         #playlistSoundSearch { margin-bottom: 10px; }
         .sound-selector-grid-v4 {
@@ -283,14 +287,15 @@
             margin-top: 15px; margin-bottom: 8px; padding-bottom: 5px;
             border-bottom: 1px solid var(--v4-border-softer);
         }
-        .sound-selector-grid-v4 label {
+        .sound-selector-grid-v4 .sound-checkbox-label { /* Changed from just label */
             display: block; padding: 8px 10px; margin-bottom: 5px;
             border-radius: 6px; cursor: pointer;
             transition: background-color 0.2s;
             font-size: 0.9em; color: var(--v4-text-primary);
+            line-height: 1.4;
         }
-        .sound-selector-grid-v4 label:hover { background-color: #e9ecef; }
-        .sound-selector-grid-v4 input[type="checkbox"] { margin-right: 10px; transform: scale(1.1); accent-color: var(--v4-purple-accent); }
+        .sound-selector-grid-v4 .sound-checkbox-label:hover { background-color: #e9ecef; }
+        .sound-selector-grid-v4 input[type="checkbox"] { margin-right: 10px; transform: scale(1.1); accent-color: var(--v4-purple-accent); vertical-align: middle;}
 
 
         /* Status Message */
@@ -392,7 +397,8 @@
             <span class="close-btn-v4" id="closePlaylistModalBtn">&times;</span>
             <h3 id="modalTitle">Create Playlist</h3>
             <form id="playlistForm">
-                <input type="hidden" id="playlistIdStore"> <div class="form-group-v4">
+                <input type="hidden" id="playlistIdStore">
+                <div class="form-group-v4">
                     <label for="playlistName">Playlist Name:</label>
                     <input type="text" id="playlistName" required>
                 </div>
@@ -402,11 +408,9 @@
                 </div>
                 <div class="form-group-v4">
                     <label>Privacy:</label>
-                    <div>
-                        <label><input type="radio" name="playlistPrivacy" value="private" checked> Private (Only you can see and edit)</label>
-                    </div>
-                    <div>
-                        <label><input type="radio" name="playlistPrivacy" value="public"> Public (Anyone with the link can view, others can remix)</label>
+                    <div class="radio-group">
+                        <label><input type="radio" name="playlistPrivacy" value="private" checked> Private</label>
+                        <label><input type="radio" name="playlistPrivacy" value="public"> Public</label>
                     </div>
                 </div>
                 <div class="form-group-v4">
@@ -449,36 +453,32 @@
                     }
                 }
                 updateMarquees();
-                loadSoundsForForm(); // Load sounds after user is confirmed
-                loadPlaylists(); // Load playlists after user is confirmed
+                await loadSoundsForForm(); // Ensure sounds are loaded before processing URL params
+                processUrlParametersAndLoadPlaylists();
             }
         });
 
         document.getElementById('logoutBtnHeader').addEventListener('click', () => {
             firebase.auth().signOut().then(() => { window.location.href = '../login.html'; });
         });
-        const signOutLinkSidebar = document.getElementById('signOutLinkSidebar');
-        if(signOutLinkSidebar) {
-            signOutLinkSidebar.addEventListener('click', (e) => {
-                e.preventDefault();
-                firebase.auth().signOut().then(() => { window.location.href = '../login.html'; });
-            });
-        }
+        document.getElementById('signOutLinkSidebar').addEventListener('click', (e) => {
+            e.preventDefault();
+            firebase.auth().signOut().then(() => { window.location.href = '../login.html'; });
+        });
 
         const sidebar = document.getElementById('sidebar');
         const toggleSidebarBtn = document.getElementById('toggleSidebar');
         if (toggleSidebarBtn && sidebar) {
             toggleSidebarBtn.addEventListener('click', () => {
                 sidebar.classList.toggle('collapsed');
-                setTimeout(updateMarquees, 550); // Match transition duration
+                setTimeout(updateMarquees, 550);
             });
         }
 
         function updateMarquees() {
             marqueeEls.forEach(el => {
                 if (!el || !el.parentElement) return;
-                const parent = el.parentElement;
-                const overflow = el.scrollWidth > parent.clientWidth;
+                const parent = el.parentElement; const overflow = el.scrollWidth > parent.clientWidth;
                 const shouldScroll = sidebar.classList.contains('collapsed') || (overflow && !sidebar.classList.contains('collapsed'));
                 el.classList.toggle('marquee-active', shouldScroll);
                 if (!overflow && !sidebar.classList.contains('collapsed')) {
@@ -506,11 +506,13 @@
         const selectedSoundsCountEl = document.getElementById('selectedSoundsCount');
         const statusMessageEl = document.getElementById('statusMessage');
         let statusMessageTimeout = null;
+
         let allSoundsData = {}; // To store sounds from SoundboardSN.json
+        let selectedSoundObjectsInModal = []; // Tracks currently selected sound objects in the modal
 
         const myPlaylistsTab = document.getElementById('myPlaylistsTab');
         const publicPlaylistsTab = document.getElementById('publicPlaylistsTab');
-        let currentView = 'my-playlists'; // 'my-playlists' or 'public-playlists'
+        let currentView = 'my-playlists';
 
         myPlaylistsTab.addEventListener('click', () => switchTab('my-playlists'));
         publicPlaylistsTab.addEventListener('click', () => switchTab('public-playlists'));
@@ -553,24 +555,34 @@
                 const response = await fetch('../SoundboardSN.json');
                 if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
                 allSoundsData = await response.json();
-                renderSoundSelector(allSoundsData);
+                // Don't render here, render when modal opens or search changes
             } catch (error) {
                 console.error("Error loading SoundboardSN.json for playlist form:", error);
-                playlistSoundSelector.innerHTML = `<p style="color:var(--v4-error-color);">Error loading sounds for selection.</p>`;
+                if(playlistSoundSelector) playlistSoundSelector.innerHTML = `<p style="color:var(--v4-error-color);">Error loading sounds for selection.</p>`;
             }
         }
 
-        function renderSoundSelector(soundData, searchTerm = '') {
-            playlistSoundSelector.innerHTML = '';
+        function handleSoundSelectionChangeInModal() {
+            selectedSoundObjectsInModal = Array.from(playlistSoundSelector.querySelectorAll('input[type="checkbox"]:checked'))
+                                             .map(cb => JSON.parse(cb.value));
+            updateSelectedSoundsCount();
+        }
+
+        function updateSelectedSoundsCount() {
+            selectedSoundsCountEl.textContent = `(${selectedSoundObjectsInModal.length} selected)`;
+        }
+
+        function renderSoundSelector(searchTerm = '') {
+            playlistSoundSelector.innerHTML = ''; // Clear previous sounds
             const categoryIcons = {"NormalSounds": "😊", "ExplicitSounds": "😈"};
             let soundAvailable = false;
 
-            for (const categoryKey in soundData) {
-                if (soundData.hasOwnProperty(categoryKey) && Array.isArray(soundData[categoryKey])) {
+            for (const categoryKey in allSoundsData) {
+                if (allSoundsData.hasOwnProperty(categoryKey) && Array.isArray(allSoundsData[categoryKey])) {
                     const categoryName = categoryKey.replace(/([A-Z])/g, ' $1').trim();
                     const icon = categoryIcons[categoryKey] || '🎵';
 
-                    const filteredSounds = soundData[categoryKey].filter(filename => {
+                    const filteredSounds = allSoundsData[categoryKey].filter(filename => {
                         const displayName = filename.replace(/\.mp3$/i, '').replace(/_/g, ' ');
                         return displayName.toLowerCase().includes(searchTerm.toLowerCase());
                     }).sort();
@@ -584,15 +596,16 @@
 
                         filteredSounds.forEach(filename => {
                             const displayName = filename.replace(/\.mp3$/i, '').replace(/_/g, ' ');
-                            const soundPath = `../Sounds/${filename}`; // Path not stored, but good for reference
                             const soundObject = { category: categoryKey, filename: filename, displayName: displayName };
 
                             const label = document.createElement('label');
+                            label.className = 'sound-checkbox-label';
                             const checkbox = document.createElement('input');
                             checkbox.type = 'checkbox';
                             checkbox.value = JSON.stringify(soundObject);
-                            checkbox.dataset.soundName = displayName; // For search
-                            checkbox.addEventListener('change', updateSelectedSoundsCount);
+                            checkbox.dataset.soundName = displayName;
+                            checkbox.checked = selectedSoundObjectsInModal.some(s => s.filename === soundObject.filename && s.category === soundObject.category);
+                            checkbox.addEventListener('change', handleSoundSelectionChangeInModal);
 
                             label.appendChild(checkbox);
                             label.appendChild(document.createTextNode(` ${displayName}`));
@@ -603,40 +616,22 @@
             }
             if (!soundAvailable && searchTerm) {
                  playlistSoundSelector.innerHTML = `<p>No sounds match "${searchTerm}".</p>`;
-            } else if (!soundAvailable && !searchTerm) {
-                 playlistSoundSelector.innerHTML = `<p>No sounds loaded.</p>`;
+            } else if (!soundAvailable && Object.keys(allSoundsData).length === 0) {
+                 playlistSoundSelector.innerHTML = `<p>No sounds loaded or available.</p>`;
             }
-            updateSelectedSoundsCount();
+            // updateSelectedSoundsCount(); // Already called by handleSoundSelectionChangeInModal or after initializing selectedSoundObjectsInModal
         }
 
         playlistSoundSearchInput.addEventListener('input', (e) => {
-            renderSoundSelector(allSoundsData, e.target.value);
-            // Re-check currently selected sounds if modal is open for editing
-            if (playlistModal.style.display === 'block' && playlistIdStore.value) {
-                const formCheckboxes = playlistSoundSelector.querySelectorAll('input[type="checkbox"]');
-                const currentSelected = Array.from(playlistForm.querySelectorAll('#playlistSoundSelector input[type="checkbox"]:checked'))
-                                        .map(cb => JSON.parse(cb.value));
-
-                formCheckboxes.forEach(cb => {
-                    const soundObj = JSON.parse(cb.value);
-                    if (currentSelected.some(s => s.filename === soundObj.filename && s.category === soundObj.category)) {
-                        cb.checked = true;
-                    }
-                });
-                updateSelectedSoundsCount();
-            }
+            renderSoundSelector(e.target.value);
         });
-
-        function updateSelectedSoundsCount() {
-            const count = playlistSoundSelector.querySelectorAll('input[type="checkbox"]:checked').length;
-            selectedSoundsCountEl.textContent = `(${count} selected)`;
-        }
 
         createPlaylistBtn.addEventListener('click', () => {
             modalTitle.textContent = 'Create Playlist';
             playlistForm.reset();
             playlistIdStore.value = '';
-            renderSoundSelector(allSoundsData, ''); // Reset sound selector and search
+            selectedSoundObjectsInModal = []; // Reset for new playlist
+            renderSoundSelector('');
             updateSelectedSoundsCount();
             playlistModal.style.display = 'block';
         });
@@ -661,8 +656,7 @@
             const name = playlistNameInput.value.trim();
             const description = playlistDescriptionInput.value.trim();
             const isPrivate = playlistForm.elements.playlistPrivacy.value === 'private';
-            const selectedSoundElements = Array.from(playlistSoundSelector.querySelectorAll('input[type="checkbox"]:checked'));
-            const sounds = selectedSoundElements.map(el => JSON.parse(el.value));
+            const sounds = selectedSoundObjectsInModal; // Use the centrally tracked list
 
             if (!name) {
                 showStatus("Playlist name is required.", "error");
@@ -676,35 +670,36 @@
             const playlistData = {
                 name,
                 description,
-                sounds, // Array of {category, filename, displayName}
+                sounds,
                 isPrivate,
                 creatorId: currentUser.uid,
-                creatorUsername: currentUsername, // Store for easier display
+                creatorUsername: currentUsername,
                 updatedAt: firebase.firestore.FieldValue.serverTimestamp()
             };
 
             const existingId = playlistIdStore.value;
+            const saveButton = document.getElementById('savePlaylistBtn');
             try {
-                document.getElementById('savePlaylistBtn').disabled = true;
-                document.getElementById('savePlaylistBtn').textContent = 'Saving...';
+                saveButton.disabled = true;
+                saveButton.textContent = 'Saving...';
 
-                if (existingId) { // Editing existing playlist
+                if (existingId) {
                     await db.collection('playlists').doc(existingId).update(playlistData);
                     showStatus("Playlist updated successfully!", "success");
-                } else { // Creating new playlist
-                    playlistData.id = generatePlaylistId();
+                } else {
+                    playlistData.id = generatePlaylistId(); // Ensure new playlists get an ID
                     playlistData.createdAt = firebase.firestore.FieldValue.serverTimestamp();
                     await db.collection('playlists').doc(playlistData.id).set(playlistData);
                     showStatus("Playlist created successfully!", "success");
                 }
                 playlistModal.style.display = 'none';
-                loadPlaylists(); // Refresh list
+                loadPlaylists();
             } catch (error) {
                 console.error("Error saving playlist:", error);
                 showStatus("Error saving playlist: " + error.message, "error");
             } finally {
-                 document.getElementById('savePlaylistBtn').disabled = false;
-                 document.getElementById('savePlaylistBtn').textContent = 'Save Playlist';
+                 saveButton.disabled = false;
+                 saveButton.textContent = 'Save Playlist';
             }
         });
 
@@ -721,7 +716,7 @@
                     query = db.collection('playlists')
                               .where('creatorId', '==', currentUser.uid)
                               .orderBy('updatedAt', 'desc');
-                } else { // public-playlists
+                } else {
                     query = db.collection('playlists')
                               .where('isPrivate', '==', false)
                               .orderBy('updatedAt', 'desc');
@@ -729,27 +724,22 @@
 
                 const snapshot = await query.get();
                 if (snapshot.empty) {
-                    if (currentView === 'my-playlists') {
-                        playlistsContainer.innerHTML = '<p>You haven\'t created any playlists yet. Click "Create New Playlist" to start!</p>';
-                    } else {
-                        playlistsContainer.innerHTML = '<p>No public playlists found yet.</p>';
-                    }
+                    playlistsContainer.innerHTML = currentView === 'my-playlists' ?
+                        '<p>You haven\'t created any playlists yet. Click "Create New Playlist" to start!</p>' :
+                        '<p>No public playlists found yet.</p>';
                     return;
                 }
 
-                playlistsContainer.innerHTML = ''; // Clear previous
+                playlistsContainer.innerHTML = '';
                 snapshot.forEach(doc => {
                     const playlist = doc.data();
-                    // playlist.id might be undefined if it was just created and serverTimestamp is resolving
-                    // use doc.id if playlist.id is not set in the doc itself after creation
-                    const playlistId = playlist.id || doc.id;
-                    renderPlaylistCard(playlist, playlistId);
+                    const playlistIdToUse = playlist.id || doc.id; // Use doc.id as fallback if playlist.id is missing
+                    renderPlaylistCard(playlist, playlistIdToUse);
                 });
 
             } catch (error) {
                 console.error("Error loading playlists:", error);
                 playlistsContainer.innerHTML = `<p style="color:var(--v4-error-color);">Error loading playlists: ${error.message}</p>`;
-                showStatus("Failed to load playlists.", "error");
             }
         }
 
@@ -766,24 +756,20 @@
 
             const infoChips = document.createElement('div');
             infoChips.className = 'info-chips';
-
             const soundCountChip = document.createElement('span');
             soundCountChip.className = 'info-chip';
             soundCountChip.textContent = `${playlist.sounds.length} Sound${playlist.sounds.length !== 1 ? 's' : ''}`;
             infoChips.appendChild(soundCountChip);
-
             const privacyChip = document.createElement('span');
             privacyChip.className = `info-chip ${playlist.isPrivate ? 'private' : 'public'}`;
             privacyChip.textContent = playlist.isPrivate ? 'Private' : 'Public';
             infoChips.appendChild(privacyChip);
-
             if (currentView === 'public-playlists' && playlist.creatorUsername) {
                  const creatorChip = document.createElement('span');
                  creatorChip.className = 'info-chip';
                  creatorChip.textContent = `By: ${playlist.creatorUsername}`;
                  infoChips.appendChild(creatorChip);
             }
-
 
             const actionsDiv = document.createElement('div');
             actionsDiv.className = 'actions';
@@ -806,7 +792,7 @@
                 deleteBtn.className = 'control-button-v4 action-button-v4 delete';
                 deleteBtn.onclick = () => deletePlaylist(playlistId, playlist.name);
                 actionsDiv.appendChild(deleteBtn);
-            } else if (!playlist.isPrivate) { // Public playlist by someone else
+            } else if (!playlist.isPrivate) {
                 const remixBtn = document.createElement('button');
                 remixBtn.textContent = 'Remix';
                 remixBtn.className = 'control-button-v4 action-button-v4';
@@ -831,22 +817,14 @@
                 const playlist = doc.data();
 
                 modalTitle.textContent = 'Edit Playlist';
-                playlistForm.reset(); // Clear previous form data
-                renderSoundSelector(allSoundsData, ''); // Reset sound selector and search
-
+                playlistForm.reset();
                 playlistIdStore.value = playlistId;
                 playlistNameInput.value = playlist.name;
                 playlistDescriptionInput.value = playlist.description;
                 playlistForm.elements.playlistPrivacy.value = playlist.isPrivate ? 'private' : 'public';
 
-                // Check the sounds that are part of this playlist
-                const formCheckboxes = playlistSoundSelector.querySelectorAll('input[type="checkbox"]');
-                formCheckboxes.forEach(checkbox => {
-                    const soundInForm = JSON.parse(checkbox.value);
-                    if (playlist.sounds.some(s => s.filename === soundInForm.filename && s.category === soundInForm.category)) {
-                        checkbox.checked = true;
-                    }
-                });
+                selectedSoundObjectsInModal = [...playlist.sounds]; // Initialize with current playlist's sounds
+                renderSoundSelector(''); // Render sounds, auto-checking selected ones
                 updateSelectedSoundsCount();
                 playlistModal.style.display = 'block';
 
@@ -863,7 +841,7 @@
             try {
                 await db.collection('playlists').doc(playlistId).delete();
                 showStatus(`Playlist "${playlistName}" deleted successfully.`, "success");
-                loadPlaylists(); // Refresh list
+                loadPlaylists();
             } catch (error) {
                 console.error("Error deleting playlist:", error);
                 showStatus(`Error deleting playlist: ${error.message}`, "error");
@@ -879,29 +857,20 @@
                 }
                 const playlistToRemix = doc.data();
 
-                if (playlistToRemix.isPrivate) {
-                    showStatus("Cannot remix a private playlist.", "error");
+                if (playlistToRemix.isPrivate && playlistToRemix.creatorId !== currentUser.uid) { // Allow owner to "remix" their own private
+                    showStatus("Cannot remix another user's private playlist.", "error");
                     return;
                 }
 
                 modalTitle.textContent = 'Remix Playlist';
                 playlistForm.reset();
-                renderSoundSelector(allSoundsData, ''); // Reset sound selector
-
                 playlistIdStore.value = ''; // This will be a new playlist
                 playlistNameInput.value = `${playlistToRemix.name} (remix)`;
                 playlistDescriptionInput.value = playlistToRemix.description;
-                // Default new remixed playlist to private, user can change
-                playlistForm.elements.playlistPrivacy.value = 'private';
+                playlistForm.elements.playlistPrivacy.value = 'private'; // Default remixed to private
 
-
-                const formCheckboxes = playlistSoundSelector.querySelectorAll('input[type="checkbox"]');
-                formCheckboxes.forEach(checkbox => {
-                    const soundInForm = JSON.parse(checkbox.value);
-                    if (playlistToRemix.sounds.some(s => s.filename === soundInForm.filename && s.category === soundInForm.category)) {
-                        checkbox.checked = true;
-                    }
-                });
+                selectedSoundObjectsInModal = [...playlistToRemix.sounds];
+                renderSoundSelector('');
                 updateSelectedSoundsCount();
                 playlistModal.style.display = 'block';
                 showStatus(`Remixing "${playlistToRemix.name}". Adjust details and save.`, "info", 5000);
@@ -912,12 +881,35 @@
             }
         }
 
+        function processUrlParametersAndLoadPlaylists() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const editId = urlParams.get('edit');
+            const remixId = urlParams.get('remix');
 
-        // Initial load
+            let handledByUrlParam = false;
+
+            if (editId) {
+                openEditPlaylistForm(editId);
+                handledByUrlParam = true;
+            } else if (remixId) {
+                remixPlaylist(remixId);
+                handledByUrlParam = true;
+            }
+
+            if (handledByUrlParam) {
+                // Clean URL parameters after processing
+                const newUrl = window.location.pathname; // URL without query string
+                window.history.replaceState({}, document.title, newUrl);
+            }
+            
+            // Always load the list of playlists in the background or if no param handled
+            // If modal is open, user won't see this immediately but it's good for when modal closes.
+            loadPlaylists();
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
-            // Auth will trigger initial load of playlists and sounds
-            // Make sure sidebar marquee is updated after initial content render if needed
-            setTimeout(updateMarquees, 600); // A bit longer to ensure layout is stable
+            // Auth state change will trigger initial data loads and URL processing.
+            setTimeout(updateMarquees, 600);
         });
 
     </script>
