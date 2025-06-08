@@ -6,6 +6,7 @@
   <title>4SP - VERN MAX PROXY</title>
   <link rel="stylesheet" href="../css/style.css" />
   <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
+  <link rel="shortcut icon" type="image/x-icon" href="">
   <style>
     /* --- Base Layout --- */
     html, body.dashboard-page {
@@ -59,8 +60,8 @@
 
     .proxy-controls {
       position: absolute;
-      top: 20px;
-      right: 20px;
+      bottom: 20px; /* Positioned at the bottom */
+      right: 20px;  /* Positioned on the right */
       display: flex;
       gap: 10px;
       z-index: 100;
@@ -176,12 +177,21 @@
       font-weight: bold;
     }
 
-    /* Animation for fade-in */
+    /* --- Animations --- */
     .fade-in { animation: fadeInGeneral 0.5s ease-out; }
     @keyframes fadeInGeneral { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
     
     .slide-in { animation: slideIn 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
     @keyframes slideIn { from { transform: translateX(-100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    /* Refresh button rotation animation */
+    @keyframes rotate-clockwise {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    .rotate-animation {
+      animation: rotate-clockwise 0.6s linear;
+    }
 
     /* Responsive */
     @media (max-width: 768px) {
@@ -216,7 +226,7 @@
     <main class="main-content fade-in">
       <div class="proxy-container">
         <div class="proxy-controls">
-          <button class="proxy-btn" onclick="refreshProxy()"><img src="../images/refresh-white.png" alt="Refresh"></button>
+          <button id="refreshBtn" class="proxy-btn" onclick="refreshProxy()"><img src="../images/refresh-white.png" alt="Refresh"></button>
           <button class="proxy-btn" onclick="toggleFullscreen()"><img src="../images/zoom-in-white.png" alt="Fullscreen"></button>
         </div>
 
@@ -237,13 +247,28 @@
   <script>
     // --- DOM Elements ---
     const proxyFrame = document.getElementById('proxyFrame');
+    const favicon = document.querySelector("link[rel*='icon']");
 
     // --- Firebase Refs ---
     let currentUser = null;
     const userProfileDocRef = () => currentUser ? firebase.firestore().collection('users').doc(currentUser.uid) : null;
 
     function refreshProxy() {
+      const refreshBtnIcon = document.querySelector('#refreshBtn img');
+      
+      // Prevent adding the class again if animation is already running
+      if (refreshBtnIcon.classList.contains('rotate-animation')) return;
+
+      // Add the animation class
+      refreshBtnIcon.classList.add('rotate-animation');
+      
+      // Refresh the iframe
       proxyFrame.src = proxyFrame.src;
+      
+      // Remove the class after the animation completes to allow re-triggering
+      refreshBtnIcon.addEventListener('animationend', () => {
+        refreshBtnIcon.classList.remove('rotate-animation');
+      }, { once: true }); // Use {once: true} to auto-remove the listener
     }
 
     function toggleFullscreen() {
@@ -262,20 +287,48 @@
         });
     };
     
-    // It seems there could be an issue if 'logoutBtn' or 'signOutLink' are not always present.
-    // Adding checks to prevent errors.
     const logoutBtn = document.getElementById('logoutBtn');
     if(logoutBtn) logoutBtn.onclick = handleLogout;
     
     const signOutLink = document.getElementById('signOutLink');
     if(signOutLink) signOutLink.onclick = handleLogout;
 
-
     // --- Authentication & User Info Display ---
     firebase.auth().onAuthStateChanged(async user => {
         currentUser = user;
         // User state change logic can be placed here if needed.
     });
+
+    // --- Iframe Title & Favicon Syncing ---
+    proxyFrame.addEventListener('load', () => {
+      // NOTE: Due to browser cross-origin security policies, we cannot directly
+      // access the iframe's document to get the title or favicon link if the
+      // content is from a different domain. This code attempts a workaround.
+
+      // 1. Update Title: Try to access the iframe's title. This will likely
+      // fail and throw a security error, which we'll catch.
+      try {
+        const iframeTitle = proxyFrame.contentDocument.title;
+        if (iframeTitle) {
+          document.title = iframeTitle;
+        }
+      } catch (e) {
+        console.warn("Could not access iframe title due to cross-origin restrictions.");
+      }
+
+      // 2. Update Favicon: We can't read the iframe's <head>, but we can guess
+      // the standard favicon location at the root of its domain. This will only
+      // work for the initial domain loaded, not for sites navigated to within the iframe.
+      try {
+        // We use the iframe's src attribute to get the origin.
+        const url = new URL(proxyFrame.src);
+        const faviconUrl = `${url.origin}/favicon.ico`;
+        favicon.href = faviconUrl;
+      } catch (e) {
+        console.error("Could not create favicon URL from iframe src:", e);
+      }
+    });
+
 
     // Keyboard shortcuts
     document.addEventListener('keydown', (e) => {
