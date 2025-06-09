@@ -701,7 +701,8 @@
         text-align: center;
         font-size: 1.6em;
         color: #6720bd;
-        font-family: 'PrimaryFont' sans-serif;
+        font-weight: bold;
+        font-family: 'PrimaryFont', sans-serif;
     }
     .settings-section {
         display: flex;
@@ -712,6 +713,7 @@
         font-weight: 600;
         color: #555;
         font-size: 1.1em;
+        font-family: 'PrimaryFont', sans-serif;
     }
     .location-input-wrapper {
         position: relative;
@@ -724,6 +726,7 @@
         border-radius: 8px;
         box-sizing: border-box;
         transition: border-color 0.2s, box-shadow 0.2s;
+        font-family: 'PrimaryFont', sans-serif; /* Ensure font */
     }
     #weatherLocationInput:focus {
         outline: none;
@@ -749,6 +752,7 @@
         cursor: pointer;
         transition: background-color 0.2s;
         border-bottom: 1px solid #eee;
+        font-family: 'PrimaryFont', sans-serif; /* Ensure font */
     }
     #locationSuggestions li:last-child {
         border-bottom: none;
@@ -766,6 +770,7 @@
         border-radius: 8px;
         cursor: pointer;
         transition: all 0.2s ease;
+        font-family: 'PrimaryFont', sans-serif; /* Ensure font */
     }
     #useCurrentLocationBtn:hover {
         transform: translateY(-2px);
@@ -784,6 +789,7 @@
         padding: 10px;
         background-color: #f8f9fa;
         border-radius: 10px;
+        font-family: 'PrimaryFont', sans-serif; /* Ensure font */
     }
     /* Custom Toggle Switch */
     .switch {
@@ -1116,34 +1122,47 @@
         return arr[(val % 16)];
     }
 
+    function getShortLocationLabel(address, fullDisplayName) {
+        if (!address) return fullDisplayName;
+
+        const city = address.city || address.town || address.village || address.hamlet;
+
+        // If it's a specific address with a street
+        if (address.house_number && address.road && city) {
+            return `${address.house_number} ${address.road}, ${city}`;
+        }
+        // If it's just a street in a city
+        if (address.road && city) {
+            return `${address.road}, ${city}`;
+        }
+        // Fallback for city and state/country
+        if (city && address.state) {
+            return `${city}, ${address.state}`;
+        }
+        if (city && address.country) {
+            return `${city}, ${address.country}`;
+        }
+        if (city) {
+            return city;
+        }
+        // If all else fails, use the full name
+        return fullDisplayName;
+    }
+
+
     async function fetchCityName(lat, lon) {
-        const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=10&addressdetails=1`;
+        const nominatimUrl = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1`;
         const fallbackLabel = `Lat: ${parseFloat(lat).toFixed(2)}, Lon: ${parseFloat(lon).toFixed(2)}`;
         try {
             const response = await fetch(nominatimUrl);
             if (!response.ok) {
                 console.warn(`Nominatim API error: ${response.status}`);
-                return { label: fallbackLabel, country_code: 'us' }; // Default to 'us'
+                return { label: fallbackLabel, country_code: 'us' };
             }
             const data = await response.json();
             if (data && data.address) {
-                const addr = data.address;
-                const city = addr.city || addr.town || addr.village || addr.hamlet || '';
-                const state = addr.state || '';
-                const country = addr.country || '';
-                const country_code = addr.country_code || 'us';
-
-                let label = fallbackLabel;
-                if (city && state && (country_code === "us")) {
-                    label = `${city}, ${state}`;
-                } else if (city && country) {
-                    label = `${city}, ${country}`;
-                } else if (city) {
-                    label = city;
-                } else if (country) {
-                    label = country;
-                }
-                return { label, country_code };
+                const label = getShortLocationLabel(data.address, data.display_name);
+                return { label, country_code: data.address.country_code || 'us' };
             }
             return { label: fallbackLabel, country_code: 'us' };
         } catch (error) {
@@ -1247,9 +1266,8 @@
     });
 
     async function fetchLocationSuggestions(query) {
-        let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&featuretype=city&addressdetails=1`;
+        let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&addressdetails=1`;
 
-        // If we have the user's location, use it to bias results
         if (userCoords) {
             const R = 6371; // Earth radius in km
             const d = 250; // Viewbox side length in km
@@ -1268,19 +1286,17 @@
             locationSuggestions.innerHTML = '';
             if (data.length > 0) {
                 locationSuggestions.style.display = 'block';
-                data.slice(0, 5).forEach(place => { // Show top 5 results
+                data.slice(0, 5).forEach(place => {
+                    const shortLabel = getShortLocationLabel(place.address, place.display_name);
                     const li = document.createElement('li');
-                    li.textContent = place.display_name;
-                    li.dataset.lat = place.lat;
-                    li.dataset.lon = place.lon;
-                    li.dataset.label = place.display_name;
+                    li.textContent = shortLabel;
                     li.addEventListener('click', () => {
                         weatherSettings.location = {
-                            label: place.display_name,
+                            label: shortLabel,
                             latitude: parseFloat(place.lat),
                             longitude: parseFloat(place.lon)
                         };
-                        weatherLocationInput.value = place.display_name;
+                        weatherLocationInput.value = shortLabel;
                         locationSuggestions.innerHTML = '';
                         locationSuggestions.style.display = 'none';
                         saveWeatherSettings();
@@ -1321,27 +1337,6 @@
     const availableCardTemplates = [
       {
         templateId: 'weather_large_widget', title: 'Weather Forecast', icon: '🌦️', type: 'medium',
-        contentGenerator: function(config) {
-            return `
-              <div class="weather-large-content">
-                <div class="current-weather-layout">
-                  <span class="weather-icon-large">⏳</span>
-                  <div class="current-weather-main-info">
-                    <span class="temp-large">--°</span>
-                    <span class="condition-large">Loading...</span>
-                  </div>
-                  <div class="current-weather-details-aside">
-                    <p>Feels like: <span class="feels-like-value">--°</span></p>
-                    <p>Humidity: <span class="humidity-value">--%</span></p>
-                    <p>Wind: <span class="wind-value">--</span></p>
-                    <p>Location: <span class="location-large">${config.location_label || 'N/A'}</span></p>
-                  </div>
-                </div>
-                <div class="forecast-large"></div>
-                <small style="text-align:center; display:block; margin-top:auto; color:#aaa; font-size:0.7em;">Weather by Open-Meteo.com</small>
-              </div>
-            `;
-        },
         onMount: async (cardElement) => {
           const forecastEl = cardElement.querySelector('.forecast-large');
           const currentIconEl = cardElement.querySelector('.weather-icon-large');
@@ -1496,15 +1491,13 @@
             const settingsLoaded = loadWeatherSettings();
             
             if (settingsLoaded) {
-                // If settings are loaded, just fetch weather
                 await actualFetchAndDisplayWeather();
-                if (navigator.geolocation) { // Still get coords for suggestions
+                if (navigator.geolocation) {
                     navigator.geolocation.getCurrentPosition(pos => {
                         userCoords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
                     }, () => {}, { timeout: 5000, enableHighAccuracy: false });
                 }
             } else {
-                // First time load: use geolocation to set initial settings
                 if (navigator.geolocation) {
                   navigator.geolocation.getCurrentPosition(
                     async (position) => {
@@ -1516,7 +1509,6 @@
                           latitude: userCoords.latitude,
                           longitude: userCoords.longitude
                       };
-                      // Default to imperial for US, metric otherwise
                       weatherSettings.units = (country_code === 'us') ? 'imperial' : 'metric';
                       
                       saveWeatherSettings();
@@ -1525,7 +1517,6 @@
                     async (error) => {
                       console.warn(`Geolocation error (${error.code}): ${error.message}`);
                       showNotification(`Geolocation failed: ${error.message}. Using default location.`, 'error', 4000);
-                      // Fallback to hardcoded default if geolocation fails on first run
                       await actualFetchAndDisplayWeather();
                     },
                     { timeout: 10000, enableHighAccuracy: false }
@@ -1541,18 +1532,11 @@
             refreshBtn.addEventListener('click', actualFetchAndDisplayWeather);
           }
           initializeWeather();
-          setInterval(actualFetchAndDisplayWeather, 30 * 60 * 1000); // Auto-refresh every 30 mins
+          setInterval(actualFetchAndDisplayWeather, 30 * 60 * 1000);
         }
       },
       {
         templateId: 'clock_widget', title: 'Current Time', icon: '🕒', type: 'medium',
-        contentGenerator: () => `
-            <div class="clock-display" id="clockTime">00:00:00</div>
-            <div class="date-display" id="clockDate">Monday, January 1, 2024</div>
-            <div class="additional-time-info">
-                <span id="clockDayOfYear">Day: ---</span> | <span id="clockWeekNum">Week: --</span>
-            </div>
-        `,
         onMount: (cardElement) => {
           const timeEl = cardElement.querySelector('#clockTime');
           const dateEl = cardElement.querySelector('#clockDate');
@@ -1582,14 +1566,6 @@
       },
       {
         templateId: 'stopwatch_widget', title: 'Stopwatch', icon: '⏱️', type: 'small',
-        contentGenerator: () => `
-            <div class="stopwatch-display">00:00:00.00</div>
-            <div class="controls-flex">
-                <button data-action="start">Start</button>
-                <button data-action="stop" style="display:none;">Stop</button>
-                <button data-action="reset">Reset</button>
-            </div>
-        `,
         onMount: (cardElement) => {
             const display = cardElement.querySelector('.stopwatch-display');
             const startBtn = cardElement.querySelector('button[data-action="start"]');
@@ -1636,19 +1612,6 @@
       },
       {
         templateId: 'timer_widget', title: 'Timer', icon: '⏲️', type: 'small',
-        contentGenerator: () => `
-            <div class="timer-inputs">
-                <input type="number" id="timer-h" placeholder="HH" min="0" value="0"> :
-                <input type="number" id="timer-m" placeholder="MM" min="0" max="59" value="5"> :
-                <input type="number" id="timer-s" placeholder="SS" min="0" max="59" value="0">
-            </div>
-            <div class="timer-display-value">00:05:00.00</div>
-            <div class="controls-flex">
-                <button data-action="start">Start</button>
-                <button data-action="pause" style="display:none;">Pause</button>
-                <button data-action="reset">Reset</button>
-            </div>
-        `,
         onMount: (cardElement) => {
             const hInput = cardElement.querySelector('#timer-h');
             const mInput = cardElement.querySelector('#timer-m');
@@ -1749,25 +1712,74 @@
       },
       {
         templateId: 'quick_actions_widget', title: 'Quick Actions', icon: '⚡', type: 'small',
-        contentGenerator: () => `
-            <div class="quick-actions-list">
-                <button onclick="window.location.href='proxies.html'">
-                    <span class="icon">🛡️</span> <span class="text">Proxy</span> <span class="arrow">→</span>
-                </button>
-                <button onclick="window.location.href='games.html'">
-                    <span class="icon">🎮</span> <span class="text">Games</span> <span class="arrow">→</span>
-                </button>
-                <button onclick="window.location.href='soundboard.html'">
-                    <span class="icon">🎵</span> <span class="text">Soundboard</span> <span class="arrow">→</span>
-                </button>
-                <button onclick="window.location.href='settings.html'">
-                    <span class="icon">⚙️</span> <span class="text">Settings</span> <span class="arrow">→</span>
-                </button>
-            </div>
-        `,
         onMount: () => {}
       }
     ];
+
+    function getContentGenerator(templateId) {
+        switch (templateId) {
+            case 'weather_large_widget': return () => `
+                <div class="weather-large-content">
+                    <div class="current-weather-layout">
+                        <span class="weather-icon-large">⏳</span>
+                        <div class="current-weather-main-info">
+                            <span class="temp-large">--°</span>
+                            <span class="condition-large">Loading...</span>
+                        </div>
+                        <div class="current-weather-details-aside">
+                            <p>Feels like: <span class="feels-like-value">--°</span></p>
+                            <p>Humidity: <span class="humidity-value">--%</span></p>
+                            <p>Wind: <span class="wind-value">--</span></p>
+                            <p>Location: <span class="location-large">${weatherSettings.location.label || 'N/A'}</span></p>
+                        </div>
+                    </div>
+                    <div class="forecast-large"></div>
+                    <small style="text-align:center; display:block; margin-top:auto; color:#aaa; font-size:0.7em;">Weather by Open-Meteo.com</small>
+                </div>`;
+            case 'clock_widget': return () => `
+                <div class="clock-display" id="clockTime">00:00:00</div>
+                <div class="date-display" id="clockDate">Monday, January 1, 2024</div>
+                <div class="additional-time-info">
+                    <span id="clockDayOfYear">Day: ---</span> | <span id="clockWeekNum">Week: --</span>
+                </div>`;
+            case 'stopwatch_widget': return () => `
+                <div class="stopwatch-display">00:00:00.00</div>
+                <div class="controls-flex">
+                    <button data-action="start">Start</button>
+                    <button data-action="stop" style="display:none;">Stop</button>
+                    <button data-action="reset">Reset</button>
+                </div>`;
+            case 'timer_widget': return () => `
+                <div class="timer-inputs">
+                    <input type="number" id="timer-h" placeholder="HH" min="0" value="0"> :
+                    <input type="number" id="timer-m" placeholder="MM" min="0" max="59" value="5"> :
+                    <input type="number" id="timer-s" placeholder="SS" min="0" max="59" value="0">
+                </div>
+                <div class="timer-display-value">00:05:00.00</div>
+                <div class="controls-flex">
+                    <button data-action="start">Start</button>
+                    <button data-action="pause" style="display:none;">Pause</button>
+                    <button data-action="reset">Reset</button>
+                </div>`;
+            case 'quick_actions_widget': return () => `
+                <div class="quick-actions-list">
+                    <button onclick="window.location.href='proxies.html'">
+                        <span class="icon">🛡️</span> <span class="text">Proxy</span> <span class="arrow">→</span>
+                    </button>
+                    <button onclick="window.location.href='games.html'">
+                        <span class="icon">🎮</span> <span class="text">Games</span> <span class="arrow">→</span>
+                    </button>
+                    <button onclick="window.location.href='soundboard.html'">
+                        <span class="icon">🎵</span> <span class="text">Soundboard</span> <span class="arrow">→</span>
+                    </button>
+                    <button onclick="window.location.href='settings.html'">
+                        <span class="icon">⚙️</span> <span class="text">Settings</span> <span class="arrow">→</span>
+                    </button>
+                </div>`;
+            default: return () => '';
+        }
+    }
+
 
     // --- Authentication & Initial Load ---
     firebase.auth().onAuthStateChanged(async user => {
@@ -1820,21 +1832,18 @@
       header.appendChild(iconEl);
       header.appendChild(titleEl);
 
-      // Add buttons for weather widget
       if (template.templateId === 'weather_large_widget') {
         const buttonContainer = document.createElement('div');
         buttonContainer.className = 'card-header-buttons';
 
-        // Settings Button
         const settingsButton = document.createElement('button');
         settingsButton.className = 'weather-action-btn weather-settings-btn';
         settingsButton.title = 'Weather Settings';
         const settingsImg = document.createElement('img');
-        settingsImg.src = '../images/gear-dark.png'; // UPDATED image path
+        settingsImg.src = '../images/gear-dark.png';
         settingsImg.alt = 'Settings';
         settingsButton.appendChild(settingsImg);
         
-        // Refresh Button
         const refreshButton = document.createElement('button');
         refreshButton.className = 'weather-action-btn weather-refresh-btn';
         refreshButton.title = 'Refresh Weather';
@@ -1850,24 +1859,20 @@
       
       const contentWrapper = document.createElement('div');
       contentWrapper.classList.add('card-content-inner');
-      // Pass the current weatherSettings to the contentGenerator for initial display
-      const currentConfig = template.templateId === 'weather_large_widget' ? weatherSettings : (template.config || {});
-      contentWrapper.innerHTML = template.contentGenerator(currentConfig);
+      contentWrapper.innerHTML = getContentGenerator(template.templateId)();
       
       newCard.appendChild(header);
       newCard.appendChild(contentWrapper);
       
-      if (template.onMount && typeof template.onMount === 'function') {
-        const cardId = newCard.dataset.templateId;
+      if (template.onMount) {
         setTimeout(() => {
           try {
-            template.onMount(newCard, template.config || {});
+            template.onMount(newCard);
           } catch (e) {
-            console.error(`Error during onMount for card ${cardId}:`, e);
+            console.error(`Error during onMount for card ${template.templateId}:`, e);
             const contentInner = newCard.querySelector('.card-content-inner');
             if (contentInner) {
-                contentInner.innerHTML = `<p style="color: red; text-align: center; padding: 20px;">Failed to load widget content.<br>Check console for details.</p>`;
-                contentInner.style.display = 'block';
+                contentInner.innerHTML = `<p style="color: red; text-align: center; padding: 20px;">Failed to load widget content.</p>`;
             }
           }
         }, 0);
@@ -1886,12 +1891,8 @@
     }
 
     function setupFixedDashboardLayout() {
-        dashboardGrid.innerHTML = ''; // Clear existing cards
-        addCardToDashboard('weather_large_widget');
-        addCardToDashboard('clock_widget');
-        addCardToDashboard('stopwatch_widget');
-        addCardToDashboard('timer_widget');
-        addCardToDashboard('quick_actions_widget');
+        dashboardGrid.innerHTML = '';
+        availableCardTemplates.forEach(template => addCardToDashboard(template.templateId));
     }
 
     function showNotification(message, type = 'info', duration = 3000) {
@@ -1902,7 +1903,8 @@
         position: 'fixed', bottom: '20px', right: '20px', padding: '12px 20px',
         borderRadius: '8px', color: 'white', fontWeight: '600', zIndex: '10000',
         transform: 'translateY(150%)', transition: 'transform 0.4s ease-in-out, background 0.3s',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.15)'
+        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+        fontFamily: 'PrimaryFont, sans-serif'
       });
       const colors = {
         success: 'linear-gradient(135deg, #28a745, #20c997)',
