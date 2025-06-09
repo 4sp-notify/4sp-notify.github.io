@@ -40,47 +40,55 @@
         background-color: var(--dark-bg-primary);
         z-index: 9999;
         display: flex;
-        justify-content: flex-end; /* Align content to the right */
-        align-items: flex-end;   /* Align content to the bottom */
-        padding: 20px;           /* Add space from the corners */
-        box-sizing: border-box;  /* Ensure padding is part of the element's dimensions */
+        justify-content: flex-end;
+        align-items: flex-end;
+        padding: 20px;
+        box-sizing: border-box;
         color: var(--dark-text-primary);
         font-family: 'PrimaryFont', sans-serif;
-        transition: background-color 0.5s ease-in, opacity 0.5s ease-out, transform 0.5s ease-in;
+        opacity: 1;
+        /* Define the fade/zoom-out transition */
+        transition: opacity 0.6s ease-out, transform 0.6s ease-out;
     }
-    #loading-overlay.fade-to-black {
-        background-color: var(--dark-bg-primary);
-    }
-    #loading-overlay.zoom-out {
-        transform: scale(1.5);
+    #loading-overlay.is-hiding {
         opacity: 0;
+        transform: scale(1.1);
+        pointer-events: none; /* Disable interaction during fade out */
     }
     #loading-spinner {
-        border: 4px solid var(--dark-bg-tertiary); /* Adjusted for a smaller spinner */
+        border: 4px solid var(--dark-bg-tertiary);
         border-top: 4px solid var(--dark-accent-purple);
         border-radius: 50%;
-        width: 24px;  /* Made spinner smaller */
-        height: 24px; /* Made spinner smaller */
+        width: 24px;
+        height: 24px;
         animation: spin 1s linear infinite;
-        margin-left: 15px; /* Space between text and spinner */
+        margin-left: 15px;
     }
     @keyframes spin {
         0% { transform: rotate(0deg); }
         100% { transform: rotate(360deg); }
     }
+    .loading-container {
+        display: flex;
+        align-items: center;
+    }
+    .loading-container p {
+        margin: 0;
+    }
+    
+    /* --- App Container Visibility --- */
     #app-container {
-      visibility: hidden; /* Hide app until user is verified */
+      visibility: hidden;
+      opacity: 0;
       height: 100%;
       display: flex;
       flex-direction: column;
+      /* Fade-in transition for the main app */
+      transition: opacity 0.5s ease-in;
     }
-    /* New container for bottom-right alignment */
-    .loading-container {
-        display: flex;
-        align-items: center; /* Vertically center text and spinner */
-    }
-    .loading-container p {
-        margin: 0; /* Remove default paragraph margin */
+    #app-container.is-visible {
+        visibility: visible;
+        opacity: 1;
     }
 
     /* --- Header adapted for Dark Mode --- */
@@ -118,12 +126,11 @@
         font-family: 'PrimaryFont', sans-serif;
         font-weight: bold;
         transition: background-color 0.2s ease;
-        text-transform: uppercase; /* Uppercase Button Text */
+        text-transform: uppercase;
     }
     .main-header .auth-buttons .btn:hover {
         background-color: #333;
     }
-    
     .header-icon-btn {
         background-color: var(--dark-bg-tertiary);
         color: var(--dark-text-primary);
@@ -138,7 +145,7 @@
         transition: all 0.2s ease;
         font-family: 'PrimaryFont', sans-serif;
         font-size: 14px;
-        text-transform: uppercase; /* Uppercase Button Text */
+        text-transform: uppercase;
     }
     .header-icon-btn:hover {
         background-color: #333;
@@ -147,7 +154,6 @@
       width: 20px;
       height: 20px;
     }
-
 
     /* --- Main Content --- */
     .main-content {
@@ -266,7 +272,7 @@
         text-align: center;
         width: 100%;
         font-family: 'PrimaryFont', sans-serif;
-        text-transform: uppercase; /* Uppercase Button Text */
+        text-transform: uppercase;
     }
     .preset-list a:hover, .saved-cloak-list button:hover {
         background: var(--dark-accent-purple);
@@ -296,7 +302,7 @@
         cursor: pointer;
         transition: background-color 0.2s ease;
         font-family: 'PrimaryFont', sans-serif;
-        text-transform: uppercase; /* Uppercase Button Text */
+        text-transform: uppercase;
     }
     .custom-cloak-form button:hover {
         background: #5619a2;
@@ -305,10 +311,8 @@
         background: #555;
         cursor: not-allowed;
     }
-
   </style>
 </head>
-
 <body class="dashboard-page">
   <div id="loading-overlay">
     <div class="loading-container">
@@ -332,13 +336,11 @@
               <img src="../images/arrow-topleft-white.png" alt="Open in New Tab Icon">
               <span>About:Blank</span>
           </button>
-          
           <button class="btn" onclick="window.location.href='../logged-in/dashboard.html'">DASHBOARD</button>
           <button id="logoutBtn" class="btn">LOG OUT</button>
         </div>
       </div>
     </header>
-
     <main class="main-content">
       <div class="proxy-container">
         <iframe 
@@ -367,7 +369,7 @@
           <div class="cloak-section">
               <h3>Custom</h3>
               <div id="custom-cloak-form" class="custom-cloak-form">
-                  <input type="text" id="custom-url-input" placeholder="Enter website URL (e.g., youtube.com)">
+                  <input type="text" id="custom-url-input" placeholder="Enter website URL">
                   <button id="custom-cloak-btn">Apply & Save</button>
               </div>
           </div>
@@ -379,218 +381,204 @@
   <script src="/firebase-config.js"></script> 
   
   <script>
-    // --- NEW: Authentication and Loading Screen Logic ---
-    const loadingOverlay = document.getElementById('loading-overlay');
-    const appContainer = document.getElementById('app-container');
+    document.addEventListener('DOMContentLoaded', () => {
+        // --- Get Element References ---
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const appContainer = document.getElementById('app-container');
+        const proxyFrame = document.getElementById('proxyFrame');
+        const favicon = document.getElementById('dynamic-favicon');
+        const openNewTabBtn = document.getElementById('openNewTabBtn');
+        const cloakBtn = document.getElementById('cloakBtn');
+        const cloakModalOverlay = document.getElementById('cloak-modal-overlay');
+        const cloakModalClose = document.getElementById('cloak-modal-close');
+        const presetList = document.getElementById('preset-list');
+        const savedCloakList = document.getElementById('saved-cloak-list');
+        const customUrlInput = document.getElementById('custom-url-input');
+        const customCloakBtn = document.getElementById('custom-cloak-btn');
+        const logoutBtn = document.getElementById('logoutBtn');
 
-    firebase.auth().onAuthStateChanged(user => {
-        if (user) {
-            // User is logged in, start the animation
-            document.body.style.overflow = 'hidden'; // Keep scroll locked
-            appContainer.style.visibility = 'visible'; // Make app content available for the zoom
-            
-            // 1. Fade to black
-            loadingOverlay.classList.add('fade-to-black');
-
-            loadingOverlay.addEventListener('transitionend', function handleFade(event) {
-                if (event.propertyName === 'background-color') {
-                    loadingOverlay.removeEventListener('transitionend', handleFade);
-
-                    // 2. Zoom and fade out
-                    loadingOverlay.classList.add('zoom-out');
-                    
-                    loadingOverlay.addEventListener('transitionend', function handleZoom(event) {
-                        if (event.propertyName === 'opacity') {
-                            loadingOverlay.removeEventListener('transitionend', handleZoom);
-                            // 3. Animation finished, hide overlay and restore scrolling
-                            loadingOverlay.style.display = 'none';
-                            document.body.style.overflow = 'auto';
-                        }
-                    });
-                }
-            });
-
-        } else {
-            // No user is signed in, redirect to login page in the root directory.
+        // --- Authentication Logic ---
+        // Failsafe: if auth takes too long, redirect to login page.
+        const authTimeout = setTimeout(() => {
+            console.error("Authentication timed out. Redirecting...");
             window.location.href = '/login.html';
-        }
-    });
+        }, 8000); // 8-second timeout
 
-    // --- Elements ---
-    const proxyFrame = document.getElementById('proxyFrame');
-    const favicon = document.getElementById('dynamic-favicon');
-    const openNewTabBtn = document.getElementById('openNewTabBtn');
-    const cloakBtn = document.getElementById('cloakBtn');
-    const cloakModalOverlay = document.getElementById('cloak-modal-overlay');
-    const cloakModalClose = document.getElementById('cloak-modal-close');
-    const presetList = document.getElementById('preset-list');
-    const savedCloakList = document.getElementById('saved-cloak-list');
-    const customUrlInput = document.getElementById('custom-url-input');
-    const customCloakBtn = document.getElementById('custom-cloak-btn');
-    
-    // --- Iframe Control Functions ---
-    function openInNewTab() {
-        const newTab = window.open('about:blank', '_blank');
-        if (newTab) {
-            newTab.document.title = document.title;
-            const newFavicon = newTab.document.createElement('link');
-            newFavicon.rel = 'icon';
-            newFavicon.type = 'image/x-icon';
-            newFavicon.href = favicon.href;
-            newTab.document.head.appendChild(newFavicon);
-            newTab.document.body.style.margin = '0';
-            newTab.document.body.style.overflow = 'hidden';
-            const iframe = newTab.document.createElement('iframe');
-            iframe.src = proxyFrame.src;
-            iframe.style.width = '100vw';
-            iframe.style.height = '100vh';
-            iframe.style.border = 'none';
-            iframe.sandbox = "allow-same-origin allow-scripts allow-forms allow-popups allow-navigation";
-            newTab.document.body.appendChild(iframe);
-        } else {
-            alert('Popup blocked! Please allow popups for this site.');
-        }
-    }
+        firebase.auth().onAuthStateChanged(user => {
+            clearTimeout(authTimeout); // Auth state confirmed, clear the failsafe timeout.
 
-    // --- Tab Cloaking Logic ---
-    const studentPresets = [
-        { name: 'Google Docs', title: 'Google Docs', favicon: 'https://ssl.gstatic.com/docs/documents/images/kix-favicon-2023q4.ico' },
-        { name: 'Google Slides', title: 'Google Slides', favicon: 'https://ssl.gstatic.com/docs/presentations/images/favicon-2023q4.ico' },
-        { name: 'Google Classroom', title: 'Classes', favicon: 'https://ssl.gstatic.com/classroom/favicon.png' },
-        { name: 'Google Drive', title: 'My Drive - Google Drive', favicon: 'https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png' },
-        { name: 'Khan Academy', title: 'Dashboard | Khan Academy', favicon: 'https://www.khanacademy.org/favicon.ico' },
-        { name: 'Wikipedia', title: 'Wikipedia', favicon: 'https://en.wikipedia.org/static/favicon/wikipedia.ico' },
-        { name: 'Gmail', title: 'Inbox - Gmail', favicon: 'https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico' },
-    ];
-
-    function applyCloak(title, faviconUrl) {
-        if (title) document.title = title;
-        if (faviconUrl) favicon.href = faviconUrl;
-        cloakModalOverlay.classList.remove('visible');
-    }
-
-    function populatePresets() {
-        presetList.innerHTML = '';
-        studentPresets.forEach(preset => {
-            const li = document.createElement('li');
-            const a = document.createElement('a');
-            a.href = '#';
-            a.textContent = preset.name;
-            a.onclick = (e) => {
-                e.preventDefault();
-                applyCloak(preset.title, preset.favicon);
-            };
-            li.appendChild(a);
-            presetList.appendChild(li);
-        });
-    }
-
-    function getSavedCloaks() {
-        return JSON.parse(localStorage.getItem('customCloaks') || '[]');
-    }
-
-    function saveCustomCloak(title, faviconUrl, name) {
-        const savedCloaks = getSavedCloaks();
-        if (!savedCloaks.some(c => c.favicon === faviconUrl)) {
-            savedCloaks.push({ name: name || title, title: title, favicon: faviconUrl });
-            localStorage.setItem('customCloaks', JSON.stringify(savedCloaks));
-        }
-    }
-    
-    function populateSavedCloaks() {
-        savedCloakList.innerHTML = '';
-        const savedCloaks = getSavedCloaks();
-        if (savedCloaks.length === 0) {
-            savedCloakList.innerHTML = '<p style="grid-column: 1 / -1; text-align: center; color: var(--dark-text-secondary);">No saved cloaks yet.</p>';
-            return;
-        }
-        savedCloaks.forEach(cloak => {
-            const li = document.createElement('li');
-            const button = document.createElement('button');
-            button.textContent = cloak.name;
-            button.onclick = () => {
-                applyCloak(cloak.title, cloak.favicon);
-            };
-            li.appendChild(button);
-            savedCloakList.appendChild(li);
-        });
-    }
-
-    async function applyCustomCloak() {
-        let url = customUrlInput.value.trim();
-        if (!url) return;
-        if (!url.startsWith('http')) {
-            url = 'https://' + url;
-        }
-        const originalBtnText = customCloakBtn.textContent;
-        customCloakBtn.textContent = '...';
-        customCloakBtn.disabled = true;
-        try {
-            const fetchUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
-            const response = await fetch(fetchUrl);
-            if (!response.ok) throw new Error('Failed to fetch site metadata.');
-            const data = await response.json();
-            const htmlContent = data.contents;
-            if (!htmlContent) throw new Error('Could not retrieve HTML content.');
-            const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i);
-            const title = titleMatch ? titleMatch[1] : 'Untitled';
-            const faviconMatch = htmlContent.match(/<link rel="icon".*?href=["'](.*?)["']/i) || htmlContent.match(/<link rel="shortcut icon".*?href=["'](.*?)["']/i);
-            let faviconUrl = '';
-            if (faviconMatch) {
-                faviconUrl = new URL(faviconMatch[1], url).href;
+            if (user) {
+                // USER IS LOGGED IN
+                appContainer.classList.add('is-visible');
+                loadingOverlay.classList.add('is-hiding');
+                
+                // Once the fade-out is done, remove the overlay entirely to save resources.
+                loadingOverlay.addEventListener('transitionend', () => {
+                    loadingOverlay.style.display = 'none';
+                }, { once: true });
+                
+                document.body.style.overflow = 'auto'; // Restore scrolling
             } else {
-                faviconUrl = new URL('/favicon.ico', url).href;
+                // NO USER, REDIRECT IMMEDIATELY
+                window.location.href = '/login.html';
             }
-            applyCloak(title, faviconUrl);
-            saveCustomCloak(title, faviconUrl, new URL(url).hostname);
-            populateSavedCloaks();
-            customUrlInput.value = '';
-        } catch (error) {
-            alert(`Error: ${error.message}. Could not apply custom cloak.`);
-        } finally {
-            customCloakBtn.textContent = originalBtnText;
-            customCloakBtn.disabled = false;
+        });
+        
+        // --- Logout Button ---
+        if(logoutBtn) {
+            logoutBtn.addEventListener('click', () => {
+                firebase.auth().signOut().catch(error => console.error('Logout Error:', error));
+            });
         }
-    }
+        
+        // --- "About:Blank" Iframe Control ---
+        function openInNewTab() {
+            const newTab = window.open('about:blank', '_blank');
+            if (newTab) {
+                newTab.document.title = document.title;
+                const newFavicon = newTab.document.createElement('link');
+                newFavicon.rel = 'icon';
+                newFavicon.href = favicon.href;
+                newTab.document.head.appendChild(newFavicon);
+                newTab.document.body.style.margin = '0';
+                newTab.document.body.style.overflow = 'hidden';
+                const iframe = newTab.document.createElement('iframe');
+                iframe.src = proxyFrame.src;
+                iframe.style.width = '100vw';
+                iframe.style.height = '100vh';
+                iframe.style.border = 'none';
+                iframe.sandbox = "allow-same-origin allow-scripts allow-forms allow-popups allow-navigation";
+                newTab.document.body.appendChild(iframe);
+            } else {
+                alert('Popup blocked! Please allow popups for this site.');
+            }
+        }
 
-    // --- Event Listeners ---
-    openNewTabBtn.addEventListener('click', openInNewTab);
-    cloakBtn.addEventListener('click', () => {
-        cloakModalOverlay.classList.add('visible');
-        populateSavedCloaks();
-    });
-    cloakModalClose.addEventListener('click', () => {
-        cloakModalOverlay.classList.remove('visible');
-    });
-    cloakModalOverlay.addEventListener('click', (e) => {
-        if (e.target === cloakModalOverlay) {
+        // --- Tab Cloaking Logic ---
+        const studentPresets = [
+            { name: 'Google Docs', title: 'Google Docs', favicon: 'https://ssl.gstatic.com/docs/documents/images/kix-favicon-2023q4.ico' },
+            { name: 'Google Slides', title: 'Google Slides', favicon: 'https://ssl.gstatic.com/docs/presentations/images/favicon-2023q4.ico' },
+            { name: 'Google Classroom', title: 'Classes', favicon: 'https://ssl.gstatic.com/classroom/favicon.png' },
+            { name: 'Google Drive', title: 'My Drive - Google Drive', favicon: 'https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png' },
+            { name: 'Khan Academy', title: 'Dashboard | Khan Academy', favicon: 'https://www.khanacademy.org/favicon.ico' },
+            { name: 'Wikipedia', title: 'Wikipedia', favicon: 'https://en.wikipedia.org/static/favicon/wikipedia.ico' },
+            { name: 'Gmail', title: 'Inbox - Gmail', favicon: 'https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico' },
+        ];
+
+        function applyCloak(title, faviconUrl) {
+            if (title) document.title = title;
+            if (faviconUrl) favicon.href = faviconUrl;
             cloakModalOverlay.classList.remove('visible');
         }
-    });
-    customCloakBtn.addEventListener('click', applyCustomCloak);
-    customUrlInput.addEventListener('keypress', (e) => {
-        if (e.key === 'Enter') {
-            applyCustomCloak();
-        }
-    });
-    
-    // --- Logout ---
-    const logoutBtn = document.getElementById('logoutBtn');
-    if(logoutBtn) {
-        logoutBtn.onclick = () => {
-            firebase.auth().signOut().then(() => {
-                // Sign-out successful.
-                console.log('Logout successful!');
-            }).catch((error) => {
-                // An error happened.
-                console.error('Logout Error:', error);
-            });
-        };
-    }
-    
-    // --- Initial Population ---
-    populatePresets();
 
+        function populatePresets() {
+            presetList.innerHTML = '';
+            studentPresets.forEach(preset => {
+                const li = document.createElement('li');
+                const a = document.createElement('a');
+                a.href = '#';
+                a.textContent = preset.name;
+                a.onclick = (e) => {
+                    e.preventDefault();
+                    applyCloak(preset.title, preset.favicon);
+                };
+                li.appendChild(a);
+                presetList.appendChild(li);
+            });
+        }
+
+        function getSavedCloaks() {
+            return JSON.parse(localStorage.getItem('customCloaks') || '[]');
+        }
+
+        function saveCustomCloak(title, faviconUrl, name) {
+            const savedCloaks = getSavedCloaks();
+            if (!savedCloaks.some(c => c.favicon === faviconUrl)) {
+                savedCloaks.push({ name: name || title, title: title, favicon: faviconUrl });
+                localStorage.setItem('customCloaks', JSON.stringify(savedCloaks));
+            }
+        }
+    
+        function populateSavedCloaks() {
+            savedCloakList.innerHTML = '';
+            const savedCloaks = getSavedCloaks();
+            if (savedCloaks.length === 0) {
+                savedCloakList.innerHTML = '<p style="grid-column: 1 / -1; text-align: center; color: var(--dark-text-secondary);">No saved cloaks yet.</p>';
+                return;
+            }
+            savedCloaks.forEach(cloak => {
+                const li = document.createElement('li');
+                const button = document.createElement('button');
+                button.textContent = cloak.name;
+                button.onclick = () => {
+                    applyCloak(cloak.title, cloak.favicon);
+                };
+                li.appendChild(button);
+                savedCloakList.appendChild(li);
+            });
+        }
+
+        async function applyCustomCloak() {
+            let url = customUrlInput.value.trim();
+            if (!url) return;
+            if (!url.startsWith('http')) {
+                url = 'https://' + url;
+            }
+            const originalBtnText = customCloakBtn.textContent;
+            customCloakBtn.textContent = '...';
+            customCloakBtn.disabled = true;
+            try {
+                const fetchUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+                const response = await fetch(fetchUrl);
+                if (!response.ok) throw new Error('Failed to fetch site metadata.');
+                const data = await response.json();
+                const htmlContent = data.contents;
+                if (!htmlContent) throw new Error('Could not retrieve HTML content.');
+                const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i);
+                const title = titleMatch ? titleMatch[1] : 'Untitled';
+                const faviconMatch = htmlContent.match(/<link rel="icon".*?href=["'](.*?)["']/i) || htmlContent.match(/<link rel="shortcut icon".*?href=["'](.*?)["']/i);
+                let faviconUrl = '';
+                if (faviconMatch) {
+                    faviconUrl = new URL(faviconMatch[1], url).href;
+                } else {
+                    faviconUrl = new URL('/favicon.ico', url).href;
+                }
+                applyCloak(title, faviconUrl);
+                saveCustomCloak(title, faviconUrl, new URL(url).hostname);
+                populateSavedCloaks();
+                customUrlInput.value = '';
+            } catch (error) {
+                alert(`Error: ${error.message}. Could not apply custom cloak.`);
+            } finally {
+                customCloakBtn.textContent = originalBtnText;
+                customCloakBtn.disabled = false;
+            }
+        }
+
+        // --- Event Listeners for Page Features ---
+        openNewTabBtn.addEventListener('click', openInNewTab);
+        cloakBtn.addEventListener('click', () => {
+            cloakModalOverlay.classList.add('visible');
+            populateSavedCloaks();
+        });
+        cloakModalClose.addEventListener('click', () => {
+            cloakModalOverlay.classList.remove('visible');
+        });
+        cloakModalOverlay.addEventListener('click', (e) => {
+            if (e.target === cloakModalOverlay) {
+                cloakModalOverlay.classList.remove('visible');
+            }
+        });
+        customCloakBtn.addEventListener('click', applyCustomCloak);
+        customUrlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                applyCustomCloak();
+            }
+        });
+    
+        // --- Initial Population ---
+        populatePresets();
+    });
   </script>
 </body>
 </html>
