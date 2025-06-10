@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>4SP - Login</title>
+    <title>4SP - LOGIN</title>
     <link rel="stylesheet" href="css/style.css">
     <style>
         /* This CSS is specific to login.html, defining the main frame for the content */
@@ -386,26 +386,24 @@
                     const result = await firebase.auth().signInWithPopup(provider);
                     const user = result.user;
 
-                    // Check if the user is new or existing (optional, but good for data consistency)
+                    // --- START OF CHANGES ---
+                    // Check if the user's UID exists in the Firestore 'users' collection
                     const userDocRef = db.collection('users').doc(user.uid);
                     const userDoc = await userDocRef.get();
 
-                    if (!userDoc.exists) {
-                        // New Google user, save data to Firestore
-                        const userData = {
-                            email: user.email,
-                            authMethod: 'google',
-                            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                            username: user.displayName || null // Use Google display name as username
-                        };
-                        await userDocRef.set(userData);
-                        console.log('New Google user data saved to Firestore.');
+                    if (userDoc.exists) {
+                        // User exists in Firestore, proceed with login
+                        console.log('Existing Google user logged in and found in Firestore.');
+                        window.location.href = 'logged-in/dashboard.html';
                     } else {
-                        console.log('Existing Google user logged in.');
+                        // User does NOT exist in Firestore. This means they signed up with Google via Firebase Auth,
+                        // but their data was never recorded in your 'users' collection.
+                        // Sign them out immediately from Firebase Auth to prevent unauthorized access.
+                        console.log('Google user found in Firebase Auth but not in Firestore. Denying login.');
+                        await firebase.auth().signOut();
+                        displayError('No account found for this Google email. Please sign up first.');
                     }
-
-                    // Google accounts are inherently email-verified by Google
-                    window.location.href = 'logged-in/dashboard.html';
+                    // --- END OF CHANGES ---
 
                 } catch (error) {
                     console.error('Google Sign-In error:', error);
@@ -419,6 +417,10 @@
                             break;
                         case 'auth/account-exists-with-different-credential':
                             message = 'An account with this email already exists using a different sign-in method. Please login with your original method.';
+                            break;
+                        case 'auth/operation-not-allowed':
+                            // This error indicates Google Sign-In is not enabled in Firebase project settings
+                            message = 'Google Sign-In is not enabled for this project. Please enable it in Firebase console.';
                             break;
                         default:
                             message = error.message;
