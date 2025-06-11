@@ -382,14 +382,15 @@
                 }
 
                 try {
-                    // Check if an account with the email actually exists
                     const methods = await firebase.auth().fetchSignInMethodsForEmail(email);
 
                     if (methods.length === 0) {
-                        // Email does not exist
                         resetErrorMessageDiv.textContent = 'No account found with this email. Please sign up.';
+                    } else if (methods.includes('google.com') && !methods.includes('password')) {
+                        // --- NEW: Handle Google-only accounts ---
+                        resetErrorMessageDiv.textContent = 'This account was created using Google and does not have a password to reset. Please log in using the Google button.';
                     } else {
-                        // Email exists, send the reset link
+                        // Email exists with a password, send the reset link
                         await firebase.auth().sendPasswordResetEmail(email);
                         resetSuccessMessageDiv.textContent = 'Password reset link sent! Please check your email inbox and spam folder.';
                     }
@@ -400,7 +401,7 @@
             });
 
 
-            // --- Login Logic (largely unchanged) ---
+            // --- Login Logic ---
 
             const displayLoginMessage = (message, type = 'error') => {
                 loginErrorMessageDiv.textContent = '';
@@ -424,8 +425,24 @@
                     displayLoginMessage('This email address is not permitted to log in.');
                     return;
                 }
-
+                
                 try {
+                    // --- NEW: Check sign-in method before attempting login ---
+                    const methods = await firebase.auth().fetchSignInMethodsForEmail(email);
+
+                    if (methods.length === 0) {
+                         // No user exists with this email.
+                        displayLoginMessage('Invalid email or password.');
+                        return;
+                    }
+
+                    if (methods.includes('google.com') && !methods.includes('password')) {
+                        // User signed up with Google, not password. Guide them to the correct button.
+                        displayLoginMessage("This account was created using Google. Please use the 'Login with Google' button.");
+                        return;
+                    }
+                    
+                    // --- Proceed with password login only if 'password' is a valid method ---
                     const userCredential = await firebase.auth().signInWithEmailAndPassword(email, password);
                     const user = userCredential.user;
 
@@ -449,6 +466,7 @@
                              message = 'Your account has been disabled.';
                              break;
                          default:
+                             // This will catch other errors, but the specific "wrong password" is now handled more gracefully.
                              message = 'An unknown error occurred. Please try again.';
                      }
                     displayLoginMessage(message);
