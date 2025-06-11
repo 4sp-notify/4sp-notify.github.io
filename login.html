@@ -167,12 +167,16 @@
             color: #5a1aa8;
         }
 
-        .auth-col .error-message {
+        .auth-col .error-message, .auth-col .success-message {
             color: #d9534f; /* Red for error */
             font-size: 0.9em;
             margin-top: 15px;
             text-align: center;
             width: 100%;
+        }
+        
+        .auth-col .success-message {
+            color: #5cb85c; /* Green for success */
         }
 
         .auth-col .forgot-password {
@@ -250,6 +254,8 @@
                 <button type="submit" class="btn-primary">LOGIN</button>
             </form>
             <div id="errorMessage" class="error-message"></div>
+            <div id="successMessage" class="success-message"></div>
+
             <div id="resendVerificationContainer" class="error-message" style="display: none;">
                 <p>Your email is not verified. Please check your inbox.</p>
                 <a href="#" id="resendVerificationLink">Resend verification email</a>
@@ -286,33 +292,52 @@
             const loginPasswordInput = document.getElementById('loginPassword');
             const googleLoginBtn = document.getElementById('googleLoginBtn');
             const errorMessageDiv = document.getElementById('errorMessage');
+            const successMessageDiv = document.getElementById('successMessage');
             const resendVerificationContainer = document.getElementById('resendVerificationContainer');
             const resendVerificationLink = document.getElementById('resendVerificationLink');
 
+            // --- List of Denied Emails ---
+            // This list should match the one in signup.html
+            const deniedEmails = [
+                'example1@domain.com',
+                'testuser@example.org',
+                'anotheruser@website.net'
+            ];
+
             let lastResendAttempt = 0; // Timestamp of the last resend attempt
 
-            // Function to display an error and potentially the resend link
-            const displayError = (message, showResend = false) => {
-                errorMessageDiv.textContent = message;
-                if (showResend) {
-                    resendVerificationContainer.style.display = 'block';
-                } else {
-                    resendVerificationContainer.style.display = 'none';
+            // Function to display messages
+            const displayMessage = (message, type = 'error') => {
+                 errorMessageDiv.textContent = '';
+                 successMessageDiv.textContent = '';
+                 resendVerificationContainer.style.display = 'none';
+
+                if (type === 'error') {
+                    errorMessageDiv.textContent = message;
+                } else if (type === 'success') {
+                    successMessageDiv.textContent = message;
                 }
             };
 
             // Handle email/password login
             loginForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
-                displayError(''); // Clear previous errors
+                displayMessage(''); // Clear previous messages
 
                 const email = loginEmailInput.value;
                 const password = loginPasswordInput.value;
+
+                // --- Denied Email Check ---
+                if (deniedEmails.includes(email)) {
+                    displayMessage('This email address is not permitted to log in.');
+                    return;
+                }
 
                 try {
                     const userCredential = await firebase.auth().signInWithEmailAndPassword(email, password);
                     const user = userCredential.user;
 
+                    // --- Enforce Email Verification ---
                     if (user.emailVerified) {
                         // User is verified, redirect to dashboard
                         console.log('User logged in and verified.');
@@ -320,112 +345,112 @@
                     } else {
                         // User is NOT verified
                         console.log('User email not verified.');
-                        // Sign out the user immediately to prevent access
-                        await firebase.auth().signOut();
-                        displayError('Your email address is not verified.', true);
+                        // Do NOT sign the user out, so they remain as currentUser for the resend link to work
+                        displayMessage('Your email address is not verified.');
+                        resendVerificationContainer.style.display = 'block';
                     }
                 } catch (error) {
                     console.error('Login error:', error);
                     let message = 'Login failed. Please check your email and password.';
-                    // Specific error handling
                     switch (error.code) {
                         case 'auth/invalid-email':
                         case 'auth/user-not-found':
                         case 'auth/wrong-password':
-                            message = 'Invalid email or password.';
-                            break;
+                        case 'auth/invalid-credential':
+                             message = 'Invalid email or password.';
+                             break;
                         case 'auth/user-disabled':
                             message = 'Your account has been disabled.';
                             break;
                         default:
-                            message = error.message;
+                            message = 'An unknown error occurred. Please try again.';
                     }
-                    displayError(message);
+                    displayMessage(message);
                 }
             });
 
             // Handle resend verification email link
             resendVerificationLink.addEventListener('click', async (e) => {
                 e.preventDefault();
-                errorMessageDiv.textContent = ''; // Clear other errors
-
                 const currentTime = Date.now();
-                const fiveMinutes = 5 * 60 * 1000; // 5 minutes in milliseconds
+                const fiveMinutes = 5 * 60 * 1000;
 
                 if (currentTime - lastResendAttempt < fiveMinutes) {
-                    displayError('Please wait 5 minutes before sending another verification email.');
+                    displayMessage('Please wait 5 minutes before sending another verification email.');
+                    resendVerificationContainer.style.display = 'block'; // Keep the container visible
                     return;
                 }
 
                 try {
-                    // It's crucial to have the current user context.
-                    // If the user just attempted to log in, firebase.auth().currentUser will be the correct user.
+                    // Get the currently signed-in (but unverified) user
                     const user = firebase.auth().currentUser;
 
                     if (user) {
                         await user.sendEmailVerification();
-                        lastResendAttempt = currentTime; // Update last attempt timestamp
-                        displayError('Verification email sent! Please check your inbox.', false);
-                        resendVerificationContainer.style.display = 'none'; // Hide the resend link
+                        lastResendAttempt = currentTime; // Update timestamp
+                        displayMessage('Verification email sent! Please check your inbox.', 'success');
                     } else {
-                        displayError('No user is currently signed in to resend verification. Please try logging in again.');
+                        // This case might happen if the auth state is lost
+                        displayMessage('Could not find user. Please try logging in again to resend the verification email.');
                     }
                 } catch (error) {
                     console.error('Error resending verification email:', error);
-                    displayError('Failed to send verification email. Please try again later.');
+                    displayMessage('Failed to send verification email. Please try again later.');
                 }
             });
 
-            // Handle Google Login (Email verification handled by Google for these accounts)
+            // Handle Google Login
             googleLoginBtn.addEventListener('click', async () => {
-                displayError(''); // Clear previous errors
-                resendVerificationContainer.style.display = 'none'; // Hide resend link for Google login
+                displayMessage(''); // Clear previous messages
 
                 try {
                     const provider = new firebase.auth.GoogleAuthProvider();
                     const result = await firebase.auth().signInWithPopup(provider);
                     const user = result.user;
 
-                    // --- START OF CHANGES ---
-                    // Check if the user's UID exists in the Firestore 'users' collection
+                    // --- Denied Email Check for Google Login ---
+                    if (deniedEmails.includes(user.email)) {
+                        await firebase.auth().signOut(); // Sign out immediately
+                        displayMessage('This email address is not permitted to log in.');
+                        return;
+                    }
+
+                    // --- Verify user exists in Firestore database (from signup) ---
                     const userDocRef = db.collection('users').doc(user.uid);
                     const userDoc = await userDocRef.get();
 
                     if (userDoc.exists) {
-                        // User exists in Firestore, proceed with login
+                        // User exists in our database, proceed.
+                        // Google accounts are considered verified by default.
                         console.log('Existing Google user logged in and found in Firestore.');
                         window.location.href = 'logged-in/dashboard.html';
                     } else {
-                        // User does NOT exist in Firestore. This means they signed up with Google via Firebase Auth,
-                        // but their data was never recorded in your 'users' collection.
-                        // Sign them out immediately from Firebase Auth to prevent unauthorized access.
-                        console.log('Google user found in Firebase Auth but not in Firestore. Denying login.');
+                        // User authenticated with Google but is NOT in our database.
+                        // This means they never completed our signup process. Deny access.
+                        console.log('Google user authenticated but not found in Firestore. Denying login.');
                         await firebase.auth().signOut();
-                        displayError('No account found for this Google email. Please sign up first.');
+                        displayMessage('No account found for this Google email. Please sign up first.');
                     }
-                    // --- END OF CHANGES ---
-
                 } catch (error) {
                     console.error('Google Sign-In error:', error);
                     let message = 'Failed to sign in with Google.';
-                    switch (error.code) {
-                        case 'auth/popup-closed-by-user':
-                            message = 'Google Sign-In popup was closed.';
-                            break;
-                        case 'auth/cancelled-popup-request':
-                            message = 'Google Sign-In request cancelled.';
-                            break;
-                        case 'auth/account-exists-with-different-credential':
-                            message = 'An account with this email already exists using a different sign-in method. Please login with your original method.';
-                            break;
-                        case 'auth/operation-not-allowed':
-                            // This error indicates Google Sign-In is not enabled in Firebase project settings
-                            message = 'Google Sign-In is not enabled for this project. Please enable it in Firebase console.';
-                            break;
-                        default:
-                            message = error.message;
-                    }
-                    displayError(message);
+                     switch (error.code) {
+                         case 'auth/popup-closed-by-user':
+                             message = 'Google Sign-In popup was closed.';
+                             break;
+                         case 'auth/cancelled-popup-request':
+                             message = 'Google Sign-In request cancelled.';
+                             break;
+                         case 'auth/account-exists-with-different-credential':
+                             message = 'An account with this email already exists using a different sign-in method. Please login with your original method.';
+                             break;
+                         case 'auth/operation-not-allowed':
+                             message = 'Google Sign-In is not enabled for this project.';
+                             break;
+                         default:
+                             message = 'An unknown error occurred during Google Sign-In.';
+                     }
+                    displayMessage(message);
                 }
             });
         });
