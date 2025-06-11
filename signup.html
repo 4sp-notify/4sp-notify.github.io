@@ -356,14 +356,12 @@
              const agreePrivacyCheckbox = document.getElementById('agreePrivacy');
 
              // --- List of Denied Emails ---
-             // You can modify this list with the emails you want to block.
              const deniedEmails = [
                  'example1@domain.com',
-                 'wyattbelknap67@gmail.com',
+                 'testuser@example.org',
                  'anotheruser@website.net'
              ];
 
-             // Initially disable buttons
              emailSignupBtn.classList.add('btn-disabled');
              googleSignupBtn.classList.add('btn-disabled');
 
@@ -411,7 +409,6 @@
                  const username = signupUsernameInput.value;
                  const password = signupPasswordInput.value;
 
-                 // --- Denied Email Check ---
                  if (deniedEmails.includes(email)) {
                      errorMessageDiv.textContent = 'This email address is not allowed to register.';
                      return;
@@ -426,7 +423,6 @@
                      const userCredential = await firebase.auth().createUserWithEmailAndPassword(email, password);
                      const user = userCredential.user;
 
-                     // --- Send Verification Email ---
                      await user.sendEmailVerification();
                      console.log('Email verification sent.');
 
@@ -438,10 +434,11 @@
                      if (username) {
                          userData.username = username;
                      }
+                     // This code is only reached if createUserWithEmailAndPassword succeeds,
+                     // so it will never run for an existing email, thus preventing duplicate data.
                      await db.collection('users').doc(user.uid).set(userData);
                      console.log('User data saved to Firestore.');
 
-                     // --- Display Success Message ---
                      successMessageDiv.textContent = 'Account created! Please check your email for a verification link before logging in.';
                      signupForm.reset();
                      agreeTermsCheckbox.checked = false;
@@ -453,7 +450,7 @@
                      let message = 'Sign-up failed. Please try again.';
                      switch (error.code) {
                          case 'auth/email-already-in-use':
-                             message = 'The email address is already in use by another account.';
+                             message = 'The email address is already in use by another account. Please login instead.';
                              break;
                          case 'auth/invalid-email':
                              message = 'The email address is not valid.';
@@ -483,59 +480,52 @@
                  try {
                      const provider = new firebase.auth.GoogleAuthProvider();
                      const result = await firebase.auth().signInWithPopup(provider);
+                     
+                     // --- UPDATED LOGIC FOR EXISTING ACCOUNTS ---
+                     // Check if this is a new user or an existing user.
+                     const isNewUser = result.additionalUserInfo.isNewUser;
                      const user = result.user;
-                     const email = user.email;
 
-                     // --- Denied Email Check for Google Sign-Up ---
-                     if (deniedEmails.includes(email)) {
-                         // If the email is denied, we must sign the user out immediately
-                         // and prevent data from being saved.
+                     if (deniedEmails.includes(user.email)) {
                          await firebase.auth().signOut();
                          errorMessageDiv.textContent = 'This email address is not allowed to register.';
                          return;
                      }
 
-                     const userDocRef = db.collection('users').doc(user.uid);
-                     const userDoc = await userDocRef.get();
-
-                     if (!userDoc.exists) {
+                     if (isNewUser) {
+                        // This is a brand new user. Create their record in Firestore.
                          const userData = {
                              email: user.email,
                              authMethod: 'google',
                              createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                              username: user.displayName || null
                          };
-                         await userDocRef.set(userData);
+                         await db.collection('users').doc(user.uid).set(userData);
                          console.log('New Google user data saved to Firestore.');
-                     } else {
-                         console.log('Existing Google user logged in.');
-                     }
+                         
+                         // Since it's a new account, proceed to the dashboard.
+                         window.location.href = 'logged-in/dashboard.html';
 
-                     // --- Check if email is verified ---
-                     // Note: Google accounts are typically pre-verified.
-                     // The crucial check will be on the login page.
-                     if (!user.emailVerified) {
-                         // This case is rare for Google Sign-In but handled for completeness.
-                         await user.sendEmailVerification();
-                         successMessageDiv.textContent = 'Please verify your email before logging in. A verification link has been sent.';
-                         await firebase.auth().signOut(); // Sign out until verified
                      } else {
-                        window.location.href = 'logged-in/dashboard.html';
+                        // This user already exists in Firebase Auth.
+                        // Prevent signup, do not write to Firestore, and sign them out.
+                        console.log('Existing Google user attempted to sign up again.');
+                        await firebase.auth().signOut();
+                        errorMessageDiv.textContent = 'An account with this Google email already exists. Please login instead.';
                      }
-
 
                  } catch (error) {
                      console.error('Google Sign-In error:', error);
-                     let message = 'Failed to sign in with Google.';
+                     let message = 'Failed to sign up with Google.';
                      switch (error.code) {
+                        case 'auth/account-exists-with-different-credential':
+                            message = 'An account with this email already exists using a different sign-in method. Please login with your original method.';
+                            break;
                          case 'auth/popup-closed-by-user':
-                             message = 'Google Sign-In popup was closed.';
+                             message = 'Google Sign-Up popup was closed.';
                              break;
                          case 'auth/cancelled-popup-request':
-                             message = 'Google Sign-In request cancelled.';
-                             break;
-                         case 'auth/account-exists-with-different-credential':
-                             message = 'An account with this email already exists using a different sign-in method. Please login with your original method.';
+                             message = 'Google Sign-Up request cancelled.';
                              break;
                          default:
                              message = error.message;
@@ -544,7 +534,6 @@
                  }
              });
 
-             // Initial state check when page loads
              updateButtonState();
          });
      </script>
