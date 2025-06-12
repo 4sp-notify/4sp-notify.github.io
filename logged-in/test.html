@@ -1,0 +1,1074 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>4SP - SOUNDBOARD</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="../firebase-config.js"></script>
+
+    <style>
+        /* V4 Theme Base (White & Purple, like dashboard.html) */
+        :root {
+            --v4-bg-gradient: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
+            --v4-card-bg: #fff;
+            --v4-text-primary: #333;
+            --v4-text-secondary: #555;
+            --v4-purple-accent: #6720bd;
+            --v4-purple-accent-darker: #5a1aa8;
+            --v4-purple-gradient: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+            --v4-border-light: #ddd;
+            --v4-border-softer: #eee;
+            --v4-input-bg: #f8f9fa;
+            --v4-input-border: #ccc;
+            --v4-error-color: #721c24; /* Text color for light error bg */
+            --v4-error-bg: #f8d7da;   /* Light error bg */
+            --v4-success-color: #155724; /* Text color for light success bg */
+            --v4-success-bg: #d4edda; /* Light success bg */
+            --v4-info-color: #004085;   /* Text color for light info bg */
+            --v4-info-bg: #cce5ff;     /* Light info bg */
+            --v4-font-primary: 'PrimaryFont', sans-serif;
+            --v4-font-secondary: 'SecondaryFont', sans-serif;
+        }
+
+        body.soundboard-page {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            margin: 0;
+            font-family: var(--v4-font-primary);
+            background-color: var(--v4-bg-gradient);
+            color: var(--v4-text-primary);
+            line-height: 1.6;
+        }
+
+        .soundboard-container-wrapper { display: flex; flex: 1; overflow: hidden; }
+
+        /* Sidebar Styles (Consistent with V4 dashboard.html/settings.html) */
+        .sidebar {
+            width: 200px;
+            background: linear-gradient(180deg, #333 0%, #2a2a2a 100%);
+            color: #fff; padding: 20px 10px; display: flex; flex-direction: column;
+            border-right: 1px solid #444;
+            transition: width 0.5s ease-in-out;
+            position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }
+        .sidebar.collapsed { width: 85px; }
+        #toggleSidebar {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            background: none; border: none; color: #fff; font-size: 1.2em;
+            cursor: pointer; padding: 4px; transition: transform 0.5s ease-in-out;
+        }
+        .sidebar.collapsed #toggleSidebar { transform: translateX(-50%) rotate(180deg); }
+        .user-info {
+            text-align: center; margin: 60px 0 30px; border-bottom: 1px solid #555;
+            padding-bottom: 20px; overflow: visible;
+        }
+        .marquee-container {
+            overflow: hidden; white-space: nowrap; position: relative;
+            width: 100%; height: 1.8em; line-height: 1.8em;
+        }
+        .marquee-content { display: inline-block; padding-left: 100%; transform: translateX(0); animation: none; line-height: 1.8em; }
+        .marquee-active { animation: scroll-left-soundboard 12s linear infinite; }
+        .sidebar.collapsed .marquee-active { animation-duration: 20s; }
+        @keyframes scroll-left-soundboard { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+
+        .user-info .username { font-family: var(--v4-font-primary); font-size: 1.3em; margin-bottom: 8px; line-height: 0.2em; font-weight: bold;}
+        .user-info .email { font-family: var(--v4-font-secondary); font-size: 0.9em; color: #bbb; }
+        .sidebar nav ul { list-style: none; padding: 0; margin: 60px 0 0; }
+        .sidebar nav li { margin-bottom: 10px; }
+        .sidebar nav a {
+            display: flex; align-items: center; padding: 12px 15px; color: #fff;
+            text-decoration: none; border-radius: 8px; transition: all 0.3s ease;
+            font-family: var(--v4-font-primary); text-transform: uppercase;
+            position: relative; overflow: hidden; font-size: 1em;
+        }
+        .sidebar nav a::before {
+            content: ''; position: absolute; top: 0; left: -100%; width: 100%; height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
+            transition: left 0.5s;
+        }
+        .sidebar nav a:hover::before { left: 100%; }
+        .sidebar nav a.active, .sidebar nav a:hover {
+            background: var(--v4-purple-gradient);
+            transform: translateX(5px); color: #fff;
+        }
+        .sidebar nav a .icon {
+            font-size: 1.2em; width: 24px; text-align: center;
+        }
+        .sidebar nav a .label {
+            margin-left: 10px;
+            white-space: nowrap;
+        }
+        .sidebar.collapsed nav a { justify-content: center; padding: 10px 0; }
+        .sidebar.collapsed nav a .label { display: none; }
+        .sidebar.collapsed nav a .icon { margin-right: 0; margin-left:0; }
+
+
+        /* Main Content Area - V4 Light Theme */
+        .main-soundboard-content {
+            flex: 1; padding: 30px;
+            background: var(--v4-bg-gradient);
+            overflow-y: auto; display: flex; flex-direction: column;
+        }
+        .soundboard-header-v4 {
+            display: flex; justify-content: space-between; align-items: center;
+            margin-bottom: 25px;
+            background: var(--v4-card-bg);
+            padding: 20px 30px; border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            border: 1px solid rgba(103, 32, 189, 0.1);
+        }
+        .soundboard-title-v4 {
+            font-size: 2.2em; font-weight: bold;
+            background: var(--v4-purple-gradient);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }
+
+        /* Search Bar - V4 Style */
+        .search-filter-container {
+            margin-bottom: 25px; padding: 15px;
+            background: var(--v4-card-bg); border-radius: 12px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.06);
+            border: 1px solid var(--v4-border-softer);
+        }
+        .search-filter-container input[type="text"] {
+            width: 100%; padding: 12px 15px; background-color: var(--v4-input-bg);
+            border: 1px solid var(--v4-input-border); border-radius: 8px;
+            color: var(--v4-text-primary); font-size: 1em; outline: none;
+            font-family: var(--v4-font-secondary);
+        }
+        .search-filter-container input[type="text"]:focus {
+            border-color: var(--v4-purple-accent);
+            box-shadow: 0 0 0 3px rgba(103, 32, 189, 0.15);
+        }
+
+        /* Controls Area - V4 Style */
+        #toggleControlsBtnWrapper {
+            margin-bottom: 15px;
+            align-self: flex-start;
+        }
+
+        .soundboard-controls-v4 {
+            background: var(--v4-card-bg);
+            padding: 25px;
+            border-radius: 15px;
+            margin-bottom: 25px;
+            box-shadow: 0 6px 30px rgba(0,0,0,0.08);
+            border: 1px solid rgba(103, 32, 189, 0.1);
+            transition: padding 0.3s ease-out, margin-bottom 0.3s ease-out, border-width 0.3s ease-out, opacity 0.3s ease-out, max-height 0.5s cubic-bezier(0.25, 0.1, 0.25, 1);
+            opacity: 1;
+            max-height: 2000px;
+            overflow: hidden;
+        }
+
+        .soundboard-controls-v4.collapsed {
+            padding-top: 0;
+            padding-bottom: 0;
+            margin-bottom: 0;
+            border-width: 0;
+            opacity: 0;
+            max-height: 0;
+        }
+
+        .soundboard-controls-v4 .controls-inner-wrapper {
+            /* Styles for this wrapper can be minimal if parent handles collapse */
+        }
+
+
+        .controls-sections-wrapper {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 25px;
+        }
+        .controls-section { }
+        .controls-section h3 {
+            font-size: 1.1em; font-weight: 600; color: var(--v4-purple-accent);
+            margin-bottom: 15px; padding-bottom: 8px; border-bottom: 1px solid var(--v4-border-light);
+            text-transform: uppercase; letter-spacing: 0.5px;
+        }
+        .control-group { display: flex; flex-direction: column; margin-bottom: 15px; }
+        .control-group label, .checkbox-label-v4 {
+            font-family: var(--v4-font-secondary); font-size: 0.9em;
+            color: var(--v4-text-secondary); margin-bottom: 6px;
+        }
+        .checkbox-label-v4 { display: flex; align-items: center; cursor: pointer; margin-bottom: 10px;}
+
+        .control-group input[type="range"] {
+            -webkit-appearance: none; appearance: none; width: 100%; height: 8px;
+            background: var(--v4-border-light); outline: none; border-radius: 5px;
+        }
+        .control-group input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; appearance: none; width: 18px; height: 18px;
+            background: var(--v4-purple-accent); cursor: pointer; border-radius: 50%;
+        }
+        .control-group input[type="range"]::-moz-range-thumb {
+            width: 18px; height: 18px; background: var(--v4-purple-accent);
+            cursor: pointer; border-radius: 50%; border: none;
+        }
+        .control-group input[type="number"], .control-group select {
+            width: 100%; padding: 10px 12px; background-color: var(--v4-input-bg);
+            border: 1px solid var(--v4-input-border); border-radius: 6px;
+            color: var(--v4-text-primary); font-family: var(--v4-font-secondary);
+            font-size: 0.95em; outline: none;
+        }
+        .control-group input[type="number"]:focus, .control-group select:focus {
+            border-color: var(--v4-purple-accent);
+            box-shadow: 0 0 0 2px rgba(103, 32, 189, 0.2);
+        }
+        .control-group input[type="checkbox"] { margin-right: 8px; transform: scale(1.1); accent-color: var(--v4-purple-accent); }
+
+        .control-button-v4, .stop-all-btn-v4 {
+            padding: 10px 18px; background: var(--v4-purple-gradient);
+            color: white; border: none; border-radius: 8px; cursor: pointer;
+            font-family: var(--v4-font-primary); font-size: 0.95em;
+            text-transform: uppercase; transition: all 0.25s ease;
+            box-shadow: 0 2px 8px rgba(103, 32, 189, 0.3);
+        }
+        .control-button-v4:hover, .stop-all-btn-v4:hover {
+            background: linear-gradient(135deg, var(--v4-purple-accent-darker) 0%, #7923c8 100%);
+            transform: translateY(-1px); box-shadow: 0 4px 12px rgba(103, 32, 189, 0.5);
+        }
+        .stop-all-btn-v4 {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            box-shadow: 0 2px 8px rgba(220, 53, 69, 0.3);
+        }
+         .stop-all-btn-v4:hover {
+             background: linear-gradient(135deg, #c82333 0%, #b01e2c 100%);
+             box-shadow: 0 4px 12px rgba(220, 53, 69, 0.5);
+         }
+        #applyDelayBtnV4 {
+            padding: 8px 12px; font-size: 0.85em; margin-top: 5px;
+            background-color: #e9ecef; color: var(--v4-text-primary);
+            border: 1px solid var(--v4-input-border);
+        }
+        #applyDelayBtnV4:hover { background-color: #dde2e6; border-color: var(--v4-purple-accent); }
+        
+        /* --- NEW BUTTON STYLES (FROM USER) --- */
+        .save-actions button {
+          background: none;
+          border: 1.5px solid;
+          padding: 6px 10px;
+          border-radius: 8px;
+          cursor: pointer;
+          margin-left: 4px;
+          font-size: 0.9em;
+          transition: all 0.2s ease-in-out;
+          font-family: var(--v4-font-primary); /* MODIFIED: Using theme variable */
+          text-transform: uppercase;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+        /* OPEN (Blue) */
+        .save-actions .open-save-btn {
+          background: rgba(0, 123, 255, 0.1);
+          border-color: #007bff;
+          color: #007bff;
+        }
+        .save-actions .open-save-btn:hover {
+          background: #007bff;
+          color: #fff;
+          box-shadow: 0 2px 6px rgba(0,123,255,0.3);
+        }
+        /* EDIT (Hazard Yellow) */
+        .save-actions .edit-countdown-btn {
+          background: rgba(255, 193, 7, 0.1);
+          border-color: #ffc107;
+          color: #856404;  /* darker yellow-brown for text contrast */
+        }
+        .save-actions .edit-countdown-btn:hover {
+          background: #ffc107;
+          color: #212529;
+          box-shadow: 0 2px 6px rgba(255,193,7,0.3);
+        }
+        /* DELETE (Ketchup Red) */
+        .save-actions .delete-save-btn {
+          background: rgba(178, 34, 34, 0.1);
+          border-color: #b22222;
+          color: #b22222;
+        }
+        .save-actions .delete-save-btn:hover {
+          background: #b22222;
+          color: #fff;
+          box-shadow: 0 2px 6px rgba(178,34,34,0.3);
+        }
+        /* --- END NEW BUTTON STYLES --- */
+
+
+        /* Sound Categories & Buttons - V4 Light Theme */
+        .sound-category-v4 {
+            margin-bottom: 25px; background: var(--v4-card-bg); padding: 20px;
+            border-radius: 15px; box-shadow: 0 6px 30px rgba(0,0,0,0.08);
+            border: 1px solid rgba(103, 32, 189, 0.1);
+        }
+        .sound-category-v4 h2 {
+            font-size: 1.5em; color: var(--v4-text-primary); margin-bottom: 15px;
+            padding-bottom: 10px; border-bottom: 1px solid var(--v4-border-softer);
+            font-family: var(--v4-font-primary); text-transform: uppercase;
+            display: flex; align-items: center;
+        }
+        .category-icon-v4 { margin-right: 10px; font-size: 1.2em; color: var(--v4-purple-accent); }
+
+        .sound-buttons-grid-v4 {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 10px;
+        }
+        .sound-button-v4 {
+            background-color: var(--v4-input-bg);
+            color: var(--v4-text-secondary);
+            border: 1px solid var(--v4-input-border); /* Default border */
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: var(--v4-font-primary); /* MODIFIED - Explicitly use SecondaryFont */
+            font-size: 1em;
+            line-height: 1.3;
+            text-align: center;
+            cursor: pointer;
+            transition: background-color 0.2s ease, color 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
+            white-space: normal;
+            word-wrap: break-word;
+            text-transform: uppercase;
+            position: relative;
+            max-width: 500px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .sound-button-v4:hover {
+            background-color: #e9ecef; border-color: var(--v4-purple-accent);
+            color: var(--v4-purple-accent); transform: translateY(-2px);
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .sound-button-v4.playing {
+            background-color: var(--v4-purple-accent);
+            color: white;
+            border: 2px solid var(--v4-purple-accent-darker); /* MODIFIED - Thicker border for playing state */
+            animation: pulsePlayingSoundboardV4 1.5s infinite;
+        }
+        /* MODIFIED Keyframes for a more visible pulse/outline */
+        @keyframes pulsePlayingSoundboardV4 {
+            0% {
+                box-shadow: 0 0 0 0px var(--v4-purple-accent);
+            }
+            70% {
+                box-shadow: 0 0 0 8px rgba(103, 32, 189, 0.4);
+            }
+            100% {
+                box-shadow: 0 0 0 0px rgba(103, 32, 189, 0.1);
+            }
+        }
+
+
+        /* Current Sound Display Overlay - V4 Style */
+        #currentSoundDisplayOverlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(240, 242, 245, 0.85);
+            color: var(--v4-text-primary);
+            display: none; justify-content: center; align-items: center; text-align: center;
+            z-index: 1000; flex-direction: column; padding: 20px;
+        }
+        #currentSoundDisplayOverlay.active { display: flex; animation: fadeInV4 0.3s ease forwards; }
+        #currentSoundDisplayOverlay.fade-out { animation: fadeOutV4 0.3s ease forwards; }
+
+        #overlaySoundNameV4 {
+            font-size: 2.5em; margin-bottom: 20px; font-family: var(--v4-font-primary);
+            color: var(--v4-purple-accent);
+        }
+        #overlayProgressContainerV4 {
+            width: 70%; max-width: 500px; height: 15px;
+            background-color: var(--v4-border-light); border-radius: 10px;
+            overflow: hidden; margin-top: 15px;
+        }
+        #overlayProgressBarV4 {
+            width: 0%; height: 100%; background-color: var(--v4-purple-accent);
+            border-radius: 10px; transition: width 0.1s linear;
+        }
+        #closeOverlayBtnV4 {
+            margin-top: 30px; padding: 10px 25px; font-size: 1em;
+            background: var(--v4-purple-gradient); color: white; border: none;
+            border-radius: 8px; cursor: pointer; font-family: var(--v4-font-primary);
+            text-transform: uppercase; transition: all 0.25s ease;
+        }
+        #closeOverlayBtnV4:hover { background: linear-gradient(135deg, var(--v4-purple-accent-darker) 0%, #7923c8 100%);}
+
+       /* Status Message (#statusMessageV4) - V4 Style Update */
+        .status-message-v4 {
+            display: none;
+            padding: 15px 25px;
+            margin: 20px auto;
+            border-radius: 12px;
+            font-size: 0.95em;
+            text-align: center;
+            min-width: 300px;
+            max-width: 600px;
+            width: auto;
+            font-family: var(--v4-font-primary, 'PrimaryFont', sans-serif);
+            text-transform: uppercase;
+            border: 1px solid transparent;
+            box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+            color: white;
+        }
+        .status-message-v4.fade-in { display: block; animation: fadeInV4 0.3s ease forwards; }
+        .status-message-v4.fade-out { animation: fadeOutV4 0.3s ease forwards; }
+
+        .status-message-v4.success {
+            background: linear-gradient(135deg, #1c7430, #155724);
+            border-color: #104d1e;
+        }
+        .status-message-v4.error {
+            background: linear-gradient(135deg, #8f262a, #721c24);
+            border-color: #5f171e;
+        }
+        .status-message-v4.info {
+            background: var(--v4-purple-gradient);
+            border-color: var(--v4-purple-accent-darker);
+        }
+
+
+        @keyframes fadeInV4 { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes fadeOutV4 { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(10px); } }
+
+        /* Responsive adjustments for V4 */
+        @media (max-width: 768px) {
+            .sidebar { width: 100%; height: auto; flex-direction: row; overflow-x: auto; border-right: none; border-bottom: 1px solid #333; padding: 5px; }
+            .sidebar.collapsed { width: 100%; } .sidebar .user-info { display: none; }
+            .sidebar nav { width: 100%; }
+            .sidebar nav ul { flex-direction: row; margin: 0; justify-content: center; width: 100%; }
+            .sidebar nav li { margin-bottom: 0; margin-right: 5px; }
+            .sidebar nav a { padding: 8px 10px; font-size: 0.9em;}
+            .sidebar nav a .icon { margin-right: 5px; font-size: 1em;}
+            #toggleSidebar { display: none; }
+            .soundboard-container-wrapper { flex-direction: column; }
+            .main-soundboard-content { padding: 15px; }
+            .soundboard-title-v4 { font-size: 1.8em; }
+            .controls-sections-wrapper { grid-template-columns: 1fr; }
+            .sound-buttons-grid-v4 { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 8px; }
+            .sound-button-v4 { font-size: 0.75em; padding: 8px 10px;}
+            #overlaySoundNameV4 { font-size: 1.8em;}
+            #toggleControlsBtnWrapper { width: 100%; margin-bottom: 10px;} /* MODIFIED */
+            .status-message-v4 { min-width: 90%; padding: 10px 15px; font-size: 0.9em; }
+        }
+
+    </style>
+</head>
+<body class="soundboard-page">
+
+    <header class="main-header light-bg"> <div class="container">
+            <div class="logo">
+                <a href="../index.html">
+                  <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer;"/>
+                </a>
+            </div>
+            <div class="auth-buttons">
+                <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="soundboard-container-wrapper">
+        <aside class="sidebar slide-in" id="sidebar"> <button id="toggleSidebar">☰</button>
+            <div class="user-info">
+                <div class="marquee-container"> <span id="userName" class="marquee-content username">Loading…</span> </div>
+                <div class="marquee-container"> <span id="userEmail" class="marquee-content email">Loading…</span> </div>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
+                    <li><a href="proxies.html"><span class="icon">🛡️</span><span class="label">Proxies</span></a></li>
+                    <li><a href="soundboard.html" class="active"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
+                    <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
+                    <li><a href="others.html"><span class="icon">✨</span><span class="label">Others</span></a></li>
+                    <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                    <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-soundboard-content">
+            <div class="soundboard-header-v4">
+                <h2 class="soundboard-title-v4">Soundboard</h2>
+                <button class="stop-all-btn-v4" id="clearAllSoundsBtnV4">Stop All</button>
+            </div>
+
+            <div class="search-filter-container">
+                <input type="text" id="soundSearchInputV4" placeholder="Search sounds...">
+            </div>
+
+            <div class="status-message-v4" id="statusMessageV4"></div>
+
+            <div class="save-actions" id="toggleControlsBtnWrapper">
+                <button id="toggleControlsBtn" class="open-save-btn">Hide Settings</button>
+            </div>
+
+            <div class="soundboard-controls-v4">
+                <div class="controls-inner-wrapper">
+                    <div class="controls-sections-wrapper">
+                        <div class="controls-section">
+                            <h3>Playback Options</h3>
+                            <div class="control-group">
+                                <label class="checkbox-label-v4">
+                                    <input type="checkbox" id="allowMultipleSoundsToggleV4" checked> Allow Multiple Sounds (Stacking)
+                                </label>
+                            </div>
+                            <div class="control-group">
+                                 <label class="checkbox-label-v4">
+                                     <input type="checkbox" id="currentSoundDisplayToggleV4"> Enable Current Sound Display
+                                 </label>
+                            </div>
+                             <div class="control-group">
+                                <label for="loopToggleBtnV4">Loop Current Sound</label>
+                                <button class="control-button-v4" id="loopToggleBtnV4" style="width:auto; padding: 8px 15px;">Loop: OFF</button>
+                            </div>
+                        </div>
+
+                        <div class="controls-section">
+                            <h3>Speed & Timing</h3>
+                            <div class="control-group">
+                                <label for="playbackSpeedSelectV4">Playback Speed Presets:</label>
+                                <select id="playbackSpeedSelectV4">
+                                    <option value="0.25">0.25x</option> <option value="0.5">0.5x</option> <option value="0.75">0.75x</option>
+                                    <option value="1" selected>1x (Normal)</option>
+                                    <option value="1.25">1.25x</option> <option value="1.5">1.5x</option> <option value="1.75">1.75x</option>
+                                    <option value="2">2x</option> <option value="2.25">2.25x</option> <option value="2.5">2.5x</option>
+                                    <option value="2.75">2.75x</option> <option value="3">3x</option>
+                                </select>
+                            </div>
+                            <div class="control-group">
+                                <label for="playbackSpeedSliderV4">Fine Tune Speed: <span id="playbackSpeedValueV4">1.0x</span></label>
+                                <input type="range" id="playbackSpeedSliderV4" min="0.1" max="5" step="0.05" value="1">
+                            </div>
+                             <div class="control-group">
+                                <label for="fadeDurationV4">Fade In/Out (ms)</label>
+                                <input type="number" id="fadeDurationV4" value="100" min="0" placeholder="e.g., 100ms">
+                            </div>
+                        </div>
+
+                        <div class="controls-section">
+                            <h3>Autoclicker</h3>
+                            <div class="control-group">
+                                <label class="checkbox-label-v4">
+                                    <input type="checkbox" id="autoClickerCheckboxV4"> Enable Autoclicker
+                                </label>
+                            </div>
+                            <div class="control-group" id="autoClickDelayLabelV4" style="display: none;">
+                                <label for="autoClickDelayInputV4">Delay (ms):</label>
+                                <div style="display:flex; gap: 5px;">
+                                    <input type="number" id="autoClickDelayInputV4" value="200" min="0.5">
+                                    <button id="applyDelayBtnV4" class="control-button-v4" style="padding: 8px 12px; font-size:0.85em;">Apply</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                     <div class="control-group" style="margin-top: 20px; border-top: 1px solid var(--v4-border-softer); padding-top:20px;">
+                        <label for="masterVolumeSliderV4">Master Volume: <span id="masterVolumeValueV4">100%</span></label>
+                        <input type="range" id="masterVolumeSliderV4" min="0" max="1" step="0.01" value="1">
+                    </div>
+
+                    <div class="controls-section" style="margin-top: 10px; border-top: 1px solid var(--v4-border-softer); padding-top:20px;">
+                        <h3>Manage Settings</h3>
+                        <div class="save-actions">
+                            <button class="open-save-btn">Save Preferences</button>
+                            <button class="edit-countdown-btn">Load Defaults</button>
+                            <button class="delete-save-btn">Reset All</button>
+                        </div>
+                    </div>
+
+                    <div class="control-group" style="margin-top: 10px;">
+                         <p style="font-size: 0.8em; color: var(--v4-text-secondary);">Keyboard Shortcut: Shift + C to Mute & Clear All Sounds.</p>
+                    </div>
+                </div>
+            </div>
+
+            <div id="soundCategoriesContainerV4"> <p>Loading sounds...</p> </div>
+        </main>
+    </div>
+
+    <div id="currentSoundDisplayOverlay"> <h3 id="overlaySoundNameV4">Sound Name</h3>
+        <div id="overlayProgressContainerV4"> <div id="overlayProgressBarV4"></div> </div>
+        <button class="stop-all-btn-v4" id="closeOverlayBtnV4">Close Display</button>
+    </div>
+
+    <script>
+        // --- V4 Standard Setup (Auth, Sidebar, User Info) ---
+        const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
+        const marqueeEls = document.querySelectorAll('.marquee-content');
+        firebase.auth().onAuthStateChanged(async user => {
+            if (!user) { window.location.href = '../login.html'; }
+            else {
+                const userEmailEl = document.getElementById('userEmail');
+                const userNameEl = document.getElementById('userName');
+                if (userEmailEl) userEmailEl.textContent = user.email;
+                if (userNameEl) {
+                    try {
+                        const doc = await dbRef().get();
+                        userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User');
+                    } catch (error) { userNameEl.textContent = 'User'; console.error("Error fetching username:", error); }
+                }
+                updateMarquees();
+            }
+        });
+        document.getElementById('logoutBtn').addEventListener('click', () => { firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
+
+        const signOutLink = document.getElementById('signOutLink');
+        if(signOutLink) { signOutLink.addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); }); }
+
+        const sidebar = document.getElementById('sidebar');
+        const toggleSidebarBtn = document.getElementById('toggleSidebar');
+        if (toggleSidebarBtn && sidebar) { toggleSidebarBtn.addEventListener('click', () => { sidebar.classList.toggle('collapsed'); setTimeout(updateMarquees, 550); }); }
+
+        function updateMarquees() {
+          marqueeEls.forEach(el => {
+            if (!el || !el.parentElement) return;
+            const parent = el.parentElement; const overflow = el.scrollWidth > parent.clientWidth;
+            const shouldScroll = sidebar.classList.contains('collapsed') || (overflow && !sidebar.classList.contains('collapsed'));
+            el.classList.toggle('marquee-active', shouldScroll);
+            if (!overflow && !sidebar.classList.contains('collapsed')) { el.classList.remove('marquee-active');}
+          });
+        }
+        window.addEventListener('resize', updateMarquees);
+        // --- End V4 Standard Setup ---
+
+        // --- Soundboard V4 ---
+        const soundCategoriesContainer = document.getElementById('soundCategoriesContainerV4');
+        const soundSearchInput = document.getElementById('soundSearchInputV4');
+        const statusMessageEl = document.getElementById('statusMessageV4');
+
+        // Controls
+        const allowMultipleSoundsToggleV4 = document.getElementById('allowMultipleSoundsToggleV4');
+        const currentSoundDisplayToggleV4 = document.getElementById('currentSoundDisplayToggleV4');
+        const loopToggleBtnV4 = document.getElementById('loopToggleBtnV4');
+
+        const playbackSpeedSelectV4 = document.getElementById('playbackSpeedSelectV4');
+        const playbackSpeedSliderV4 = document.getElementById('playbackSpeedSliderV4');
+        const playbackSpeedValueDisplayV4 = document.getElementById('playbackSpeedValueV4');
+        const masterVolumeSliderV4 = document.getElementById('masterVolumeSliderV4');
+        const masterVolumeValueDisplayV4 = document.getElementById('masterVolumeValueV4');
+
+        const autoClickerCheckboxV4 = document.getElementById('autoClickerCheckboxV4');
+        const autoClickDelayLabelV4 = document.getElementById('autoClickDelayLabelV4');
+        const autoClickDelayInputV4 = document.getElementById('autoClickDelayInputV4');
+        const applyDelayBtnV4 = document.getElementById('applyDelayBtnV4');
+        const fadeDurationInputV4 = document.getElementById('fadeDurationV4');
+
+        const clearAllSoundsBtnV4 = document.getElementById('clearAllSoundsBtnV4');
+
+        // Current Sound Display Overlay Elements
+        const currentSoundDisplayOverlay = document.getElementById('currentSoundDisplayOverlay');
+        const overlaySoundNameV4 = document.getElementById('overlaySoundNameV4');
+        const overlayProgressBarV4 = document.getElementById('overlayProgressBarV4');
+        const closeOverlayBtnV4 = document.getElementById('closeOverlayBtnV4');
+
+        // Collapsible Settings Menu
+        const toggleControlsBtn = document.getElementById('toggleControlsBtn');
+        const soundboardControlsV4 = document.querySelector('.soundboard-controls-v4');
+
+
+        let soundsDataGlobal = {};
+        let playingAudios = [];
+        let currentLoopingAudio = null;
+        let autoClickIntervalId = null;
+        let currentlyHoveredButton = null;
+
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        let globalGainNode = audioContext.createGain();
+        globalGainNode.connect(audioContext.destination);
+        let statusMessageTimeout = null;
+
+        if (toggleControlsBtn && soundboardControlsV4) {
+            toggleControlsBtn.addEventListener('click', () => {
+                soundboardControlsV4.classList.toggle('collapsed');
+                if (soundboardControlsV4.classList.contains('collapsed')) {
+                    toggleControlsBtn.textContent = 'Show Settings';
+                } else {
+                    toggleControlsBtn.textContent = 'Hide Settings';
+                }
+            });
+        }
+
+        function showStatus(message, type = 'info') {
+            if (statusMessageTimeout) clearTimeout(statusMessageTimeout);
+            statusMessageEl.textContent = message;
+            statusMessageEl.className = 'status-message-v4 ' + type;
+            statusMessageEl.style.display = 'block'; 
+            statusMessageEl.classList.remove('fade-out');
+            statusMessageEl.classList.add('fade-in');
+            statusMessageTimeout = setTimeout(() => {
+                statusMessageEl.classList.remove('fade-in');
+                statusMessageEl.classList.add('fade-out');
+                setTimeout(() => {
+                    statusMessageEl.style.display = 'none';
+                    statusMessageEl.classList.remove('fade-out');
+                }, 300);
+            }, 3000);
+        }
+
+
+        let currentPlaybackSpeed = 1.0;
+        function applySpeedToAllPlaying() {
+            playingAudios.forEach(audioObj => { if (audioObj.audioElement && !audioObj.audioElement.paused) audioObj.audioElement.playbackRate = currentPlaybackSpeed; });
+        }
+        playbackSpeedSelectV4.addEventListener('change', function() {
+            currentPlaybackSpeed = parseFloat(this.value);
+            playbackSpeedSliderV4.value = currentPlaybackSpeed;
+            playbackSpeedValueDisplayV4.textContent = `${currentPlaybackSpeed.toFixed(2)}x`;
+            localStorage.setItem('playbackSpeedV4', currentPlaybackSpeed.toString());
+            applySpeedToAllPlaying();
+            showStatus(`Playback speed: ${currentPlaybackSpeed.toFixed(2)}x`, 'info');
+        });
+        playbackSpeedSliderV4.addEventListener('input', function() {
+            currentPlaybackSpeed = parseFloat(this.value);
+            playbackSpeedValueDisplayV4.textContent = `${currentPlaybackSpeed.toFixed(2)}x`;
+            const presetOption = Array.from(playbackSpeedSelectV4.options).find(opt => parseFloat(opt.value).toFixed(2) === currentPlaybackSpeed.toFixed(2));
+             playbackSpeedSelectV4.value = presetOption ? presetOption.value : "";
+        });
+        playbackSpeedSliderV4.addEventListener('change', function() {
+             localStorage.setItem('playbackSpeedV4', currentPlaybackSpeed.toString());
+             applySpeedToAllPlaying();
+             showStatus(`Playback speed: ${currentPlaybackSpeed.toFixed(2)}x`, 'info');
+        });
+
+         masterVolumeSliderV4.addEventListener('input', (e) => {
+            const volume = parseFloat(e.target.value);
+            masterVolumeValueDisplayV4.textContent = `${Math.round(volume * 100)}%`;
+            globalGainNode.gain.setValueAtTime(volume, audioContext.currentTime);
+            localStorage.setItem('masterVolumeV4', volume.toString());
+        });
+
+        autoClickerCheckboxV4.addEventListener('change', function() {
+            autoClickDelayLabelV4.style.display = this.checked ? 'flex' : 'none';
+            if (!this.checked) stopAutoClicker();
+            localStorage.setItem('autoClickerV4', this.checked.toString());
+            showStatus(`Autoclicker: ${this.checked ? 'ON' : 'OFF'}`, 'info');
+        });
+        applyDelayBtnV4.addEventListener('click', () => {
+            const delay = parseInt(autoClickDelayInputV4.value, 10);
+            if (isNaN(delay) || delay < 0) autoClickDelayInputV4.value = 10;
+            localStorage.setItem('autoClickDelayV4', autoClickDelayInputV4.value);
+            if (autoClickerCheckboxV4.checked && currentlyHoveredButton) startAutoClicker();
+            showStatus(`Autoclicker delay: ${autoClickDelayInputV4.value}ms`, 'info');
+        });
+        function startAutoClicker() {
+            stopAutoClicker();
+            if (!currentlyHoveredButton || !autoClickerCheckboxV4.checked) return;
+            const delay = parseInt(autoClickDelayInputV4.value, 10) || 200;
+            autoClickIntervalId = setInterval(() => {
+                if (currentlyHoveredButton) currentlyHoveredButton.dispatchEvent(new MouseEvent('click'));
+                else stopAutoClicker();
+            }, Math.max(50, delay));
+        }
+        function stopAutoClicker() {
+            if (autoClickIntervalId) { clearInterval(autoClickIntervalId); autoClickIntervalId = null; }
+        }
+
+        function fadeOutAndStopSingle(audioObj, duration = 0) {
+             const { audioElement, gainNode } = audioObj;
+             if (!audioElement || !gainNode) return;
+             const fadeTime = duration / 1000;
+
+             if (fadeTime > 0 && audioContext.state === 'running') {
+                 try {
+                     gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+                     gainNode.gain.setValueAtTime(gainNode.gain.value, audioContext.currentTime);
+                     gainNode.gain.linearRampToValueAtTime(0.0001, audioContext.currentTime + fadeTime);
+                     setTimeout(() => {
+                         if (!audioElement.paused) audioElement.pause();
+                         audioElement.currentTime = 0;
+                         if (audioObj.buttonElement) audioObj.buttonElement.classList.remove('playing');
+                     }, fadeTime * 1000 + 50);
+                 } catch (e) { if (!audioElement.paused) audioElement.pause(); audioElement.currentTime = 0; if (audioObj.buttonElement) audioObj.buttonElement.classList.remove('playing');}
+             } else {
+                 if (!audioElement.paused) audioElement.pause();
+                 audioElement.currentTime = 0;
+                 if (audioObj.buttonElement) audioObj.buttonElement.classList.remove('playing');
+             }
+        }
+
+        function stopAllActiveSounds(clearLoopState = true) {
+            const fadeDuration = parseInt(fadeDurationInputV4.value) || 0;
+            [...playingAudios].forEach(audioObj => fadeOutAndStopSingle(audioObj, fadeDuration));
+            playingAudios = [];
+
+            if (clearLoopState && currentLoopingAudio) {
+                if (currentLoopingAudio.audioElement) currentLoopingAudio.audioElement.loop = false;
+                if (currentLoopingAudio.buttonElement) currentLoopingAudio.buttonElement.classList.remove('playing');
+                currentLoopingAudio = null;
+            }
+            if (clearLoopState) loopToggleBtnV4.textContent = "Loop: OFF";
+
+            document.querySelectorAll('.sound-button-v4.playing').forEach(btn => btn.classList.remove('playing'));
+
+            if (currentSoundDisplayOverlay.classList.contains('active')) {
+                currentSoundDisplayOverlay.classList.remove('active');
+            }
+        }
+        clearAllSoundsBtnV4.addEventListener('click', () => {
+            stopAllActiveSounds(true);
+            showStatus('All sounds stopped.', 'info');
+        });
+        document.addEventListener('keydown', (e) => {
+            if (e.shiftKey && e.key.toLowerCase() === 'c') {
+                e.preventDefault();
+                stopAllActiveSounds(true);
+                showStatus('All sounds muted & cleared!', 'success');
+            }
+        });
+
+        loopToggleBtnV4.addEventListener('click', () => {
+            const isLooping = loopToggleBtnV4.textContent.includes("ON");
+            if (isLooping) {
+                loopToggleBtnV4.textContent = "Loop: OFF";
+                if (currentLoopingAudio && currentLoopingAudio.audioElement) {
+                    currentLoopingAudio.audioElement.loop = false;
+                }
+            } else {
+                loopToggleBtnV4.textContent = "Loop: ON";
+            }
+        });
+
+        closeOverlayBtnV4.addEventListener('click', () => currentSoundDisplayOverlay.classList.remove('active'));
+
+        function playSound(soundDetails, buttonElement) {
+            if (audioContext.state === 'suspended') audioContext.resume();
+
+            if (!allowMultipleSoundsToggleV4.checked) {
+                stopAllActiveSounds(false);
+            }
+
+            const audioElement = new Audio(soundDetails.path);
+            audioElement.playbackRate = currentPlaybackSpeed;
+            audioElement.loop = loopToggleBtnV4.textContent.includes("ON");
+
+            if (audioElement.loop) {
+                if (currentLoopingAudio && currentLoopingAudio.id !== soundDetails.id && currentLoopingAudio.audioElement) {
+                    currentLoopingAudio.audioElement.loop = false;
+                     if (currentLoopingAudio.audioElement && !currentLoopingAudio.audioElement.paused) {
+                         fadeOutAndStopSingle(currentLoopingAudio, parseInt(fadeDurationInputV4.value) || 0);
+                     }
+                }
+            }
+
+            const sourceNode = audioContext.createMediaElementSource(audioElement);
+            const gainNode = audioContext.createGain();
+            sourceNode.connect(gainNode);
+            gainNode.connect(globalGainNode);
+
+            const audioObj = {
+                id: soundDetails.id,
+                audioElement: audioElement,
+                sourceNode: sourceNode,
+                gainNode: gainNode,
+                buttonElement: buttonElement,
+                name: soundDetails.name
+            };
+
+            if (audioElement.loop) {
+                currentLoopingAudio = audioObj;
+            } else if (currentLoopingAudio && currentLoopingAudio.id === audioObj.id) {
+                currentLoopingAudio = null;
+            }
+
+            playingAudios.push(audioObj);
+
+            const fadeDuration = parseInt(fadeDurationInputV4.value) || 0;
+            gainNode.gain.setValueAtTime(fadeDuration > 0 ? 0.0001 : 1, audioContext.currentTime);
+            if (fadeDuration > 0) {
+                gainNode.gain.linearRampToValueAtTime(1, audioContext.currentTime + fadeDuration / 1000);
+            }
+
+            audioElement.play().catch(e => {
+                console.error("Error playing sound:", soundDetails.path, e);
+                showStatus(`ERROR PLAYING: ${soundDetails.name}`, 'error');
+                playingAudios = playingAudios.filter(obj => obj !== audioObj);
+                if (buttonElement) buttonElement.classList.remove('playing');
+            });
+
+            if (buttonElement) {
+                if (!allowMultipleSoundsToggleV4.checked) {
+                    document.querySelectorAll('.sound-button-v4.playing').forEach(btn => btn.classList.remove('playing'));
+                }
+                buttonElement.classList.add('playing');
+            }
+
+            if (currentSoundDisplayToggleV4.checked) {
+                overlaySoundNameV4.textContent = soundDetails.name;
+                overlayProgressBarV4.style.width = '0%';
+                currentSoundDisplayOverlay.classList.add('active');
+            }
+
+            audioElement.ontimeupdate = () => {
+                if (currentSoundDisplayToggleV4.checked && currentSoundDisplayOverlay.classList.contains('active') && audioElement.duration) {
+                    if(overlaySoundNameV4.textContent === audioObj.name){
+                         overlayProgressBarV4.style.width = `${(audioElement.currentTime / audioElement.duration) * 100}%`;
+                    }
+                }
+            };
+
+            audioElement.onended = () => {
+                if (buttonElement && !audioElement.loop) buttonElement.classList.remove('playing');
+                playingAudios = playingAudios.filter(obj => obj !== audioObj);
+
+                if (currentSoundDisplayOverlay.classList.contains('active') && overlaySoundNameV4.textContent === audioObj.name) {
+                     if (!playingAudios.some(ao => ao.audioElement && !ao.audioElement.paused && ao.buttonElement?.classList.contains('playing'))) {
+                         currentSoundDisplayOverlay.classList.remove('active');
+                     }
+                }
+                if (currentLoopingAudio && currentLoopingAudio.id === audioObj.id && !audioElement.loop) {
+                    currentLoopingAudio = null;
+                }
+            };
+        }
+
+
+        async function loadSoundsAndCreateButtons() {
+            try {
+                const response = await fetch('../SoundboardSN.json');
+                if (!response.ok) throw new Error(`HTTP error! S:${response.status}`);
+                soundsDataGlobal = await response.json();
+
+                soundCategoriesContainerV4.innerHTML = '';
+                const categoryIcons = {"NormalSounds": "😊", "ExplicitSounds": "😈"};
+
+                for (const categoryKey in soundsDataGlobal) {
+                    if (soundsDataGlobal.hasOwnProperty(categoryKey) && Array.isArray(soundsDataGlobal[categoryKey])) {
+                        let categoryName = categoryKey.replace(/([A-Z])/g, ' $1').trim();
+                        categoryName = categoryName.charAt(0).toUpperCase() + categoryName.slice(1);
+                        const icon = categoryIcons[categoryKey] || '🎵';
+
+                        const categoryDiv = document.createElement('div');
+                        categoryDiv.className = 'sound-category-v4';
+                        categoryDiv.innerHTML = `<h2><span class="category-icon-v4">${icon}</span>${categoryName}</h2>`;
+
+                        const buttonsGrid = document.createElement('div');
+                        buttonsGrid.className = 'sound-buttons-grid-v4';
+
+                        const sortedFilenames = [...soundsDataGlobal[categoryKey]].sort();
+
+                        sortedFilenames.forEach((filename, index) => {
+                            let displayName = filename.replace(/\.mp3$/i, '').replace(/_/g, ' ');
+                            const soundPath = `../Sounds/${filename}`;
+
+                            const button = document.createElement('button');
+                            button.className = 'sound-button-v4';
+                            button.textContent = displayName;
+                            button.dataset.soundName = displayName;
+                            const soundDetails = {
+                                id: `${categoryKey}-${filename}-${index}`,
+                                name: displayName,
+                                path: soundPath
+                            };
+
+                            button.addEventListener('click', () => playSound(soundDetails, button));
+
+                            button.addEventListener('mouseenter', () => {
+                                currentlyHoveredButton = button;
+                                if (autoClickerCheckboxV4.checked) startAutoClicker();
+                            });
+                            button.addEventListener('mouseleave', () => {
+                                if (currentlyHoveredButton === button) {
+                                    currentlyHoveredButton = null;
+                                    stopAutoClicker();
+                                }
+                            });
+                            buttonsGrid.appendChild(button);
+                        });
+                        categoryDiv.appendChild(buttonsGrid);
+                        soundCategoriesContainerV4.appendChild(categoryDiv);
+                    }
+                }
+                if (Object.keys(soundsDataGlobal).length === 0) {
+                     showStatus('No sound categories found in JSON.', 'error');
+                }
+
+            } catch (error) {
+                console.error("Error loading SoundboardSN.json:", error);
+                soundCategoriesContainerV4.innerHTML = `<p style="color:var(--v4-error-color);">Error loading sounds. Check console.</p>`;
+                showStatus('ERROR LOADING SOUND LIST.', 'error');
+            }
+        }
+
+        function filterSounds(searchTerm) {
+            document.querySelectorAll('.sound-category-v4').forEach(categoryDiv => {
+                let categoryHasVisibleSounds = false;
+                categoryDiv.querySelectorAll('.sound-button-v4').forEach(btn => {
+                    const soundName = btn.dataset.soundName.toLowerCase();
+                    if (soundName.includes(searchTerm)) {
+                        btn.style.display = 'flex'; 
+                        categoryHasVisibleSounds = true;
+                    } else {
+                        btn.style.display = 'none';
+                    }
+                });
+                categoryDiv.style.display = categoryHasVisibleSounds ? '' : 'none';
+            });
+        }
+        soundSearchInputV4.addEventListener('input', (e) => filterSounds(e.target.value.toLowerCase()));
+
+        function loadPreferences() {
+            if (localStorage.getItem('allowMultipleSoundsV4') === 'false') allowMultipleSoundsToggleV4.checked = false;
+            else allowMultipleSoundsToggleV4.checked = true;
+
+            if (localStorage.getItem('currentSoundDisplayV4') === 'true') currentSoundDisplayToggleV4.checked = true;
+
+            if (localStorage.getItem('autoClickerV4') === 'true') {
+                autoClickerCheckboxV4.checked = true;
+                autoClickDelayLabelV4.style.display = 'flex';
+            } else {
+                autoClickerCheckboxV4.checked = false;
+                autoClickDelayLabelV4.style.display = 'none';
+            }
+            const savedDelay = localStorage.getItem('autoClickDelayV4');
+            if (savedDelay !== null) autoClickDelayInputV4.value = savedDelay;
+            else autoClickDelayInputV4.value = 200;
+
+            const savedSpeed = localStorage.getItem('playbackSpeedV4');
+            if (savedSpeed !== null) {
+                currentPlaybackSpeed = parseFloat(savedSpeed);
+                playbackSpeedSelectV4.value = currentPlaybackSpeed.toString();
+                 if (!playbackSpeedSelectV4.value) {
+                    const closestOption = Array.from(playbackSpeedSelectV4.options).find(opt => parseFloat(opt.value).toFixed(2) === currentPlaybackSpeed.toFixed(2));
+                    if(closestOption) playbackSpeedSelectV4.value = closestOption.value;
+                    else playbackSpeedSelectV4.value = "";
+                 }
+                playbackSpeedSliderV4.value = currentPlaybackSpeed;
+                playbackSpeedValueDisplayV4.textContent = `${currentPlaybackSpeed.toFixed(2)}x`;
+            } else {
+                currentPlaybackSpeed = 1.0;
+                playbackSpeedSelectV4.value = "1";
+                playbackSpeedSliderV4.value = "1";
+                playbackSpeedValueDisplayV4.textContent = "1.0x";
+            }
+
+            const savedVolume = localStorage.getItem('masterVolumeV4');
+            if (savedVolume !== null) {
+                const volume = parseFloat(savedVolume);
+                masterVolumeSliderV4.value = volume;
+                masterVolumeValueDisplayV4.textContent = `${Math.round(volume * 100)}%`;
+                globalGainNode.gain.value = volume;
+            }
+            loopToggleBtnV4.textContent = "Loop: OFF";
+            if(currentLoopingAudio && currentLoopingAudio.audioElement) currentLoopingAudio.audioElement.loop = false;
+            currentLoopingAudio = null;
+
+            const savedFade = localStorage.getItem('fadeDurationV4');
+            if (savedFade !== null) fadeDurationInputV4.value = savedFade;
+            else fadeDurationInputV4.value = 100;
+        }
+
+        allowMultipleSoundsToggleV4.addEventListener('change', (e) => localStorage.setItem('allowMultipleSoundsV4', e.target.checked.toString()));
+        currentSoundDisplayToggleV4.addEventListener('change', (e) => localStorage.setItem('currentSoundDisplayV4', e.target.checked.toString()));
+        fadeDurationInputV4.addEventListener('change', (e) => localStorage.setItem('fadeDurationV4', e.target.value));
+
+
+        document.addEventListener('DOMContentLoaded', () => {
+            loadPreferences();
+            loadSoundsAndCreateButtons();
+            setTimeout(updateMarquees, 500);
+        });
+
+    </script>
+</body>
+</html>
