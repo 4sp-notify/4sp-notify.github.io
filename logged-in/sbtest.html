@@ -9,7 +9,842 @@
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
     <script src="../firebase-config.js"></script>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>4SP - SOUNDBOARD (Full Featured)</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="../firebase-config.js"></script>
 
+    <style>
+        /* V4 Theme Base */
+        :root {
+            --v4-bg-gradient: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
+            --v4-card-bg: #fff;
+            --v4-text-primary: #333;
+            --v4-text-secondary: #555;
+            --v4-purple-accent: #6720bd;
+            --v4-purple-accent-darker: #5a1aa8;
+            --v4-purple-gradient: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+            --v4-border-light: #ddd;
+            --v4-border-softer: #eee;
+            --v4-input-bg: #f8f9fa;
+            --v4-input-border: #ccc;
+            --v4-font-primary: 'PrimaryFont', sans-serif;
+            --v4-font-secondary: 'SecondaryFont', sans-serif;
+        }
+
+        body.soundboard-page {
+            display: flex; flex-direction: column; min-height: 100vh;
+            margin: 0; font-family: var(--v4-font-primary);
+            background: var(--v4-bg-gradient); color: var(--v4-text-primary);
+            line-height: 1.6;
+        }
+        
+        .soundboard-container-wrapper { display: flex; flex: 1; overflow: hidden; }
+
+        /* Sidebar Styles */
+        .sidebar {
+            width: 200px; background: linear-gradient(180deg, #333 0%, #2a2a2a 100%);
+            color: #fff; padding: 20px 10px; display: flex; flex-direction: column;
+            border-right: 1px solid #444; transition: width 0.5s ease-in-out;
+            position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }
+        .sidebar.collapsed { width: 85px; }
+        #toggleSidebar {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            background: none; border: none; color: #fff; font-size: 1.2em;
+            cursor: pointer; padding: 4px; transition: transform 0.5s ease-in-out;
+        }
+        .sidebar.collapsed #toggleSidebar { transform: translateX(-50%) rotate(180deg); }
+        .user-info { text-align: center; margin: 60px 0 30px; border-bottom: 1px solid #555; padding-bottom: 20px; overflow: visible; }
+        .marquee-container { overflow: hidden; white-space: nowrap; position: relative; width: 100%; height: 1.8em; line-height: 1.8em; }
+        .marquee-content { display: inline-block; padding-left: 100%; transform: translateX(0); animation: none; line-height: 1.8em; }
+        .marquee-active { animation: scroll-left-soundboard 12s linear infinite; }
+        @keyframes scroll-left-soundboard { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+        .user-info .username { font-family: var(--v4-font-primary); font-size: 1.3em; margin-bottom: 8px; line-height: 0.2em; font-weight: bold;}
+        .user-info .email { font-family: var(--v4-font-secondary); font-size: 0.9em; color: #bbb; }
+        .sidebar nav ul { list-style: none; padding: 0; margin: 60px 0 0; }
+        .sidebar nav li { margin-bottom: 10px; }
+        .sidebar nav a {
+            display: flex; align-items: center; padding: 12px 15px; color: #fff;
+            text-decoration: none; border-radius: 8px; transition: all 0.3s ease;
+            font-family: var(--v4-font-primary); text-transform: uppercase;
+            position: relative; overflow: hidden; font-size: 1em;
+        }
+        .sidebar nav a:hover, .sidebar nav a.active { background: var(--v4-purple-gradient); transform: translateX(5px); color: #fff; }
+        .sidebar nav a .icon { font-size: 1.2em; width: 24px; text-align: center; }
+        .sidebar nav a .label { margin-left: 10px; white-space: nowrap; }
+        .sidebar.collapsed nav a .label { display: none; }
+
+        /* Main Content Area */
+        .main-soundboard-content {
+            flex: 1; padding: 30px; background: var(--v4-bg-gradient);
+            overflow-y: auto; display: flex; flex-direction: column; padding-bottom: 120px;
+        }
+        .soundboard-header-v4 {
+            margin-bottom: 25px; background: var(--v4-card-bg); padding: 20px 30px; border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        }
+        .soundboard-title-v4 {
+            font-size: 2.2em; font-weight: bold; background: var(--v4-purple-gradient);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }
+
+        /* Settings Tabs */
+        .settings-header { display: flex; justify-content: space-between; align-items: center; padding-right: 15px; border-bottom: 1px solid var(--v4-border-softer); }
+        .settings-tab-container {
+            background: var(--v4-card-bg); border-radius: 15px;
+            box-shadow: 0 6px 30px rgba(0,0,0,0.08); margin-bottom: 25px;
+            overflow: visible;
+        }
+        nav.settings-tabs { display: flex; padding: 0 15px; flex-wrap: wrap;}
+        .tab-link {
+            background: none; border: none; padding: 15px 20px; cursor: pointer;
+            font-size: 1.1em; font-family: var(--v4-font-primary); color: var(--v4-text-secondary);
+            border-bottom: 3px solid transparent; margin-bottom: -1px; transition: all 0.2s ease-in-out;
+        }
+        .tab-link.active, .tab-link:hover { color: var(--v4-purple-accent); }
+        .tab-link.active { border-bottom-color: var(--v4-purple-accent); font-weight: bold; }
+        #resetSettingsBtn {
+            background: none; border: 1px solid var(--v4-border-light); color: var(--v4-text-secondary);
+            font-size: 0.8em; padding: 5px 10px; border-radius: 6px; cursor: pointer; transition: all 0.2s ease;
+            font-family: var(--v4-font-secondary);
+        }
+        #resetSettingsBtn:hover { background: var(--v4-input-bg); border-color: var(--v4-purple-accent); color: var(--v4-purple-accent); }
+
+        .tab-content {
+            display: none; padding: 25px;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 25px;
+            overflow: visible;
+        }
+        .tab-content.active { display: grid; }
+
+        /* General Controls */
+        .control-group { display: flex; flex-direction: column; margin-bottom: 15px; transition: opacity 0.3s ease; }
+        .control-group.disabled { opacity: 0.4; pointer-events: none; }
+        .control-group label, .checkbox-label-v4 { font-family: var(--v4-font-secondary); font-size: 0.9em; color: var(--v4-text-secondary); margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+        .control-group input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; background: var(--v4-border-light); outline: none; border-radius: 5px; margin-top: 5px; }
+        .control-group input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; background: var(--v4-purple-accent); cursor: pointer; border-radius: 50%; }
+        .control-group input[type="number"], .control-group select, .control-group input[type="text"] { width: 100%; padding: 10px 12px; background-color: var(--v4-input-bg); border: 1px solid var(--v4-input-border); border-radius: 6px; color: var(--v4-text-primary); font-family: var(--v4-font-secondary); font-size: 0.95em; outline: none; box-sizing: border-box; }
+        .control-group input[type="checkbox"] { margin-right: 8px; transform: scale(1.1); accent-color: var(--v4-purple-accent); }
+        .control-group-notice {
+            background-color: var(--v4-input-bg);
+            border: 1px solid var(--v4-border-light);
+            border-radius: 8px;
+            padding: 10px;
+            margin-bottom: 15px;
+            font-size: 0.85em;
+            color: var(--v4-text-secondary);
+        }
+        
+        /* Dynamic Audio Display */
+        .loudness-display {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 10px 15px; border-radius: 8px; margin-bottom: 12px;
+            font-family: var(--v4-font-secondary); transition: background-color 0.5s ease;
+            border: 1px solid rgba(0,0,0,0.05);
+        }
+        .loudness-display .emoji { font-size: 1.4em; }
+        .loudness-display .description { flex-grow: 1; text-align: center; font-size: 0.9em; }
+        .loudness-display .level { font-weight: bold; font-size: 1.1em; }
+        .loudness-display.quiet { background-color: #e0f0ff; color: #004085; }
+        .loudness-display.ambient { background-color: #d4edda; color: #155724; }
+        .loudness-display.voice { background-color: #fff3cd; color: #856404; }
+
+        #resetProfileBtn {
+            background: var(--v4-input-bg); border: 1px solid var(--v4-input-border);
+            border-radius: 6px; cursor: pointer; font-family: var(--v4-font-secondary);
+            transition: all 0.2s ease;
+            padding: 10px 12px; font-size: 0.9em;
+        }
+        #resetProfileBtn:hover { border-color: var(--v4-purple-accent); }
+
+        /* Sound Buttons */
+        .sound-category-v4 { margin-bottom: 25px; background: var(--v4-card-bg); padding: 20px; border-radius: 15px; box-shadow: 0 6px 30px rgba(0,0,0,0.08); }
+        .sound-category-v4 h2 { font-size: 1.5em; color: var(--v4-text-primary); margin-bottom: 15px; padding-bottom: 10px; border-bottom: 1px solid var(--v4-border-softer); text-transform: uppercase; }
+        .sound-buttons-grid-v4 { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 10px; }
+        .sound-button-v4 {
+            background-color: var(--v4-input-bg); color: var(--v4-text-secondary); border: 1px solid var(--v4-input-border);
+            padding: 8px 12px; font-size: 1em; text-align: center; cursor: pointer;
+            transition: all 0.2s ease; text-transform: uppercase;
+            font-family: var(--v4-font-primary);
+            border-radius: 12px;
+        }
+        .sound-button-v4:hover { background-color: #e9ecef; border-color: var(--v4-purple-accent); color: var(--v4-purple-accent); transform: translateY(-2px); }
+        .sound-button-v4.playing {
+            background-color: var(--v4-purple-accent); color: white;
+            border: 2px solid var(--v4-purple-accent-darker);
+        }
+        .sound-button-v4.pulsating { animation: pulsePlayingSoundboardV4 1.5s infinite; }
+        @keyframes pulsePlayingSoundboardV4 { 0% { box-shadow: 0 0 0 0px var(--v4-purple-accent); } 100% { box-shadow: 0 0 0 8px rgba(103, 32, 189, 0); } }
+
+        /* Bottom Bar */
+        #bottom-fixed-bar {
+            position: fixed; bottom: 20px; right: 20px; z-index: 1001; display: flex; align-items: center; gap: 15px; padding: 15px;
+            background: rgba(255, 255, 255, 0.25); backdrop-filter: blur(10px) saturate(1.5); -webkit-backdrop-filter: blur(10px) saturate(1.5);
+            border-radius: 15px; border: 1px solid rgba(255, 255, 255, 0.4); box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15);
+        }
+        #bottom-fixed-bar input[type="text"] {
+            background: transparent; border: none; border-bottom: 1px solid rgba(255,255,255,0.6);
+            color: var(--v4-text-primary); padding: 8px 5px; width: 200px; font-size: 1em; outline: none;
+            font-family: var(--v4-font-secondary);
+        }
+        #clearSoundsBtn {
+            padding: 10px 18px; background: rgba(220, 53, 69, 0.7); color: white;
+            border: 1px solid rgba(255,255,255,0.3); border-radius: 8px; cursor: pointer;
+            font-size: 0.95em; text-transform: uppercase; transition: all 0.25s ease;
+            font-family: var(--v4-font-primary);
+        }
+        #clearSoundsBtn:hover { background: rgba(200, 35, 51, 0.9); transform: translateY(-1px); }
+        
+        /* Status Message */
+        .status-message-v4 { display: none; padding: 15px 25px; margin: 0 auto 20px auto; border-radius: 12px; text-align: center; max-width: 600px; text-transform: uppercase; box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1); color: white; }
+        .status-message-v4.success { background: linear-gradient(135deg, #1c7430, #155724); }
+        .status-message-v4.error { background: linear-gradient(135deg, #8f262a, #721c24); }
+        .status-message-v4.info { background: var(--v4-purple-gradient); }
+    </style>
+</head>
+<body class="soundboard-page">
+
+    <header class="main-header light-bg">
+        <div class="container">
+            <div class="logo">
+                <a href="../index.html">
+                    <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer;"/>
+                </a>
+            </div>
+            <div class="auth-buttons">
+                <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="soundboard-container-wrapper">
+        <aside class="sidebar slide-in" id="sidebar">
+            <button id="toggleSidebar">☰</button>
+            <div class="user-info">
+                <div class="marquee-container"> <span id="userName" class="marquee-content username">Loading…</span> </div>
+                <div class="marquee-container"> <span id="userEmail" class="marquee-content email">Loading…</span> </div>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
+                    <li><a href="proxies.html"><span class="icon">🛡️</span><span class="label">Proxies</span></a></li>
+                    <li><a href="soundboard.html" class="active"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
+                    <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
+                    <li><a href="others.html"><span class="icon">✨</span><span class="label">Others</span></a></li>
+                    <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                    <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-soundboard-content">
+            <div class="soundboard-header-v4"> <h2 class="soundboard-title-v4">Soundboard</h2> </div>
+            <div class="status-message-v4" id="statusMessageV4"></div>
+
+            <div class="settings-tab-container">
+                <div class="settings-header">
+                    <nav class="settings-tabs">
+                        <button class="tab-link active" data-tab="playback">Playback</button>
+                        <button class="tab-link" data-tab="effects">Effects</button>
+                        <button class="tab-link" data-tab="equalizer">Equalizer</button>
+                        <button class="tab-link" data-tab="spatial">Spatial Audio</button>
+                        <button class="tab-link" data-tab="dynamic-audio">Dynamic Audio</button>
+                        <button class="tab-link" data-tab="autoclicker">Autoclicker</button>
+                    </nav>
+                    <button id="resetSettingsBtn">Reset Settings</button>
+                </div>
+                
+                <div id="playback" class="tab-content active">
+                     <div class="control-group">
+                        <label class="checkbox-label-v4">Allow Multiple Sounds <input type="checkbox" id="allowMultipleSounds" data-setting="allowMultiple"></label>
+                        <label class="checkbox-label-v4">Sound Looping <input type="checkbox" id="soundLooping" data-setting="looping"></label>
+                    </div>
+                    <div class="control-group">
+                         <label for="fadeIn">Fade In (sec): <span id="fadeInValue">0.1s</span></label>
+                         <input type="range" id="fadeIn" min="0" max="5" step="0.1" value="0.1" data-setting="fadeIn">
+                    </div>
+                     <div class="control-group">
+                         <label for="fadeOut">Fade Out (sec): <span id="fadeOutValue">0.1s</span></label>
+                         <input type="range" id="fadeOut" min="0" max="5" step="0.1" value="0.1" data-setting="fadeOut">
+                    </div>
+                     <div class="control-group">
+                         <label for="playbackDevice">Audio Output Device</label>
+                         <select id="playbackDevice" data-setting="playbackDevice"></select>
+                    </div>
+                     <div class="control-group">
+                        <label>Master Volume: <span id="masterVolumeValue">100%</span></label>
+                        <input type="range" id="masterVolume" min="0" max="1" step="0.01" value="1" data-setting="masterVolume">
+                    </div>
+                </div>
+
+                <div id="effects" class="tab-content">
+                    <div class="control-group">
+                        <label for="speed">Speed: <span id="speedValue">1.00x</span></label>
+                        <input type="range" id="speed" min="0.25" max="4" step="0.01" value="1" data-setting="speed" data-default="1">
+                    </div>
+                    <div class="control-group">
+                        <label for="pitch">Pitch (Cents): <span id="pitchValue">0</span></label>
+                        <input type="range" id="pitch" min="-1200" max="1200" step="1" value="0" data-setting="pitch" data-default="0">
+                    </div>
+                    <div class="control-group">
+                        <label for="distortion">Distortion: <span id="distortionValue">0%</span></label>
+                        <input type="range" id="distortion" min="0" max="100" step="1" value="0" data-setting="distortion" data-default="0">
+                    </div>
+                </div>
+                <div id="equalizer" class="tab-content">
+                     <div class="control-group">
+                        <label for="preamp">Preamp: <span id="preampValue">0 dB</span></label>
+                        <input type="range" id="preamp" min="-30" max="30" step="1" value="0" data-setting="preamp" data-default="0">
+                    </div>
+                    <div class="control-group">
+                        <label for="bass">Bass: <span id="bassValue">0 dB</span></label>
+                        <input type="range" id="bass" min="-30" max="30" step="1" value="0" data-setting="bass" data-default="0">
+                    </div>
+                    <div class="control-group">
+                        <label for="mid">Mid: <span id="midValue">0 dB</span></label>
+                        <input type="range" id="mid" min="-30" max="30" step="1" value="0" data-setting="mid" data-default="0">
+                    </div>
+                    <div class="control-group">
+                        <label for="treble">Treble: <span id="trebleValue">0 dB</span></label>
+                        <input type="range" id="treble" min="-30" max="30" step="1" value="0" data-setting="treble" data-default="0">
+                    </div>
+                </div>
+                <div id="spatial" class="tab-content">
+                    <div class="control-group" id="pan-control-group">
+                        <label for="pan">Pan (L/R): <span id="panValue">Center</span></label>
+                        <input type="range" id="pan" min="-1" max="1" step="0.01" value="0" data-setting="pan" data-default="0">
+                    </div>
+                    <div class="control-group">
+                         <label for="surroundMode">Audio Mode</label>
+                         <select id="surroundMode" data-setting="surroundMode">
+                            <option value="stereo">Stereo</option>
+                            <option value="spatial">Spatial Audio</option>
+                        </select>
+                    </div>
+                     <div class="control-group-notice">
+                        Spatial Audio uses a built-in reverb effect to create a wider soundstage.
+                        For dynamic volume adjustment based on your environment, see the "Dynamic Audio" tab.
+                    </div>
+                </div>
+                <div id="dynamic-audio" class="tab-content">
+                    <div class="control-group">
+                        <label class="checkbox-label-v4">Enable Dynamic Audio Engine
+                            <input type="checkbox" id="dynamicAudioEnabled" data-setting="dynamicAudioEnabled">
+                        </label>
+                    </div>
+                    <div class="control-group">
+                        <label for="microphoneDevice">Input Microphone</label>
+                        <select id="microphoneDevice" data-setting="microphoneDevice"></select>
+                    </div>
+                    <div class="control-group">
+                        <div id="loudnessDisplay" class="loudness-display">
+                           <span class="emoji">🧠</span>
+                           <span class="description">Engine Idle</span>
+                           <span class="level">--%</span>
+                        </div>
+                    </div>
+                     <div class="control-group">
+                        <button id="resetProfileBtn">Reset Learning Profile</button>
+                    </div>
+                </div>
+                <div id="autoclicker" class="tab-content">
+                    <div class="control-group">
+                         <label class="checkbox-label-v4">Enable Autoclicker <input type="checkbox" id="autoclickerEnabled" data-setting="autoclickerEnabled"></label>
+                    </div>
+                    <div class="control-group">
+                        <label for="clickInterval">Click Interval (ms)</label>
+                        <input type="number" id="clickInterval" value="200" min="50" data-setting="clickInterval">
+                    </div>
+                     <div class="control-group">
+                        <label for="clickType">Click Type</label>
+                        <select id="clickType" data-setting="clickType">
+                            <option value="single">Single</option>
+                            <option value="double">Double</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+
+            <div id="soundCategoriesContainerV4"> <p>Loading sounds...</p> </div>
+        </main>
+    </div>
+
+    <div id="bottom-fixed-bar">
+        <input type="text" id="soundSearchInput" placeholder="Search sounds...">
+        <button id="clearSoundsBtn">Clear Sounds</button>
+    </div>
+
+    <script>
+    // --- Standard Setup (Auth, Sidebar, User Info) ---
+    const dbRef_ = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
+    const marqueeEls_ = document.querySelectorAll('.marquee-content');
+    firebase.auth().onAuthStateChanged(async user => {
+        if (!user) { window.location.href = '../login.html'; }
+        else {
+            const userEmailEl = document.getElementById('userEmail');
+            const userNameEl = document.getElementById('userName');
+            if (userEmailEl) userEmailEl.textContent = user.email;
+            if (userNameEl) {
+                try {
+                    const doc = await dbRef_().get();
+                    userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User');
+                } catch (error) { userNameEl.textContent = 'User'; console.error("Error fetching username:", error); }
+            }
+            updateMarquees_();
+        }
+    });
+    document.getElementById('logoutBtn')?.addEventListener('click', () => { firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
+    document.getElementById('signOutLink')?.addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
+    const sidebar_ = document.getElementById('sidebar');
+    const toggleSidebarBtn_ = document.getElementById('toggleSidebar');
+    if (toggleSidebarBtn_ && sidebar_) { toggleSidebarBtn_.addEventListener('click', () => { sidebar_.classList.toggle('collapsed'); setTimeout(updateMarquees_, 550); }); }
+    function updateMarquees_() {
+        marqueeEls_.forEach(el => {
+            if (!el || !el.parentElement) return;
+            const parent = el.parentElement; const overflow = el.scrollWidth > parent.clientWidth;
+            const shouldScroll = sidebar_.classList.contains('collapsed') || (overflow && !sidebar_.classList.contains('collapsed'));
+            el.classList.toggle('marquee-active', shouldScroll);
+            if (!overflow && !sidebar_.classList.contains('collapsed')) { el.classList.remove('marquee-active'); }
+        });
+    }
+    window.addEventListener('resize', updateMarquees_);
+    // --- End Standard Setup ---
+
+    // --- Soundboard Logic ---
+    document.addEventListener('DOMContentLoaded', () => {
+        const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        const LOCAL_STORAGE_KEY = 'soundboardSettingsV5';
+        const LEARNING_KEY = 'soundboardLearningData';
+
+        let activeSounds = new Map();
+        let lastVolume = 1;
+
+        const masterGain = audioContext.createGain();
+        const nodes = {
+            preamp: audioContext.createGain(),
+            bass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 250 }),
+            mid: new BiquadFilterNode(audioContext, { type: 'peaking', frequency: 1000, Q: 0.8 }),
+            treble: new BiquadFilterNode(audioContext, { type: 'highshelf', frequency: 4000 }),
+            distortion: audioContext.createWaveShaper(),
+            panner: audioContext.createStereoPanner(),
+            convolver: audioContext.createConvolver(),
+            convolverBypass: audioContext.createGain(),
+            convolverWet: audioContext.createGain(),
+        };
+        
+        const inputGain = audioContext.createGain();
+        inputGain.connect(nodes.preamp).connect(nodes.bass).connect(nodes.mid).connect(nodes.treble).connect(nodes.distortion);
+        
+        // Stereo Path
+        nodes.distortion.connect(nodes.panner).connect(nodes.convolverBypass).connect(masterGain);
+        // Spatial Path
+        nodes.distortion.connect(nodes.convolver).connect(nodes.convolverWet).connect(masterGain);
+        
+        nodes.convolverBypass.gain.value = 1; // Start in stereo mode
+        nodes.convolverWet.gain.value = 0;
+        masterGain.connect(audioContext.destination);
+
+        const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
+        
+        const showStatus = (message, type = 'info', duration = 3000) => {
+            const el = document.getElementById('statusMessageV4');
+            clearTimeout(el.timeoutId);
+            el.textContent = message;
+            el.className = `status-message-v4 ${type}`;
+            el.style.display = 'block';
+            el.timeoutId = setTimeout(() => el.style.display = 'none', duration);
+        };
+        
+        // --- Heuristic Learning Engine ---
+        const learningEngine = {
+            micStream: null,
+            analyser: null,
+            interval: null,
+            isActive: false,
+            data: {},
+            
+            start(deviceId) {
+                if (this.isActive) return;
+                if (!deviceId) {
+                    showStatus('No microphone selected.', 'error');
+                    controls.dynamicAudioEnabled.checked = false;
+                    return;
+                }
+                this.isActive = true;
+                const constraints = { audio: { deviceId: { exact: deviceId }, noiseSuppression: true, echoCancellation: true } };
+                
+                navigator.mediaDevices.getUserMedia(constraints)
+                    .then(stream => {
+                        this.micStream = stream;
+                        this.analyser = audioContext.createAnalyser();
+                        this.analyser.fftSize = 256;
+                        this.analyser.smoothingTimeConstant = 0.8;
+                        audioContext.createMediaStreamSource(stream).connect(this.analyser);
+                        
+                        if (!this.data[deviceId]) {
+                            this.data[deviceId] = { levels: [], quiet: 5, ambient: 25, voice: 70 };
+                        }
+                        
+                        this.interval = setInterval(() => this.process(deviceId), 200);
+                    })
+                    .catch(err => {
+                        showStatus('Microphone access denied.', 'error');
+                        controls.dynamicAudioEnabled.checked = false;
+                        this.stop();
+                    });
+            },
+
+            stop() {
+                if (this.interval) clearInterval(this.interval);
+                if (this.micStream) this.micStream.getTracks().forEach(track => track.stop());
+                this.isActive = false;
+                this.interval = this.micStream = this.analyser = null;
+                localStorage.setItem(LEARNING_KEY, JSON.stringify(this.data));
+            },
+
+            process(deviceId) {
+                if (!this.analyser) return;
+                const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+                this.analyser.getByteFrequencyData(dataArray);
+                const currentLevel = dataArray.reduce((s,v) => s+v, 0) / dataArray.length;
+
+                const deviceData = this.data[deviceId];
+                deviceData.levels.push(currentLevel);
+                if (deviceData.levels.length > 500) deviceData.levels.shift(); 
+
+                if (deviceData.levels.length > 0 && deviceData.levels.length % 50 === 0) {
+                    const sorted = [...deviceData.levels].sort((a,b) => a-b);
+                    deviceData.quiet = sorted[Math.floor(sorted.length * 0.10)];
+                    deviceData.ambient = sorted[Math.floor(sorted.length * 0.50)];
+                    deviceData.voice = sorted[Math.floor(sorted.length * 0.92)];
+                }
+
+                const { quiet, ambient, voice } = deviceData;
+                let loudnessPercent = (currentLevel - quiet) / Math.max(1, voice - quiet) * 100;
+                loudnessPercent = Math.max(0, Math.min(200, loudnessPercent));
+                
+                const display = document.getElementById('loudnessDisplay');
+                const levelEl = display.querySelector('.level');
+                const descEl = display.querySelector('.description');
+                const emojiEl = display.querySelector('.emoji');
+                
+                levelEl.textContent = `${Math.round(loudnessPercent)}%`;
+
+                if (currentLevel < ambient * 1.1) {
+                    display.className = 'loudness-display quiet'; descEl.textContent = 'Quiet Environment'; emojiEl.textContent = '🤫';
+                } else if (currentLevel < voice * 0.9) {
+                    display.className = 'loudness-display ambient'; descEl.textContent = 'Ambient Noise Detected'; emojiEl.textContent = '🎧';
+                } else {
+                    display.className = 'loudness-display voice'; descEl.textContent = 'Voice Detected'; emojiEl.textContent = '🗣️';
+                }
+
+                let targetGain = 0.5 + ((currentLevel - ambient) / Math.max(1, voice - ambient));
+                targetGain = Math.max(0.1, Math.min(1.0, targetGain));
+                masterGain.gain.linearRampToValueAtTime(targetGain, audioContext.currentTime + 0.2);
+            },
+            
+            resetProfile(deviceId) {
+                if (this.data[deviceId]) {
+                    delete this.data[deviceId];
+                    localStorage.setItem(LEARNING_KEY, JSON.stringify(this.data));
+                    showStatus('Profile for this device has been reset.', 'info');
+                }
+                if (this.isActive) {
+                    this.stop();
+                    this.start(deviceId);
+                }
+            },
+
+            load() {
+                const savedData = localStorage.getItem(LEARNING_KEY);
+                if (savedData) this.data = JSON.parse(savedData);
+            }
+        };
+
+        const clearSounds = () => {
+            for (const [_, instances] of activeSounds.entries()) {
+                [...instances].forEach(sound => sound.stop(parseFloat(controls.fadeOut.value)));
+            }
+        };
+        
+        class Sound {
+            constructor(fileName, onEnd) {
+                this.audioElement = new Audio(`../Sounds/${fileName}`);
+                this.sourceNode = audioContext.createMediaElementSource(this.audioElement);
+                this.gainNode = audioContext.createGain();
+                this.analyser = audioContext.createAnalyser();
+                this.analyser.fftSize = 128;
+                this.sourceNode.connect(this.gainNode).connect(this.analyser).connect(inputGain);
+                this.onEnd = onEnd;
+                this.audioElement.addEventListener('ended', () => { if (!this.audioElement.loop) this.onEnd(this); });
+            }
+            async play(options) {
+                try {
+                    const sinkId = controls.playbackDevice.value;
+                    if (sinkId && typeof this.audioElement.setSinkId === 'function') await this.audioElement.setSinkId(sinkId);
+                } catch (err) { console.error("Failed to set audio output device:", err); }
+                this.audioElement.loop = options.loop;
+                this.audioElement.playbackRate = options.speed;
+                this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(1, audioContext.currentTime + options.fadeTime);
+                await this.audioElement.play().catch(e => { console.error("Play Error:", e); this.onEnd(this); });
+            }
+            stop(fadeTime) {
+                this.gainNode.gain.cancelScheduledValues(audioContext.currentTime);
+                this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, audioContext.currentTime).linearRampToValueAtTime(0.0001, audioContext.currentTime + fadeTime);
+                setTimeout(() => { this.audioElement.pause(); this.onEnd(this); }, fadeTime * 1000 + 50);
+            }
+        }
+        
+        async function loadSoundsAndCreateButtons() {
+            try {
+                const response = await fetch('../SoundboardSN.json');
+                const soundsData = await response.json();
+                const container = document.getElementById('soundCategoriesContainerV4');
+                container.innerHTML = ''; 
+                for (const categoryKey in soundsData) {
+                    const categoryDiv = document.createElement('div');
+                    categoryDiv.className = 'sound-category-v4';
+                    categoryDiv.innerHTML = `<h2>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`;
+                    const buttonsGrid = document.createElement('div');
+                    buttonsGrid.className = 'sound-buttons-grid-v4';
+                    soundsData[categoryKey].sort().forEach(fileName => {
+                        const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' ');
+                        const button = document.createElement('button');
+                        button.className = 'sound-button-v4';
+                        button.textContent = displayName;
+                        button.dataset.soundFile = fileName;
+                        button.addEventListener('click', () => {
+                            if (!controls.allowMultiple.checked) clearSounds();
+                            
+                            const onEnd = (soundInstance) => {
+                                const instances = activeSounds.get(fileName) || [];
+                                const filtered = instances.filter(s => s !== soundInstance);
+                                if (filtered.length > 0) activeSounds.set(fileName, filtered);
+                                else activeSounds.delete(fileName);
+                            };
+
+                            const sound = new Sound(fileName, onEnd);
+                            activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]);
+                            sound.play({ loop: controls.looping.checked, fadeTime: parseFloat(controls.fadeIn.value), speed: parseFloat(controls.speed.value) });
+                        });
+                        buttonsGrid.appendChild(button);
+                    });
+                    categoryDiv.appendChild(buttonsGrid);
+                    container.appendChild(categoryDiv);
+                }
+            } catch (error) { console.error("Failed to load sounds:", error); }
+        }
+        
+        const updateFunctions = {
+            masterVolume: v => { masterGain.gain.value = v; document.getElementById('masterVolumeValue').textContent = `${Math.round(v*100)}%`; },
+            fadeIn: v => { document.getElementById('fadeInValue').textContent = `${parseFloat(v).toFixed(1)}s`; },
+            fadeOut: v => { document.getElementById('fadeOutValue').textContent = `${parseFloat(v).toFixed(1)}s`; },
+            speed: v => { document.getElementById('speedValue').textContent = `${parseFloat(v).toFixed(2)}x`; activeSounds.forEach(i => i.forEach(s => s.audioElement.playbackRate = v)); },
+            distortion: v => { nodes.distortion.curve = makeDistortionCurve(v*4); document.getElementById('distortionValue').textContent = `${v}%`; },
+            preamp: v => { nodes.preamp.gain.value = Math.pow(10, v / 20); document.getElementById('preampValue').textContent = `${v} dB`; },
+            bass: v => { nodes.bass.gain.value = v; document.getElementById('bassValue').textContent = `${v} dB`; },
+            mid: v => { nodes.mid.gain.value = v; document.getElementById('midValue').textContent = `${v} dB`; },
+            treble: v => { nodes.treble.gain.value = v; document.getElementById('trebleValue').textContent = `${v} dB`; },
+            pan: v => { nodes.panner.pan.value = v; document.getElementById('panValue').textContent = v == 0 ? 'Center' : `${Math.round(Math.abs(v)*100)}% ${v > 0 ? 'R' : 'L'}`; },
+            surroundMode: mode => {
+                const isSpatial = mode === 'spatial';
+                nodes.convolverBypass.gain.value = isSpatial ? 0 : 1;
+                nodes.convolverWet.gain.value = isSpatial ? 1 : 0;
+            }
+        };
+
+        function createImpulseResponse(context) {
+            const sampleRate = context.sampleRate;
+            const length = sampleRate * 1.5;
+            const impulse = context.createBuffer(2, length, sampleRate);
+            const left = impulse.getChannelData(0);
+            const right = impulse.getChannelData(1);
+
+            for (let i = 0; i < length; i++) {
+                left[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2.5);
+                right[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2.8);
+            }
+            return impulse;
+        }
+        
+        function updateButtonVisuals() {
+            document.querySelectorAll('.sound-button-v4[data-sound-file]').forEach(button => {
+                const fileName = button.dataset.soundFile;
+                const instances = activeSounds.get(fileName);
+
+                if (instances && instances.length > 0) {
+                    button.classList.add('playing');
+                    if (instances.length > 1) {
+                        button.classList.add('pulsating');
+                        button.style.transform = '';
+                        button.style.boxShadow = '';
+                    } else {
+                        button.classList.remove('pulsating');
+                        const analyser = instances[0].analyser;
+                        const dataArray = new Uint8Array(analyser.frequencyBinCount);
+                        analyser.getByteFrequencyData(dataArray);
+                        const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length;
+                        const scale = 1 + (avg / 255) * 0.05;
+                        const shadowSpread = 2 + (avg / 255) * 8;
+                        button.style.transform = `scale(${scale})`;
+                        button.style.boxShadow = `0 0 ${shadowSpread}px rgba(103, 32, 189, 0.7)`;
+                    }
+                } else {
+                    button.classList.remove('playing', 'pulsating');
+                    button.style.transform = '';
+                    button.style.boxShadow = '';
+                }
+            });
+            requestAnimationFrame(updateButtonVisuals);
+        }
+
+        async function initialize() {
+            learningEngine.load();
+            nodes.convolver.buffer = createImpulseResponse(audioContext);
+            await loadSoundsAndCreateButtons();
+            requestAnimationFrame(updateButtonVisuals);
+
+            document.querySelector('.settings-tab-container').addEventListener('input', () => {
+                const currentSettings = {};
+                for (const key in controls) currentSettings[key] = controls[key].type === 'checkbox' ? controls[key].checked : controls[key].value;
+                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(currentSettings));
+            });
+
+            document.getElementById('resetSettingsBtn').addEventListener('click', () => {
+                if (!confirm('Are you sure you want to reset all settings to their defaults? This will also clear all learned audio profiles.')) return;
+                localStorage.removeItem(LOCAL_STORAGE_KEY);
+                localStorage.removeItem(LEARNING_KEY);
+                learningEngine.data = {};
+                for (const key in controls) {
+                    const el = controls[key];
+                    const defaultValue = el.type === 'checkbox' ? false : el.querySelector('option')?.value || el.defaultValue || '';
+                    if(el.type === 'checkbox') { el.checked = defaultValue; } 
+                    else { el.value = defaultValue; }
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                }
+                showStatus('Settings and learned profiles have been reset.', 'success');
+            });
+            
+            document.getElementById('clearSoundsBtn').addEventListener('click', clearSounds);
+            
+            document.getElementById('soundSearchInput').addEventListener('input', (e) => {
+                const searchTerm = e.target.value.toLowerCase();
+                document.querySelectorAll('.sound-category-v4').forEach(cat => {
+                    let hasVisible = false;
+                    cat.querySelectorAll('.sound-button-v4').forEach(btn => {
+                        const isVisible = btn.textContent.toLowerCase().includes(searchTerm);
+                        btn.style.display = isVisible ? '' : 'none';
+                        if (isVisible) hasVisible = true;
+                    });
+                    cat.style.display = hasVisible ? 'block' : 'none';
+                });
+            });
+
+            document.querySelector('.settings-tabs').addEventListener('click', e => {
+                if (e.target.matches('.tab-link')) {
+                    document.querySelectorAll('.tab-link, .tab-content').forEach(el => el.classList.remove('active'));
+                    e.target.classList.add('active');
+                    document.getElementById(e.target.dataset.tab).classList.add('active');
+                }
+            });
+
+            document.addEventListener('keydown', e => {
+                if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT') return;
+                if (e.shiftKey && e.key.toLowerCase() === 'c') { e.preventDefault(); clearSounds(); }
+                if (e.key.toLowerCase() === 'm') {
+                    e.preventDefault();
+                    const currentGain = masterGain.gain.value;
+                    if (currentGain > 0) { lastVolume = currentGain; controls.masterVolume.value = 0; } 
+                    else { controls.masterVolume.value = lastVolume; }
+                    controls.masterVolume.dispatchEvent(new Event('input'));
+                }
+            });
+
+            document.getElementById('resetProfileBtn').addEventListener('click', () => {
+                learningEngine.resetProfile(controls.microphoneDevice.value);
+            });
+
+            const wrapper = document.querySelector('.soundboard-container-wrapper');
+            if (wrapper) {
+                document.querySelectorAll('#playbackDevice, #microphoneDevice, #surroundMode, #clickType').forEach(selectEl => {
+                    selectEl.addEventListener('focus', () => { wrapper.style.overflow = 'visible'; });
+                    selectEl.addEventListener('blur', () => { wrapper.style.overflow = 'hidden'; });
+                });
+            }
+        
+            Object.values(controls).forEach(el => {
+                const key = el.dataset.setting;
+                if(updateFunctions[key]) {
+                    el.addEventListener('input', e => updateFunctions[key](e.target.value));
+                }
+            });
+
+            // Specific listener for the new Dynamic Audio checkbox
+            controls.dynamicAudioEnabled.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    learningEngine.start(controls.microphoneDevice.value);
+                } else {
+                    learningEngine.stop();
+                }
+            });
+            // Also need to handle when the mic device itself is changed
+            controls.microphoneDevice.addEventListener('change', () => {
+                if (controls.dynamicAudioEnabled.checked) {
+                    learningEngine.start(controls.microphoneDevice.value);
+                }
+            });
+
+            // Populate devices last to ensure all listeners are ready
+            try {
+                await navigator.mediaDevices.getUserMedia({ audio: true });
+                const devices = await navigator.mediaDevices.enumerateDevices();
+                const audioOutputs = devices.filter(d => d.kind === 'audiooutput');
+                const audioInputs = devices.filter(d => d.kind === 'audioinput');
+
+                if (audioInputs.length > 0) {
+                    const micSelectEl = controls.microphoneDevice;
+                    const savedMic = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY))?.microphoneDevice;
+                    micSelectEl.innerHTML = '';
+                    audioInputs.forEach(device => {
+                        const option = new Option(device.label || `Microphone ${micSelectEl.options.length + 1}`, device.deviceId);
+                        if (device.deviceId === savedMic) option.selected = true;
+                        micSelectEl.add(option);
+                    });
+                } else {
+                    // Disable dynamic audio tab content if no mics
+                    document.querySelector('#dynamic-audio .control-group').classList.add('disabled');
+                }
+                
+                const speakerSelectEl = controls.playbackDevice;
+                const savedSpeaker = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY))?.playbackDevice;
+                speakerSelectEl.innerHTML = '';
+                audioOutputs.forEach(device => {
+                    const option = new Option(device.label || `Speaker ${speakerSelectEl.options.length + 1}`, device.deviceId);
+                    if(device.deviceId === savedSpeaker) option.selected = true;
+                    speakerSelectEl.add(option);
+                });
+            } catch (err) {
+                console.error("Audio device permission error:", err);
+                document.querySelector('#dynamic-audio').classList.add('disabled');
+                showStatus('Microphone access denied. Dynamic features disabled.', 'error');
+            }
+             navigator.mediaDevices.ondevicechange = initialize;
+        }
+
+        initialize();
+    });
+    </script>
+</body>
+</html>
     <style>
         /* V4 Theme Base */
         :root {
