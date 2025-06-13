@@ -411,7 +411,6 @@
 
         let activeSounds = new Map();
         let lastVolume = 1;
-        let isSpatialReady = false;
 
         const masterGain = audioContext.createGain();
         const nodes = {
@@ -429,10 +428,12 @@
         const inputGain = audioContext.createGain();
         inputGain.connect(nodes.preamp).connect(nodes.bass).connect(nodes.mid).connect(nodes.treble).connect(nodes.distortion);
         
+        // Stereo Path
         nodes.distortion.connect(nodes.panner).connect(nodes.convolverBypass).connect(masterGain);
+        // Spatial Path
         nodes.distortion.connect(nodes.convolver).connect(nodes.convolverWet).connect(masterGain);
         
-        nodes.convolverBypass.gain.value = 1;
+        nodes.convolverBypass.gain.value = 1; // Start in stereo mode
         nodes.convolverWet.gain.value = 0;
         masterGain.connect(audioContext.destination);
 
@@ -499,7 +500,7 @@
                 deviceData.levels.push(currentLevel);
                 if (deviceData.levels.length > 500) deviceData.levels.shift(); 
 
-                if (deviceData.levels.length % 50 === 0 && deviceData.levels.length > 0) {
+                if (deviceData.levels.length > 0 && deviceData.levels.length % 50 === 0) {
                     const sorted = [...deviceData.levels].sort((a,b) => a-b);
                     deviceData.quiet = sorted[Math.floor(sorted.length * 0.10)];
                     deviceData.ambient = sorted[Math.floor(sorted.length * 0.50)];
@@ -634,20 +635,11 @@
             treble: v => { nodes.treble.gain.value = v; document.getElementById('trebleValue').textContent = `${v} dB`; },
             pan: v => { nodes.panner.pan.value = v; document.getElementById('panValue').textContent = v == 0 ? 'Center' : `${Math.round(Math.abs(v)*100)}% ${v > 0 ? 'R' : 'L'}`; },
             surroundMode: mode => {
-                const wantsSpatial = mode === 'spatial' || mode === 'dynamic';
-                
-                if (wantsSpatial && !isSpatialReady) {
-                    showStatus('Spatial Audio disabled: resources failed to load.', 'error');
-                    controls.surroundMode.value = 'stereo'; // Revert to stereo
-                    return;
-                }
-
-                const isStereo = mode === 'stereo';
-                const isSpatial = wantsSpatial && isSpatialReady;
+                const isSpatial = mode === 'spatial' || mode === 'dynamic';
                 const isDynamic = mode === 'dynamic';
                 
                 document.getElementById('resetProfileBtn').style.display = isDynamic ? 'block' : 'none';
-                document.getElementById('surround-mic-notice').style.display = !isStereo ? 'block' : 'none';
+                document.getElementById('surround-mic-notice').style.display = !isSpatial ? 'none' : 'block';
                 document.getElementById('pan-control-group').classList.toggle('disabled', isSpatial);
                 controls.pan.disabled = isSpatial;
                 
@@ -661,19 +653,19 @@
                 }
             }
         };
-        
-        async function loadImpulseResponse() {
-            try {
-                const response = await fetch('../Sounds/IR/small_room.wav');
-                if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
-                const arrayBuffer = await response.arrayBuffer();
-                nodes.convolver.buffer = await audioContext.decodeAudioData(arrayBuffer);
-                isSpatialReady = true;
-                console.log("Spatial Audio engine ready.");
-            } catch (e) {
-                console.error("Could not load impulse response file. Spatial audio will be disabled.", e);
-                isSpatialReady = false;
+
+        function createImpulseResponse(context) {
+            const sampleRate = context.sampleRate;
+            const length = sampleRate * 1.5;
+            const impulse = context.createBuffer(2, length, sampleRate);
+            const left = impulse.getChannelData(0);
+            const right = impulse.getChannelData(1);
+
+            for (let i = 0; i < length; i++) {
+                left[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2.5);
+                right[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 2.8);
             }
+            return impulse;
         }
         
         function updateButtonVisuals() {
@@ -709,10 +701,10 @@
         
         // --- Initialize Page and Listeners ---
         learningEngine.load();
-        loadImpulseResponse();
+        nodes.convolver.buffer = createImpulseResponse(audioContext);
         loadSoundsAndCreateButtons();
         requestAnimationFrame(updateButtonVisuals);
-        
+
         document.querySelector('.settings-tab-container').addEventListener('input', () => {
              const currentSettings = {};
             for (const key in controls) currentSettings[key] = controls[key].type === 'checkbox' ? controls[key].checked : controls[key].value;
