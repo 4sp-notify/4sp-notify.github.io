@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>4SP - SOUNDBOARD (Complete)</title>
+    <title>4SP - SOUNDBOARD (Complete & Fixed)</title>
     <link rel="stylesheet" href="../css/style.css">
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
@@ -115,10 +115,7 @@
         }
         .tab-content.active { display: grid; }
         
-        #playback.tab-content {
-            grid-template-columns: 1fr 1fr;
-            gap: 15px 25px;
-        }
+        #playback.tab-content { grid-template-columns: 1fr 1fr; gap: 15px 25px; }
         .device-selection-wrapper { display: flex; align-items: center; gap: 15px; grid-column: 1 / -1; }
 
         /* General Control Styling */
@@ -167,11 +164,22 @@
         .sound-button-v4.playing { background-color: var(--v4-purple-accent); color: white; border: 2px solid var(--v4-purple-accent-darker); animation: pulsePlayingSoundboardV4 1.5s infinite; }
         @keyframes pulsePlayingSoundboardV4 { 0% { box-shadow: 0 0 0 0px var(--v4-purple-accent); } 100% { box-shadow: 0 0 0 8px rgba(103, 32, 189, 0); } }
 
-        /* Status Message */
+        /* Status Message & Init Overlay */
         .status-message-v4 { display: none; padding: 15px 25px; margin: 0 auto 20px auto; border-radius: 12px; text-align: center; max-width: 600px; text-transform: uppercase; box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1); color: white; }
         .status-message-v4.success { background: linear-gradient(135deg, #1c7430, #155724); }
         .status-message-v4.error { background: linear-gradient(135deg, #8f262a, #721c24); }
         .status-message-v4.info { background: var(--v4-purple-gradient); }
+        
+        #init-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.7); backdrop-filter: blur(5px);
+            z-index: 3000; display: flex; justify-content: center; align-items: center;
+        }
+        #init-button {
+            padding: 20px 40px; font-size: 1.5em; color: white;
+            background: var(--v4-purple-gradient); border: none;
+            border-radius: 15px; cursor: pointer;
+        }
     </style>
 </head>
 <body class="soundboard-page">
@@ -211,6 +219,7 @@
         </aside>
 
         <main class="main-soundboard-content">
+            <div id="init-overlay"><button id="init-button">Click to Start</button></div>
             <div class="soundboard-header-v4"> <h2 class="soundboard-title-v4">Soundboard</h2> </div>
             <div class="status-message-v4" id="statusMessageV4"></div>
 
@@ -233,7 +242,7 @@
                         <label class="checkbox-label-v4">Dynamic Volume <input type="checkbox" data-setting="dynamicVolume"></label>
                     </div>
                     <div class="control-group">
-                         <label for="fadeIn">Fade In (sec): <span id="fadeInValue">0.1s</span></label>
+                         <label>Fade In (sec): <span id="fadeInValue">0.1s</span></label>
                          <input type="range" min="0" max="5" step="0.1" value="0.1" data-setting="fadeIn">
                     </div>
                      <div class="control-group">
@@ -241,7 +250,7 @@
                         <input type="range" min="0" max="1" step="0.01" value="1" data-setting="masterVolume">
                     </div>
                     <div class="control-group">
-                         <label for="fadeOut">Fade Out (sec): <span id="fadeOutValue">0.1s</span></label>
+                         <label>Fade Out (sec): <span id="fadeOutValue">0.1s</span></label>
                          <input type="range" min="0" max="5" step="0.1" value="0.1" data-setting="fadeOut">
                     </div>
                     <div class="device-selection-wrapper">
@@ -302,15 +311,15 @@
                 </div>
                 <div id="autoclicker" class="tab-content">
                     <div class="control-group">
-                         <label class="checkbox-label-v4">Enable Autoclicker <input type="checkbox" id="autoclickerEnabled" data-setting="autoclickerEnabled"></label>
+                         <label class="checkbox-label-v4">Enable Autoclicker <input type="checkbox" data-setting="autoclickerEnabled"></label>
                     </div>
                     <div class="control-group">
                         <label for="clickInterval">Click Interval (ms)</label>
-                        <input type="number" id="clickInterval" value="200" min="50" data-setting="clickInterval">
+                        <input type="number" value="200" min="50" data-setting="clickInterval">
                     </div>
                      <div class="control-group">
                         <label for="clickType">Click Type</label>
-                        <select id="clickType" data-setting="clickType">
+                        <select data-setting="clickType">
                             <option value="single">Single</option>
                             <option value="double">Double</option>
                         </select>
@@ -318,7 +327,7 @@
                 </div>
             </div>
 
-            <div id="soundCategoriesContainerV4"> <p>Loading sounds...</p> </div>
+            <div id="soundCategoriesContainerV4"> <p>Please click 'Start' to load sounds.</p> </div>
         </main>
     </div>
 
@@ -326,7 +335,7 @@
         <input type="text" id="soundSearchInput" placeholder="Search sounds...">
         <button id="clearSoundsBtn">Clear Sounds</button>
     </div>
-
+    
     <script>
     // --- Standard Setup (Auth, Sidebar, User Info) ---
     const dbRef_ = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
@@ -385,15 +394,15 @@
         nodes.surroundBypass.gain.value = 1; nodes.surroundEffect.gain.value = 0;
         nodes.distortion.connect(nodes.surroundEffect);
         
-        const surroundGain = 0.5; // Gain compensation factor
-        nodes.surroundEffect.connect(nodes.surroundPan.center).connect(masterGain); nodes.surroundPan.center.gain.value = surroundGain * 1.2;
+        const surroundGainComp = 0.5;
+        nodes.surroundEffect.connect(nodes.surroundPan.center).connect(masterGain); nodes.surroundPan.center.gain.value = surroundGainComp * 1.2;
         nodes.surroundPan.front_l.pan.value = -0.8; nodes.surroundPan.front_r.pan.value = 0.8;
-        nodes.surroundEffect.connect(nodes.surroundPan.front_l).connect(masterGain); nodes.surroundPan.front_l.gain.value = surroundGain;
-        nodes.surroundEffect.connect(nodes.surroundPan.front_r).connect(masterGain); nodes.surroundPan.front_r.gain.value = surroundGain;
+        nodes.surroundEffect.connect(nodes.surroundPan.front_l).connect(masterGain); nodes.surroundPan.front_l.gain.value = surroundGainComp;
+        nodes.surroundEffect.connect(nodes.surroundPan.front_r).connect(masterGain); nodes.surroundPan.front_r.gain.value = surroundGainComp;
         nodes.surroundDelay.rear_l.delayTime.value = 0.025; nodes.surroundDelay.rear_r.delayTime.value = 0.030;
         nodes.surroundPan.rear_l.pan.value = -0.6; nodes.surroundPan.rear_r.pan.value = 0.6;
-        nodes.surroundEffect.connect(nodes.surroundDelay.rear_l).connect(nodes.surroundPan.rear_l).connect(masterGain); nodes.surroundPan.rear_l.gain.value = surroundGain * 0.8;
-        nodes.surroundEffect.connect(nodes.surroundDelay.rear_r).connect(nodes.surroundPan.rear_r).connect(masterGain); nodes.surroundPan.rear_r.gain.value = surroundGain * 0.8;
+        nodes.surroundEffect.connect(nodes.surroundDelay.rear_l).connect(nodes.surroundPan.rear_l).connect(masterGain); nodes.surroundPan.rear_l.gain.value = surroundGainComp * 0.8;
+        nodes.surroundEffect.connect(nodes.surroundDelay.rear_r).connect(nodes.surroundPan.rear_r).connect(masterGain); nodes.surroundPan.rear_r.gain.value = surroundGainComp * 0.8;
         masterGain.connect(audioContext.destination);
 
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
@@ -497,10 +506,11 @@
         }
         controls.playbackDevice.addEventListener('change', (e) => applyOutputDevice(e.target.value));
 
-        async function populateAudioDevices() {
+        async function populateAudioDevices(isFirstRun = false) {
             try {
-                const permission = await navigator.permissions.query({ name: 'microphone' });
-                if (permission.state === 'prompt') { micNoticeEl.style.display = 'block'; }
+                if (isFirstRun && audioContext.state === 'suspended') {
+                    await audioContext.resume();
+                }
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 stream.getTracks().forEach(track => track.stop());
                 const devices = await navigator.mediaDevices.enumerateDevices();
@@ -516,10 +526,10 @@
                     if(device.deviceId === savedDevice) option.selected = true;
                     selectEl.appendChild(option);
                 });
-                if (hasLabels) micNoticeEl.style.display = 'none';
+                micNoticeEl.style.display = hasLabels ? 'none' : 'block';
             } catch (err) { console.error("Audio device enumeration error:", err); micNoticeEl.style.display = 'block'; }
         }
-        navigator.mediaDevices.ondevicechange = populateAudioDevices;
+        navigator.mediaDevices.ondevicechange = () => populateAudioDevices(false);
 
         class Sound {
             constructor(details, onEnd) {
@@ -581,7 +591,7 @@
         });
         
         const updateFunctions = {
-            masterVolume: v => { masterGain.gain.value = v; valueDisplays.masterVolumeValue.textContent = `${Math.round(v*100)}%`; },
+            masterVolume: v => { if (!controls.dynamicVolume.checked) { masterGain.gain.value = v; valueDisplays.masterVolumeValue.textContent = `${Math.round(v*100)}%`; } },
             fadeIn: v => { valueDisplays.fadeInValue.textContent = `${parseFloat(v).toFixed(1)}s`; },
             fadeOut: v => { valueDisplays.fadeOutValue.textContent = `${parseFloat(v).toFixed(1)}s`; },
             speed: v => { valueDisplays.speedValue.textContent = `${parseFloat(v).toFixed(2)}x`; activeSounds.forEach(s => s.audioElement.playbackRate = v); },
@@ -599,7 +609,7 @@
                 if (!isStereo) { controls.pan.value = 0; controls.pan.dispatchEvent(new Event('input')); }
             }
         };
-        for (const key in controls) { if (updateFunctions[key]) { controls[key].addEventListener('input', e => updateFunctions[key](e.target.value)); } }
+        for (const key in controls) { if (updateFunctions[key] && key !== 'dynamicVolume') { controls[key].addEventListener('input', e => updateFunctions[key](e.target.value)); } }
         
         document.querySelectorAll('input[type="range"][data-default]').forEach(slider => {
             slider.addEventListener('change', () => {
@@ -615,10 +625,16 @@
             return curve;
         }
 
-        loadSettings();
-        populateAudioDevices();
-        loadSoundsAndCreateButtons();
-        updateMarquees_();
+        const initButton = document.getElementById('init-button');
+        const initOverlay = document.getElementById('init-overlay');
+        initButton.addEventListener('click', async () => {
+            await audioContext.resume();
+            loadSettings();
+            await populateAudioDevices(true);
+            await loadSoundsAndCreateButtons();
+            updateMarquees_();
+            initOverlay.style.display = 'none';
+        }, { once: true });
     });
     </script>
 </body>
