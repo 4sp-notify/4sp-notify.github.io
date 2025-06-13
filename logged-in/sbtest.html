@@ -417,6 +417,7 @@
 
         let activeSounds = new Map();
         let impulseResponseBuffer = null;
+        let lastVolume = 1;
 
         const masterGain = audioContext.createGain();
         const nodes = {
@@ -458,12 +459,12 @@
             analyser: null,
             interval: null,
             isActive: false,
-            data: {}, // { deviceId: { levels: [0,0,0...], quiet: 10, ambient: 30, voice: 80 } }
+            data: {},
             
             start(deviceId) {
                 if (this.isActive) this.stop();
                 this.isActive = true;
-                const constraints = { audio: { deviceId: { exact: deviceId } } };
+                const constraints = { audio: { deviceId: { exact: deviceId }, noiseSuppression: true, echoCancellation: true } };
                 
                 navigator.mediaDevices.getUserMedia(constraints)
                     .then(stream => {
@@ -508,20 +509,17 @@
                 this.analyser.getByteFrequencyData(dataArray);
                 const currentLevel = dataArray.reduce((s,v) => s+v, 0) / dataArray.length;
 
-                // --- Learning Logic ---
                 const deviceData = this.data[deviceId];
                 deviceData.levels.push(currentLevel);
-                if (deviceData.levels.length > 500) deviceData.levels.shift(); // Keep last 100s of data
+                if (deviceData.levels.length > 500) deviceData.levels.shift(); 
 
-                // Recalculate baselines periodically
                 if (deviceData.levels.length % 50 === 0) {
                     const sorted = [...deviceData.levels].sort((a,b) => a-b);
-                    deviceData.quiet = sorted[Math.floor(sorted.length * 0.10)]; // 10th percentile
-                    deviceData.ambient = sorted[Math.floor(sorted.length * 0.50)]; // Median
-                    deviceData.voice = sorted[Math.floor(sorted.length * 0.92)]; // 92nd percentile
+                    deviceData.quiet = sorted[Math.floor(sorted.length * 0.10)];
+                    deviceData.ambient = sorted[Math.floor(sorted.length * 0.50)];
+                    deviceData.voice = sorted[Math.floor(sorted.length * 0.92)];
                 }
 
-                // --- Dynamic Volume & UI Logic ---
                 const { quiet, ambient, voice } = deviceData;
                 let loudnessPercent = (currentLevel - quiet) / Math.max(1, voice - quiet) * 100;
                 loudnessPercent = Math.max(0, Math.min(200, loudnessPercent));
@@ -533,31 +531,20 @@
                 
                 levelEl.textContent = `${Math.round(loudnessPercent)}%`;
 
-                if (currentLevel < ambient) {
-                    display.className = 'loudness-display quiet';
-                    descEl.textContent = 'Quiet Environment';
-                    emojiEl.textContent = '🤫';
-                } else if (currentLevel < voice) {
-                    display.className = 'loudness-display ambient';
-                    descEl.textContent = 'Ambient Noise Detected';
-                    emojiEl.textContent = '🎧';
+                if (currentLevel < ambient * 1.1) {
+                    display.className = 'loudness-display quiet'; descEl.textContent = 'Quiet Environment'; emojiEl.textContent = '🤫';
+                } else if (currentLevel < voice * 0.9) {
+                    display.className = 'loudness-display ambient'; descEl.textContent = 'Ambient Noise Detected'; emojiEl.textContent = '🎧';
                 } else {
-                    display.className = 'loudness-display voice';
-                    descEl.textContent = 'Voice Detected';
-                    emojiEl.textContent = '🗣️';
+                    display.className = 'loudness-display voice'; descEl.textContent = 'Voice Detected'; emojiEl.textContent = '🗣️';
                 }
 
-                // Adjust gain: Target 50% volume when ambient sound is at the median
-                let targetGain = 0.5 + ((currentLevel - ambient) / (voice - ambient));
-                targetGain = Math.max(0.1, Math.min(1.0, targetGain)); // Clamp between 10% and 100%
+                let targetGain = 0.5 + ((currentLevel - ambient) / Math.max(1, voice - ambient));
+                targetGain = Math.max(0.1, Math.min(1.0, targetGain));
                 masterGain.gain.linearRampToValueAtTime(targetGain, audioContext.currentTime + 0.2);
             },
             
-            toggle(deviceId) {
-                if (this.isActive) this.stop();
-                else this.start(deviceId);
-            },
-            
+            toggle(deviceId) { this.isActive ? this.stop() : this.start(deviceId); },
             load() {
                 const savedData = localStorage.getItem(LEARNING_KEY);
                 if (savedData) this.data = JSON.parse(savedData);
@@ -643,6 +630,12 @@
             fadeIn: v => { document.getElementById('fadeInValue').textContent = `${parseFloat(v).toFixed(1)}s`; },
             fadeOut: v => { document.getElementById('fadeOutValue').textContent = `${parseFloat(v).toFixed(1)}s`; },
             speed: v => { document.getElementById('speedValue').textContent = `${parseFloat(v).toFixed(2)}x`; activeSounds.forEach(i => i.forEach(s => s.audioElement.playbackRate = v)); },
+            distortion: v => { nodes.distortion.curve = makeDistortionCurve(v*4); document.getElementById('distortionValue').textContent = `${v}%`; },
+            preamp: v => { nodes.preamp.gain.value = Math.pow(10, v / 20); document.getElementById('preampValue').textContent = `${v} dB`; },
+            bass: v => { nodes.bass.gain.value = v; document.getElementById('bassValue').textContent = `${v} dB`; },
+            mid: v => { nodes.mid.gain.value = v; document.getElementById('midValue').textContent = `${v} dB`; },
+            treble: v => { nodes.treble.gain.value = v; document.getElementById('trebleValue').textContent = `${v} dB`; },
+            pan: v => { nodes.panner.pan.value = v; document.getElementById('panValue').textContent = v == 0 ? 'Center' : `${Math.round(Math.abs(v)*100)}% ${v > 0 ? 'R' : 'L'}`; },
             surroundMode: mode => {
                 const isStereo = mode === 'stereo';
                 const isSpatial = mode === 'spatial' || mode === 'dynamic';
@@ -663,7 +656,7 @@
 
         async function loadImpulseResponse() {
             try {
-                const response = await fetch('../Sounds/IR/small_room.wav'); // Assumes this file exists
+                const response = await fetch('../Sounds/IR/small_room.wav');
                 const arrayBuffer = await response.arrayBuffer();
                 impulseResponseBuffer = await audioContext.decodeAudioData(arrayBuffer);
                 nodes.convolver.buffer = impulseResponseBuffer;
@@ -703,24 +696,79 @@
             requestAnimationFrame(updateButtonVisuals);
         }
 
-        async function initialize() {
-            document.querySelectorAll('[data-setting]').forEach(el => {
-                const key = el.dataset.setting;
-                if(updateFunctions[key]) el.addEventListener('input', e => updateFunctions[key](e.target.value));
-            });
-            
-            learningEngine.load();
-            loadImpulseResponse();
-            await loadSoundsAndCreateButtons();
-            
-            document.getElementById('learningEngineBtn').addEventListener('click', () => {
-                learningEngine.toggle(controls.microphoneDevice.value);
-            });
-            
-            requestAnimationFrame(updateButtonVisuals);
-        }
+        // --- Initialize Page and Listeners ---
+        learningEngine.load();
+        loadImpulseResponse();
+        loadSoundsAndCreateButtons();
+        requestAnimationFrame(updateButtonVisuals);
 
-        initialize();
+        // Restore all event listeners
+        document.querySelector('.settings-tab-container').addEventListener('input', () => {
+             const currentSettings = {};
+            for (const key in controls) currentSettings[key] = controls[key].type === 'checkbox' ? controls[key].checked : controls[key].value;
+            localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(currentSettings));
+        });
+        document.getElementById('resetSettingsBtn').addEventListener('click', () => {
+            if (!confirm('Are you sure you want to reset all settings to their defaults? This will also clear all learned audio profiles.')) return;
+            localStorage.removeItem(LOCAL_STORAGE_KEY);
+            localStorage.removeItem(LEARNING_KEY);
+            learningEngine.data = {};
+             for (const key in controls) {
+                const el = controls[key];
+                const defaultValue = el.type === 'checkbox' ? false : el.querySelector('option')?.value || el.defaultValue || 0;
+                if(el.type === 'checkbox') { el.checked = defaultValue; } 
+                else { el.value = defaultValue; }
+                el.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            showStatus('Settings and learned profiles have been reset.', 'success');
+        });
+        document.getElementById('clearSoundsBtn').addEventListener('click', clearSounds);
+        document.getElementById('soundSearchInput').addEventListener('input', (e) => {
+            const searchTerm = e.target.value.toLowerCase();
+            document.querySelectorAll('.sound-category-v4').forEach(cat => {
+                let hasVisible = false;
+                cat.querySelectorAll('.sound-button-v4').forEach(btn => {
+                    const isVisible = btn.textContent.toLowerCase().includes(searchTerm);
+                    btn.style.display = isVisible ? '' : 'none';
+                    if (isVisible) hasVisible = true;
+                });
+                cat.style.display = hasVisible ? 'block' : 'none';
+            });
+        });
+        document.querySelector('.settings-tabs').addEventListener('click', e => {
+            if (e.target.matches('.tab-link')) {
+                document.querySelectorAll('.tab-link, .tab-content').forEach(el => el.classList.remove('active'));
+                e.target.classList.add('active');
+                document.getElementById(e.target.dataset.tab).classList.add('active');
+            }
+        });
+        document.addEventListener('keydown', e => {
+            if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'SELECT') return;
+            if (e.shiftKey && e.key.toLowerCase() === 'c') { e.preventDefault(); clearSounds(); }
+            if (e.key.toLowerCase() === 'm') {
+                e.preventDefault();
+                const currentGain = masterGain.gain.value;
+                if (currentGain > 0) { lastVolume = currentGain; controls.masterVolume.value = 0; } 
+                else { controls.masterVolume.value = lastVolume; }
+                controls.masterVolume.dispatchEvent(new Event('input'));
+            }
+        });
+        document.getElementById('learningEngineBtn').addEventListener('click', () => {
+            learningEngine.toggle(controls.microphoneDevice.value);
+        });
+
+        const wrapper = document.querySelector('.soundboard-container-wrapper');
+        if (wrapper) {
+            document.querySelectorAll('#playbackDevice, #microphoneDevice').forEach(selectEl => {
+                selectEl.addEventListener('focus', () => { wrapper.style.overflow = 'visible'; });
+                selectEl.addEventListener('blur', () => { wrapper.style.overflow = 'hidden'; });
+            });
+        }
+        
+        Object.values(controls).forEach(el => {
+            const key = el.dataset.setting;
+            if(updateFunctions[key]) el.addEventListener('input', e => updateFunctions[key](e.target.value));
+        });
     });
     </script>
 </body>
