@@ -152,18 +152,12 @@
         .loudness-display.ambient { background-color: #d4edda; color: #155724; }
         .loudness-display.voice { background-color: #fff3cd; color: #856404; }
 
-        #learningEngineBtn {
+        #resetProfileBtn {
             background: var(--v4-input-bg); border: 1px solid var(--v4-input-border);
             border-radius: 6px; cursor: pointer; font-family: var(--v4-font-secondary);
             transition: all 0.2s ease;
-            color: #155724; /* Green for start */
         }
-        #learningEngineBtn:hover { border-color: var(--v4-purple-accent); }
-        #learningEngineBtn.active {
-            background: var(--v4-purple-accent);
-            color: white;
-            border-color: var(--v4-purple-accent-darker);
-        }
+        #resetProfileBtn:hover { border-color: var(--v4-purple-accent); }
 
         /* Sound Buttons */
         .sound-category-v4 { margin-bottom: 25px; background: var(--v4-card-bg); padding: 20px; border-radius: 15px; box-shadow: 0 6px 30px rgba(0,0,0,0.08); }
@@ -342,7 +336,7 @@
                                 <option value="spatial">Spatial Audio</option>
                                 <option value="dynamic" data-mic-required>Dynamic Audio</option>
                             </select>
-                            <button id="learningEngineBtn" data-mic-required style="display:none; padding: 10px 12px; font-size: 0.9em;">Start Learning</button>
+                            <button id="resetProfileBtn" data-mic-required style="display:none; padding: 10px 12px; font-size: 0.9em;">Reset Profile</button>
                         </div>
                     </div>
                 </div>
@@ -416,7 +410,6 @@
         const LEARNING_KEY = 'soundboardLearningData';
 
         let activeSounds = new Map();
-        let impulseResponseBuffer = null;
         let lastVolume = 1;
 
         const masterGain = audioContext.createGain();
@@ -454,7 +447,7 @@
         };
         
         // --- Heuristic Learning Engine ---
-        let learningEngine = {
+        const learningEngine = {
             micStream: null,
             analyser: null,
             interval: null,
@@ -478,10 +471,7 @@
                             this.data[deviceId] = { levels: [], quiet: 5, ambient: 25, voice: 70 };
                         }
                         
-                        document.getElementById('learningEngineBtn').classList.add('active');
-                        document.getElementById('learningEngineBtn').textContent = 'Learning...';
                         document.getElementById('loudnessDisplay').style.display = 'flex';
-                        
                         this.interval = setInterval(() => this.process(deviceId), 200);
                     })
                     .catch(err => {
@@ -496,11 +486,7 @@
                 this.isActive = false;
                 this.interval = this.micStream = this.analyser = null;
                 localStorage.setItem(LEARNING_KEY, JSON.stringify(this.data));
-                const btn = document.getElementById('learningEngineBtn');
-                if (btn) {
-                    btn.classList.remove('active');
-                    btn.textContent = 'Start Learning';
-                }
+                document.getElementById('loudnessDisplay').style.display = 'none';
             },
 
             process(deviceId) {
@@ -513,7 +499,7 @@
                 deviceData.levels.push(currentLevel);
                 if (deviceData.levels.length > 500) deviceData.levels.shift(); 
 
-                if (deviceData.levels.length % 50 === 0) {
+                if (deviceData.levels.length % 50 === 0 && deviceData.levels.length > 0) {
                     const sorted = [...deviceData.levels].sort((a,b) => a-b);
                     deviceData.quiet = sorted[Math.floor(sorted.length * 0.10)];
                     deviceData.ambient = sorted[Math.floor(sorted.length * 0.50)];
@@ -525,9 +511,9 @@
                 loudnessPercent = Math.max(0, Math.min(200, loudnessPercent));
                 
                 const display = document.getElementById('loudnessDisplay');
-                const levelEl = display.querySelector('.level');
-                const descEl = display.querySelector('.description');
-                const emojiEl = display.querySelector('.emoji');
+                levelEl = display.querySelector('.level');
+                descEl = display.querySelector('.description');
+                emojiEl = display.querySelector('.emoji');
                 
                 levelEl.textContent = `${Math.round(loudnessPercent)}%`;
 
@@ -544,7 +530,18 @@
                 masterGain.gain.linearRampToValueAtTime(targetGain, audioContext.currentTime + 0.2);
             },
             
-            toggle(deviceId) { this.isActive ? this.stop() : this.start(deviceId); },
+            resetProfile(deviceId) {
+                if (this.data[deviceId]) {
+                    delete this.data[deviceId];
+                    localStorage.setItem(LEARNING_KEY, JSON.stringify(this.data));
+                    showStatus('Profile for this device has been reset.', 'info');
+                }
+                if (this.isActive) {
+                    this.stop();
+                    this.start(deviceId);
+                }
+            },
+
             load() {
                 const savedData = localStorage.getItem(LEARNING_KEY);
                 if (savedData) this.data = JSON.parse(savedData);
@@ -641,16 +638,19 @@
                 const isSpatial = mode === 'spatial' || mode === 'dynamic';
                 const isDynamic = mode === 'dynamic';
                 
-                document.getElementById('learningEngineBtn').style.display = isDynamic ? 'block' : 'none';
-                if (!isDynamic && learningEngine.isActive) learningEngine.stop();
-                
-                document.getElementById('loudnessDisplay').style.display = isDynamic && learningEngine.isActive ? 'flex' : 'none';
+                document.getElementById('resetProfileBtn').style.display = isDynamic ? 'block' : 'none';
                 document.getElementById('surround-mic-notice').style.display = !isStereo ? 'block' : 'none';
                 document.getElementById('pan-control-group').classList.toggle('disabled', isSpatial);
                 controls.pan.disabled = isSpatial;
                 
                 nodes.convolverBypass.gain.value = isSpatial ? 0 : 1;
                 nodes.convolverWet.gain.value = isSpatial ? 1 : 0;
+
+                if (isDynamic) {
+                    learningEngine.start(controls.microphoneDevice.value);
+                } else {
+                    learningEngine.stop();
+                }
             }
         };
 
@@ -658,8 +658,7 @@
             try {
                 const response = await fetch('../Sounds/IR/small_room.wav');
                 const arrayBuffer = await response.arrayBuffer();
-                impulseResponseBuffer = await audioContext.decodeAudioData(arrayBuffer);
-                nodes.convolver.buffer = impulseResponseBuffer;
+                nodes.convolver.buffer = await audioContext.decodeAudioData(arrayBuffer);
             } catch (e) {
                 console.warn("Could not load impulse response file. Spatial audio will be disabled.");
             }
@@ -715,7 +714,7 @@
             learningEngine.data = {};
              for (const key in controls) {
                 const el = controls[key];
-                const defaultValue = el.type === 'checkbox' ? false : el.querySelector('option')?.value || el.defaultValue || 0;
+                const defaultValue = el.type === 'checkbox' ? false : el.querySelector('option')?.value || el.defaultValue || '';
                 if(el.type === 'checkbox') { el.checked = defaultValue; } 
                 else { el.value = defaultValue; }
                 el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -753,13 +752,13 @@
                 controls.masterVolume.dispatchEvent(new Event('input'));
             }
         });
-        document.getElementById('learningEngineBtn').addEventListener('click', () => {
-            learningEngine.toggle(controls.microphoneDevice.value);
+        document.getElementById('resetProfileBtn').addEventListener('click', () => {
+            learningEngine.resetProfile(controls.microphoneDevice.value);
         });
 
         const wrapper = document.querySelector('.soundboard-container-wrapper');
         if (wrapper) {
-            document.querySelectorAll('#playbackDevice, #microphoneDevice').forEach(selectEl => {
+            document.querySelectorAll('#playbackDevice, #microphoneDevice, #surroundMode, #clickType').forEach(selectEl => {
                 selectEl.addEventListener('focus', () => { wrapper.style.overflow = 'visible'; });
                 selectEl.addEventListener('blur', () => { wrapper.style.overflow = 'hidden'; });
             });
