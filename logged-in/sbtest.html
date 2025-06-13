@@ -380,10 +380,63 @@
     </div>
 
     <script>
-        // --- V4 Standard Setup (Auth, etc.) ---
-        firebase.auth().onAuthStateChanged(async user => { if (!user) window.location.href = '../login.html'; });
-        // Other standard setup code remains here...
-        
+        // --- V4 Standard Setup (Auth, Sidebar, User Info) ---
+        firebase.auth().onAuthStateChanged(async user => {
+            if (!user) {
+                window.location.href = '../login.html';
+            } else {
+                const userEmailEl = document.getElementById('userEmail');
+                const userNameEl = document.getElementById('userName');
+                const dbRef = () => firebase.firestore().collection('users').doc(user.uid);
+                if (userEmailEl) userEmailEl.textContent = user.email;
+                if (userNameEl) {
+                    try {
+                        const doc = await dbRef().get();
+                        userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User');
+                    } catch (error) {
+                        userNameEl.textContent = 'User';
+                        console.error("Error fetching username:", error);
+                    }
+                }
+                updateMarquees();
+            }
+        });
+
+        const setupSignOutButtons = () => {
+            document.querySelectorAll('.signOutBtn').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    firebase.auth().signOut().then(() => {
+                        window.location.href = '../login.html';
+                    });
+                });
+            });
+        };
+
+        const sidebar = document.getElementById('sidebar');
+        const toggleSidebarBtn = document.getElementById('toggleSidebar');
+        if (toggleSidebarBtn && sidebar) {
+            toggleSidebarBtn.addEventListener('click', () => {
+                sidebar.classList.toggle('collapsed');
+                setTimeout(updateMarquees, 550);
+            });
+        }
+
+        function updateMarquees() {
+            document.querySelectorAll('.marquee-content').forEach(el => {
+                if (!el || !el.parentElement) return;
+                const parent = el.parentElement;
+                const overflow = el.scrollWidth > parent.clientWidth;
+                const shouldScroll = sidebar.classList.contains('collapsed') || (overflow && !sidebar.classList.contains('collapsed'));
+                el.classList.toggle('marquee-active', shouldScroll);
+                if (!overflow && !sidebar.classList.contains('collapsed')) {
+                    el.classList.remove('marquee-active');
+                }
+            });
+        }
+        window.addEventListener('resize', updateMarquees);
+        // --- End V4 Standard Setup ---
+
         // --- Soundboard V4 ---
         document.addEventListener('DOMContentLoaded', () => {
             // --- Global Elements ---
@@ -392,6 +445,7 @@
             const statusMessageEl = document.getElementById('statusMessageV4');
             const clearAllSoundsBtn = document.getElementById('clearAllSoundsBtnV4');
             const soundboardControls = document.querySelector('.soundboard-controls-v4');
+            const toggleControlsBtn = document.getElementById('toggleControlsBtn');
 
             // --- Control Elements ---
             const allowMultipleSoundsToggle = document.getElementById('allowMultipleSoundsToggleV4');
@@ -411,9 +465,11 @@
             const autoClickerCheckbox = document.getElementById('autoClickerCheckboxV4');
             const autoClickerControlsContainer = document.getElementById('autoClickerControlsContainer');
             const autoClickerRandomizeContainer = document.getElementById('autoClickerRandomizeContainer');
+            const autoClickerTrigger = document.getElementById('autoClickerTriggerV4');
+            const autoClickDelayInput = document.getElementById('autoClickDelayInputV4');
 
             // --- Audio Nodes ---
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            const audioContext = new(window.AudioContext || window.webkitAudioContext)();
             const globalGainNode = audioContext.createGain();
             const bassFilter = audioContext.createBiquadFilter();
             const midFilter = audioContext.createBiquadFilter();
@@ -431,7 +487,7 @@
             midFilter.connect(trebleFilter);
             trebleFilter.connect(globalGainNode);
             globalGainNode.connect(audioContext.destination);
-            
+
             // --- State Variables ---
             let audioBuffers = {};
             let playingAudios = [];
@@ -444,26 +500,36 @@
                 const disclaimer = soundboardControls.querySelector('.controls-disclaimer');
                 if (disclaimer) disclaimer.style.display = disabled ? 'block' : 'none';
                 soundboardControls.querySelectorAll('input, select').forEach(control => {
-                    // Keep master volume and autoclicker enable always active
                     if (control.id !== 'masterVolumeSliderV4' && control.id !== 'autoClickerCheckboxV4') {
-                         control.disabled = disabled;
+                        control.disabled = disabled;
                     }
                 });
             };
 
+            const setupControlsToggle = () => {
+                if (toggleControlsBtn && soundboardControls) {
+                    toggleControlsBtn.addEventListener('click', () => {
+                        soundboardControls.classList.toggle('collapsed');
+                        toggleControlsBtn.textContent = soundboardControls.classList.contains('collapsed') ? 'Show Settings' : 'Hide Settings';
+                    });
+                }
+            };
+
             const stopAllActiveSounds = () => {
                 [...playingAudios].forEach(audioObj => {
-                    try { audioObj.source.stop(); } catch(e) {}
+                    try {
+                        audioObj.source.stop();
+                    } catch (e) {}
                 });
                 playingAudios = [];
                 document.querySelectorAll('.sound-button-v4.playing').forEach(btn => btn.classList.remove('playing'));
                 setControlsDisabled(false);
             };
-            
+
             const playSound = async (soundDetails, buttonElement) => {
                 if (audioContext.state === 'suspended') await audioContext.resume();
                 if (!allowMultipleSoundsToggle.checked) stopAllActiveSounds();
-                
+
                 if (playingAudios.length === 0) setControlsDisabled(true);
 
                 const source = audioContext.createBufferSource();
@@ -471,7 +537,7 @@
                 source.playbackRate.value = parseFloat(playbackSpeedSlider.value);
                 source.detune.value = parseInt(pitchSlider.value, 10) * 100;
                 source.loop = loopSoundToggle.checked;
-                
+
                 const gainNode = audioContext.createGain();
                 const fadeSeconds = (parseInt(fadeDurationInput.value, 10) || 0) / 1000;
                 if (fadeSeconds > 0) {
@@ -481,10 +547,13 @@
 
                 source.connect(gainNode);
                 gainNode.connect(bassFilter);
-                
+
                 const audioId = Date.now();
-                playingAudios.push({ id: audioId, source: source });
-                
+                playingAudios.push({
+                    id: audioId,
+                    source: source
+                });
+
                 source.start(0);
                 buttonElement.classList.add('playing');
 
@@ -494,7 +563,7 @@
                     if (playingAudios.length === 0) setControlsDisabled(false);
                 };
             };
-            
+
             const loadSounds = async () => {
                 try {
                     const response = await fetch('../SoundboardSN.json');
@@ -507,60 +576,87 @@
                         categoryDiv.innerHTML = `<h2><span class="category-icon-v4">🎵</span>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`;
                         const buttonsGrid = document.createElement('div');
                         buttonsGrid.className = 'sound-buttons-grid-v4';
-                        
+
                         soundsDataGlobal[categoryKey].sort().forEach((filename, index) => {
                             const displayName = filename.replace(/\.mp3$/i, '').replace(/_/g, ' ');
                             const soundPath = `../Sounds/${filename}`;
-                            allSounds.push({ path: soundPath });
+                            allSounds.push({
+                                path: soundPath
+                            });
 
-                            const soundDetails = { id: `${categoryKey}-${index}`, name: displayName, path: soundPath };
+                            const soundDetails = {
+                                id: `${categoryKey}-${index}`,
+                                name: displayName,
+                                path: soundPath
+                            };
                             const button = document.createElement('button');
                             button.className = 'sound-button-v4';
                             button.textContent = displayName;
                             button.dataset.soundName = displayName.toLowerCase();
-                            
+
                             button.addEventListener('click', () => playSound(soundDetails, button));
-                            
-                            button.addEventListener('mouseenter', () => { currentlyHoveredButton = button; if (autoClickerCheckbox.checked) startAutoClicker(); });
-                            button.addEventListener('mouseleave', () => { if (currentlyHoveredButton === button) { currentlyHoveredButton = null; stopAutoClicker(); }});
-                            button.addEventListener('mousedown', () => { if (autoClickerCheckbox.checked) startAutoClicker(); });
+
+                            button.addEventListener('mouseenter', (event) => {
+                                currentlyHoveredButton = button;
+                                if (autoClickerCheckbox.checked) startAutoClicker(event);
+                            });
+                            button.addEventListener('mouseleave', () => {
+                                if (currentlyHoveredButton === button) {
+                                    currentlyHoveredButton = null;
+                                    stopAutoClicker();
+                                }
+                            });
+                            button.addEventListener('mousedown', (event) => {
+                                if (autoClickerCheckbox.checked) startAutoClicker(event);
+                            });
                             button.addEventListener('mouseup', stopAutoClicker);
-                            
+
                             buttonsGrid.appendChild(button);
                         });
                         categoryDiv.appendChild(buttonsGrid);
                         soundCategoriesContainer.appendChild(categoryDiv);
                     }
-                    
-                    const promises = allSounds.map(sound => 
-                        fetch(sound.path).then(res => res.arrayBuffer()).then(buf => audioContext.decodeAudioData(buf)).then(decoded => { audioBuffers[sound.path] = decoded; })
+
+                    const promises = allSounds.map(sound =>
+                        fetch(sound.path).then(res => res.arrayBuffer()).then(buf => audioContext.decodeAudioData(buf)).then(decoded => {
+                            audioBuffers[sound.path] = decoded;
+                        })
                     );
                     await Promise.all(promises);
-                } catch (error) { console.error("Error loading sounds:", error); }
+                } catch (error) {
+                    console.error("Error loading sounds:", error);
+                }
             };
 
-            const startAutoClicker = () => {
-                const trigger = document.getElementById('autoClickerTriggerV4').value;
+            const startAutoClicker = (event) => {
+                if (!event) return;
+                const trigger = autoClickerTrigger.value;
                 if ((trigger === 'mouseenter' && event.type !== 'mouseenter') || (trigger === 'click' && event.type !== 'mousedown')) return;
-                
+
                 stopAutoClicker();
                 if (!currentlyHoveredButton) return;
-                
-                const baseDelay = parseInt(document.getElementById('autoClickDelayInputV4').value, 10) || 200;
+
+                const baseDelay = parseInt(autoClickDelayInput.value, 10) || 200;
                 const randomize = document.getElementById('autoClickerRandomizeV4').checked;
 
                 const triggerClick = () => {
                     if (currentlyHoveredButton) {
-                        currentlyHoveredButton.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+                        currentlyHoveredButton.dispatchEvent(new MouseEvent('click', {
+                            bubbles: true
+                        }));
                     } else {
                         stopAutoClicker();
                     }
                 };
-
+                
                 autoClickIntervalId = setInterval(() => {
-                    const delay = randomize ? baseDelay + (Math.random() * 50) : baseDelay;
-                    setTimeout(triggerClick, delay - baseDelay); // Adjust for the interval itself
-                }, baseDelay);
+                    if (randomize) {
+                         const randomOffset = Math.random() * 50;
+                         setTimeout(triggerClick, randomOffset);
+                    } else {
+                        triggerClick();
+                    }
+                }, Math.max(50, baseDelay));
             };
 
             const stopAutoClicker = () => {
@@ -574,61 +670,100 @@
                     autoClickerControlsContainer.style.display = enabled ? 'block' : 'none';
                     autoClickerRandomizeContainer.style.display = enabled ? 'flex' : 'none';
                     if (!enabled) stopAutoClicker();
+                    localStorage.setItem('autoClickerEnabledV4', enabled);
                 });
             };
-            
+
             const setupEventListeners = () => {
                 clearAllSoundsBtn.addEventListener('click', stopAllActiveSounds);
-                soundSearchInput.addEventListener('input', (e) => { /* filter logic here */ });
+                soundSearchInput.addEventListener('input', (e) => {
+                    const searchTerm = e.target.value.toLowerCase();
+                    document.querySelectorAll('.sound-button-v4').forEach(btn => {
+                        const isMatch = btn.dataset.soundName.includes(searchTerm);
+                        btn.style.display = isMatch ? 'flex' : 'none';
+                    });
+                });
+
                 document.getElementById('searchContainer').addEventListener('click', (e) => {
                     if (e.target.classList.contains('search-icon')) {
-                        if (document.activeElement === soundSearchInput && soundSearchInput.value === '') { soundSearchInput.blur(); } 
-                        else { soundSearchInput.focus(); }
+                        if (document.activeElement === soundSearchInput && soundSearchInput.value === '') {
+                            soundSearchInput.blur();
+                        } else {
+                            soundSearchInput.focus();
+                        }
                     }
                 });
-                
-                playbackSpeedSlider.addEventListener('input', (e) => { playbackSpeedValueDisplay.textContent = `${parseFloat(e.target.value).toFixed(2)}x`; });
-                pitchSlider.addEventListener('input', (e) => { pitchValueDisplay.textContent = `${e.target.value} semitones`; });
 
+                playbackSpeedSlider.addEventListener('input', (e) => {
+                    playbackSpeedValueDisplay.textContent = `${parseFloat(e.target.value).toFixed(2)}x`;
+                    localStorage.setItem('playbackSpeedV4', e.target.value);
+                });
+                pitchSlider.addEventListener('input', (e) => {
+                    pitchValueDisplay.textContent = `${e.target.value} semitones`;
+                    localStorage.setItem('pitchV4', e.target.value);
+                });
                 bassSlider.addEventListener('input', (e) => {
                     const value = parseInt(e.target.value, 10);
                     bassFilter.gain.setValueAtTime(value, audioContext.currentTime);
                     bassValueDisplay.textContent = `${value > 0 ? '+' : ''}${value} dB`;
+                    localStorage.setItem('bassV4', value);
                 });
                 midSlider.addEventListener('input', (e) => {
                     const value = parseInt(e.target.value, 10);
                     midFilter.gain.setValueAtTime(value, audioContext.currentTime);
                     midValueDisplay.textContent = `${value > 0 ? '+' : ''}${value} dB`;
+                    localStorage.setItem('midV4', value);
                 });
                 trebleSlider.addEventListener('input', (e) => {
                     const value = parseInt(e.target.value, 10);
                     trebleFilter.gain.setValueAtTime(value, audioContext.currentTime);
                     trebleValueDisplay.textContent = `${value > 0 ? '+' : ''}${value} dB`;
+                    localStorage.setItem('trebleV4', value);
                 });
             };
 
             const loadPreferences = () => {
                 const savedBass = localStorage.getItem('bassV4') || 0;
-                bassSlider.value = savedBass; bassFilter.gain.value = savedBass; bassValueDisplay.textContent = `${savedBass > 0 ? '+' : ''}${savedBass} dB`;
+                bassSlider.value = savedBass;
+                bassFilter.gain.value = savedBass;
+                bassValueDisplay.textContent = `${savedBass > 0 ? '+' : ''}${savedBass} dB`;
+
                 const savedMid = localStorage.getItem('midV4') || 0;
-                midSlider.value = savedMid; midFilter.gain.value = savedMid; midValueDisplay.textContent = `${savedMid > 0 ? '+' : ''}${savedMid} dB`;
+                midSlider.value = savedMid;
+                midFilter.gain.value = savedMid;
+                midValueDisplay.textContent = `${savedMid > 0 ? '+' : ''}${savedMid} dB`;
+
                 const savedTreble = localStorage.getItem('trebleV4') || 0;
-                trebleSlider.value = savedTreble; trebleFilter.gain.value = savedTreble; trebleValueDisplay.textContent = `${savedTreble > 0 ? '+' : ''}${savedTreble} dB`;
+                trebleSlider.value = savedTreble;
+                trebleFilter.gain.value = savedTreble;
+                trebleValueDisplay.textContent = `${savedTreble > 0 ? '+' : ''}${savedTreble} dB`;
+                
+                const savedSpeed = localStorage.getItem('playbackSpeedV4') || '1';
+                playbackSpeedSlider.value = savedSpeed;
+                playbackSpeedValueDisplay.textContent = `${parseFloat(savedSpeed).toFixed(2)}x`;
+                
+                const savedPitch = localStorage.getItem('pitchV4') || '0';
+                pitchSlider.value = savedPitch;
+                pitchValueDisplay.textContent = `${savedPitch} semitones`;
+
                 const acEnabled = localStorage.getItem('autoClickerEnabledV4') === 'true';
                 autoClickerCheckbox.checked = acEnabled;
                 autoClickerControlsContainer.style.display = acEnabled ? 'block' : 'none';
                 autoClickerRandomizeContainer.style.display = acEnabled ? 'flex' : 'none';
+                
+                document.getElementById('autoClickerRandomizeV4').checked = localStorage.getItem('autoClickerRandomV4') === 'true';
+                autoClickerTrigger.value = localStorage.getItem('autoClickerTriggerV4') || 'mouseenter';
+                autoClickDelayInput.value = localStorage.getItem('autoClickerDelayV4') || '200';
             };
-            
-            
-    // --- Initial Execution ---
-    setupSignOutButtons();
-    loadPreferences();
-    loadSounds();
-    setupEventListeners();
-    setupAutoClickerControls();
-    setupControlsToggle();
-    setTimeout(updateMarquees, 500);
+
+            // --- Initial Execution ---
+            setupSignOutButtons();
+            loadPreferences();
+            loadSounds();
+            setupEventListeners();
+            setupAutoClickerControls();
+            setupControlsToggle();
+            setTimeout(updateMarquees, 500);
         });
     </script>
 </body>
