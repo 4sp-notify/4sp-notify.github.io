@@ -44,6 +44,15 @@
             color: var(--v4-text-primary);
             line-height: 1.6;
         }
+        
+        /* UPDATED: Sticky Header */
+        .main-header {
+            position: sticky;
+            top: 0;
+            z-index: 1001; /* Higher than overlay to stay on top */
+            background: var(--v4-card-bg, #fff);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
 
         .soundboard-container-wrapper { display: flex; flex: 1; overflow: hidden; }
 
@@ -409,7 +418,7 @@
             </div>
             <div class="auth-buttons">
                 <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
-                <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
+                <button id="signOutBtnHeader" class="btn btn-login signOutBtn">LOG OUT</button>
             </div>
         </div>
     </header>
@@ -428,7 +437,7 @@
                     <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
                     <li><a href="others.html"><span class="icon">✨</span><span class="label">Others</span></a></li>
                     <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
-                    <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
+                    <li><a href="#" id="signOutBtnSidebar" class="signOutBtn"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
                 </ul>
             </nav>
         </aside>
@@ -557,8 +566,19 @@
             }
         });
 
-        const signOutLink = document.getElementById('signOutLink');
-        if(signOutLink) { signOutLink.addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); }); }
+        // UPDATED: Centralized sign-out logic for multiple buttons
+        const setupSignOutButtons = () => {
+            document.querySelectorAll('.signOutBtn').forEach(button => {
+                button.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    firebase.auth().signOut().then(() => {
+                        window.location.href = '../login.html';
+                    }).catch(error => {
+                       console.error("Sign out error", error);
+                    });
+                });
+            });
+        };
 
         const sidebar = document.getElementById('sidebar');
         const toggleSidebarBtn = document.getElementById('toggleSidebar');
@@ -628,6 +648,31 @@
             let autoClickIntervalId = null;
             let currentlyHoveredButton = null;
             let statusMessageTimeout = null;
+
+            // --- OPTIMIZATION: Central Update Loop ---
+            let isUpdateLoopRunning = false;
+            const globalUpdateLoop = () => {
+                if (playingAudios.length === 0) {
+                    isUpdateLoopRunning = false;
+                    // Hide overlay if it's somehow still active
+                    if (currentSoundDisplayOverlay.classList.contains('active')) {
+                       currentSoundDisplayOverlay.classList.remove('active');
+                    }
+                    return;
+                }
+
+                // Find the sound that should be displayed in the overlay
+                const overlayAudio = playingAudios.find(a => a.name === overlaySoundName.textContent);
+
+                if (showOverlayToggle.checked && currentSoundDisplayOverlay.classList.contains('active') && overlayAudio) {
+                    const elapsedTime = audioContext.currentTime - overlayAudio.startTime;
+                    const progress = (elapsedTime / overlayAudio.duration) * 100;
+                    overlayProgressBar.style.width = `${progress % 100}%`;
+                }
+                
+                requestAnimationFrame(globalUpdateLoop);
+            };
+
 
             // --- Core Functions ---
 
@@ -752,19 +797,11 @@
                     currentSoundDisplayOverlay.classList.add('active');
                 }
                 
-                const updateProgress = () => {
-                    if (!playingAudios.includes(audioObj)) return; // Stop if removed
-                    const elapsedTime = audioContext.currentTime - audioObj.startTime;
-                    const progress = (elapsedTime / audioObj.duration) * 100;
-                    
-                    if (showOverlayToggle.checked && currentSoundDisplayOverlay.classList.contains('active') && overlaySoundName.textContent === audioObj.name) {
-                       overlayProgressBar.style.width = `${progress % 100}%`;
-                    }
-                    if (elapsedTime < audioObj.duration) {
-                        requestAnimationFrame(updateProgress);
-                    }
-                };
-                requestAnimationFrame(updateProgress);
+                // OPTIMIZATION: Start the global update loop if it's not running
+                if (!isUpdateLoopRunning) {
+                    isUpdateLoopRunning = true;
+                    globalUpdateLoop();
+                }
 
                 source.onended = () => {
                     if (buttonElement && !source.loop) {
@@ -772,10 +809,9 @@
                     }
                     playingAudios = playingAudios.filter(obj => obj.id !== audioId);
 
+                    // If the sound that just ended was the one in the overlay, hide it
                     if (currentSoundDisplayOverlay.classList.contains('active') && overlaySoundName.textContent === audioObj.name) {
-                        if (!playingAudios.some(ao => ao.buttonElement?.classList.contains('playing'))) {
-                            currentSoundDisplayOverlay.classList.remove('active');
-                        }
+                        currentSoundDisplayOverlay.classList.remove('active');
                     }
                 };
             };
@@ -1018,6 +1054,7 @@
             };
             
             // --- Initial Execution ---
+            setupSignOutButtons(); // Call the updated sign-out setup
             loadPreferences();
             loadSounds();
             setupEventListeners();
