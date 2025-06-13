@@ -92,7 +92,7 @@
             box-shadow: 0 6px 30px rgba(0,0,0,0.08); margin-bottom: 25px;
             overflow: visible;
         }
-        nav.settings-tabs { display: flex; padding: 0 15px; flex-wrap: wrap;}
+        nav.settings-tabs { display: flex; padding: 0 15px; }
         .tab-link {
             background: none; border: none; padding: 15px 20px; cursor: pointer;
             font-size: 1.1em; font-family: var(--v4-font-primary); color: var(--v4-text-secondary);
@@ -122,12 +122,13 @@
         .control-group input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; background: var(--v4-purple-accent); cursor: pointer; border-radius: 50%; }
         .control-group input[type="number"], .control-group select, .control-group input[type="text"] { width: 100%; padding: 10px 12px; background-color: var(--v4-input-bg); border: 1px solid var(--v4-input-border); border-radius: 6px; color: var(--v4-text-primary); font-family: var(--v4-font-secondary); font-size: 0.95em; outline: none; box-sizing: border-box; }
         .control-group input[type="checkbox"] { margin-right: 8px; transform: scale(1.1); accent-color: var(--v4-purple-accent); }
-        .control-group-notice, .device-display {
+        .control-group-notice {
+            display: none;
             background-color: var(--v4-input-bg);
             border: 1px solid var(--v4-border-light);
             border-radius: 8px;
             padding: 10px;
-            margin-top: 10px;
+            margin-bottom: 15px;
             font-size: 0.85em;
             color: var(--v4-text-secondary);
         }
@@ -246,7 +247,6 @@
                         <button class="tab-link" data-tab="effects">Effects</button>
                         <button class="tab-link" data-tab="equalizer">Equalizer</button>
                         <button class="tab-link" data-tab="spatial">Spatial Audio</button>
-                        <button class="tab-link" data-tab="dynamic-audio">Dynamic Audio</button>
                         <button class="tab-link" data-tab="autoclicker">Autoclicker</button>
                     </nav>
                     <button id="resetSettingsBtn">Reset Settings</button>
@@ -309,7 +309,7 @@
                     </div>
                 </div>
                 <div id="spatial" class="tab-content">
-                    <div class="control-group" id="pan-control-group">
+                    <div class="control-group">
                         <label for="pan">Pan (L/R): <span id="panValue">Center</span></label>
                         <input type="range" id="pan" min="-1" max="1" step="0.01" value="0" data-setting="pan" data-default="0">
                     </div>
@@ -318,33 +318,25 @@
                          <select id="surroundMode" data-setting="surroundMode">
                             <option value="stereo">Stereo</option>
                             <option value="spatial">Spatial Audio</option>
+                            <option value="dynamic">Dynamic Audio</option>
                         </select>
-                    </div>
-                     <div class="control-group-notice">
-                        Spatial Audio uses a built-in reverb effect to create a wider soundstage.
-                        For dynamic volume adjustment based on your environment, see the "Dynamic Audio" tab.
-                    </div>
-                </div>
-                <div id="dynamic-audio" class="tab-content">
-                    <div class="control-group">
-                        <label class="checkbox-label-v4">Enable Dynamic Audio Engine
-                            <input type="checkbox" id="dynamicAudioEnabled" data-setting="dynamicAudioEnabled">
-                        </label>
                     </div>
                     <div class="control-group">
                         <label for="microphoneDevice">Input Microphone</label>
                         <select id="microphoneDevice" data-setting="microphoneDevice"></select>
                          <div class="device-display">Currently Using: <strong id="currentInputDevice">Default</strong></div>
                     </div>
-                    <div class="control-group">
-                        <div id="loudnessDisplay" class="loudness-display">
-                           <span class="emoji">🧠</span>
-                           <span class="description">Engine Idle</span>
-                           <span class="level">--%</span>
+                     <div id="dynamicAudioControls" style="display:none;">
+                        <div class="control-group">
+                            <div id="loudnessDisplay" class="loudness-display">
+                               <span class="emoji">🧠</span>
+                               <span class="description">Engine Idle</span>
+                               <span class="level">--%</span>
+                            </div>
                         </div>
-                    </div>
-                     <div class="control-group">
-                        <button id="resetProfileBtn">Reset Learning Profile</button>
+                         <div class="control-group">
+                            <button id="resetProfileBtn">Reset Learning Profile</button>
+                        </div>
                     </div>
                 </div>
                 <div id="autoclicker" class="tab-content">
@@ -430,6 +422,7 @@
             convolver: audioContext.createConvolver(),
             convolverBypass: audioContext.createGain(),
             convolverWet: audioContext.createGain(),
+            dynamicGain: audioContext.createGain(), // New node for dynamic volume
         };
         
         const inputGain = audioContext.createGain();
@@ -438,9 +431,10 @@
         nodes.distortion.connect(nodes.panner).connect(nodes.convolverBypass).connect(masterGain);
         nodes.distortion.connect(nodes.convolver).connect(nodes.convolverWet).connect(masterGain);
         
-        nodes.convolverBypass.gain.value = 1;
+        masterGain.connect(nodes.dynamicGain).connect(audioContext.destination);
+        
+        nodes.convolverBypass.gain.value = 1; 
         nodes.convolverWet.gain.value = 0;
-        masterGain.connect(audioContext.destination);
 
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
         
@@ -464,7 +458,8 @@
                 if (this.isActive) this.stop();
                 if (!deviceId) {
                     showStatus('No microphone selected.', 'error');
-                    controls.dynamicAudioEnabled.checked = false;
+                    controls.surroundMode.value = 'stereo';
+                    controls.surroundMode.dispatchEvent(new Event('input'));
                     return;
                 }
                 this.isActive = true;
@@ -486,7 +481,8 @@
                     })
                     .catch(err => {
                         showStatus('Microphone access denied.', 'error');
-                        controls.dynamicAudioEnabled.checked = false;
+                        controls.surroundMode.value = 'stereo';
+                        controls.surroundMode.dispatchEvent(new Event('input'));
                         this.stop();
                     });
             },
@@ -496,6 +492,7 @@
                 if (this.micStream) this.micStream.getTracks().forEach(track => track.stop());
                 this.isActive = false;
                 this.interval = this.micStream = this.analyser = null;
+                nodes.dynamicGain.gain.linearRampToValueAtTime(1.0, audioContext.currentTime + 0.2); // Return to normal volume
                 localStorage.setItem(LEARNING_KEY, JSON.stringify(this.data));
             },
 
@@ -535,9 +532,9 @@
                     display.className = 'loudness-display voice'; descEl.textContent = 'Voice Detected'; emojiEl.textContent = '🗣️';
                 }
 
-                let targetGain = 0.5 + ((currentLevel - ambient) / Math.max(1, voice - ambient));
-                targetGain = Math.max(0.1, Math.min(1.0, targetGain));
-                masterGain.gain.linearRampToValueAtTime(targetGain, audioContext.currentTime + 0.2);
+                let targetGain = 0.8 + ((currentLevel - ambient) / Math.max(1, voice - ambient)) * 0.4;
+                targetGain = Math.max(0.3, Math.min(1.5, targetGain));
+                nodes.dynamicGain.gain.linearRampToValueAtTime(targetGain, audioContext.currentTime + 0.2);
             },
             
             resetProfile(deviceId) {
@@ -632,11 +629,18 @@
             } catch (error) { console.error("Failed to load sounds:", error); }
         }
         
+        function makeDistortionCurve(amount) {
+            const k = amount, n_samples = 44100, curve = new Float32Array(n_samples);
+            for (let i = 0; i < n_samples; i++) { const x = i * 2 / n_samples - 1; curve[i] = (3 + k) * x * 20 * (Math.PI/180) / (Math.PI + k * Math.abs(x)); }
+            return curve;
+        }
+
         const updateFunctions = {
             masterVolume: v => { masterGain.gain.value = v; document.getElementById('masterVolumeValue').textContent = `${Math.round(v*100)}%`; },
             fadeIn: v => { document.getElementById('fadeInValue').textContent = `${parseFloat(v).toFixed(1)}s`; },
             fadeOut: v => { document.getElementById('fadeOutValue').textContent = `${parseFloat(v).toFixed(1)}s`; },
             speed: v => { document.getElementById('speedValue').textContent = `${parseFloat(v).toFixed(2)}x`; activeSounds.forEach(i => i.forEach(s => s.audioElement.playbackRate = v)); },
+            pitch: v => { document.getElementById('pitchValue').textContent = v; },
             distortion: v => { nodes.distortion.curve = makeDistortionCurve(v*4); document.getElementById('distortionValue').textContent = `${v}%`; },
             preamp: v => { nodes.preamp.gain.value = Math.pow(10, v / 20); document.getElementById('preampValue').textContent = `${v} dB`; },
             bass: v => { nodes.bass.gain.value = v; document.getElementById('bassValue').textContent = `${v} dB`; },
@@ -644,9 +648,21 @@
             treble: v => { nodes.treble.gain.value = v; document.getElementById('trebleValue').textContent = `${v} dB`; },
             pan: v => { nodes.panner.pan.value = v; document.getElementById('panValue').textContent = v == 0 ? 'Center' : `${Math.round(Math.abs(v)*100)}% ${v > 0 ? 'R' : 'L'}`; },
             surroundMode: mode => {
-                const isSpatial = mode === 'spatial';
+                const isSpatial = mode === 'spatial' || mode === 'dynamic';
+                const isDynamic = mode === 'dynamic';
+                
+                document.getElementById('dynamicAudioControls').style.display = isDynamic ? 'block' : 'none';
+                document.getElementById('pan-control-group').classList.toggle('disabled', isSpatial);
+                controls.pan.disabled = isSpatial;
+                
                 nodes.convolverBypass.gain.value = isSpatial ? 0 : 1;
                 nodes.convolverWet.gain.value = isSpatial ? 1 : 0;
+
+                if (isDynamic) {
+                    learningEngine.start(controls.microphoneDevice.value);
+                } else {
+                    learningEngine.stop();
+                }
             }
         };
 
@@ -703,6 +719,8 @@
             }
             if (inEl && controls.microphoneDevice.selectedOptions.length > 0) {
                 inEl.textContent = controls.microphoneDevice.selectedOptions[0].text;
+            } else if (inEl) {
+                inEl.textContent = 'None';
             }
         }
 
@@ -711,13 +729,6 @@
             nodes.convolver.buffer = createImpulseResponse(audioContext);
             await loadSoundsAndCreateButtons();
             requestAnimationFrame(updateButtonVisuals);
-
-            // --- Main Event Listeners ---
-            document.querySelector('.settings-tab-container').addEventListener('input', () => {
-                const currentSettings = {};
-                for (const key in controls) currentSettings[key] = controls[key].type === 'checkbox' ? controls[key].checked : controls[key].value;
-                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(currentSettings));
-            });
 
             document.getElementById('resetSettingsBtn').addEventListener('click', () => {
                 if (!confirm('Are you sure you want to reset all settings to their defaults? This will also clear all learned audio profiles.')) return;
@@ -788,24 +799,15 @@
                 }
             });
 
-            controls.dynamicAudioEnabled.addEventListener('change', (e) => {
-                if (e.target.checked) {
-                    learningEngine.start(controls.microphoneDevice.value);
-                } else {
-                    learningEngine.stop();
-                }
-            });
-            
             controls.microphoneDevice.addEventListener('change', () => {
                 updateDeviceDisplays();
-                if (controls.dynamicAudioEnabled.checked) {
+                if (controls.surroundMode.value === 'dynamic') {
                     learningEngine.start(controls.microphoneDevice.value);
                 }
             });
 
              controls.playbackDevice.addEventListener('change', updateDeviceDisplays);
 
-            // --- Device Population and Final Setup ---
             try {
                 await navigator.mediaDevices.getUserMedia({ audio: true });
                 const devices = await navigator.mediaDevices.enumerateDevices();
@@ -814,29 +816,25 @@
 
                 if (audioInputs.length > 0) {
                     const micSelectEl = controls.microphoneDevice;
-                    const savedMic = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY))?.microphoneDevice;
                     micSelectEl.innerHTML = '';
                     audioInputs.forEach(device => {
                         const option = new Option(device.label || `Internal Mic ${micSelectEl.options.length + 1}`, device.deviceId);
-                        if (device.deviceId === savedMic) option.selected = true;
                         micSelectEl.add(option);
                     });
                 } else {
-                    document.querySelector('#dynamic-audio').classList.add('disabled');
+                    document.querySelector('#spatial .control-group:nth-child(3)').classList.add('disabled');
                 }
                 
                 const speakerSelectEl = controls.playbackDevice;
-                const savedSpeaker = JSON.parse(localStorage.getItem(LOCAL_STORAGE_KEY))?.playbackDevice;
                 speakerSelectEl.innerHTML = '';
                 audioOutputs.forEach(device => {
                     const option = new Option(device.label || `Internal Speakers ${speakerSelectEl.options.length + 1}`, device.deviceId);
-                    if(device.deviceId === savedSpeaker) option.selected = true;
                     speakerSelectEl.add(option);
                 });
                 updateDeviceDisplays();
             } catch (err) {
                 console.error("Audio device permission error:", err);
-                document.querySelector('#dynamic-audio').classList.add('disabled');
+                document.querySelector('#spatial .control-group:nth-child(3)').classList.add('disabled');
                 showStatus('Microphone access denied. Dynamic features disabled.', 'error');
             }
              navigator.mediaDevices.ondevicechange = initialize;
