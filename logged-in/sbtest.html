@@ -114,7 +114,8 @@
         .control-group input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 8px; background: var(--v4-border-light); outline: none; border-radius: 5px; margin-top: 5px; }
         .control-group input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 18px; height: 18px; background: var(--v4-purple-accent); cursor: pointer; border-radius: 50%; }
         .control-group input[type="number"], .control-group select, .control-group input[type="text"] { width: 100%; padding: 10px 12px; background-color: var(--v4-input-bg); border: 1px solid var(--v4-input-border); border-radius: 6px; color: var(--v4-text-primary); font-family: var(--v4-font-secondary); font-size: 0.95em; outline: none; box-sizing: border-box; }
-        .control-group input[type="checkbox"] { margin-right: 8px; transform: scale(1.1); accent-color: var(--v4-purple-accent); }
+        .checkbox-label-v4 { padding: 8px 0; }
+        .control-group input[type="checkbox"] { margin-left: 12px; transform: scale(1.1); accent-color: var(--v4-purple-accent); }
         .device-display {
             background-color: var(--v4-input-bg);
             border: 1px solid var(--v4-border-light);
@@ -141,6 +142,7 @@
             border: 1px solid #ffeeba;
             border-radius: 8px;
             text-align: center;
+            grid-column: 1 / -1; /* Span across all columns */
         }
          #mic-permission-prompt button {
             margin-top: 10px;
@@ -283,16 +285,9 @@
                         <label class="checkbox-label-v4">Conversation Awareness <input type="checkbox" data-setting="modeAwareness"></label>
                          <label class="checkbox-label-v4">Night Mode <input type="checkbox" data-setting="modeNight"></label>
                     </div>
-                    <hr>
                      <div id="mic-permission-prompt" style="display: none;">
                         <p>Dynamic features require microphone access to work.</p>
                         <button id="enable-mic-btn" class="btn">Enable Microphone</button>
-                    </div>
-                     <div id="dynamicAudioControls" style="display:none;">
-                        <div class="loudness-display">
-                           <span class="emoji">🧠</span>
-                           <span class="description">Engine Idle</span>
-                        </div>
                     </div>
                 </div>
 
@@ -366,38 +361,35 @@
         
         let activeSounds = new Map();
         
+        const masterGain = audioContext.createGain();
+        const finalCompressor = new DynamicsCompressorNode(audioContext);
         const inputGain = audioContext.createGain();
-        const finalCompressor = new DynamicsCompressorNode(audioContext); // Final limiter to prevent clipping
-        const masterGain = audioContext.createGain(); // User-controlled master volume
-        
+
         const nodes = {
             spatial: { input: audioContext.createGain(), convolver: audioContext.createConvolver(), output: audioContext.createGain() },
             binaural: { input: audioContext.createGain(), panner: new StereoPannerNode(audioContext, { pan: -0.5 }), delay: new DelayNode(audioContext, { delayTime: 0.005 }), output: audioContext.createGain() },
-            party: { input: audioContext.createGain(), compressor: new DynamicsCompressorNode(audioContext, {threshold: -40, ratio: 12}), bassBoost: new BiquadFilterNode(audioContext, {type: 'lowshelf', frequency: 200, gain: 6}) },
+            party: { compressor: new DynamicsCompressorNode(audioContext, {threshold: -100, ratio: 1}), bassBoost: new BiquadFilterNode(audioContext, {type: 'lowshelf', frequency: 200, gain: 0}) },
             vocalBoost: new BiquadFilterNode(audioContext, {type: 'peaking', frequency: 2500, Q: 1.5, gain: 0}),
-            nightMode: audioContext.createGain(),
-            stableVolume: new DynamicsCompressorNode(audioContext, {threshold: -100, ratio: 1}), // Initial disabled state
+            nightMode: new DynamicsCompressorNode(audioContext, {threshold: -100, ratio: 1}),
+            stableVolume: new DynamicsCompressorNode(audioContext, {threshold: -100, ratio: 1}),
             dynamicGain: audioContext.createGain(),
         };
 
-        // --- Static Audio Routing Graph ---
-        const dryBus = audioContext.createGain(); // Carries the original signal
-        const wetBus = audioContext.createGain(); // Carries the signal to be processed by effects
+        const dryBus = audioContext.createGain();
+        const wetBus = audioContext.createGain();
         
         inputGain.connect(dryBus);
         inputGain.connect(wetBus);
 
-        // --- Effects processing on the WET bus ---
         wetBus.connect(nodes.spatial.input).connect(nodes.spatial.convolver).connect(masterGain);
-        wetBus.connect(nodes.binaural.input).connect(nodes.binaural.panner).connect(masterGain); // Left
-        wetBus.connect(nodes.binaural.input).connect(nodes.binaural.delay).connect(masterGain); // Right (delayed)
+        wetBus.connect(nodes.binaural.input).connect(nodes.binaural.panner).connect(masterGain);
+        wetBus.connect(nodes.binaural.input).connect(nodes.binaural.delay).connect(masterGain);
         wetBus.connect(nodes.vocalBoost);
-        wetBus.connect(nodes.party.input).connect(nodes.party.bassBoost).connect(nodes.party.compressor).connect(masterGain);
+        wetBus.connect(nodes.party.bassBoost).connect(nodes.party.compressor).connect(masterGain);
         
         nodes.vocalBoost.connect(masterGain);
-        dryBus.connect(masterGain); // The dry signal also routes to master
+        dryBus.connect(masterGain);
 
-        // --- Final Output Chain ---
         masterGain.connect(nodes.stableVolume).connect(nodes.nightMode).connect(nodes.dynamicGain).connect(finalCompressor).connect(audioContext.destination);
         
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
@@ -411,50 +403,55 @@
             el.timeoutId = setTimeout(() => el.style.display = 'none', duration);
         };
         
-        const dynamicAudioEngine = {
-            micStream: null, analyser: null, interval: null, isActive: false,
+        const awarenessEngine = {
+            micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false,
+            
             start(deviceId) {
-                if (this.isActive) this.stop();
+                if (this.isActive || !deviceId) return;
                 this.isActive = true;
-                navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId } } })
+                navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId }, noiseSuppression: true, echoCancellation: true } })
                     .then(stream => {
                         this.micStream = stream;
                         this.analyser = audioContext.createAnalyser();
-                        this.analyser.fftSize = 256;
+                        this.analyser.fftSize = 512;
                         audioContext.createMediaStreamSource(stream).connect(this.analyser);
-                        document.getElementById('dynamicAudioControls').style.display = 'block';
-                        this.interval = setInterval(this.process, 200);
-                    }).catch(err => this.stop());
+                        this.interval = setInterval(() => this.process(), 100);
+                    }).catch(err => { this.stop(); });
             },
+
             stop() {
-                if(this.interval) clearInterval(this.interval);
-                if(this.micStream) this.micStream.getTracks().forEach(track => track.stop());
+                if (this.interval) clearInterval(this.interval);
+                if (this.micStream) this.micStream.getTracks().forEach(track => track.stop());
                 this.isActive = false;
-                nodes.dynamicGain.gain.linearRampToValueAtTime(1.0, audioContext.currentTime + 0.2);
-                document.getElementById('dynamicAudioControls').style.display = 'none';
+                this.interval = this.micStream = this.analyser = null;
+                this.setDucking(false);
             },
+
             process() {
-                if (!dynamicAudioEngine.analyser) return;
-                const dataArray = new Uint8Array(dynamicAudioEngine.analyser.frequencyBinCount);
-                dynamicAudioEngine.analyser.getByteFrequencyData(dataArray);
-                const level = dataArray.reduce((s, v) => s + v, 0) / dataArray.length;
-                
-                const display = document.getElementById('loudnessDisplay');
-                const descEl = display.querySelector('.description');
-                const emojiEl = display.querySelector('.emoji');
-                
-                let targetGain = 1.0;
-                if (level < 10) {
-                    display.className = 'loudness-display quiet'; descEl.textContent = 'Quiet'; emojiEl.textContent = '🤫';
-                    targetGain = 0.7;
-                } else if (level < 40) {
-                    display.className = 'loudness-display normal'; descEl.textContent = 'Normal'; emojiEl.textContent = '😊';
-                    targetGain = 1.0;
-                } else {
-                    display.className = 'loudness-display loud'; descEl.textContent = 'Loud'; emojiEl.textContent = '🔊';
-                    targetGain = 1.3;
+                if (!this.analyser) return;
+                const dataArray = new Uint8Array(this.analyser.frequencyBinCount);
+                this.analyser.getByteFrequencyData(dataArray);
+
+                const targetMinHz = 300, targetMaxHz = 3400;
+                const binWidth = audioContext.sampleRate / this.analyser.fftSize;
+                const minBin = Math.floor(targetMinHz / binWidth);
+                const maxBin = Math.ceil(targetMaxHz / binWidth);
+
+                let voiceEnergy = 0;
+                for (let i = minBin; i <= maxBin; i++) voiceEnergy += dataArray[i];
+                voiceEnergy /= (maxBin - minBin + 1);
+
+                const currentlySpeaking = voiceEnergy > 20;
+
+                if (currentlySpeaking !== this.isSpeaking) {
+                    this.isSpeaking = currentlySpeaking;
+                    this.setDucking(this.isSpeaking);
                 }
-                nodes.dynamicGain.gain.linearRampToValueAtTime(targetGain, audioContext.currentTime + 0.2);
+            },
+            
+            setDucking(isDucking) {
+                const newVolume = isDucking ? 0.3 : 1.0;
+                masterGain.gain.linearRampToValueAtTime(newVolume, audioContext.currentTime + (isDucking ? 0.2 : 0.5));
             }
         };
 
@@ -554,8 +551,8 @@
             },
             modeVocalBoost: v => nodes.vocalBoost.gain.linearRampToValueAtTime(v ? 6 : 0, 0.1),
             modeParty: v => {
-                nodes.party.input.gain.linearRampToValueAtTime(v ? 1 : 0, 0.1);
-                nodes.party.feedback.gain.linearRampToValueAtTime(v ? 0.3 : 0, 0.1);
+                nodes.party.compressor.threshold.value = v ? -40 : -100;
+                nodes.party.bassBoost.gain.value = v ? 6 : 0;
             },
             modeDynamic: v => v ? dynamicAudioEngine.start(controls.microphoneDevice.value) : dynamicAudioEngine.stop(),
             modeAwareness: v => v ? awarenessEngine.start(controls.microphoneDevice.value) : awarenessEngine.stop(),
@@ -614,7 +611,7 @@
         
         function createImpulseResponse(context) {
             const sampleRate = context.sampleRate;
-            const length = sampleRate * 0.5; // Shorter reverb
+            const length = sampleRate * 0.5;
             const impulse = context.createBuffer(2, length, sampleRate);
             const left = impulse.getChannelData(0);
             const right = impulse.getChannelData(1);
@@ -630,7 +627,6 @@
             await loadSoundsAndCreateButtons();
             requestAnimationFrame(updateButtonVisuals);
 
-            // --- Main Event Listeners ---
             document.getElementById('resetSettingsBtn').addEventListener('click', () => {
                 if (!confirm('Are you sure you want to reset all settings?')) return;
                 localStorage.removeItem(LOCAL_STORAGE_KEY);
@@ -670,7 +666,6 @@
             controls.microphoneDevice.addEventListener('change', updateDeviceDisplays);
              controls.playbackDevice.addEventListener('change', updateDeviceDisplays);
             
-            // --- Mic Permission Handling ---
              const micPrompt = document.getElementById('mic-permission-prompt');
              const micFeatures = document.getElementById('dynamic-audio-group');
              try {
