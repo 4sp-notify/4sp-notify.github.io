@@ -421,15 +421,11 @@
                          <small class="mode-description">Creates an ultra-wide stereo effect, best with headphones.</small>
                     </div>
                      <div class="control-group" data-search-terms="vocal boost voice clarity">
-                         <label class="checkbox-label-v4">Vocal Boost <input type="checkbox" data-setting="modeVocalBoost"></label>
+                         <label class="checkbox-label-v4">Vocal Boost <input type="checkbox" id="modeVocalBoost" data-setting="modeVocalBoost"></label>
                          <small class="mode-description">Emphasizes frequencies in human speech to improve clarity.</small>
                     </div>
-                     <div class="control-group" data-search-terms="party mode echo bass boost">
-                         <label class="checkbox-label-v4">Party Mode <input type="checkbox" data-setting="modeParty"></label>
-                         <small class="mode-description">Adds bass boost and compression for a punchier, louder sound.</small>
-                    </div>
                      <div class="control-group" data-search-terms="stable volume normalize compression">
-                         <label class="checkbox-label-v4">Stable Volume <input type="checkbox" data-setting="modeStable"></label>
+                         <label class="checkbox-label-v4">Stable Volume <input type="checkbox" id="modeStable" data-setting="modeStable"></label>
                          <small class="mode-description">Reduces the difference between loud and quiet parts (normalization).</small>
                     </div>
                      <div class="control-group" data-search-terms="night mode quiet listening volume lock">
@@ -450,8 +446,8 @@
                     <div class="control-group" data-search-terms="equalizer eq bass">
                         <label for="eqBass">Bass: <span id="eqBassValue">0 dB</span></label>
                         <div class="slider-input-container">
-                            <input type="range" id="eqBass" min="-40" max="80" step="1" value="0" data-setting="eqBass">
-                            <input type="number" class="slider-value-input" data-slider-id="eqBass" min="-40" max="80" step="1">
+                            <input type="range" id="eqBass" min="-40" max="40" step="1" value="0" data-setting="eqBass">
+                            <input type="number" class="slider-value-input" data-slider-id="eqBass" min="-40" max="40" step="1">
                         </div>
                     </div>
                     <div class="control-group" data-search-terms="equalizer eq mid">
@@ -562,62 +558,54 @@
         let lastVolumeBeforeMute = 1;
         let lastVolumeBeforeNightMode = 1;
         
-        // --- Main Audio Graph Nodes ---
         const inputGain = audioContext.createGain();
-        const preEffectGain = audioContext.createGain();
         const masterGain = audioContext.createGain();
 
-        // --- Effect Path Nodes ---
-        // Spatial (HRTF) Path
-        const monoMerger = audioContext.createChannelMerger(1);
-        const spatialPanner = new PannerNode(audioContext, { 
-            panningModel: 'HRTF', 
-            distanceModel: 'inverse',
-            positionX: 1, positionY: 2, positionZ: 3,
-            orientationX: 0, orientationY: 0, orientationZ: -1
-        });
-        const spatialGain = audioContext.createGain();
-        
-        // Binaural (Stereo Widener) Path
-        const binauralSplitter = audioContext.createChannelSplitter(2);
-        const binauralDelay = audioContext.createDelay(0.1);
-        const binauralMerger = audioContext.createChannelMerger(2);
-        const binauralGain = audioContext.createGain();
+        const nodes = {
+            eqBass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 100, gain: 0 }),
+            eqMid: new BiquadFilterNode(audioContext, { type: 'peaking', frequency: 1200, Q: 1.0, gain: 0 }),
+            eqTreble: new BiquadFilterNode(audioContext, { type: 'highshelf', frequency: 6000, gain: 0 }),
+            vocalBoost: new BiquadFilterNode(audioContext, { type: 'peaking', frequency: 2500, Q: 1.5, gain: 0 }),
+            stableVolume: new DynamicsCompressorNode(audioContext, { threshold: -24, ratio: 1, knee: 0 }),
+            awarenessGain: audioContext.createGain(),
+            monoMerger: audioContext.createChannelMerger(1),
+            spatialPanner: new PannerNode(audioContext, { panningModel: 'HRTF', distanceModel: 'inverse', positionX: 1, positionY: 2, positionZ: 3, orientationX: 0, orientationY: 0, orientationZ: -1 }),
+            binauralSplitter: audioContext.createChannelSplitter(2),
+            binauralDelay: audioContext.createDelay(0.1),
+            binauralMerger: audioContext.createChannelMerger(2),
+            nightModeLimiter: new DynamicsCompressorNode(audioContext),
+            finalCompressor: new DynamicsCompressorNode(audioContext, { threshold: -12.0, ratio: 6.0 }),
+            dryGain: audioContext.createGain(),
+            spatialGain: audioContext.createGain(),
+            binauralGain: audioContext.createGain(),
+            postEffectGain: audioContext.createGain(),
+        };
 
-        // Dry (No Effect) Path
-        const dryGain = audioContext.createGain();
-
-        // Final common path
-        const postEffectGain = audioContext.createGain();
-        const nightModeLimiter = new DynamicsCompressorNode(audioContext); // Configured on the fly
-        const finalCompressor = new DynamicsCompressorNode(audioContext, { threshold: -12.0, ratio: 6.0 });
-        
         // --- Routing ---
-        inputGain.connect(masterGain).connect(preEffectGain);
-
+        inputGain.connect(masterGain);
+        masterGain.connect(nodes.eqBass).connect(nodes.eqMid).connect(nodes.eqTreble).connect(nodes.postEffectGain);
+        
         // Dry Path
-        preEffectGain.connect(dryGain).connect(postEffectGain);
-        
+        nodes.postEffectGain.connect(nodes.dryGain).connect(nodes.vocalBoost);
         // Spatial Path
-        preEffectGain.connect(monoMerger, 0, 0);
-        preEffectGain.connect(monoMerger, 0, 1); // Force stereo to mono
-        monoMerger.connect(spatialPanner).connect(spatialGain).connect(postEffectGain);
-        
-        // Binaural Path (Haas Effect)
-        preEffectGain.connect(binauralSplitter);
-        binauralSplitter.connect(binauralMerger, 0, 0); // Left channel direct
-        binauralSplitter.connect(binauralDelay, 1);   // Right channel to delay
-        binauralDelay.connect(binauralMerger, 0, 1);    // Delayed right channel
-        binauralMerger.connect(binauralGain).connect(postEffectGain);
-        
+        nodes.postEffectGain.connect(nodes.monoMerger, 0, 0);
+        nodes.postEffectGain.connect(nodes.monoMerger, 0, 1);
+        nodes.monoMerger.connect(nodes.spatialPanner).connect(nodes.spatialGain).connect(nodes.vocalBoost);
+        // Binaural Path
+        nodes.postEffectGain.connect(nodes.binauralSplitter);
+        nodes.binauralSplitter.connect(nodes.binauralMerger, 0, 0);
+        nodes.binauralSplitter.connect(nodes.binauralDelay, 1);
+        nodes.binauralDelay.connect(nodes.binauralMerger, 0, 1);
+        nodes.binauralMerger.connect(nodes.binauralGain).connect(nodes.vocalBoost);
+
         // Final Chain
-        postEffectGain.connect(nightModeLimiter).connect(finalCompressor).connect(audioContext.destination);
+        nodes.vocalBoost.connect(nodes.stableVolume).connect(nodes.awarenessGain).connect(nodes.nightModeLimiter).connect(nodes.finalCompressor).connect(audioContext.destination);
 
         // Initial Gains
-        dryGain.gain.value = 1;
-        spatialGain.gain.value = 0;
-        binauralGain.gain.value = 0;
-        binauralDelay.delayTime.value = 0.005; // 5ms delay for Haas effect
+        nodes.dryGain.gain.value = 1;
+        nodes.spatialGain.gain.value = 0;
+        nodes.binauralGain.gain.value = 0;
+        nodes.binauralDelay.delayTime.value = 0.005;
 
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
@@ -628,65 +616,20 @@
         
         const toggleMute = () => { isMuted = !isMuted; const muteIndicator = document.getElementById('muteIndicator'); if (isMuted) { lastVolumeBeforeMute = masterGain.gain.value; masterGain.gain.value = 0; muteIndicator.classList.add('visible'); } else { masterGain.gain.value = lastVolumeBeforeMute; muteIndicator.classList.remove('visible'); } controls.masterVolume.value = masterGain.gain.value; document.getElementById('masterVolumeValue').textContent = `${Math.round(masterGain.gain.value * 100)}%`; };
         const updateFunctions = { 
-            masterVolume: v => { 
-                const newVol = parseFloat(v); 
-                masterGain.gain.value = newVol; 
-                if (newVol > 0 && !document.getElementById('modeNight').checked) { lastVolumeBeforeMute = newVol; } 
-                isMuted = (newVol === 0); 
-                document.getElementById('muteIndicator').classList.toggle('visible', isMuted); 
-                document.getElementById('masterVolumeValue').textContent = `${Math.round(newVol*100)}%`;
-                const numInput = document.querySelector(`[data-slider-id="masterVolume"]`);
-                if(numInput) numInput.value = Math.round(newVol*100);
-            }, 
-            fadeIn: v => { document.getElementById('fadeInValue').textContent = `${parseFloat(v).toFixed(1)}s`; if(document.querySelector(`[data-slider-id="fadeIn"]`)) document.querySelector(`[data-slider-id="fadeIn"]`).value = v; }, 
-            fadeOut: v => { document.getElementById('fadeOutValue').textContent = `${parseFloat(v).toFixed(1)}s`; if(document.querySelector(`[data-slider-id="fadeOut"]`)) document.querySelector(`[data-slider-id="fadeOut"]`).value = v; }, 
-            speed: v => { document.getElementById('speedValue').textContent = `${parseFloat(v).toFixed(2)}x`; activeSounds.forEach(i => i.forEach(s => s.audioElement.playbackRate = v)); if(document.querySelector(`[data-slider-id="speed"]`)) document.querySelector(`[data-slider-id="speed"]`).value = v; }, 
-            pitch: v => { const pitchValue = parseFloat(v); document.getElementById('pitchValue').textContent = pitchValue; activeSounds.forEach(instances => instances.forEach(s => s.audioElement.detune = pitchValue)); if(document.querySelector(`[data-slider-id="pitch"]`)) document.querySelector(`[data-slider-id="pitch"]`).value = v; }, 
-            eqBass: v => {  const val = parseFloat(v); postEffectGain.disconnect(); postEffectGain.connect(nightModeLimiter); /* Reconnect EQ if needed */ if(document.querySelector(`[data-slider-id="eqBass"]`)) document.querySelector(`[data-slider-id="eqBass"]`).value = v; },
-            eqMid: v => { /* ... */ if(document.querySelector(`[data-slider-id="eqMid"]`)) document.querySelector(`[data-slider-id="eqMid"]`).value = v; },
-            eqTreble: v => { /* ... */ if(document.querySelector(`[data-slider-id="eqTreble"]`)) document.querySelector(`[data-slider-id="eqTreble"]`).value = v; },
-            modeSpatial: (v) => {
-                if (v) {
-                    controls.modeBinaural.checked = false;
-                    binauralGain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.1);
-                }
-                dryGain.gain.linearRampToValueAtTime(v ? 0 : 1, audioContext.currentTime + 0.1);
-                spatialGain.gain.linearRampToValueAtTime(v ? 1 : 0, audioContext.currentTime + 0.1);
-            },
-            modeBinaural: (v) => {
-                if (v) {
-                    controls.modeSpatial.checked = false;
-                    spatialGain.gain.linearRampToValueAtTime(0, audioContext.currentTime + 0.1);
-                }
-                dryGain.gain.linearRampToValueAtTime(v ? 0 : 1, audioContext.currentTime + 0.1);
-                binauralGain.gain.linearRampToValueAtTime(v ? 1 : 0, audioContext.currentTime + 0.1);
-            },
-            modeNight: (v) => {
-                const volControl = document.getElementById('masterVolumeControl');
-                if (v) {
-                    // Store current volume and lock the control
-                    lastVolumeBeforeNightMode = controls.masterVolume.value;
-                    volControl.classList.add('volume-locked');
-                    controls.masterVolume.value = 0.15; // Set to a low, audible volume
-                    controls.masterVolume.dispatchEvent(new Event('input', { bubbles: true }));
-                    
-                    // Apply heavy compression
-                    nightModeLimiter.threshold.setValueAtTime(-40, audioContext.currentTime);
-                    nightModeLimiter.knee.setValueAtTime(30, audioContext.currentTime);
-                    nightModeLimiter.ratio.setValueAtTime(20, audioContext.currentTime);
-                } else {
-                    // Unlock control and restore volume
-                    volControl.classList.remove('volume-locked');
-                    controls.masterVolume.value = lastVolumeBeforeNightMode;
-                    controls.masterVolume.dispatchEvent(new Event('input', { bubbles: true }));
-
-                    // Reset compressor to neutral
-                    nightModeLimiter.threshold.setValueAtTime(0, audioContext.currentTime);
-                    nightModeLimiter.knee.setValueAtTime(0, audioContext.currentTime);
-                    nightModeLimiter.ratio.setValueAtTime(1, audioContext.currentTime);
-                }
-            },
-            modeAwareness: v => v ? awarenessEngine.start() : awarenessEngine.stop(), 
+            masterVolume: v => { const newVol = parseFloat(v); masterGain.gain.value = newVol; if (newVol > 0 && !document.getElementById('modeNight').checked) { lastVolumeBeforeMute = newVol; } isMuted = (newVol === 0); document.getElementById('muteIndicator').classList.toggle('visible', isMuted); document.getElementById('masterVolumeValue').textContent = `${Math.round(newVol*100)}%`; const numInput = document.querySelector(`[data-slider-id="masterVolume"]`); if(numInput) numInput.value = Math.round(newVol*100); },
+            fadeIn: v => { document.getElementById('fadeInValue').textContent = `${parseFloat(v).toFixed(1)}s`; if(document.querySelector(`[data-slider-id="fadeIn"]`)) document.querySelector(`[data-slider-id="fadeIn"]`).value = v; },
+            fadeOut: v => { document.getElementById('fadeOutValue').textContent = `${parseFloat(v).toFixed(1)}s`; if(document.querySelector(`[data-slider-id="fadeOut"]`)) document.querySelector(`[data-slider-id="fadeOut"]`).value = v; },
+            speed: v => { document.getElementById('speedValue').textContent = `${parseFloat(v).toFixed(2)}x`; activeSounds.forEach(i => i.forEach(s => s.audioElement.playbackRate = v)); if(document.querySelector(`[data-slider-id="speed"]`)) document.querySelector(`[data-slider-id="speed"]`).value = v; },
+            pitch: v => { const pitchValue = parseFloat(v); document.getElementById('pitchValue').textContent = pitchValue; activeSounds.forEach(instances => instances.forEach(s => s.audioElement.detune = pitchValue)); if(document.querySelector(`[data-slider-id="pitch"]`)) document.querySelector(`[data-slider-id="pitch"]`).value = v; },
+            eqBass: v => { const val = parseFloat(v); nodes.eqBass.gain.value = val; document.getElementById('eqBassValue').textContent = `${val} dB`; if(document.querySelector(`[data-slider-id="eqBass"]`)) document.querySelector(`[data-slider-id="eqBass"]`).value = v; },
+            eqMid: v => { const val = parseFloat(v); nodes.eqMid.gain.value = val; document.getElementById('eqMidValue').textContent = `${val} dB`; if(document.querySelector(`[data-slider-id="eqMid"]`)) document.querySelector(`[data-slider-id="eqMid"]`).value = v; },
+            eqTreble: v => { const val = parseFloat(v); nodes.eqTreble.gain.value = val; document.getElementById('eqTrebleValue').textContent = `${val} dB`; if(document.querySelector(`[data-slider-id="eqTreble"]`)) document.querySelector(`[data-slider-id="eqTreble"]`).value = v; },
+            modeSpatial: (v) => { if (v) { controls.modeBinaural.checked = false; controls.modeBinaural.dispatchEvent(new Event('change')); } nodes.dryGain.gain.linearRampToValueAtTime(v ? 0 : 1, audioContext.currentTime + 0.05); nodes.spatialGain.gain.linearRampToValueAtTime(v ? 1 : 0, audioContext.currentTime + 0.05); },
+            modeBinaural: (v) => { if (v) { controls.modeSpatial.checked = false; controls.modeSpatial.dispatchEvent(new Event('change')); } nodes.dryGain.gain.linearRampToValueAtTime(v ? 0 : 1, audioContext.currentTime + 0.05); nodes.binauralGain.gain.linearRampToValueAtTime(v ? 1 : 0, audioContext.currentTime + 0.05); },
+            modeNight: (v) => { const volControl = document.getElementById('masterVolumeControl'); if (v) { lastVolumeBeforeNightMode = controls.masterVolume.value; volControl.classList.add('volume-locked'); controls.masterVolume.value = 0.15; controls.masterVolume.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeLimiter.threshold.setValueAtTime(-40, audioContext.currentTime); nodes.nightModeLimiter.knee.setValueAtTime(30, audioContext.currentTime); nodes.nightModeLimiter.ratio.setValueAtTime(20, audioContext.currentTime); } else { volControl.classList.remove('volume-locked'); controls.masterVolume.value = lastVolumeBeforeNightMode; controls.masterVolume.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeLimiter.threshold.setValueAtTime(0, audioContext.currentTime); nodes.nightModeLimiter.knee.setValueAtTime(0, audioContext.currentTime); nodes.nightModeLimiter.ratio.setValueAtTime(1, audioContext.currentTime); } },
+            modeVocalBoost: v => { nodes.vocalBoost.gain.linearRampToValueAtTime(v ? 6 : 0, audioContext.currentTime + 0.1) },
+            modeStable: v => { nodes.stableVolume.ratio.linearRampToValueAtTime(v ? 12 : 1, audioContext.currentTime + 0.1); },
+            modeAwareness: v => v ? awarenessEngine.start() : awarenessEngine.stop(),
         };
         
         function updateButtonVisuals() { requestAnimationFrame(updateButtonVisuals); document.querySelectorAll('.sound-button-v4[data-sound-file]').forEach(button => { const fileName = button.dataset.soundFile; const instances = activeSounds.get(fileName); if (instances && instances.length > 0) { button.classList.add('playing'); if (instances.length > 1) { button.classList.add('pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } else { button.classList.remove('pulsating'); const analyser = instances[0].analyser; const dataArray = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(dataArray); const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length; const scale = 1 + (avg / 255) * 0.05; const shadowSpread = 2 + (avg / 255) * 8; button.style.transform = `scale(${scale})`; button.style.boxShadow = `0 0 ${shadowSpread}px rgba(103, 32, 189, 0.7)`; } } else { button.classList.remove('playing', 'pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } }); }
