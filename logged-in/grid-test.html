@@ -337,7 +337,7 @@
             cursor: grab;
             z-index: 10;
             box-shadow: 0 2px 5px rgba(0,0,0,0.2);
-            transition: background-color 0.2s, transform 0.2s, box-shadow 0.2s;
+            transition: top 0.3s ease, left 0.3s ease, background-color 0.2s, transform 0.2s, box-shadow 0.2s;
         }
         #spatial-puck.snapped {
             box-shadow: 0 0 10px 2px var(--v4-purple-accent);
@@ -363,7 +363,7 @@
             padding: 5px 10px;
             border-radius: 6px;
             border: 1px solid var(--v4-border-light);
-            min-width: 110px;
+            min-width: 150px; /* Increased width for Z coord */
             text-align: center;
         }
         #resetSpatialBtn {
@@ -585,7 +585,7 @@
                          </label>
                          <div class="spatial-audio-panel">
                              <small class="spatial-extended-description">
-                                Experience a hyper-realistic 3D soundscape. Our advanced engine simulates the sound's position, air absorption, and room reflections, automatically creating a sense of depth and movement that adapts to any headphones. Drag the puck to place the sound around you.
+                                Immerse yourself in our most powerful spatial audio engine yet. We now simulate the size and shape of a virtual room around you, creating hyper-realistic early reflections that your brain uses to perceive true 3D space. Drag the puck to place the sound, and use the scroll wheel for elevation. The experience is breathtaking with headphones.
                              </small>
                              <div class="spatial-interactive-area">
                                  <div id="spatial-pad">
@@ -598,7 +598,7 @@
                                      <div id="spatial-puck"></div>
                                  </div>
                                  <div id="spatial-pad-controls">
-                                     <div id="spatial-coords">X: 0.00, Y: 0.00</div>
+                                     <div id="spatial-coords">X: 0.00, Y: 0.00, Z: 0.00</div>
                                      <button id="resetSpatialBtn" title="Reset Position"><img src="../images/refresh-dark.png" alt="Reset"></button>
                                  </div>
                              </div>
@@ -747,7 +747,7 @@
     // --- Soundboard Logic ---
     document.addEventListener('DOMContentLoaded', () => {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const LOCAL_STORAGE_KEY = 'soundboardSettingsV14'; // Incremented key for new settings
+        const LOCAL_STORAGE_KEY = 'soundboardSettingsV15'; // Incremented key for new settings
         
         let activeSounds = new Map();
         let isMuted = false;
@@ -757,8 +757,9 @@
         // --- Spatial Audio State ---
         let spatialPadRect = null;
         let currentSnapAngle = null;
+        let currentZ = 0; // Z-axis state is back
         let isDragging = false;
-        let lastDragPosition = { x: 0, y: 0, timestamp: 0 }; // For Doppler effect
+        let lastDragPosition = { x: 0, y: 0, timestamp: 0 };
         
         const unlockAudioContext = () => {
             if (audioContext.state === 'suspended') {
@@ -774,16 +775,20 @@
         const finalCompressor = new DynamicsCompressorNode(audioContext, { threshold: -12.0, ratio: 6.0 });
         
         const nodes = {
-            // --- ADVANCED SPATIAL NODES ---
+            // --- SUPER POWERFUL SPATIAL NODES ---
+            spatialInput: audioContext.createGain(), // New single entry point for all spatial effects
             airAbsorptionFilter: new BiquadFilterNode(audioContext, { type: 'lowpass', frequency: 22050 }),
-            spatialPanner: new PannerNode(audioContext, { panningModel: 'HRTF', distanceModel: 'inverse', positionX: 0, positionY: 0, positionZ: 0 }),
-            reverbNode: audioContext.createConvolver(),
-            reverbGain: audioContext.createGain(),
-            lfoZ: audioContext.createOscillator(),
-            lfoZDepth: audioContext.createGain(),
-            lfoXY: audioContext.createOscillator(),
-            lfoXYDepth: audioContext.createGain(),
-            // --- END ADVANCED SPATIAL NODES ---
+            mainPanner: new PannerNode(audioContext, { panningModel: 'HRTF', distanceModel: 'inverse' }),
+            reverb: {
+                node: audioContext.createConvolver(),
+                gain: audioContext.createGain(),
+            },
+            earlyReflections: { // NEW Early Reflections Engine
+                input: audioContext.createGain(),
+                output: audioContext.createGain(),
+                surfaces: {} // Will be populated with delay, gain, panner for each surface
+            },
+            // --- END SPATIAL NODES ---
 
             inputGain: audioContext.createGain(),
             eqBass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 100, gain: 0 }),
@@ -798,28 +803,54 @@
         };
         
         // --- ADVANCED AUDIO GRAPH WIRING ---
-        nodes.airAbsorptionFilter.connect(nodes.spatialPanner);
-        nodes.spatialPanner.connect(nodes.inputGain); // Dry path
-        nodes.spatialPanner.connect(nodes.reverbGain).connect(nodes.reverbNode).connect(nodes.inputGain); // Wet path
+        // 1. Each sound connects to the main spatial input
+        nodes.spatialInput.connect(nodes.airAbsorptionFilter);
         
-        // Automated LFO modulation for lifelike movement
-        nodes.lfoZ.connect(nodes.lfoZDepth).connect(nodes.spatialPanner.positionZ);
-        nodes.lfoXY.connect(nodes.lfoXYDepth).connect(nodes.spatialPanner.positionY); // Modulating Y for subtle drift
-
+        // 2. Main "dry" signal path
+        nodes.airAbsorptionFilter.connect(nodes.mainPanner).connect(nodes.inputGain);
+        
+        // 3. Reverb "wet" path
+        nodes.airAbsorptionFilter.connect(nodes.reverb.gain).connect(nodes.reverb.node).connect(nodes.inputGain);
+        
+        // 4. NEW: Early Reflections path
+        nodes.airAbsorptionFilter.connect(nodes.earlyReflections.input);
+        nodes.earlyReflections.output.connect(nodes.inputGain);
+        
+        // 5. Rest of the chain is connected after the spatial effects are mixed
         nodes.inputGain.connect(masterGain).connect(nodes.eqBass).connect(nodes.bassWaveShaper).connect(nodes.eqMid).connect(nodes.eqTreble).connect(nodes.vintageWarmer).connect(nodes.stableVolume).connect(nodes.vocalBoost).connect(nodes.awarenessGain).connect(nodes.nightModeCompressor).connect(finalCompressor).connect(audioContext.destination);
 
-        // --- UTILITY FUNCTIONS ---
+        // --- UTILITY FUNCTIONS & INITIALIZATION ---
         async function createReverbIR(audioContext) {
             const sampleRate = audioContext.sampleRate;
-            const length = sampleRate * 2; // 2-second reverb tail
+            const length = sampleRate * 2;
             const impulse = audioContext.createBuffer(2, length, sampleRate);
-            for (let channel = 0; channel < 2; channel++) {
-                const channelData = impulse.getChannelData(channel);
-                for (let i = 0; i < length; i++) {
-                    channelData[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 3);
-                }
+            for (let ch = 0; ch < 2; ch++) {
+                const data = impulse.getChannelData(ch);
+                for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 3);
             }
-            nodes.reverbNode.buffer = impulse;
+            nodes.reverb.node.buffer = impulse;
+        }
+
+        function createEarlyReflectionsEngine() {
+            const surfaces = ['left', 'right', 'front', 'back', 'top', 'bottom'];
+            surfaces.forEach(name => {
+                const reflection = {
+                    delay: audioContext.createDelay(1.0), // Max 1 second delay
+                    gain: audioContext.createGain(),
+                    panner: audioContext.createStereoPanner(), // Simple stereo panner for reflections
+                };
+                // Route the audio for this reflection
+                nodes.earlyReflections.input.connect(reflection.delay).connect(reflection.gain).connect(reflection.panner).connect(nodes.earlyReflections.output);
+                nodes.earlyReflections.surfaces[name] = reflection;
+            });
+            // Set initial pan positions for each reflection source
+            nodes.earlyReflections.surfaces.left.panner.pan.value = -0.8;
+            nodes.earlyReflections.surfaces.right.panner.pan.value = 0.8;
+            // Front/back/top/bottom are centered, their spatial cue comes from the main HRTF panner primarily
+            nodes.earlyReflections.surfaces.front.panner.pan.value = 0;
+            nodes.earlyReflections.surfaces.back.panner.pan.value = 0;
+            nodes.earlyReflections.surfaces.top.panner.pan.value = 0;
+            nodes.earlyReflections.surfaces.bottom.panner.pan.value = 0;
         }
 
         function makeDistortionCurve(amount) { const k = typeof amount === 'number' ? amount : 50; const n_samples = 44100; const curve = new Float32Array(n_samples); const deg = Math.PI / 180; for (let i = 0; i < n_samples; i++) { const x = i * 2 / n_samples - 1; curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x)); } return curve; }
@@ -829,7 +860,7 @@
         nodes.bassWaveShaper.oversample = '4x';
         nodes.vintageWarmer.curve = makeVintageCurve(0);
         nodes.vintageWarmer.oversample = '4x';
-        nodes.reverbGain.gain.value = 0; // Start with no reverb
+        nodes.reverb.gain.gain.value = 0;
         
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
@@ -843,24 +874,13 @@
                 this.gainNode = audioContext.createGain();
                 this.analyser = audioContext.createAnalyser();
                 this.analyser.fftSize = 128;
-                // Connect to the advanced effect chain entry point
-                this.sourceNode.connect(this.gainNode).connect(this.analyser).connect(nodes.airAbsorptionFilter);
+                // Connect to the new spatial input node
+                this.sourceNode.connect(this.gainNode).connect(this.analyser).connect(nodes.spatialInput);
                 this.onEnd = onEnd;
                 this.audioElement.addEventListener('ended', () => { if (!this.audioElement.loop) this.onEnd(this); });
             }
-            async play(options) {
-                try { await this.audioElement.setSinkId('default'); } catch (err) { console.error("Failed to set audio output device:", err); }
-                this.audioElement.loop = options.looping;
-                this.audioElement.playbackRate = options.speed;
-                this.audioElement.detune = options.pitch;
-                this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(1, audioContext.currentTime + options.fadeTime);
-                await this.audioElement.play().catch(e => { console.error("Play Error:", e); this.onEnd(this); });
-            }
-            stop(fadeTime) {
-                this.gainNode.gain.cancelScheduledValues(audioContext.currentTime);
-                this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, audioContext.currentTime).linearRampToValueAtTime(0.0001, audioContext.currentTime + fadeTime);
-                setTimeout(() => { this.audioElement.pause(); this.onEnd(this); }, fadeTime * 1000 + 50);
-            }
+            async play(options) { try { await this.audioElement.setSinkId('default'); } catch (err) { console.error("Failed to set audio output device:", err); } this.audioElement.loop = options.looping; this.audioElement.playbackRate = options.speed; this.audioElement.detune = options.pitch; this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(1, audioContext.currentTime + options.fadeTime); await this.audioElement.play().catch(e => { console.error("Play Error:", e); this.onEnd(this); }); }
+            stop(fadeTime) { this.gainNode.gain.cancelScheduledValues(audioContext.currentTime); this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, audioContext.currentTime).linearRampToValueAtTime(0.0001, audioContext.currentTime + fadeTime); setTimeout(() => { this.audioElement.pause(); this.onEnd(this); }, fadeTime * 1000 + 50); }
         }
         
         async function loadSoundsAndCreateButtons() { try { const response = await fetch('../SoundboardNames.json'); const soundsData = await response.json(); const container = document.getElementById('soundCategoriesContainerV4'); container.innerHTML = ''; for (const categoryKey in soundsData) { const categoryDiv = document.createElement('div'); categoryDiv.className = 'sound-category-v4'; categoryDiv.innerHTML = `<h2>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`; const buttonsGrid = document.createElement('div'); buttonsGrid.className = 'sound-buttons-grid-v4'; soundsData[categoryKey].sort().forEach(fileName => { const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); const button = document.createElement('button'); button.className = 'sound-button-v4'; button.textContent = displayName; button.dataset.soundFile = fileName; button.addEventListener('click', () => { if (!controls.allowMultiple.checked) clearSounds(); const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); }; const sound = new Sound(fileName, onEnd); activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]); sound.play({ looping: controls.looping.checked, fadeTime: parseFloat(controls.fadeIn.value || 0.1), speed: parseFloat(controls.speed.value || 1), pitch: parseFloat(controls.pitch.value || 0) }); }); buttonsGrid.appendChild(button); }); categoryDiv.appendChild(buttonsGrid); container.appendChild(categoryDiv); } } catch (error) { console.error("Failed to load sounds:", error); } }
@@ -873,21 +893,12 @@
             fadeOut: v => { document.getElementById('fadeOutValue').textContent = `${parseFloat(v).toFixed(1)}s`; const numInput = document.querySelector(`[data-slider-id="fadeOut"]`); if(numInput) numInput.value = v; }, 
             speed: v => { document.getElementById('speedValue').textContent = `${parseFloat(v).toFixed(2)}x`; activeSounds.forEach(i => i.forEach(s => s.audioElement.playbackRate = v)); const numInput = document.querySelector(`[data-slider-id="speed"]`); if(numInput) numInput.value = v; }, 
             pitch: v => { const pitchValue = parseFloat(v); document.getElementById('pitchValue').textContent = pitchValue; activeSounds.forEach(instances => instances.forEach(s => s.audioElement.detune = pitchValue)); const numInput = document.querySelector(`[data-slider-id="pitch"]`); if(numInput) numInput.value = v; }, 
-            eqBass: v => { 
-                const val = parseFloat(v);
-                if (val <= 40) { nodes.eqBass.gain.value = val; nodes.bassWaveShaper.curve = makeDistortionCurve(0); document.getElementById('eqBassValue').textContent = `${val} dB`; }
-                else { nodes.eqBass.gain.value = 40; const distortionAmount = (val - 40) * 10; nodes.bassWaveShaper.curve = makeDistortionCurve(distortionAmount); document.getElementById('eqBassValue').textContent = `+40 dB (Punch ${Math.round((val - 40) / 40 * 100)}%)`; if ('vibrate' in navigator) { navigator.vibrate(Math.min(200, (val - 40) * 5)); } }
-                const numInput = document.querySelector(`[data-slider-id="eqBass"]`); if(numInput) numInput.value = v;
-            },
+            eqBass: v => { const val = parseFloat(v); if (val <= 40) { nodes.eqBass.gain.value = val; nodes.bassWaveShaper.curve = makeDistortionCurve(0); document.getElementById('eqBassValue').textContent = `${val} dB`; } else { nodes.eqBass.gain.value = 40; const distortionAmount = (val - 40) * 10; nodes.bassWaveShaper.curve = makeDistortionCurve(distortionAmount); document.getElementById('eqBassValue').textContent = `+40 dB (Punch ${Math.round((val - 40) / 40 * 100)}%)`; if ('vibrate' in navigator) { navigator.vibrate(Math.min(200, (val - 40) * 5)); } } const numInput = document.querySelector(`[data-slider-id="eqBass"]`); if(numInput) numInput.value = v; },
             eqMid: v => { const val = parseFloat(v); nodes.eqMid.gain.value = val; document.getElementById('eqMidValue').textContent = `${val} dB`; const numInput = document.querySelector(`[data-slider-id="eqMid"]`); if(numInput) numInput.value = v; },
             eqTreble: v => { const val = parseFloat(v); nodes.eqTreble.gain.value = val; document.getElementById('eqTrebleValue').textContent = `${val} dB`; const numInput = document.querySelector(`[data-slider-id="eqTreble"]`); if(numInput) numInput.value = v; },
-            modeSpatial: v => { if (v) { updateSpatialPuckAndAudio(0, 0, document.getElementById('spatial-pad').offsetWidth / 2 || 90); } },
+            modeSpatial: v => { if (v) { updateSpatialPuckAndAudio(0, 0, 0, document.getElementById('spatial-pad').offsetWidth / 2 || 90); } },
             modeVintageWarmth: v => { nodes.vintageWarmer.curve = makeVintageCurve(v ? 1.5 : 0); },
-            modeNight: v => {
-                const volControlGroup = document.getElementById('masterVolumeControlGroup'); const volSlider = controls.masterVolume; const volInput = document.getElementById('masterVolumeInput');
-                if (v) { volumeBeforeNightMode = volSlider.value; volControlGroup.classList.add('locked'); volSlider.disabled = true; volInput.disabled = true; volSlider.value = 0.15; volSlider.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeCompressor.threshold.linearRampToValueAtTime(-40, audioContext.currentTime + 0.1); nodes.nightModeCompressor.ratio.linearRampToValueAtTime(12.0, audioContext.currentTime + 0.1); }
-                else { volControlGroup.classList.remove('locked'); volSlider.disabled = false; volInput.disabled = false; volSlider.value = volumeBeforeNightMode; volSlider.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeCompressor.threshold.linearRampToValueAtTime(0, audioContext.currentTime + 0.1); nodes.nightModeCompressor.ratio.linearRampToValueAtTime(1.0, audioContext.currentTime + 0.1); }
-            },
+            modeNight: v => { const volControlGroup = document.getElementById('masterVolumeControlGroup'); const volSlider = controls.masterVolume; const volInput = document.getElementById('masterVolumeInput'); if (v) { volumeBeforeNightMode = volSlider.value; volControlGroup.classList.add('locked'); volSlider.disabled = true; volInput.disabled = true; volSlider.value = 0.15; volSlider.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeCompressor.threshold.linearRampToValueAtTime(-40, audioContext.currentTime + 0.1); nodes.nightModeCompressor.ratio.linearRampToValueAtTime(12.0, audioContext.currentTime + 0.1); } else { volControlGroup.classList.remove('locked'); volSlider.disabled = false; volInput.disabled = false; volSlider.value = volumeBeforeNightMode; volSlider.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeCompressor.threshold.linearRampToValueAtTime(0, audioContext.currentTime + 0.1); nodes.nightModeCompressor.ratio.linearRampToValueAtTime(1.0, audioContext.currentTime + 0.1); } },
             modeVocalBoost: v => nodes.vocalBoost.gain.linearRampToValueAtTime(v ? 6 : 0, audioContext.currentTime + 0.1), 
             modeAwareness: v => v ? awarenessEngine.start() : awarenessEngine.stop(), 
             modeStable: v => { nodes.stableVolume.ratio.linearRampToValueAtTime(v ? 12 : 1, audioContext.currentTime + 0.1); }
@@ -912,6 +923,7 @@
             if (spatialControl.dataset.x) {
                 settingsToSave['spatial_x'] = spatialControl.dataset.x;
                 settingsToSave['spatial_y'] = spatialControl.dataset.y;
+                settingsToSave['spatial_z'] = spatialControl.dataset.z;
             }
             settingsToSave.savedAt = new Date().toISOString();
             localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(settingsToSave));
@@ -934,9 +946,11 @@
                 if (settings['spatial_x'] !== undefined) {
                     const x = parseFloat(settings['spatial_x']);
                     const y = parseFloat(settings['spatial_y']);
+                    const z = parseFloat(settings['spatial_z'] || 0); // Handle legacy settings
+                    currentZ = z;
                     setTimeout(() => {
                          const padRadius = document.getElementById('spatial-pad').offsetWidth / 2 || 90;
-                         updateSpatialPuckAndAudio(x, y, padRadius);
+                         updateSpatialPuckAndAudio(x, y, z, padRadius);
                     }, 100);
                 }
                 updateSaveButtonText(settings.savedAt);
@@ -949,42 +963,63 @@
         const spatialPuck = document.getElementById('spatial-puck');
         const spatialCoords = document.getElementById('spatial-coords');
 
-        function updateSpatialPuckAndAudio(audioX, audioY, padRadius) {
+        function updateSpatialPuckAndAudio(audioX, audioY, audioZ, padRadius) {
             if (!padRadius) padRadius = 90;
             const pannerScale = 10;
-            nodes.spatialPanner.positionX.linearRampToValueAtTime(audioX * pannerScale, audioContext.currentTime + 0.05);
-            nodes.spatialPanner.positionY.linearRampToValueAtTime(audioY * pannerScale, audioContext.currentTime + 0.05);
+            nodes.mainPanner.positionX.linearRampToValueAtTime(audioX * pannerScale, audioContext.currentTime + 0.05);
+            nodes.mainPanner.positionY.linearRampToValueAtTime(audioY * pannerScale, audioContext.currentTime + 0.05);
+            nodes.mainPanner.positionZ.linearRampToValueAtTime(audioZ * pannerScale, audioContext.currentTime + 0.05);
 
             const puckX = audioX * padRadius;
-            const puckY = -audioY * padRadius; // Y is inverted for screen coordinates
+            const puckY = -audioY * padRadius;
             spatialPuck.style.left = `${puckX + padRadius}px`;
             spatialPuck.style.top = `${puckY + padRadius}px`;
-            spatialCoords.textContent = `X: ${audioX.toFixed(2)}, Y: ${audioY.toFixed(2)}`;
+
+            const zScale = 1 + (audioZ * 0.15);
+            const zShadow = 2 + (Math.abs(audioZ) * 5);
+            spatialPuck.style.transform = `translate(-50%, -50%) scale(${zScale})`;
+            spatialPuck.style.boxShadow = `0 ${zShadow}px ${zShadow * 2}px rgba(0,0,0,0.3)`;
+            spatialCoords.textContent = `X:${audioX.toFixed(2)}, Y:${audioY.toFixed(2)}, Z:${audioZ.toFixed(2)}`;
 
             const posEl = document.querySelector('.spatial-audio-control');
-            if (posEl) { posEl.dataset.x = audioX; posEl.dataset.y = audioY; }
+            if (posEl) { posEl.dataset.x = audioX; posEl.dataset.y = audioY; posEl.dataset.z = audioZ; }
 
-            const distance = Math.sqrt(audioX**2 + audioY**2);
-            const maxFreq = 20000;
-            const minFreq = 4000;
-            const airAbsorptionFreq = Math.max(minFreq, maxFreq - (distance * (maxFreq - minFreq)));
+            const distance = Math.sqrt(audioX**2 + audioY**2 + audioZ**2);
+            const airAbsorptionFreq = Math.max(4000, 20000 - (distance * 16000));
             nodes.airAbsorptionFilter.frequency.linearRampToValueAtTime(airAbsorptionFreq, audioContext.currentTime + 0.05);
 
-            const reverbLevel = Math.min(0.7, distance * 0.5);
-            nodes.reverbGain.gain.linearRampToValueAtTime(reverbLevel, audioContext.currentTime + 0.05);
+            const reverbLevel = Math.min(0.5, distance * 0.35);
+            nodes.reverb.gain.gain.linearRampToValueAtTime(reverbLevel, audioContext.currentTime + 0.05);
+
+            // --- Update Early Reflections ---
+            const room = { width: 20, depth: 20, height: 10 }; // Virtual room dimensions
+            const speedOfSound = 343; // m/s
+            const pos = { x: audioX * 10, y: audioY * 10, z: audioZ * 5 };
+            
+            const calcReflection = (dist) => {
+                const delay = dist / speedOfSound;
+                const gain = Math.max(0, 0.7 - (dist / room.width)); // Attenuate distant reflections
+                return { delay, gain };
+            };
+
+            const surfaces = nodes.earlyReflections.surfaces;
+            let r;
+            r = calcReflection(room.width / 2 + pos.x); surfaces.left.delay.delayTime.linearRampToValueAtTime(r.delay, 0.05); surfaces.left.gain.gain.linearRampToValueAtTime(r.gain, 0.05);
+            r = calcReflection(room.width / 2 - pos.x); surfaces.right.delay.delayTime.linearRampToValueAtTime(r.delay, 0.05); surfaces.right.gain.gain.linearRampToValueAtTime(r.gain, 0.05);
+            r = calcReflection(room.depth / 2 - pos.y); surfaces.front.delay.delayTime.linearRampToValueAtTime(r.delay, 0.05); surfaces.front.gain.gain.linearRampToValueAtTime(r.gain * 0.8, 0.05); // Front wall is less reflective
+            r = calcReflection(room.depth / 2 + pos.y); surfaces.back.delay.delayTime.linearRampToValueAtTime(r.delay, 0.05); surfaces.back.gain.gain.linearRampToValueAtTime(r.gain, 0.05);
+            r = calcReflection(room.height / 2 - pos.z); surfaces.top.delay.delayTime.linearRampToValueAtTime(r.delay, 0.05); surfaces.top.gain.gain.linearRampToValueAtTime(r.gain * 0.6, 0.05); // Ceiling is less reflective
+            r = calcReflection(room.height / 2 + pos.z); surfaces.bottom.delay.delayTime.linearRampToValueAtTime(r.delay, 0.05); surfaces.bottom.gain.gain.linearRampToValueAtTime(r.gain * 0.5, 0.05); // Floor is least reflective
         }
         
         function handleDrag(event) {
             if (!isDragging || !spatialPadRect) return;
             event.preventDefault();
-
             const padRadius = spatialPadRect.width / 2;
             const clientX = event.touches ? event.touches[0].clientX : event.clientX;
             const clientY = event.touches ? event.touches[0].clientY : event.clientY;
-
             let x = clientX - spatialPadRect.left - padRadius;
             let y = -(clientY - spatialPadRect.top - padRadius);
-            
             let distance = Math.sqrt(x * x + y * y);
             let angle = Math.atan2(y, x);
             
@@ -992,89 +1027,28 @@
             const break_tolerance_rad = 10 * (Math.PI / 180);
             let isSnapped = false;
 
-            if (currentSnapAngle !== null) {
-                let angle_diff = Math.abs(angle - currentSnapAngle);
-                if (angle_diff > Math.PI) angle_diff = 2 * Math.PI - angle_diff;
-                if (angle_diff > break_tolerance_rad) { currentSnapAngle = null; } 
-                else { angle = currentSnapAngle; isSnapped = true; }
-            } else {
-                const snap_angles_rad = [0, 0.25 * Math.PI, 0.5 * Math.PI, 0.75 * Math.PI, Math.PI, -0.75 * Math.PI, -0.5 * Math.PI, -0.25 * Math.PI];
-                for (const snap_angle of snap_angles_rad) {
-                    let angle_diff = Math.abs(angle - snap_angle);
-                    if (angle_diff > Math.PI) angle_diff = 2 * Math.PI - angle_diff;
-                    if (angle_diff < engage_tolerance_rad) { angle = snap_angle; currentSnapAngle = snap_angle; isSnapped = true; break; }
-                }
-            }
+            if (currentSnapAngle !== null) { let angle_diff = Math.abs(angle - currentSnapAngle); if (angle_diff > Math.PI) angle_diff = 2 * Math.PI - angle_diff; if (angle_diff > break_tolerance_rad) { currentSnapAngle = null; } else { angle = currentSnapAngle; isSnapped = true; }
+            } else { const snap_angles_rad = [0, 0.25 * Math.PI, 0.5 * Math.PI, 0.75 * Math.PI, Math.PI, -0.75 * Math.PI, -0.5 * Math.PI, -0.25 * Math.PI]; for (const snap_angle of snap_angles_rad) { let angle_diff = Math.abs(angle - snap_angle); if (angle_diff > Math.PI) angle_diff = 2 * Math.PI - angle_diff; if (angle_diff < engage_tolerance_rad) { angle = snap_angle; currentSnapAngle = snap_angle; isSnapped = true; break; } } }
             spatialPuck.classList.toggle('snapped', isSnapped);
-
             x = distance * Math.cos(angle);
             y = distance * Math.sin(angle);
-
             const final_distance = Math.sqrt(x * x + y * y);
             if (final_distance > padRadius) { x = (x / final_distance) * padRadius; y = (y / final_distance) * padRadius; }
-            
             const audioX = x / padRadius;
             const audioY = y / padRadius;
-            updateSpatialPuckAndAudio(audioX, audioY, padRadius);
+            updateSpatialPuckAndAudio(audioX, audioY, currentZ, padRadius);
 
             const now = Date.now();
-            if (lastDragPosition.timestamp > 0) {
-                const dt = (now - lastDragPosition.timestamp) / 1000.0;
-                if (dt > 0) {
-                    const lastDist = Math.sqrt(lastDragPosition.x**2 + lastDragPosition.y**2);
-                    const currentDist = Math.sqrt(audioX**2 + audioY**2);
-                    const radialVelocity = (lastDist - currentDist) / dt;
-                    const dopplerShift = radialVelocity * 0.05;
-                    const baseSpeed = parseFloat(controls.speed.value || 1);
-                    const newSpeed = baseSpeed + dopplerShift;
-                    activeSounds.forEach(instances => instances.forEach(s => { s.audioElement.playbackRate = Math.max(0.1, newSpeed); }));
-                }
-            }
+            if (lastDragPosition.timestamp > 0) { const dt = (now - lastDragPosition.timestamp) / 1000.0; if (dt > 0) { const lastDist = Math.sqrt(lastDragPosition.x**2 + lastDragPosition.y**2); const currentDist = Math.sqrt(audioX**2 + audioY**2); const radialVelocity = (lastDist - currentDist) / dt; const dopplerShift = radialVelocity * 0.05; const baseSpeed = parseFloat(controls.speed.value || 1); const newSpeed = baseSpeed + dopplerShift; activeSounds.forEach(instances => instances.forEach(s => { s.audioElement.playbackRate = Math.max(0.1, newSpeed); })); } }
             lastDragPosition = { x: audioX, y: audioY, timestamp: now };
         }
 
-        function startDrag(event) {
-            if (!controls.modeSpatial.checked || (event.type === 'mousedown' && event.button !== 0)) return;
-            spatialPadRect = spatialPad.getBoundingClientRect();
-            isDragging = true;
-            document.body.style.userSelect = 'none';
-            handleDrag(event);
-        }
-
-        function stopDrag() {
-            if (!isDragging) return;
-            isDragging = false;
-            spatialPadRect = null;
-            currentSnapAngle = null;
-            document.body.style.userSelect = '';
-            spatialPuck.classList.remove('snapped');
-            
-            const baseSpeed = parseFloat(controls.speed.value || 1);
-            activeSounds.forEach(instances => instances.forEach(s => s.audioElement.playbackRate = baseSpeed));
-            lastDragPosition = { x: 0, y: 0, timestamp: 0 };
-            
-            const deadzoneRadius = 0.15;
-            const posEl = document.querySelector('.spatial-audio-control');
-            const currentX = parseFloat(posEl.dataset.x);
-            const currentY = parseFloat(posEl.dataset.y);
-            if (Math.sqrt(currentX**2 + currentY**2) < deadzoneRadius) {
-                updateSpatialPuckAndAudio(0, 0, spatialPad.offsetWidth / 2);
-            }
-        }
+        function startDrag(event) { if (!controls.modeSpatial.checked || (event.type === 'mousedown' && event.button !== 0)) return; spatialPadRect = spatialPad.getBoundingClientRect(); isDragging = true; document.body.style.userSelect = 'none'; handleDrag(event); }
+        function stopDrag() { if (!isDragging) return; isDragging = false; spatialPadRect = null; currentSnapAngle = null; document.body.style.userSelect = ''; spatialPuck.classList.remove('snapped'); const baseSpeed = parseFloat(controls.speed.value || 1); activeSounds.forEach(instances => instances.forEach(s => s.audioElement.playbackRate = baseSpeed)); lastDragPosition = { x: 0, y: 0, timestamp: 0 }; const deadzoneRadius = 0.15; const posEl = document.querySelector('.spatial-audio-control'); const currentX = parseFloat(posEl.dataset.x); const currentY = parseFloat(posEl.dataset.y); if (Math.sqrt(currentX**2 + currentY**2) < deadzoneRadius) { updateSpatialPuckAndAudio(0, 0, currentZ, spatialPad.offsetWidth / 2); } }
 
         // --- INITIALIZATION ---
         async function initialize() {
-            // Configure and start the LFOs for automatic spatial movement
-            nodes.lfoZ.type = 'sine';
-            nodes.lfoZ.frequency.value = 0.07; // Very slow vertical movement
-            nodes.lfoZDepth.gain.value = 1.5; // Controls depth of Z movement
-            nodes.lfoZ.start();
-            
-            nodes.lfoXY.type = 'sine';
-            nodes.lfoXY.frequency.value = 0.11; // Slightly different speed for natural feel
-            nodes.lfoXYDepth.gain.value = 0.75; // Controls depth of Y movement
-            nodes.lfoXY.start();
-
+            createEarlyReflectionsEngine();
             await createReverbIR(audioContext);
             await loadSoundsAndCreateButtons();
             requestAnimationFrame(updateButtonVisuals);
@@ -1086,26 +1060,12 @@
             document.getElementById('soundSearchInput').addEventListener('input', debouncedSoundSearch);
             document.addEventListener('keydown', (event) => { if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA') { return; } if (event.shiftKey && (event.key === 'C' || event.key === 'c')) { event.preventDefault(); clearSounds(); } if (!event.shiftKey && (event.key === 'M' || event.key === 'm')) { event.preventDefault(); toggleMute(); } });
             document.querySelector('.settings-tabs').addEventListener('click', e => { if (e.target.matches('.tab-link')) { document.querySelectorAll('.tab-link, .tab-content').forEach(el => el.classList.remove('active')); e.target.classList.add('active'); document.getElementById(e.target.dataset.tab).classList.add('active'); document.getElementById('settingsSearch').value = ''; document.getElementById('searchResultsContainer').style.display = 'none'; document.querySelector('.settings-tab-container').classList.remove('search-active'); } });
-            
             document.getElementById('resetEqBtn').addEventListener('click', () => { ['eqBass', 'eqMid', 'eqTreble'].forEach(key => { const slider = controls[key]; if (slider) { slider.value = 0; slider.dispatchEvent(new Event('input', { bubbles: true })); } }); });
             const recommendedTune = { eqBass: 4, eqMid: 2, eqTreble: 5 };
             document.getElementById('applyEqTuneBtn').addEventListener('click', () => { Object.entries(recommendedTune).forEach(([key, value]) => { const slider = controls[key]; if (slider) { slider.value = value; slider.dispatchEvent(new Event('input', { bubbles: true })); } }); });
 
-            Object.values(controls).forEach(el => { 
-                const key = el.dataset.setting; if (!key) return; 
-                const eventType = el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input'; 
-                if(updateFunctions[key]) { el.addEventListener(eventType, e => { const value = el.type === 'checkbox' ? e.target.checked : e.target.value; updateFunctions[key](value); }); }
-            });
-            
-            document.querySelectorAll('.slider-value-input').forEach(numInput => {
-                numInput.addEventListener('change', (e) => {
-                    const sliderId = e.target.dataset.sliderId; const slider = document.getElementById(sliderId); if (!slider) return; let value = parseFloat(e.target.value); const min = parseFloat(slider.min); const max = parseFloat(slider.max);
-                    if (slider.id === 'masterVolume') { value = value / 100; }
-                    if (value < min) value = min; if (value > max) value = max;
-                    slider.value = value;
-                    slider.dispatchEvent(new Event('input', { bubbles: true }));
-                });
-            });
+            Object.values(controls).forEach(el => { const key = el.dataset.setting; if (!key) return; const eventType = el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input'; if(updateFunctions[key]) { el.addEventListener(eventType, e => { const value = el.type === 'checkbox' ? e.target.checked : e.target.value; updateFunctions[key](value); }); } });
+            document.querySelectorAll('.slider-value-input').forEach(numInput => { numInput.addEventListener('change', (e) => { const sliderId = e.target.dataset.sliderId; const slider = document.getElementById(sliderId); if (!slider) return; let value = parseFloat(e.target.value); const min = parseFloat(slider.min); const max = parseFloat(slider.max); if (slider.id === 'masterVolume') { value = value / 100; } if (value < min) value = min; if (value > max) value = max; slider.value = value; slider.dispatchEvent(new Event('input', { bubbles: true })); }); });
             
             // Spatial Pad Event Listeners
             spatialPad.addEventListener('mousedown', startDrag);
@@ -1114,10 +1074,19 @@
             spatialPad.addEventListener('touchstart', startDrag, { passive: false });
             document.addEventListener('touchmove', handleDrag, { passive: false });
             document.addEventListener('touchend', stopDrag);
-            document.getElementById('resetSpatialBtn').addEventListener('click', () => { 
-                updateSpatialPuckAndAudio(0, 0, spatialPad.offsetWidth / 2); 
-            });
-            
+            document.getElementById('resetSpatialBtn').addEventListener('click', () => { currentZ = 0; updateSpatialPuckAndAudio(0, 0, 0, spatialPad.offsetWidth / 2); });
+            spatialPad.addEventListener('wheel', event => {
+                if (!controls.modeSpatial.checked) return;
+                event.preventDefault();
+                event.stopPropagation();
+                const scrollAmount = event.deltaY > 0 ? -0.05 : 0.05;
+                currentZ = Math.max(-1, Math.min(1, currentZ + scrollAmount));
+                const posEl = document.querySelector('.spatial-audio-control');
+                const currentX = parseFloat(posEl.dataset.x) || 0;
+                const currentY = parseFloat(posEl.dataset.y) || 0;
+                updateSpatialPuckAndAudio(currentX, currentY, currentZ, spatialPad.offsetWidth / 2);
+            }, { passive: false });
+
             const micPrompt = document.getElementById('mic-permission-prompt');
             try { const permissionStatus = await navigator.permissions.query({name: 'microphone'}); const handlePermission = (status) => { const micDependentModes = document.querySelectorAll('[data-setting="modeAwareness"]'); if (status.state === 'granted') { micPrompt.style.display = 'none'; micDependentModes.forEach(el => el.closest('.control-group').classList.remove('disabled')); } else { micPrompt.style.display = 'block'; micDependentModes.forEach(el => { el.checked = false; el.dispatchEvent(new Event('change')); el.closest('.control-group').classList.add('disabled'); }); micPrompt.querySelector('p').textContent = status.state === 'denied' ? 'Microphone access was denied. Please enable it in your browser settings.' : 'Conversation Awareness requires microphone access.'; micPrompt.querySelector('button').disabled = status.state === 'denied'; } }; permissionStatus.onchange = () => handlePermission(permissionStatus); handlePermission(permissionStatus); document.getElementById('enable-mic-btn').onclick = async () => { try { await navigator.mediaDevices.getUserMedia({ audio: true }); } catch(e) { showStatus('Microphone access was not granted.', 'error'); } }; } catch(e) { document.querySelectorAll('[data-setting="modeAwareness"]').forEach(el => el.closest('.control-group').classList.add('disabled')); }
             
