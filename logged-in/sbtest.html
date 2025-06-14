@@ -102,7 +102,7 @@
             width: 100%;
             padding: 10px 15px;
             margin: 10px 0;
-            border-radius: 20px;
+            border-radius: 12px; /* MODIFIED */
             border: 1px solid var(--v4-border-light);
             font-family: var(--v4-font-secondary);
             font-size: 1em;
@@ -123,7 +123,6 @@
             display: grid;
             grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
         }
-        /* NEW: Hides tabs when settings search is active */
         .settings-tab-container.search-active .tab-content.active {
             display: none;
         }
@@ -213,7 +212,7 @@
         .is-filtering { opacity: 0 !important; }
         #bottom-fixed-bar {
             position: fixed; bottom: 20px; right: 20px; z-index: 1001;
-            display: flex; align-items: center; gap: 15px; padding: 12px 20px;
+            display: flex; align-items: center; gap: 10px; padding: 12px 20px;
             background: rgba(255, 255, 255, 0.45);
             backdrop-filter: blur(12px) saturate(1.8);
             -webkit-backdrop-filter: blur(12px) saturate(1.8);
@@ -233,6 +232,21 @@
             font-family: var(--v4-font-primary);
         }
         #clearSoundsBtn:hover { background: rgba(255, 0, 20, 1); transform: translateY(-1px); }
+        /* NEW: Mute indicator style */
+        .mute-status {
+            display: none; /* Hidden by default */
+            background-color: #c41e3a;
+            color: #fff;
+            padding: 10px 15px;
+            border-radius: 10px;
+            font-size: 0.9em;
+            font-weight: bold;
+            text-transform: uppercase;
+            pointer-events: none;
+        }
+        .mute-status.visible {
+            display: inline-block; /* Show when muted */
+        }
         .status-message-v4 { display: none; padding: 15px 25px; margin: 0 auto 20px auto; border-radius: 12px; text-align: center; max-width: 600px; text-transform: uppercase; box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1); color: white; }
         .status-message-v4.success { background: linear-gradient(135deg, #1c7430, #155724); }
         .status-message-v4.error { background: linear-gradient(135deg, #8f262a, #721c24); }
@@ -327,9 +341,9 @@
                         <label for="speed">Speed: <span id="speedValue">1.00x</span></label>
                         <input type="range" id="speed" min="0.25" max="4" step="0.01" value="1" data-setting="speed">
                     </div>
-                    <div class="control-group" data-search-terms="auto-pitch correction autotune vocals">
-                        <label for="pitchCorrection">Auto-Pitch Correction</label>
-                        <input type="range" id="pitchCorrection" min="0" max="1" step="0.01" value="0" data-setting="pitchCorrection">
+                    <div class="control-group" data-search-terms="pitch shift detune">
+                        <label for="pitch">Pitch: <span id="pitchValue">0</span></label>
+                        <input type="range" id="pitch" min="-1200" max="1200" step="10" value="0" data-setting="pitch">
                     </div>
                 </div>
 
@@ -387,6 +401,7 @@
     </div>
 
     <div id="bottom-fixed-bar">
+        <span id="muteIndicator" class="mute-status">Muted</span>
         <input type="text" id="soundSearchInput" placeholder="Search sounds...">
         <button id="clearSoundsBtn">Clear Sounds</button>
     </div>
@@ -433,6 +448,8 @@
         const LOCAL_STORAGE_KEY = 'soundboardSettingsV5';
         
         let activeSounds = new Map();
+        let isMuted = false;
+        let lastVolumeBeforeMute = 1;
         
         const masterGain = audioContext.createGain();
         const finalCompressor = new DynamicsCompressorNode(audioContext);
@@ -447,72 +464,59 @@
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
         const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start(deviceId) { if (this.isActive || !deviceId) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { deviceId: { exact: deviceId }, noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); const targetMinHz = 300, targetMaxHz = 3400; const binWidth = audioContext.sampleRate / this.analyser.fftSize; const minBin = Math.floor(targetMinHz / binWidth); const maxBin = Math.ceil(targetMaxHz / binWidth); let voiceEnergy = 0; for (let i = minBin; i <= maxBin; i++) voiceEnergy += dataArray[i]; voiceEnergy /= (maxBin - minBin + 1); const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; masterGain.gain.linearRampToValueAtTime(newVolume, audioContext.currentTime + (isDucking ? 0.2 : 0.5)); } };
         const clearSounds = () => { for (const [_, instances] of activeSounds.entries()) { [...instances].forEach(sound => sound.stop(parseFloat(controls.fadeOut.value || 0.1))); } };
-        class Sound { constructor(fileName, onEnd) { this.audioElement = new Audio(`../Sounds/${fileName}`); this.sourceNode = audioContext.createMediaElementSource(this.audioElement); this.gainNode = audioContext.createGain(); this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 128; this.sourceNode.connect(this.gainNode).connect(this.analyser).connect(inputGain); this.onEnd = onEnd; this.audioElement.addEventListener('ended', () => { if (!this.audioElement.loop) this.onEnd(this); }); } async play(options) { try { const sinkId = controls.playbackDevice.value; if (sinkId && typeof this.audioElement.setSinkId === 'function') await this.audioElement.setSinkId(sinkId); } catch (err) { console.error("Failed to set audio output device:", err); } this.audioElement.loop = options.looping; this.audioElement.playbackRate = options.speed; this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(1, audioContext.currentTime + options.fadeTime); await this.audioElement.play().catch(e => { console.error("Play Error:", e); this.onEnd(this); }); } stop(fadeTime) { this.gainNode.gain.cancelScheduledValues(audioContext.currentTime); this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, audioContext.currentTime).linearRampToValueAtTime(0.0001, audioContext.currentTime + fadeTime); setTimeout(() => { this.audioElement.pause(); this.onEnd(this); }, fadeTime * 1000 + 50); } }
-        async function loadSoundsAndCreateButtons() { try { const response = await fetch('../SoundboardSN.json'); const soundsData = await response.json(); const container = document.getElementById('soundCategoriesContainerV4'); container.innerHTML = ''; for (const categoryKey in soundsData) { const categoryDiv = document.createElement('div'); categoryDiv.className = 'sound-category-v4'; categoryDiv.innerHTML = `<h2>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`; const buttonsGrid = document.createElement('div'); buttonsGrid.className = 'sound-buttons-grid-v4'; soundsData[categoryKey].sort().forEach(fileName => { const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); const button = document.createElement('button'); button.className = 'sound-button-v4'; button.textContent = displayName; button.dataset.soundFile = fileName; button.addEventListener('click', () => { if (!controls.allowMultiple.checked) clearSounds(); const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); }; const sound = new Sound(fileName, onEnd); activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]); sound.play({ looping: controls.looping.checked, fadeTime: parseFloat(controls.fadeIn.value || 0.1), speed: parseFloat(controls.speed.value || 1) }); }); buttonsGrid.appendChild(button); }); categoryDiv.appendChild(buttonsGrid); container.appendChild(categoryDiv); } } catch (error) { console.error("Failed to load sounds:", error); } }
-        const updateFunctions = { masterVolume: v => { masterGain.gain.value = v; document.getElementById('masterVolumeValue').textContent = `${Math.round(v*100)}%`; }, fadeIn: v => { document.getElementById('fadeInValue').textContent = `${parseFloat(v).toFixed(1)}s`; }, fadeOut: v => { document.getElementById('fadeOutValue').textContent = `${parseFloat(v).toFixed(1)}s`; }, speed: v => { document.getElementById('speedValue').textContent = `${parseFloat(v).toFixed(2)}x`; activeSounds.forEach(i => i.forEach(s => s.audioElement.playbackRate = v)); }, pitchCorrection: v => {}, modeSpatial: v => { if (v) controls.modeBinaural.checked = false; nodes.spatial.input.gain.linearRampToValueAtTime(v ? 1 : 0, 0.1); dryBus.gain.linearRampToValueAtTime(v ? 0 : 1, 0.1); }, modeBinaural: v => { if (v) controls.modeSpatial.checked = false; nodes.binaural.input.gain.linearRampToValueAtTime(v ? 1 : 0, 0.1); dryBus.gain.linearRampToValueAtTime(v ? 0 : 1, 0.1); }, modeVocalBoost: v => nodes.vocalBoost.gain.linearRampToValueAtTime(v ? 6 : 0, 0.1), modeParty: v => { nodes.party.compressor.threshold.value = v ? -40 : -100; nodes.party.bassBoost.gain.value = v ? 6 : 0; }, modeDynamic: v => v ? dynamicAudioEngine.start(controls.microphoneDevice.value) : dynamicAudioEngine.stop(), modeAwareness: v => v ? awarenessEngine.start(controls.microphoneDevice.value) : awarenessEngine.stop(), modeStable: v => { nodes.stableVolume.threshold.value = v ? -24 : -100; nodes.stableVolume.ratio.value = v ? 12 : 1; }, modeNight: v => { finalGain.gain.linearRampToValueAtTime(v ? 0.25 : 1.0, 0.1); } };
+        class Sound { constructor(fileName, onEnd) { this.audioElement = new Audio(`../Sounds/${fileName}`); this.sourceNode = audioContext.createMediaElementSource(this.audioElement); this.gainNode = audioContext.createGain(); this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 128; this.sourceNode.connect(this.gainNode).connect(this.analyser).connect(inputGain); this.onEnd = onEnd; this.audioElement.addEventListener('ended', () => { if (!this.audioElement.loop) this.onEnd(this); }); } async play(options) { try { const sinkId = controls.playbackDevice.value; if (sinkId && typeof this.audioElement.setSinkId === 'function') await this.audioElement.setSinkId(sinkId); } catch (err) { console.error("Failed to set audio output device:", err); } this.audioElement.loop = options.looping; this.audioElement.playbackRate = options.speed; this.audioElement.detune = options.pitch; this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(1, audioContext.currentTime + options.fadeTime); await this.audioElement.play().catch(e => { console.error("Play Error:", e); this.onEnd(this); }); } stop(fadeTime) { this.gainNode.gain.cancelScheduledValues(audioContext.currentTime); this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, audioContext.currentTime).linearRampToValueAtTime(0.0001, audioContext.currentTime + fadeTime); setTimeout(() => { this.audioElement.pause(); this.onEnd(this); }, fadeTime * 1000 + 50); } }
+        async function loadSoundsAndCreateButtons() { try { const response = await fetch('../SoundboardSN.json'); const soundsData = await response.json(); const container = document.getElementById('soundCategoriesContainerV4'); container.innerHTML = ''; for (const categoryKey in soundsData) { const categoryDiv = document.createElement('div'); categoryDiv.className = 'sound-category-v4'; categoryDiv.innerHTML = `<h2>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`; const buttonsGrid = document.createElement('div'); buttonsGrid.className = 'sound-buttons-grid-v4'; soundsData[categoryKey].sort().forEach(fileName => { const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); const button = document.createElement('button'); button.className = 'sound-button-v4'; button.textContent = displayName; button.dataset.soundFile = fileName; button.addEventListener('click', () => { if (!controls.allowMultiple.checked) clearSounds(); const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); }; const sound = new Sound(fileName, onEnd); activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]); sound.play({ looping: controls.looping.checked, fadeTime: parseFloat(controls.fadeIn.value || 0.1), speed: parseFloat(controls.speed.value || 1), pitch: parseFloat(controls.pitch.value || 0) }); }); buttonsGrid.appendChild(button); }); categoryDiv.appendChild(buttonsGrid); container.appendChild(categoryDiv); } } catch (error) { console.error("Failed to load sounds:", error); } }
+        
+        // --- NEW: Mute Functionality ---
+        const toggleMute = () => {
+            isMuted = !isMuted;
+            const muteIndicator = document.getElementById('muteIndicator');
+            if (isMuted) {
+                lastVolumeBeforeMute = masterGain.gain.value;
+                masterGain.gain.value = 0;
+                muteIndicator.classList.add('visible');
+            } else {
+                masterGain.gain.value = lastVolumeBeforeMute;
+                muteIndicator.classList.remove('visible');
+            }
+             // Sync the volume slider, but don't trigger its update function's side effects
+            controls.masterVolume.value = masterGain.gain.value;
+            document.getElementById('masterVolumeValue').textContent = `${Math.round(masterGain.gain.value * 100)}%`;
+        };
+
+        const updateFunctions = { 
+            masterVolume: v => { 
+                const newVol = parseFloat(v);
+                masterGain.gain.value = newVol;
+                lastVolumeBeforeMute = newVol; // Update last volume when user changes it
+                isMuted = (newVol === 0); // Update mute state if volume is 0
+                document.getElementById('muteIndicator').classList.toggle('visible', isMuted);
+                document.getElementById('masterVolumeValue').textContent = `${Math.round(newVol*100)}%`;
+            }, 
+            fadeIn: v => { document.getElementById('fadeInValue').textContent = `${parseFloat(v).toFixed(1)}s`; }, 
+            fadeOut: v => { document.getElementById('fadeOutValue').textContent = `${parseFloat(v).toFixed(1)}s`; }, 
+            speed: v => { document.getElementById('speedValue').textContent = `${parseFloat(v).toFixed(2)}x`; activeSounds.forEach(i => i.forEach(s => s.audioElement.playbackRate = v)); }, 
+            pitch: v => { 
+                const pitchValue = parseFloat(v);
+                document.getElementById('pitchValue').textContent = pitchValue;
+                activeSounds.forEach(instances => instances.forEach(s => s.audioElement.detune = pitchValue));
+            },
+            modeSpatial: v => { if (v) controls.modeBinaural.checked = false; nodes.spatial.input.gain.linearRampToValueAtTime(v ? 1 : 0, 0.1); dryBus.gain.linearRampToValueAtTime(v ? 0 : 1, 0.1); }, 
+            modeBinaural: v => { if (v) controls.modeSpatial.checked = false; nodes.binaural.input.gain.linearRampToValueAtTime(v ? 1 : 0, 0.1); dryBus.gain.linearRampToValueAtTime(v ? 0 : 1, 0.1); }, 
+            modeVocalBoost: v => nodes.vocalBoost.gain.linearRampToValueAtTime(v ? 6 : 0, 0.1), 
+            modeParty: v => { nodes.party.compressor.threshold.value = v ? -40 : -100; nodes.party.bassBoost.gain.value = v ? 6 : 0; }, 
+            modeDynamic: v => v ? dynamicAudioEngine.start(controls.microphoneDevice.value) : dynamicAudioEngine.stop(), 
+            modeAwareness: v => v ? awarenessEngine.start(controls.microphoneDevice.value) : awarenessEngine.stop(), 
+            modeStable: v => { nodes.stableVolume.threshold.value = v ? -24 : -100; nodes.stableVolume.ratio.value = v ? 12 : 1; }, 
+            modeNight: v => { finalGain.gain.linearRampToValueAtTime(v ? 0.25 : 1.0, 0.1); } 
+        };
+        
         function updateButtonVisuals() { requestAnimationFrame(updateButtonVisuals); document.querySelectorAll('.sound-button-v4[data-sound-file]').forEach(button => { const fileName = button.dataset.soundFile; const instances = activeSounds.get(fileName); if (instances && instances.length > 0) { button.classList.add('playing'); if (instances.length > 1) { button.classList.add('pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } else { button.classList.remove('pulsating'); const analyser = instances[0].analyser; const dataArray = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(dataArray); const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length; const scale = 1 + (avg / 255) * 0.05; const shadowSpread = 2 + (avg / 255) * 8; button.style.transform = `scale(${scale})`; button.style.boxShadow = `0 0 ${shadowSpread}px rgba(103, 32, 189, 0.7)`; } } else { button.classList.remove('playing', 'pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } }); }
         function updateDeviceDisplays() { const outEl = document.getElementById('currentOutputDevice'); const inEl = document.getElementById('currentInputDevice'); if (outEl && controls.playbackDevice.selectedOptions.length > 0) { outEl.textContent = controls.playbackDevice.selectedOptions[0].text; } if (inEl && controls.microphoneDevice.selectedOptions.length > 0) { inEl.textContent = controls.microphoneDevice.selectedOptions[0].text; } else if (inEl) { inEl.textContent = 'None available'; } }
         function createImpulseResponse(context) { const sampleRate = context.sampleRate; const length = sampleRate * 0.5; const impulse = context.createBuffer(2, length, sampleRate); const left = impulse.getChannelData(0); const right = impulse.getChannelData(1); for (let i = 0; i < length; i++) { left[i] = (Math.random() * 0.5 - 0.25) * Math.pow(1 - i / length, 2); right[i] = (Math.random() * 0.5 - 0.25) * Math.pow(1 - i / length, 2.5); } return impulse; }
         
-        // --- REVISED: Settings Search Logic ---
-        function handleSettingsSearch(e) {
-            const searchTerm = e.target.value.toLowerCase().trim();
-            const resultsContainer = document.getElementById('searchResultsContainer');
-            const settingsContainer = document.querySelector('.settings-tab-container');
-            resultsContainer.innerHTML = '';
-
-            if (!searchTerm) {
-                settingsContainer.classList.remove('search-active');
-                resultsContainer.style.display = 'none';
-                return;
-            }
-
-            settingsContainer.classList.add('search-active');
-            resultsContainer.style.display = 'block';
-            
-            const allControls = document.querySelectorAll('.control-group[data-search-terms]');
-            let matchFound = false;
-
-            allControls.forEach(control => {
-                const searchTerms = control.dataset.searchTerms;
-                if (searchTerms.includes(searchTerm)) {
-                    matchFound = true;
-                    const resultItem = document.createElement('div');
-                    resultItem.className = 'search-result-item';
-                    
-                    const labelText = control.querySelector('label').textContent.trim();
-                    const tabPane = control.closest('.tab-content');
-                    const tabId = tabPane.id;
-                    const tabName = document.querySelector(`.tab-link[data-tab="${tabId}"]`).textContent;
-
-                    resultItem.innerHTML = `<span>${labelText}</span> <span class="search-result-category">${tabName}</span>`;
-                    
-                    resultItem.onclick = () => {
-                        // The tab click listener now handles resetting the UI.
-                        document.querySelector(`.tab-link[data-tab="${tabId}"]`).click();
-
-                        // We just need to scroll and highlight the correct control.
-                        setTimeout(() => {
-                            const targetControl = document.querySelector(`#${tabId} [data-search-terms='${searchTerms}']`);
-                            if (targetControl) {
-                                targetControl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                                targetControl.classList.add('highlight');
-                                setTimeout(() => targetControl.classList.remove('highlight'), 1500);
-                            }
-                        }, 50); // Short delay for tab switch to render.
-                    };
-                    resultsContainer.appendChild(resultItem);
-                }
-            });
-
-            if (!matchFound) {
-                resultsContainer.innerHTML = '<div class="search-result-item">No settings found.</div>';
-            }
-        }
-
-        // --- Sound Search Logic ---
-        let isAnimatingSearch = false;
-        function debounce(func, delay) { let timeout; return function(...args) { clearTimeout(timeout); timeout = setTimeout(() => func.apply(this, args), delay); }; }
+        function handleSettingsSearch(e) { const searchTerm = e.target.value.toLowerCase().trim(); const resultsContainer = document.getElementById('searchResultsContainer'); const settingsContainer = document.querySelector('.settings-tab-container'); resultsContainer.innerHTML = ''; if (!searchTerm) { settingsContainer.classList.remove('search-active'); resultsContainer.style.display = 'none'; return; } settingsContainer.classList.add('search-active'); resultsContainer.style.display = 'block'; const allControls = document.querySelectorAll('.control-group[data-search-terms]'); let matchFound = false; allControls.forEach(control => { const searchTerms = control.dataset.searchTerms; if (searchTerms.includes(searchTerm)) { matchFound = true; const resultItem = document.createElement('div'); resultItem.className = 'search-result-item'; const labelText = control.querySelector('label').textContent.trim(); const tabPane = control.closest('.tab-content'); const tabId = tabPane.id; const tabName = document.querySelector(`.tab-link[data-tab="${tabId}"]`).textContent; resultItem.innerHTML = `<span>${labelText}</span> <span class="search-result-category">${tabName}</span>`; resultItem.onclick = () => { document.querySelector(`.tab-link[data-tab="${tabId}"]`).click(); setTimeout(() => { const targetControl = document.querySelector(`#${tabId} [data-search-terms='${searchTerms}']`); if (targetControl) { targetControl.scrollIntoView({ behavior: 'smooth', block: 'center' }); targetControl.classList.add('highlight'); setTimeout(() => targetControl.classList.remove('highlight'), 1500); } }, 50); }; resultsContainer.appendChild(resultItem); } }); if (!matchFound) { resultsContainer.innerHTML = '<div class="search-result-item">No settings found.</div>'; } }
+        let isAnimatingSearch = false; function debounce(func, delay) { let timeout; return function(...args) { clearTimeout(timeout); timeout = setTimeout(() => func.apply(this, args), delay); }; }
         const performSoundSearch = (searchTerm) => { if (isAnimatingSearch) return; isAnimatingSearch = true; const allCategories = document.querySelectorAll('.sound-category-v4'); allCategories.forEach(category => category.classList.add('is-filtering')); setTimeout(() => { let firstMatchCategory = null; allCategories.forEach(category => { const buttonsInCategory = category.querySelectorAll('.sound-button-v4'); let categoryHasVisibleChildren = false; buttonsInCategory.forEach(button => { const soundName = button.textContent.toLowerCase(); const matches = searchTerm ? soundName.includes(searchTerm) : true; button.classList.toggle('is-hidden', !matches); if (matches) { categoryHasVisibleChildren = true; } }); category.classList.toggle('is-hidden', !categoryHasVisibleChildren); if (categoryHasVisibleChildren && !firstMatchCategory) { firstMatchCategory = category; } }); allCategories.forEach(category => category.classList.remove('is-filtering')); if (firstMatchCategory && searchTerm) { firstMatchCategory.scrollIntoView({ behavior: 'smooth', block: 'start' }); } isAnimatingSearch = false; }, 300); };
         const debouncedSoundSearch = debounce(event => { performSoundSearch(event.target.value.toLowerCase().trim()); }, 350);
 
@@ -524,29 +528,25 @@
             // --- Main Event Listeners ---
             document.getElementById('resetSettingsBtn').addEventListener('click', () => { if (confirm('Are you sure you want to reset all settings?')) { localStorage.removeItem(LOCAL_STORAGE_KEY); window.location.reload(); } });
             document.getElementById('clearSoundsBtn').addEventListener('click', clearSounds);
-            
-            // --- REVISED: Connect new settings search logic ---
             document.getElementById('settingsSearch').addEventListener('input', handleSettingsSearch);
-            
             document.getElementById('soundSearchInput').addEventListener('input', debouncedSoundSearch);
-
-            // --- REVISED: Tab switching logic ---
-            document.querySelector('.settings-tabs').addEventListener('click', e => {
-                if (e.target.matches('.tab-link')) {
-                    // Deactivate all links and content panes
-                    document.querySelectorAll('.tab-link, .tab-content').forEach(el => el.classList.remove('active'));
-                    
-                    // Activate the clicked link and its corresponding content
-                    e.target.classList.add('active');
-                    document.getElementById(e.target.dataset.tab).classList.add('active');
-                    
-                    // Reset the search UI state
-                    document.getElementById('settingsSearch').value = '';
-                    document.getElementById('searchResultsContainer').style.display = 'none';
-                    document.querySelector('.settings-tab-container').classList.remove('search-active');
+            
+            // --- NEW: Keyboard Shortcuts ---
+            document.addEventListener('keydown', (event) => {
+                if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA') {
+                    return; // Don't trigger shortcuts when typing in form fields
+                }
+                if (event.shiftKey && (event.key === 'C' || event.key === 'c')) {
+                    event.preventDefault();
+                    clearSounds();
+                }
+                if (event.shiftKey && (event.key === 'M' || event.key === 'm')) {
+                    event.preventDefault();
+                    toggleMute();
                 }
             });
             
+            document.querySelector('.settings-tabs').addEventListener('click', e => { if (e.target.matches('.tab-link')) { document.querySelectorAll('.tab-link, .tab-content').forEach(el => el.classList.remove('active')); e.target.classList.add('active'); document.getElementById(e.target.dataset.tab).classList.add('active'); document.getElementById('settingsSearch').value = ''; document.getElementById('searchResultsContainer').style.display = 'none'; document.querySelector('.settings-tab-container').classList.remove('search-active'); } });
             const wrapper = document.querySelector('.soundboard-container-wrapper');
             if (wrapper) { document.querySelectorAll('select').forEach(selectEl => { selectEl.addEventListener('focus', () => { wrapper.style.overflow = 'visible'; }); selectEl.addEventListener('blur', () => { wrapper.style.overflow = 'hidden'; }); }); }
             Object.values(controls).forEach(el => { const key = el.dataset.setting; const eventType = el.type === 'checkbox' ? 'change' : 'input'; if(updateFunctions[key]) { el.addEventListener(eventType, e => updateFunctions[key](el.type === 'checkbox' ? e.target.checked : e.target.value)); } });
