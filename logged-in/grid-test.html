@@ -261,14 +261,14 @@
         }
         .spatial-main-controls {
             flex-grow: 1;
-            min-width: 200px;
+            flex-shrink: 0;
+            flex-basis: 250px; /* Give the left side a stable base width */
         }
         #spatial-controls-container {
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            padding: 10px 0;
             transition: opacity 0.3s ease-in-out, transform 0.3s ease-in-out;
             opacity: 0;
             transform: scale(0.95);
@@ -695,12 +695,25 @@
     // --- Soundboard Logic ---
     document.addEventListener('DOMContentLoaded', () => {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const LOCAL_STORAGE_KEY = 'soundboardSettingsV9'; // Incremented version
+        const LOCAL_STORAGE_KEY = 'soundboardSettingsV10'; // Incremented version
        
         let activeSounds = new Map();
         let isMuted = false;
         let lastVolumeBeforeMute = 1;
         let volumeBeforeNightMode = 1;
+        let spatialPadRect = null; // For drag optimization
+        
+        // Robust AudioContext unlocking
+        const unlockAudioContext = () => {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+            document.body.removeEventListener('click', unlockAudioContext);
+            document.body.removeEventListener('touchstart', unlockAudioContext);
+        };
+        document.body.addEventListener('click', unlockAudioContext);
+        document.body.addEventListener('touchstart', unlockAudioContext);
+
 
         const masterGain = audioContext.createGain();
         const finalCompressor = new DynamicsCompressorNode(audioContext, { threshold: -12.0, ratio: 6.0 });
@@ -712,14 +725,13 @@
             bassWaveShaper: audioContext.createWaveShaper(),
             eqMid: new BiquadFilterNode(audioContext, { type: 'peaking', frequency: 1200, Q: 1.0, gain: 0 }),
             eqTreble: new BiquadFilterNode(audioContext, { type: 'highshelf', frequency: 6000, gain: 0 }),
-            vintageWarmer: audioContext.createWaveShaper(), // New node for warmth
+            vintageWarmer: audioContext.createWaveShaper(),
             stableVolume: new DynamicsCompressorNode(audioContext, {threshold: -24, ratio: 12}), 
             vocalBoost: new BiquadFilterNode(audioContext, {type: 'peaking', frequency: 2500, Q: 1.5, gain: 0}), 
             awarenessGain: audioContext.createGain(),
             nightModeCompressor: new DynamicsCompressorNode(audioContext, {threshold: 0, knee: 30, ratio: 1, attack: 0.003, release: 0.25 }),
         };
         
-        // --- Audio node connection chain ---
         nodes.spatialPanner.connect(nodes.inputGain).connect(masterGain).connect(nodes.eqBass).connect(nodes.bassWaveShaper).connect(nodes.eqMid).connect(nodes.eqTreble).connect(nodes.vintageWarmer).connect(nodes.stableVolume).connect(nodes.vocalBoost).connect(nodes.awarenessGain).connect(nodes.nightModeCompressor).connect(finalCompressor).connect(audioContext.destination);
 
         function makeDistortionCurve(amount) {
@@ -734,21 +746,25 @@
             return curve;
         }
 
-        // New curve for the vintage warmth effect (subtle)
         function makeVintageCurve(amount) {
             const n_samples = 44100;
             const curve = new Float32Array(n_samples);
-            for (let i = 0; i < n_samples; i++) {
-                const x = i * 2 / n_samples - 1;
-                // A gentle tanh curve for soft saturation
-                curve[i] = Math.tanh(x * amount);
+            if (amount === 0) { // Return linear curve if amount is 0
+                for (let i = 0; i < n_samples; i++) {
+                    curve[i] = i * 2 / n_samples - 1;
+                }
+            } else {
+                for (let i = 0; i < n_samples; i++) {
+                    const x = i * 2 / n_samples - 1;
+                    curve[i] = Math.tanh(x * amount);
+                }
             }
             return curve;
         }
 
         nodes.bassWaveShaper.curve = makeDistortionCurve(0);
         nodes.bassWaveShaper.oversample = '4x';
-        nodes.vintageWarmer.curve = makeVintageCurve(0); // Initially off
+        nodes.vintageWarmer.curve = makeVintageCurve(0);
         nodes.vintageWarmer.oversample = '4x';
        
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
@@ -756,7 +772,7 @@
         const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start() { if (this.isActive) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); showStatus('Could not access microphone.', 'error'); }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); let voiceEnergy = 0; for (let i = 5; i < 100; i++) voiceEnergy += dataArray[i]; voiceEnergy /= 95; const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; nodes.awarenessGain.gain.linearRampToValueAtTime(newVolume, audioContext.currentTime + (isDucking ? 0.2 : 0.5)); } };
         const clearSounds = () => { if (controls.confirmClear && controls.confirmClear.checked && !confirm('Are you sure you want to stop all sounds?')) { return; } for (const [_, instances] of activeSounds.entries()) { [...instances].forEach(sound => sound.stop(parseFloat(controls.fadeOut.value || 0.1))); } };
         class Sound { constructor(fileName, onEnd) { this.audioElement = new Audio(`../Sounds/${fileName}`); this.sourceNode = audioContext.createMediaElementSource(this.audioElement); this.gainNode = audioContext.createGain(); this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 128; this.sourceNode.connect(this.gainNode).connect(this.analyser).connect(nodes.spatialPanner); this.onEnd = onEnd; this.audioElement.addEventListener('ended', () => { if (!this.audioElement.loop) this.onEnd(this); }); } async play(options) { try { await this.audioElement.setSinkId('default'); } catch (err) { console.error("Failed to set audio output device:", err); } this.audioElement.loop = options.looping; this.audioElement.playbackRate = options.speed; this.audioElement.detune = options.pitch; this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(1, audioContext.currentTime + options.fadeTime); await this.audioElement.play().catch(e => { console.error("Play Error:", e); this.onEnd(this); }); } stop(fadeTime) { this.gainNode.gain.cancelScheduledValues(audioContext.currentTime); this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, audioContext.currentTime).linearRampToValueAtTime(0.0001, audioContext.currentTime + fadeTime); setTimeout(() => { this.audioElement.pause(); this.onEnd(this); }, fadeTime * 1000 + 50); } }
-        async function loadSoundsAndCreateButtons() { try { const response = await fetch('../SoundboardSN.json'); const soundsData = await response.json(); const container = document.getElementById('soundCategoriesContainerV4'); container.innerHTML = ''; for (const categoryKey in soundsData) { const categoryDiv = document.createElement('div'); categoryDiv.className = 'sound-category-v4'; categoryDiv.innerHTML = `<h2>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`; const buttonsGrid = document.createElement('div'); buttonsGrid.className = 'sound-buttons-grid-v4'; soundsData[categoryKey].sort().forEach(fileName => { const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); const button = document.createElement('button'); button.className = 'sound-button-v4'; button.textContent = displayName; button.dataset.soundFile = fileName; button.addEventListener('click', () => { if (audioContext.state === 'suspended') { audioContext.resume(); } if (!controls.allowMultiple.checked) clearSounds(); const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); }; const sound = new Sound(fileName, onEnd); activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]); sound.play({ looping: controls.looping.checked, fadeTime: parseFloat(controls.fadeIn.value || 0.1), speed: parseFloat(controls.speed.value || 1), pitch: parseFloat(controls.pitch.value || 0) }); }); buttonsGrid.appendChild(button); }); categoryDiv.appendChild(buttonsGrid); container.appendChild(categoryDiv); } } catch (error) { console.error("Failed to load sounds:", error); } }
+        async function loadSoundsAndCreateButtons() { try { const response = await fetch('../SoundboardSN.json'); const soundsData = await response.json(); const container = document.getElementById('soundCategoriesContainerV4'); container.innerHTML = ''; for (const categoryKey in soundsData) { const categoryDiv = document.createElement('div'); categoryDiv.className = 'sound-category-v4'; categoryDiv.innerHTML = `<h2>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`; const buttonsGrid = document.createElement('div'); buttonsGrid.className = 'sound-buttons-grid-v4'; soundsData[categoryKey].sort().forEach(fileName => { const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); const button = document.createElement('button'); button.className = 'sound-button-v4'; button.textContent = displayName; button.dataset.soundFile = fileName; button.addEventListener('click', () => { if (!controls.allowMultiple.checked) clearSounds(); const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); }; const sound = new Sound(fileName, onEnd); activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]); sound.play({ looping: controls.looping.checked, fadeTime: parseFloat(controls.fadeIn.value || 0.1), speed: parseFloat(controls.speed.value || 1), pitch: parseFloat(controls.pitch.value || 0) }); }); buttonsGrid.appendChild(button); }); categoryDiv.appendChild(buttonsGrid); container.appendChild(categoryDiv); } } catch (error) { console.error("Failed to load sounds:", error); } }
        
         const toggleMute = () => { isMuted = !isMuted; const muteIndicator = document.getElementById('muteIndicator'); if (isMuted) { lastVolumeBeforeMute = masterGain.gain.value; masterGain.gain.value = 0; muteIndicator.classList.add('visible'); } else { masterGain.gain.value = lastVolumeBeforeMute; muteIndicator.classList.remove('visible'); } controls.masterVolume.value = masterGain.gain.value; document.getElementById('masterVolumeValue').textContent = `${Math.round(masterGain.gain.value * 100)}%`; };
         const updateFunctions = { 
@@ -939,16 +955,15 @@
         }
 
         function handleDrag(event) {
-            if (!isDragging) return;
+            if (!isDragging || !spatialPadRect) return;
             event.preventDefault();
 
-            const rect = spatialPad.getBoundingClientRect();
-            const padRadius = rect.width / 2;
+            const padRadius = spatialPadRect.width / 2;
             const clientX = event.touches ? event.touches[0].clientX : event.clientX;
             const clientY = event.touches ? event.touches[0].clientY : event.clientY;
 
-            let x = clientX - rect.left - padRadius;
-            let y = -(clientY - rect.top - padRadius);
+            let x = clientX - spatialPadRect.left - padRadius;
+            let y = -(clientY - spatialPadRect.top - padRadius);
 
             const distance = Math.sqrt(x * x + y * y);
             if (distance > padRadius) {
@@ -963,6 +978,7 @@
 
         function startDrag(event) {
             if (event.type === 'mousedown' && event.button !== 0) return;
+            spatialPadRect = spatialPad.getBoundingClientRect(); // Cache the rect on drag start
             isDragging = true;
             spatialPuck.style.cursor = 'grabbing';
             document.body.style.userSelect = 'none';
@@ -972,11 +988,11 @@
         function stopDrag() {
             if (!isDragging) return;
             isDragging = false;
+            spatialPadRect = null; // Clear the cached rect
             spatialPuck.style.cursor = 'grab';
             document.body.style.userSelect = '';
             
-            // Snap-to-center logic
-            const deadzoneRadius = 0.15; // 15% of the pad radius
+            const deadzoneRadius = 0.15;
             const currentX = parseFloat(spatialContainer.dataset.x);
             const currentY = parseFloat(spatialContainer.dataset.y);
             const distanceFromCenter = Math.sqrt(currentX**2 + currentY**2);
