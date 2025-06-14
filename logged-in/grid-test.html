@@ -739,12 +739,11 @@
         let lastVolumeBeforeMute = 1;
         let volumeBeforeNightMode = 1;
         let spatialPadRect = null;
+        let currentSnapAngle = null;
         
         const unlockAudioContext = () => {
             if (audioContext.state === 'suspended') {
-                audioContext.resume().then(() => {
-                    console.log('AudioContext resumed successfully.');
-                });
+                audioContext.resume().then(() => { console.log('AudioContext resumed successfully.'); });
             }
             document.body.removeEventListener('click', unlockAudioContext);
             document.body.removeEventListener('touchstart', unlockAudioContext);
@@ -771,28 +770,8 @@
         
         nodes.spatialPanner.connect(nodes.inputGain).connect(masterGain).connect(nodes.eqBass).connect(nodes.bassWaveShaper).connect(nodes.eqMid).connect(nodes.eqTreble).connect(nodes.vintageWarmer).connect(nodes.stableVolume).connect(nodes.vocalBoost).connect(nodes.awarenessGain).connect(nodes.nightModeCompressor).connect(finalCompressor).connect(audioContext.destination);
 
-        function makeDistortionCurve(amount) {
-            const k = typeof amount === 'number' ? amount : 50;
-            const n_samples = 44100;
-            const curve = new Float32Array(n_samples);
-            const deg = Math.PI / 180;
-            for (let i = 0; i < n_samples; i++) {
-                const x = i * 2 / n_samples - 1;
-                curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
-            }
-            return curve;
-        }
-
-        function makeVintageCurve(amount) {
-            const n_samples = 44100;
-            const curve = new Float32Array(n_samples);
-            if (amount === 0) {
-                for (let i = 0; i < n_samples; i++) { curve[i] = i * 2 / n_samples - 1; }
-            } else {
-                for (let i = 0; i < n_samples; i++) { const x = i * 2 / n_samples - 1; curve[i] = Math.tanh(x * amount); }
-            }
-            return curve;
-        }
+        function makeDistortionCurve(amount) { const k = typeof amount === 'number' ? amount : 50; const n_samples = 44100; const curve = new Float32Array(n_samples); const deg = Math.PI / 180; for (let i = 0; i < n_samples; i++) { const x = i * 2 / n_samples - 1; curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x)); } return curve; }
+        function makeVintageCurve(amount) { const n_samples = 44100; const curve = new Float32Array(n_samples); if (amount === 0) { for (let i = 0; i < n_samples; i++) { curve[i] = i * 2 / n_samples - 1; } } else { for (let i = 0; i < n_samples; i++) { const x = i * 2 / n_samples - 1; curve[i] = Math.tanh(x * amount); } } return curve; }
 
         nodes.bassWaveShaper.curve = makeDistortionCurve(0);
         nodes.bassWaveShaper.oversample = '4x';
@@ -850,17 +829,9 @@
         const spatialContainer = document.getElementById('spatial-controls-container');
         let isDragging = false;
 
-        function updateSpatialPuckAndAudio(audioX, audioY, padRadius) {
-            const pannerScale = 10;
-            nodes.spatialPanner.positionX.linearRampToValueAtTime(audioX * pannerScale, audioContext.currentTime + 0.05);
-            nodes.spatialPanner.positionY.linearRampToValueAtTime(audioY * pannerScale, audioContext.currentTime + 0.05);
-            const puckX = audioX * padRadius; const puckY = -audioY * padRadius;
-            spatialPuck.style.left = `${puckX + padRadius}px`;
-            spatialPuck.style.top = `${puckY + padRadius}px`;
-            spatialCoords.textContent = `X: ${audioX.toFixed(2)}, Y: ${audioY.toFixed(2)}`;
-            spatialContainer.dataset.x = audioX; spatialContainer.dataset.y = audioY;
-        }
-
+        function updateSpatialPuckAndAudio(audioX, audioY, padRadius) { const pannerScale = 10; nodes.spatialPanner.positionX.linearRampToValueAtTime(audioX * pannerScale, audioContext.currentTime + 0.05); nodes.spatialPanner.positionY.linearRampToValueAtTime(audioY * pannerScale, audioContext.currentTime + 0.05); const puckX = audioX * padRadius; const puckY = -audioY * padRadius; spatialPuck.style.left = `${puckX + padRadius}px`; spatialPuck.style.top = `${puckY + padRadius}px`; spatialCoords.textContent = `X: ${audioX.toFixed(2)}, Y: ${audioY.toFixed(2)}`; spatialContainer.dataset.x = audioX; spatialContainer.dataset.y = audioY; }
+        
+        // --- UPDATED DRAG LOGIC WITH HYSTERESIS ---
         function handleDrag(event) {
             if (!isDragging || !spatialPadRect) return;
             event.preventDefault();
@@ -872,30 +843,40 @@
             let x = clientX - spatialPadRect.left - padRadius;
             let y = -(clientY - spatialPadRect.top - padRadius);
             
-            let original_distance = Math.sqrt(x * x + y * y);
+            let distance = Math.sqrt(x * x + y * y);
             let angle = Math.atan2(y, x);
             
-            const snap_angles_rad = [0, 0.25 * Math.PI, 0.5 * Math.PI, 0.75 * Math.PI, Math.PI, -0.75 * Math.PI, -0.5 * Math.PI, -0.25 * Math.PI];
-            const snap_tolerance_rad = 5 * (Math.PI / 180);
+            const engage_tolerance_rad = 5 * (Math.PI / 180); 
+            const break_tolerance_rad = 10 * (Math.PI / 180);
             let isSnapped = false;
 
-            for (const snap_angle of snap_angles_rad) {
-                let angle_diff = Math.abs(angle - snap_angle);
-                if (angle_diff > Math.PI) { angle_diff = 2 * Math.PI - angle_diff; }
-                if (angle_diff < snap_tolerance_rad) {
-                    angle = snap_angle;
+            if (currentSnapAngle !== null) {
+                let angle_diff = Math.abs(angle - currentSnapAngle);
+                if (angle_diff > Math.PI) angle_diff = 2 * Math.PI - angle_diff;
+                if (angle_diff > break_tolerance_rad) {
+                    currentSnapAngle = null;
+                } else {
+                    angle = currentSnapAngle;
                     isSnapped = true;
-                    break;
+                }
+            } else {
+                const snap_angles_rad = [0, 0.25 * Math.PI, 0.5 * Math.PI, 0.75 * Math.PI, Math.PI, -0.75 * Math.PI, -0.5 * Math.PI, -0.25 * Math.PI];
+                for (const snap_angle of snap_angles_rad) {
+                    let angle_diff = Math.abs(angle - snap_angle);
+                    if (angle_diff > Math.PI) angle_diff = 2 * Math.PI - angle_diff;
+                    if (angle_diff < engage_tolerance_rad) {
+                        angle = snap_angle;
+                        currentSnapAngle = snap_angle;
+                        isSnapped = true;
+                        break;
+                    }
                 }
             }
             spatialPuck.classList.toggle('snapped', isSnapped);
 
-            if (isSnapped) {
-                x = original_distance * Math.cos(angle);
-                y = original_distance * Math.sin(angle);
-            }
+            x = distance * Math.cos(angle);
+            y = distance * Math.sin(angle);
 
-            // **FIX**: The boundary check is now the final step
             const final_distance = Math.sqrt(x * x + y * y);
             if (final_distance > padRadius) {
                 x = (x / final_distance) * padRadius;
@@ -918,6 +899,7 @@
             if (!isDragging) return;
             isDragging = false;
             spatialPadRect = null;
+            currentSnapAngle = null;
             spatialPuck.style.cursor = 'grab';
             document.body.style.userSelect = '';
             spatialPuck.classList.remove('snapped');
@@ -964,45 +946,23 @@
             document.addEventListener('keydown', (event) => { if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA') { return; } if (event.shiftKey && (event.key === 'C' || event.key === 'c')) { event.preventDefault(); clearSounds(); } if (!event.shiftKey && (event.key === 'M' || event.key === 'm')) { event.preventDefault(); toggleMute(); } });
             document.querySelector('.settings-tabs').addEventListener('click', e => { if (e.target.matches('.tab-link')) { document.querySelectorAll('.tab-link, .tab-content').forEach(el => el.classList.remove('active')); e.target.classList.add('active'); document.getElementById(e.target.dataset.tab).classList.add('active'); document.getElementById('settingsSearch').value = ''; document.getElementById('searchResultsContainer').style.display = 'none'; document.querySelector('.settings-tab-container').classList.remove('search-active'); } });
             
-            document.getElementById('resetEqBtn').addEventListener('click', () => {
-                ['eqBass', 'eqMid', 'eqTreble'].forEach(key => {
-                    const slider = controls[key];
-                    if (slider) { slider.value = 0; slider.dispatchEvent(new Event('input', { bubbles: true })); }
-                });
-            });
-
-            document.getElementById('applyEqTuneBtn').addEventListener('click', () => {
-                Object.entries(recommendedTune).forEach(([key, value]) => {
-                    const slider = controls[key];
-                    if (slider) { slider.value = value; slider.dispatchEvent(new Event('input', { bubbles: true })); }
-                });
-            });
+            document.getElementById('resetEqBtn').addEventListener('click', () => { ['eqBass', 'eqMid', 'eqTreble'].forEach(key => { const slider = controls[key]; if (slider) { slider.value = 0; slider.dispatchEvent(new Event('input', { bubbles: true })); } }); });
+            document.getElementById('applyEqTuneBtn').addEventListener('click', () => { Object.entries(recommendedTune).forEach(([key, value]) => { const slider = controls[key]; if (slider) { slider.value = value; slider.dispatchEvent(new Event('input', { bubbles: true })); } }); });
 
             Object.values(controls).forEach(el => { 
                 if (!el.dataset.setting.startsWith('spatial-puck')) {
                     const key = el.dataset.setting; 
                     if (!key) return; 
                     const eventType = el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input'; 
-                    if(updateFunctions[key]) { 
-                        el.addEventListener(eventType, e => { 
-                            const value = el.type === 'checkbox' ? e.target.checked : e.target.value; 
-                            updateFunctions[key](value); 
-                        });
-                    }
+                    if(updateFunctions[key]) { el.addEventListener(eventType, e => { const value = el.type === 'checkbox' ? e.target.checked : e.target.value; updateFunctions[key](value); }); }
                 }
             });
             
             document.querySelectorAll('.slider-value-input').forEach(numInput => {
                 numInput.addEventListener('change', (e) => {
-                    const sliderId = e.target.dataset.sliderId;
-                    const slider = document.getElementById(sliderId);
-                    if (!slider) return;
-                    let value = parseFloat(e.target.value);
-                    const min = parseFloat(slider.min);
-                    const max = parseFloat(slider.max);
+                    const sliderId = e.target.dataset.sliderId; const slider = document.getElementById(sliderId); if (!slider) return; let value = parseFloat(e.target.value); const min = parseFloat(slider.min); const max = parseFloat(slider.max);
                     if (slider.id === 'masterVolume') { value = value / 100; }
-                    if (value < min) value = min;
-                    if (value > max) value = max;
+                    if (value < min) value = min; if (value > max) value = max;
                     slider.value = value;
                     slider.dispatchEvent(new Event('input', { bubbles: true }));
                 });
@@ -1014,15 +974,11 @@
             spatialPad.addEventListener('touchstart', startDrag, { passive: false });
             document.addEventListener('touchmove', handleDrag, { passive: false });
             document.addEventListener('touchend', stopDrag);
-            document.getElementById('resetSpatialBtn').addEventListener('click', () => {
-                updateSpatialPuckAndAudio(0, 0, spatialPad.offsetWidth / 2);
-            });
+            document.getElementById('resetSpatialBtn').addEventListener('click', () => { updateSpatialPuckAndAudio(0, 0, spatialPad.offsetWidth / 2); });
             
             Object.keys(eqSnapPoints).forEach(sliderId => {
                 const slider = document.getElementById(sliderId);
-                if(slider) {
-                    slider.addEventListener('change', () => handleEqSliderSnap(slider, eqSnapPoints[sliderId]));
-                }
+                if(slider) { slider.addEventListener('change', () => handleEqSliderSnap(slider, eqSnapPoints[sliderId])); }
             });
 
             const micPrompt = document.getElementById('mic-permission-prompt');
