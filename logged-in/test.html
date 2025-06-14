@@ -415,7 +415,7 @@
                 <div id="equalizer" class="tab-content">
                     <div class="control-group" data-search-terms="equalizer eq bass">
                         <label>Bass: <span id="eqBassValue">0 dB</span></label>
-                        <input type="range" id="eqBass" min="-12" max="12" step="1" value="0" data-setting="eqBass">
+                        <input type="range" id="eqBass" min="-12" max="18" step="1" value="0" data-setting="eqBass">
                     </div>
                     <div class="control-group" data-search-terms="equalizer eq mid">
                         <label>Mid: <span id="eqMidValue">0 dB</span></label>
@@ -506,42 +506,30 @@
         let isMuted = false;
         let lastVolumeBeforeMute = 1;
         
+        // REVAMPED: Final compressor is more relaxed to allow for more powerful bass
         const masterGain = audioContext.createGain();
-        const finalCompressor = new DynamicsCompressorNode(audioContext);
+        const finalCompressor = new DynamicsCompressorNode(audioContext, { threshold: -12.0, ratio: 6.0 });
         const inputGain = audioContext.createGain();
         
-        // --- Main Audio Nodes Setup ---
         const nodes = { 
-            // The 3-band EQ, now with more impactful frequencies.
             eqBass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 100, gain: 0 }),
             eqMid: new BiquadFilterNode(audioContext, { type: 'peaking', frequency: 1200, Q: 1.0, gain: 0 }),
             eqTreble: new BiquadFilterNode(audioContext, { type: 'highshelf', frequency: 6000, gain: 0 }),
-            
-            // Effect Nodes
             spatialPanner: new PannerNode(audioContext, { panningModel: 'HRTF', distanceModel: 'inverse' }),
             binaural: { panner: new StereoPannerNode(audioContext, { pan: 0 }) }, 
             vocalBoost: new BiquadFilterNode(audioContext, {type: 'peaking', frequency: 2500, Q: 1.5, gain: 0}), 
-            
-            // Utility Nodes
             stableVolume: new DynamicsCompressorNode(audioContext, {threshold: -24, ratio: 12}), 
             awarenessGain: audioContext.createGain(),
         };
 
-        // --- REVAMPED Audio Routing ---
-        // A single, clean signal path. No more dry/wet bus to bypass the EQ.
-        // 1. All sounds enter here.
-        inputGain
-        // 2. Main volume control.
-            .connect(masterGain)
-        // 3. The 3-band Equalizer. All audio passes through here.
+        // REVAMPED: Clean, single audio path. All sound goes through the EQ.
+        inputGain.connect(masterGain)
             .connect(nodes.eqBass)
             .connect(nodes.eqMid)
             .connect(nodes.eqTreble)
-        // 4. Other serial effects.
-            .connect(nodes.vocalBoost)
             .connect(nodes.stableVolume)
+            .connect(nodes.vocalBoost)
             .connect(nodes.awarenessGain)
-        // 5. Final output compressor and destination.
             .connect(finalCompressor)
             .connect(audioContext.destination);
         
@@ -562,13 +550,9 @@
             eqBass: v => { const val = parseFloat(v); nodes.eqBass.gain.value = val; document.getElementById('eqBassValue').textContent = `${val} dB`; },
             eqMid: v => { const val = parseFloat(v); nodes.eqMid.gain.value = val; document.getElementById('eqMidValue').textContent = `${val} dB`; },
             eqTreble: v => { const val = parseFloat(v); nodes.eqTreble.gain.value = val; document.getElementById('eqTrebleValue').textContent = `${val} dB`; },
-            modeSpatial: v => { /* Logic to be added if needed */ },
-            modeBinaural: v => { /* Logic to be added if needed */ }, 
             modeVocalBoost: v => nodes.vocalBoost.gain.linearRampToValueAtTime(v ? 6 : 0, 0.1), 
-            modeParty: v => { /* This can be removed or repurposed */ }, 
             modeAwareness: v => v ? awarenessEngine.start() : awarenessEngine.stop(), 
             modeStable: v => { nodes.stableVolume.ratio.linearRampToValueAtTime(v ? 12 : 1, 0.1); }, 
-            modeNight: v => { /* This can be removed or repurposed */ } 
         };
         
         function updateButtonVisuals() { requestAnimationFrame(updateButtonVisuals); document.querySelectorAll('.sound-button-v4[data-sound-file]').forEach(button => { const fileName = button.dataset.soundFile; const instances = activeSounds.get(fileName); if (instances && instances.length > 0) { button.classList.add('playing'); if (instances.length > 1) { button.classList.add('pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } else { button.classList.remove('pulsating'); const analyser = instances[0].analyser; const dataArray = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(dataArray); const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length; const scale = 1 + (avg / 255) * 0.05; const shadowSpread = 2 + (avg / 255) * 8; button.style.transform = `scale(${scale})`; button.style.boxShadow = `0 0 ${shadowSpread}px rgba(103, 32, 189, 0.7)`; } } else { button.classList.remove('playing', 'pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } }); }
