@@ -457,27 +457,41 @@
         .is-hidden { display: none !important; }
         .is-filtering { opacity: 0 !important; }
         #bottom-fixed-bar {
-            position: fixed; bottom: 15px; right: 15px; z-index: 1001;
-            display: flex; align-items: center; gap: 12px; padding: 10px 10px;
-            background: rgba(255, 255, 255, 0.45);
-            backdrop-filter: blur(3px) saturate(1.5);
-            -webkit-backdrop-filter: blur(12px) saturate(1.8);
+            position: fixed;
+            bottom: 15px;
+            right: 15px;
+            left: auto;
+            z-index: 1001;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 10px 10px;
+            background: linear-gradient(135deg, rgba(255, 255, 255, 0.4), rgba(255, 255, 255, 0.1));
+            backdrop-filter: blur(10px) saturate(1.2);
+            -webkit-backdrop-filter: blur(10px) saturate(1.2);
             border-radius: 20px;
-            border: 1.5px solid rgba(255, 255, 255, 0.3);
-            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2), inset 0 1px 1px 0 rgba(255, 255, 255, 0.5);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.15), inset 0 1px 1px 0 rgba(255, 255, 255, 0.7);
         }
         #bottom-fixed-bar input[type="text"] {
-            background: transparent; border: none; border-bottom: 1px solid rgba(50,50,50,0.6);
-            color: var(--v4-text-primary); padding: 8px 5px; width: 180px;
-            font-size: 1em; outline: none; font-family: var(--v4-font-secondary);
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid rgba(50,50,50,0.6);
+            color: var(--v4-text-primary);
+            padding: 8px 5px;
+            font-size: 1em;
+            outline: none;
+            font-family: var(--v4-font-secondary);
+            flex-grow: 1; /* This makes the input field expand */
+            width: auto; /* Override fixed width */
         }
         #clearSoundsBtn {
             padding: 10px 12px; background: rgba(255, 5, 5, 0.85);
             color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 10px;
             cursor: pointer; font-size: 0.95em; text-transform: uppercase; transition: all 0.25s ease;
             font-family: var(--v4-font-primary);
+            flex-shrink: 0; /* Prevents the button from shrinking */
         }
-        #clearSoundsBtn:hover { background: rgba(255, 0, 20, 1); transform: translateY(-1px); }
         .mute-status {
             display: none;
             background-color: #c41e3a;
@@ -630,7 +644,7 @@
                          <small class="mode-description">Emphasizes frequencies common in human speech to improve clarity.</small>
                      </div>
                      <div class="control-group" data-search-terms="party mode echo bass boost">
-                         <label class="checkbox-label-v4">Party Mode <input type="checkbox" data-setting="modeParty"></label>
+                         <label class="checkbox-label-v4">Party Mode <input type="checkbox" id="modeParty" data-setting="modeParty"></label>
                          <small class="mode-description">Adds bass boost and audio compression for a punchier, louder sound.</small>
                      </div>
                      <div class="control-group" data-search-terms="stable volume normalize compression">
@@ -764,7 +778,7 @@
     // --- Soundboard Logic ---
     document.addEventListener('DOMContentLoaded', () => {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const LOCAL_STORAGE_KEY = 'soundboardSettingsV16';
+        const LOCAL_STORAGE_KEY = 'soundboardSettingsV17';
         
         let activeSounds = new Map();
         let isMuted = false;
@@ -796,6 +810,7 @@
             mainPanner: new PannerNode(audioContext, { panningModel: 'HRTF', distanceModel: 'inverse' }),
             reverb: { node: audioContext.createConvolver(), gain: audioContext.createGain() },
             earlyReflections: { input: audioContext.createGain(), output: audioContext.createGain(), surfaces: {} },
+            partyMode: { bass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 120 }), comp: new DynamicsCompressorNode(audioContext, { threshold: -18, ratio: 8 }) },
             inputGain: audioContext.createGain(),
             eqBass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 100, gain: 0 }),
             bassWaveShaper: audioContext.createWaveShaper(),
@@ -814,7 +829,8 @@
         nodes.airAbsorptionFilter.connect(nodes.reverb.gain).connect(nodes.reverb.node).connect(nodes.inputGain);
         nodes.airAbsorptionFilter.connect(nodes.earlyReflections.input);
         nodes.earlyReflections.output.connect(nodes.inputGain);
-        nodes.inputGain.connect(masterGain).connect(nodes.eqBass).connect(nodes.bassWaveShaper).connect(nodes.eqMid).connect(nodes.eqTreble).connect(nodes.vintageWarmer).connect(nodes.stableVolume).connect(nodes.vocalBoost).connect(nodes.awarenessGain).connect(nodes.nightModeCompressor).connect(finalCompressor).connect(audioContext.destination);
+        nodes.partyMode.bass.connect(nodes.partyMode.comp);
+        nodes.inputGain.connect(masterGain).connect(nodes.partyMode.bass).connect(nodes.eqBass).connect(nodes.bassWaveShaper).connect(nodes.eqMid).connect(nodes.eqTreble).connect(nodes.vintageWarmer).connect(nodes.stableVolume).connect(nodes.vocalBoost).connect(nodes.awarenessGain).connect(nodes.nightModeCompressor).connect(finalCompressor).connect(audioContext.destination);
 
         // --- UTILITY FUNCTIONS & INITIALIZATION ---
         async function createReverbIR(audioContext) { const sampleRate = audioContext.sampleRate; const length = sampleRate * 2; const impulse = audioContext.createBuffer(2, length, sampleRate); for (let ch = 0; ch < 2; ch++) { const data = impulse.getChannelData(ch); for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, 3); } nodes.reverb.node.buffer = impulse; }
@@ -826,7 +842,7 @@
         
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
-        const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start() { if (this.isActive) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); showStatus('Could not access microphone.', 'error'); }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); let voiceEnergy = 0; for (let i = 5; i < 100; i++) voiceEnergy += dataArray[i]; voiceEnergy /= 95; const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; nodes.awarenessGain.gain.setTargetAtTime(newVolume, audioContext.currentTime, 0.1); } };
+        const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start() { if (this.isActive) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); showStatus('Could not access microphone. Please enable it in browser settings.', 'error'); controls.modeAwareness.checked = false; }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); let voiceEnergy = 0; for (let i = 5; i < 100; i++) voiceEnergy += dataArray[i]; voiceEnergy /= 95; const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; nodes.awarenessGain.gain.setTargetAtTime(newVolume, audioContext.currentTime, 0.1); } };
         const clearSounds = () => { if (controls.confirmClear && controls.confirmClear.checked && !confirm('Are you sure you want to stop all sounds?')) { return; } for (const [_, instances] of activeSounds.entries()) { [...instances].forEach(sound => sound.stop(parseFloat(controls.fadeOut.value || 0.1))); } };
         
         class Sound {
@@ -834,28 +850,15 @@
                 this.audioElement = new Audio(`../Sounds/${fileName}`);
                 this.sourceNode = audioContext.createMediaElementSource(this.audioElement);
                 this.gainNode = audioContext.createGain();
-                this.analyser = audioContext.createAnalyser();
-                this.analyser.fftSize = 128;
-
-                // --- NEW Crossfader for enabling/disabling spatial effects ---
-                this.spatialOnGain = audioContext.createGain();
-                this.spatialOffGain = audioContext.createGain();
-                this.spatialOnGain.gain.value = 0; // Start with spatial OFF
-                this.spatialOffGain.gain.value = 1; // Start with normal ON
-
+                this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 128;
+                this.spatialOnGain = audioContext.createGain(); this.spatialOffGain = audioContext.createGain();
+                this.spatialOnGain.gain.value = 0; this.spatialOffGain.gain.value = 1;
+                this.sourceNode.connect(this.gainNode).connect(this.analyser);
                 this.analyser.connect(this.spatialOnGain).connect(nodes.spatialInput);
                 this.analyser.connect(this.spatialOffGain).connect(nodes.inputGain);
-                // --- End Crossfader ---
-                
-                this.sourceNode.connect(this.gainNode).connect(this.analyser);
-                this.onEnd = onEnd;
-                this.audioElement.addEventListener('ended', () => { if (!this.audioElement.loop) this.onEnd(this); });
+                this.onEnd = onEnd; this.audioElement.addEventListener('ended', () => { if (!this.audioElement.loop) this.onEnd(this); });
             }
-            toggleSpatial(isOn) {
-                const onValue = isOn ? 1.0 : 0.0;
-                this.spatialOnGain.gain.setTargetAtTime(onValue, audioContext.currentTime, 0.05);
-                this.spatialOffGain.gain.setTargetAtTime(1.0 - onValue, audioContext.currentTime, 0.05);
-            }
+            toggleSpatial(isOn) { const onValue = isOn ? 1.0 : 0.0; this.spatialOnGain.gain.setTargetAtTime(onValue, audioContext.currentTime, 0.05); this.spatialOffGain.gain.setTargetAtTime(1.0 - onValue, audioContext.currentTime, 0.05); }
             async play(options) { try { await this.audioElement.setSinkId('default'); } catch (err) { console.error("Failed to set audio output device:", err); } this.audioElement.loop = options.looping; this.audioElement.playbackRate = options.speed; this.audioElement.detune = options.pitch; this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(1, audioContext.currentTime + options.fadeTime); await this.audioElement.play().catch(e => { console.error("Play Error:", e); this.onEnd(this); }); }
             stop(fadeTime) { this.gainNode.gain.cancelScheduledValues(audioContext.currentTime); this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, audioContext.currentTime).linearRampToValueAtTime(0.0001, audioContext.currentTime + fadeTime); setTimeout(() => { this.audioElement.pause(); this.onEnd(this); }, fadeTime * 1000 + 50); }
         }
@@ -873,21 +876,10 @@
             eqBass: v => { const val = parseFloat(v); if (val <= 40) { nodes.eqBass.gain.value = val; nodes.bassWaveShaper.curve = makeDistortionCurve(0); document.getElementById('eqBassValue').textContent = `${val} dB`; } else { nodes.eqBass.gain.value = 40; const distortionAmount = (val - 40) * 10; nodes.bassWaveShaper.curve = makeDistortionCurve(distortionAmount); document.getElementById('eqBassValue').textContent = `+40 dB (Punch ${Math.round((val - 40) / 40 * 100)}%)`; if ('vibrate' in navigator) { navigator.vibrate(Math.min(200, (val - 40) * 5)); } } const numInput = document.querySelector(`[data-slider-id="eqBass"]`); if(numInput) numInput.value = v; },
             eqMid: v => { const val = parseFloat(v); nodes.eqMid.gain.value = val; document.getElementById('eqMidValue').textContent = `${val} dB`; const numInput = document.querySelector(`[data-slider-id="eqMid"]`); if(numInput) numInput.value = v; },
             eqTreble: v => { const val = parseFloat(v); nodes.eqTreble.gain.value = val; document.getElementById('eqTrebleValue').textContent = `${val} dB`; const numInput = document.querySelector(`[data-slider-id="eqTreble"]`); if(numInput) numInput.value = v; },
-            modeSpatial: v => { 
-                const statusEl = document.getElementById('spatialConversionStatus');
-                if (activeSounds.size > 0 && statusEl) {
-                    statusEl.textContent = v ? 'Converting...' : 'Reverting...';
-                    statusEl.classList.remove('visible');
-                    void statusEl.offsetWidth;
-                    statusEl.classList.add('visible');
-                }
-                for (const instances of activeSounds.values()) {
-                    instances.forEach(sound => sound.toggleSpatial(v));
-                }
-                if (v) { const posEl = document.querySelector('.spatial-audio-control'); const x = parseFloat(posEl.dataset.x) || 0; const y = parseFloat(posEl.dataset.y) || 0; const z = parseFloat(posEl.dataset.z) || 0; updateSpatialPuckAndAudio(x, y, z, document.getElementById('spatial-pad').offsetWidth / 2 || 90); }
-            },
+            modeSpatial: v => { const statusEl = document.getElementById('spatialConversionStatus'); if (activeSounds.size > 0 && statusEl) { statusEl.textContent = v ? 'Converting...' : 'Reverting...'; statusEl.classList.remove('visible'); void statusEl.offsetWidth; statusEl.classList.add('visible'); } for (const instances of activeSounds.values()) { instances.forEach(sound => sound.toggleSpatial(v)); } if (v) { const posEl = document.querySelector('.spatial-audio-control'); const x = parseFloat(posEl.dataset.x) || 0; const y = parseFloat(posEl.dataset.y) || 0; const z = parseFloat(posEl.dataset.z) || 0; updateSpatialPuckAndAudio(x, y, z, document.getElementById('spatial-pad').offsetWidth / 2 || 90); } },
             modeVintageWarmth: v => { nodes.vintageWarmer.curve = makeVintageCurve(v ? 1.5 : 0); },
-            modeNight: v => { const volControlGroup = document.getElementById('masterVolumeControlGroup'); const volSlider = controls.masterVolume; const volInput = document.getElementById('masterVolumeInput'); if (v) { volumeBeforeNightMode = volSlider.value; volControlGroup.classList.add('locked'); volSlider.disabled = true; volInput.disabled = true; volSlider.value = 0.15; volSlider.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeCompressor.threshold.setTargetAtTime(-40, audioContext.currentTime, 0.01); nodes.nightModeCompressor.ratio.setTargetAtTime(12.0, audioContext.currentTime, 0.01); } else { volControlGroup.classList.remove('locked'); volSlider.disabled = false; volInput.disabled = false; volSlider.value = volumeBeforeNightMode; volSlider.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeCompressor.threshold.setTargetAtTime(0, audioContext.currentTime, 0.01); nodes.nightModeCompressor.ratio.setTargetAtTime(1.0, audioContext.currentTime, 0.01); } },
+            modeParty: v => { if (v && controls.modeNight.checked) { controls.modeNight.checked = false; controls.modeNight.dispatchEvent(new Event('change')); } const bassGain = v ? 6 : 0; const compThreshold = v ? -18 : 0; nodes.partyMode.bass.gain.setTargetAtTime(bassGain, audioContext.currentTime, 0.02); nodes.partyMode.comp.threshold.setTargetAtTime(compThreshold, audioContext.currentTime, 0.02); },
+            modeNight: v => { if (v && controls.modeParty.checked) { controls.modeParty.checked = false; controls.modeParty.dispatchEvent(new Event('change')); } const volControlGroup = document.getElementById('masterVolumeControlGroup'); const volSlider = controls.masterVolume; const volInput = document.getElementById('masterVolumeInput'); if (v) { volumeBeforeNightMode = volSlider.value; volControlGroup.classList.add('locked'); volSlider.disabled = true; volInput.disabled = true; volSlider.value = 0.15; volSlider.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeCompressor.threshold.setTargetAtTime(-40, audioContext.currentTime, 0.01); nodes.nightModeCompressor.ratio.setTargetAtTime(12.0, audioContext.currentTime, 0.01); } else { volControlGroup.classList.remove('locked'); volSlider.disabled = false; volInput.disabled = false; volSlider.value = volumeBeforeNightMode; volSlider.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeCompressor.threshold.setTargetAtTime(0, audioContext.currentTime, 0.01); nodes.nightModeCompressor.ratio.setTargetAtTime(1.0, audioContext.currentTime, 0.01); } },
             modeVocalBoost: v => nodes.vocalBoost.gain.setTargetAtTime(v ? 6 : 0, audioContext.currentTime, 0.01), 
             modeAwareness: v => v ? awarenessEngine.start() : awarenessEngine.stop(), 
             modeStable: v => { nodes.stableVolume.ratio.setTargetAtTime(v ? 12 : 1, audioContext.currentTime, 0.01); }
@@ -905,35 +897,28 @@
         function saveSettings() { const settingsToSave = {}; document.querySelectorAll('[data-setting]').forEach(el => { const key = el.dataset.setting; settingsToSave[key] = (el.type === 'checkbox') ? el.checked : el.value; }); const spatialControl = document.querySelector('.spatial-audio-control'); if (spatialControl.dataset.x) { settingsToSave['spatial_x'] = spatialControl.dataset.x; settingsToSave['spatial_y'] = spatialControl.dataset.y; settingsToSave['spatial_z'] = spatialControl.dataset.z; } settingsToSave.savedAt = new Date().toISOString(); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(settingsToSave)); updateSaveButtonText(settingsToSave.savedAt); showStatus('Settings saved successfully!', 'success'); }
         function loadSettings() { const savedSettings = localStorage.getItem(LOCAL_STORAGE_KEY); if (savedSettings) { const settings = JSON.parse(savedSettings); Object.keys(settings).forEach(key => { const control = controls[key]; if (control) { if (control.type === 'checkbox') { control.checked = settings[key]; } else { control.value = settings[key]; } control.dispatchEvent(new Event(control.type === 'checkbox' ? 'change' : 'input', { bubbles: true })); } }); if (settings['spatial_x'] !== undefined) { const x = parseFloat(settings['spatial_x']); const y = parseFloat(settings['spatial_y']); const z = parseFloat(settings['spatial_z'] || 0); currentZ = z; setTimeout(() => { const padRadius = document.getElementById('spatial-pad').offsetWidth / 2 || 90; updateSpatialPuckAndAudio(x, y, z, padRadius); }, 100); } updateSaveButtonText(settings.savedAt); showStatus('Settings loaded.', 'info'); } }
         
-        const spatialPad = document.getElementById('spatial-pad');
-        const spatialPuck = document.getElementById('spatial-puck');
-        const spatialCoords = document.getElementById('spatial-coords');
+        const spatialPad = document.getElementById('spatial-pad'); const spatialPuck = document.getElementById('spatial-puck'); const spatialCoords = document.getElementById('spatial-coords');
 
         function updateSpatialPuckAndAudio(audioX, audioY, audioZ, padRadius) {
             if (!padRadius) padRadius = 90;
-            const timeConstant = 0.015; // Time constant for smooth parameter changes
+            const timeConstant = 0.015;
             const now = audioContext.currentTime;
-
             nodes.mainPanner.positionX.setTargetAtTime(audioX * 10, now, timeConstant);
             nodes.mainPanner.positionY.setTargetAtTime(audioY * 10, now, timeConstant);
             nodes.mainPanner.positionZ.setTargetAtTime(audioZ * 10, now, timeConstant);
-
             const puckX = audioX * padRadius; const puckY = -audioY * padRadius;
             spatialPuck.style.left = `${puckX + padRadius}px`; spatialPuck.style.top = `${puckY + padRadius}px`;
             const zScale = 1 + (audioZ * 0.15); const zShadow = 2 + (Math.abs(audioZ) * 5);
             spatialPuck.style.transform = `translate(-50%, -50%) scale(${zScale})`;
             spatialPuck.style.boxShadow = `0 ${zShadow}px ${zShadow * 2}px rgba(0,0,0,0.3)`;
             spatialCoords.textContent = `X:${audioX.toFixed(2)}, Y:${audioY.toFixed(2)}, Z:${audioZ.toFixed(2)}`;
-
             const posEl = document.querySelector('.spatial-audio-control');
             if (posEl) { posEl.dataset.x = audioX; posEl.dataset.y = audioY; posEl.dataset.z = audioZ; }
-
             const distance = Math.sqrt(audioX**2 + audioY**2 + audioZ**2);
             const airAbsorptionFreq = Math.max(4000, 20000 - (distance * 16000));
             nodes.airAbsorptionFilter.frequency.setTargetAtTime(airAbsorptionFreq, now, timeConstant);
             const reverbLevel = Math.min(0.5, distance * 0.35);
             nodes.reverb.gain.gain.setTargetAtTime(reverbLevel, now, timeConstant);
-
             const room = { width: 20, depth: 20, height: 10 }; const speedOfSound = 343;
             const pos = { x: audioX * 10, y: audioY * 10, z: audioZ * 5 };
             const calcReflection = (dist) => ({ delay: dist / speedOfSound, gain: Math.max(0, 0.7 - (dist / room.width)) });
@@ -958,7 +943,7 @@
             spatialPad.addEventListener('mousedown', startDrag); document.addEventListener('mousemove', handleDrag); document.addEventListener('mouseup', stopDrag); spatialPad.addEventListener('touchstart', startDrag, { passive: false }); document.addEventListener('touchmove', handleDrag, { passive: false }); document.addEventListener('touchend', stopDrag);
             document.getElementById('resetSpatialBtn').addEventListener('click', () => { currentZ = 0; updateSpatialPuckAndAudio(0, 0, 0, spatialPad.offsetWidth / 2); });
             spatialPad.addEventListener('wheel', event => { if (!controls.modeSpatial.checked) return; event.preventDefault(); event.stopPropagation(); const scrollAmount = event.deltaY > 0 ? -0.05 : 0.05; currentZ = Math.max(-1, Math.min(1, currentZ + scrollAmount)); const posEl = document.querySelector('.spatial-audio-control'); const currentX = parseFloat(posEl.dataset.x) || 0; const currentY = parseFloat(posEl.dataset.y) || 0; updateSpatialPuckAndAudio(currentX, currentY, currentZ, spatialPad.offsetWidth / 2); }, { passive: false });
-            try { const permissionStatus = await navigator.permissions.query({name: 'microphone'}); const handlePermission = (status) => { const micDependentModes = document.querySelectorAll('[data-setting="modeAwareness"]'); if (status.state === 'granted') { micPrompt.style.display = 'none'; micDependentModes.forEach(el => el.closest('.control-group').classList.remove('disabled')); } else { micPrompt.style.display = 'block'; micDependentModes.forEach(el => { el.checked = false; el.dispatchEvent(new Event('change')); el.closest('.control-group').classList.add('disabled'); }); micPrompt.querySelector('p').textContent = status.state === 'denied' ? 'Microphone access was denied. Please enable it in your browser settings.' : 'Conversation Awareness requires microphone access.'; micPrompt.querySelector('button').disabled = status.state === 'denied'; } }; permissionStatus.onchange = () => handlePermission(permissionStatus); handlePermission(permissionStatus); document.getElementById('enable-mic-btn').onclick = async () => { try { await navigator.mediaDevices.getUserMedia({ audio: true }); } catch(e) { showStatus('Microphone access was not granted.', 'error'); } }; } catch(e) { document.querySelectorAll('[data-setting="modeAwareness"]').forEach(el => el.closest('.control-group').classList.add('disabled')); }
+            
             loadSettings();
         }
 
