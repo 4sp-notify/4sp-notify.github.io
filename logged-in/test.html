@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>4SP - Web Radio</title>
+    <title>4SP - Advanced Web Radio</title>
     <link rel="stylesheet" href="../css/style.css"> <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
@@ -135,25 +135,54 @@
             border: 1px solid rgba(255,255,255,0.1);
             box-shadow: inset 0 2px 10px rgba(0,0,0,0.5);
             text-align: center;
+            position: relative;
+            overflow: hidden; /* For static overlay */
+        }
+        #staticOverlay {
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background-image: url('data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIj48ZmlsdGVyIGlkPSJzIj48ZmVUdXJidWxlbmNlIHR5cGU9ImZyYWN0YWxOb2lzZSIgYmFzZUZyZXF1ZW5jeT0iMS4yIiBudW1PY3RhdmVzPSIzIiBzdGl0Y2hUaWxlcz0ic3RpdGNoIi8+PC9maWx0ZXI+PHJlY3Qgd2lkdGg9IjEwMCUiIGhlaWdodD0iMTAwJSIgZmlsdGVyPSJ1ciAoI3MpIiBvcGFjaXR5PSIwLjM1Ii8+PC9zdmc+');
+            z-index: 1;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.5s ease-in-out;
+            animation: static-flicker 0.15s infinite;
+        }
+        @keyframes static-flicker {
+            0%, 100% { transform: translate(0,0); }
+            25% { transform: translate(-2px, 2px); }
+            50% { transform: translate(2px, -2px); }
+            75% { transform: translate(2px, 2px); }
         }
         .station-name {
             font-size: 1.75em;
             font-weight: bold;
             min-height: 1.2em;
+            position: relative; z-index: 2;
         }
         .station-genre {
             font-size: 1em;
             color: var(--v4-text-secondary);
             font-style: italic;
-            min-height: 1.2em; /* Reserve space */
+            min-height: 1.2em;
+            position: relative; z-index: 2;
         }
-        .search-controls, .custom-station-controls {
-            display: flex;
+        .search-grid {
+            display: grid;
+            grid-template-columns: 1fr auto;
             gap: 10px;
             align-items: center;
         }
-        .custom-station-controls { flex-wrap: wrap; }
-        .search-controls input, .custom-station-controls input { flex-grow: 1; }
+        .search-grid label {
+            font-size: 0.9em;
+            font-weight: 600;
+            color: var(--v4-text-secondary);
+            text-align: left;
+            margin-bottom: 5px;
+        }
+        .search-input-group {
+            display: contents; /* Allows inputs to be direct children of the grid */
+        }
         .btn-primary {
             padding: 8px 15px;
             font-size: 1em;
@@ -187,6 +216,20 @@
         .power-button.off { background-color: #dc3545; border-color: #c82333; color: #fff; }
         .power-button.on { background-color: #28a745; border-color: #218838; color: #fff; }
         hr.divider { border: none; border-top: 1px solid var(--v4-border-softer); margin: 20px 0; }
+        #searchResultsModal {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); z-index: 1002;
+        }
+        .modal-content {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: var(--v4-card-bg); padding: 20px; border-radius: 15px;
+            width: 90%; max-width: 500px; max-height: 70vh; overflow-y: auto;
+            border: 1px solid var(--v4-border-light);
+        }
+        .modal-content h3 { margin-top: 0; }
+        .result-item { padding: 10px; border-bottom: 1px solid var(--v4-border-softer); cursor: pointer; }
+        .result-item:hover { background: var(--v4-input-bg); }
+        .result-item:last-child { border-bottom: none; }
     </style>
 </head>
 <body class="radio-page">
@@ -224,19 +267,29 @@
 
         <main class="main-content">
             <div class="content-header-v4">
-                <h2 class="content-title-v4">Web Radio</h2>
+                <h2 class="content-title-v4">Advanced Web Radio</h2>
             </div>
 
             <div class="radio-player-container">
                 <div class="radio-display">
+                    <div id="staticOverlay"></div>
                     <h3 id="stationName" class="station-name">OFF</h3>
                     <p id="stationGenre" class="station-genre">---</p>
                 </div>
+                
+                <div class="search-grid">
+                    <label for="stationSearchInput">Search by Name / Genre</label>
+                    <label for="freqSearchInput">Search by Frequency</label>
+                    
+                    <div class="search-input-group">
+                        <input type="text" id="stationSearchInput" placeholder="e.g., rock cleveland">
+                        <button id="searchNameButton" class="btn-primary">Tune</button>
+                    </div>
 
-                <div class="search-controls">
-                    <input type="text" id="stationSearchInput" placeholder="Search for a station (e.g., Q92.5, rock cleveland)...">
-                    <button id="searchButton" class="btn-primary">Tune</button>
-                    <button id="powerButton" class="power-button off">POWER</button>
+                    <div class="search-input-group">
+                        <input type="text" id="freqSearchInput" placeholder="e.g., 92.5">
+                        <button id="searchFreqButton" class="btn-primary">Tune</button>
+                    </div>
                 </div>
 
                 <hr class="divider">
@@ -248,8 +301,12 @@
                 </div>
                 <div class="custom-station-controls">
                      <select id="customStationSelect" style="flex-grow: 1;" title="Your Saved Stations"></select>
-                     <button id="removeCustomStationButton" class="btn-secondary">Remove Selected</button>
+                     <button id="removeCustomStationButton" class="btn-secondary">Remove</button>
                 </div>
+            </div>
+
+            <div id="power-volume-controls" style="text-align:center; margin-top: 20px;">
+                <button id="powerButton" class="power-button off">POWER</button>
             </div>
 
             <div class="settings-tab-container">
@@ -269,78 +326,37 @@
                             <div id="spatial-coords">X: 0.00, Y: 0.00, Z: 0.00</div>
                          </div>
                      </div>
-                     <div class="control-group">
-                         <label class="checkbox-label-v4">Vintage Warmth
-                             <input type="checkbox" data-setting="modeVintageWarmth">
-                         </label>
-                         <small class="mode-description">Adds subtle analog-style saturation for a richer sound.</small>
-                     </div>
-                     <div class="control-group">
-                         <label class="checkbox-label-v4">Vocal Boost
-                            <input type="checkbox" data-setting="modeVocalBoost">
-                         </label>
-                         <small class="mode-description">Emphasizes frequencies common in human speech.</small>
-                     </div>
                 </div>
                 <div id="equalizer" class="tab-content">
                     <div class="control-group">
                         <label>Bass: <span id="eqBassValue">0 dB</span></label>
                         <input type="range" id="eqBass" min="-40" max="40" step="1" value="0" data-setting="eqBass">
                     </div>
-                    <div class="control-group">
-                        <label>Mid: <span id="eqMidValue">0 dB</span></label>
-                        <input type="range" id="eqMid" min="-20" max="20" step="1" value="0" data-setting="eqMid">
-                    </div>
-                    <div class="control-group">
-                        <label>Treble: <span id="eqTrebleValue">0 dB</span></label>
-                        <input type="range" id="eqTreble" min="-30" max="30" step="1" value="0" data-setting="eqTreble">
-                    </div>
                 </div>
             </div>
         </main>
     </div>
 
+    <div id="searchResultsModal">
+        <div class="modal-content">
+            <h3 id="modalTitle">Search Results</h3>
+            <div id="modalBody"></div>
+        </div>
+    </div>
+
     <script>
     // --- Standard Setup (Auth, Sidebar, etc.) ---
-    const dbRef_ = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
-    const marqueeEls_ = document.querySelectorAll('.marquee-content');
-    firebase.auth().onAuthStateChanged(async user => {
-        if (!user) { window.location.href = '../login.html'; }
-        else {
-            const userEmailEl = document.getElementById('userEmail');
-            const userNameEl = document.getElementById('userName');
-            if (userEmailEl) userEmailEl.textContent = user.email;
-            if (userNameEl) {
-                try {
-                    const doc = await dbRef_().get();
-                    userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User');
-                } catch (error) { userNameEl.textContent = 'User'; console.error("Error fetching username:", error); }
-            }
-            updateMarquees_();
-        }
-    });
-    document.getElementById('logoutBtn')?.addEventListener('click', () => { firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
-    document.getElementById('signOutLink')?.addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
-    const sidebar_ = document.getElementById('sidebar');
-    const toggleSidebarBtn_ = document.getElementById('toggleSidebar');
-    if (toggleSidebarBtn_ && sidebar_) { toggleSidebarBtn_.addEventListener('click', () => { sidebar_.classList.toggle('collapsed'); setTimeout(updateMarquees_, 550); }); }
-    function updateMarquees_() {
-        marqueeEls_.forEach(el => {
-            if (!el || !el.parentElement) return;
-            const parent = el.parentElement; const overflow = el.scrollWidth > parent.clientWidth;
-            const shouldScroll = sidebar_.classList.contains('collapsed') || (overflow && !sidebar_.classList.contains('collapsed'));
-            el.classList.toggle('marquee-active', shouldScroll);
-            if (!overflow && !sidebar_.classList.contains('collapsed')) { el.classList.remove('marquee-active'); }
-        });
-    }
-    window.addEventListener('resize', updateMarquees_);
+    firebase.auth().onAuthStateChanged(user => { if (!user) window.location.href = '../login.html'; });
+    // --- End Standard Setup ---
     
     // --- Radio Logic ---
     document.addEventListener('DOMContentLoaded', () => {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         let radioAudioElement = new Audio();
         radioAudioElement.crossOrigin = "anonymous";
-        let radioSourceNode;
+        let radioSourceNode, staticSourceNode;
+
+        const staticAudioBuffer = createStaticBuffer();
 
         let isPowerOn = false;
 
@@ -349,62 +365,101 @@
         const stationNameEl = document.getElementById('stationName');
         const stationGenreEl = document.getElementById('stationGenre');
         const searchInput = document.getElementById('stationSearchInput');
-        const searchButton = document.getElementById('searchButton');
+        const searchNameButton = document.getElementById('searchNameButton');
+        const freqInput = document.getElementById('freqSearchInput');
+        const searchFreqButton = document.getElementById('searchFreqButton');
         const customNameInput = document.getElementById('customStationName');
         const customUrlInput = document.getElementById('customStationUrl');
         const addCustomBtn = document.getElementById('addCustomStationButton');
         const customSelect = document.getElementById('customStationSelect');
         const removeCustomBtn = document.getElementById('removeCustomStationButton');
+        const staticOverlay = document.getElementById('staticOverlay');
+        const searchResultsModal = document.getElementById('searchResultsModal');
+        const modalBody = document.getElementById('modalBody');
+        const modalTitle = document.getElementById('modalTitle');
         
         // --- Audio Nodes ---
         const masterGain = audioContext.createGain();
+        const staticGain = audioContext.createGain();
         const nodes = {
             mainPanner: new PannerNode(audioContext, { panningModel: 'HRTF', distanceModel: 'inverse' }),
-            inputGain: audioContext.createGain(),
             eqBass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 100, gain: 0 }),
-            eqMid: new BiquadFilterNode(audioContext, { type: 'peaking', frequency: 1200, Q: 1.0, gain: 0 }),
-            eqTreble: new BiquadFilterNode(audioContext, { type: 'highshelf', frequency: 6000, gain: 0 }),
-            vintageWarmer: audioContext.createWaveShaper(),
-            vocalBoost: new BiquadFilterNode(audioContext, {type: 'peaking', frequency: 2500, Q: 1.5, gain: 0}),
         };
 
-        function makeVintageCurve(amount) { const n_samples = 44100; const curve = new Float32Array(n_samples); if (amount === 0) for (let i=0; i<n_samples; ++i) curve[i] = i * 2 / n_samples - 1; else for (let i=0; i<n_samples; ++i) { const x = i * 2 / n_samples - 1; curve[i] = Math.tanh(x*amount); } return curve; }
-        nodes.vintageWarmer.curve = makeVintageCurve(0);
-
         // --- Audio Graph Wiring ---
-        masterGain.connect(nodes.mainPanner).connect(nodes.inputGain).connect(nodes.vocalBoost).connect(nodes.vintageWarmer).connect(nodes.eqBass).connect(nodes.eqMid).connect(nodes.eqTreble).connect(audioContext.destination);
+        masterGain.connect(nodes.mainPanner).connect(nodes.eqBass).connect(audioContext.destination);
+        staticGain.connect(audioContext.destination);
 
         // --- Station Logic ---
+        function createStaticBuffer() {
+            const bufferSize = audioContext.sampleRate * 2; // 2 seconds of static
+            const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+            const output = buffer.getChannelData(0);
+            for (let i = 0; i < bufferSize; i++) {
+                output[i] = Math.random() * 2 - 1;
+            }
+            return buffer;
+        }
+
+        function playStatic() {
+            if (staticSourceNode) { staticSourceNode.stop(); }
+            staticSourceNode = audioContext.createBufferSource();
+            staticSourceNode.buffer = staticAudioBuffer;
+            staticSourceNode.loop = true;
+            staticSourceNode.connect(staticGain);
+            staticSourceNode.start(0);
+        }
+
+        function setStaticLevel(strength) { // strength is 0.0 (max static) to 1.0 (no static)
+            const staticValue = Math.max(0, 1 - strength);
+            staticGain.gain.setTargetAtTime(staticValue * 0.1, audioContext.currentTime, 0.1); // Audio static
+            staticOverlay.style.opacity = staticValue * 0.4; // Visual static
+        }
+        
         function playStream(station) {
             if (!isPowerOn) return;
             stationNameEl.textContent = station.name;
-            stationGenreEl.textContent = station.genre || 'Custom Stream';
-            radioAudioElement.src = station.url;
+            stationGenreEl.textContent = station.tags || station.genre || 'Stream';
+            
+            // Normalize signal strength (votes) to a 0-1 scale
+            // Using a logarithmic scale makes it feel more natural
+            const maxVotes = 500; // An arbitrary reasonable max for normalization
+            const signalStrength = Math.min(1, Math.log1p(station.votes || 0) / Math.log1p(maxVotes));
+            setStaticLevel(signalStrength);
+
+            radioAudioElement.src = station.url_resolved || station.url;
             radioAudioElement.play().catch(e => {
-                console.error("Playback error:", e);
                 stationNameEl.textContent = "Error";
                 stationGenreEl.textContent = "Could not play stream.";
+                setStaticLevel(0); // Full static on error
             });
         }
         
-        async function searchAndPlay(query) {
+        async function performSearch(query, searchType) {
             if (!query) return;
             stationNameEl.textContent = "Searching...";
             stationGenreEl.textContent = `for "${query}"`;
+            setStaticLevel(0.5); // Static while tuning
             try {
-                const response = await fetch(`https://de1.api.radio-browser.info/json/stations/search?limit=50&name=${encodeURIComponent(query)}&hidebroken=true&order=clickcount&reverse=true`);
+                const searchParams = new URLSearchParams({
+                    limit: '200',
+                    order: 'clickcount',
+                    reverse: 'true'
+                });
+                if(searchType === 'name') searchParams.set('name', query);
+                if(searchType === 'tag') searchParams.set('tag', query);
+
+                const response = await fetch(`https://de1.api.radio-browser.info/json/stations/search?${searchParams.toString()}`);
                 const data = await response.json();
-                const bestResult = data.find(s => s.url_resolved && (s.codec === 'MP3' || s.codec === 'AAC'));
                 
-                if (bestResult) {
-                    playStream({
-                        name: bestResult.name,
-                        genre: bestResult.tags,
-                        url: bestResult.url_resolved
-                    });
+                const results = data.filter(s => s.url_resolved);
+
+                if (results.length > 0) {
+                    showSearchResults(results, query);
                 } else {
                     stationNameEl.textContent = "Not Found";
                     stationGenreEl.textContent = `No results for "${query}"`;
+                    setStaticLevel(1); // No signal, full static
                 }
             } catch (error) {
                 console.error("API search error:", error);
@@ -413,13 +468,26 @@
             }
         }
 
+        function showSearchResults(stations, query) {
+            modalTitle.textContent = `Results for "${query}"`;
+            modalBody.innerHTML = '';
+            stations.forEach(station => {
+                const item = document.createElement('div');
+                item.className = 'result-item';
+                item.innerHTML = `<strong>${station.name}</strong><br><small>${station.countrycode || ''} - ${station.tags.split(',')[0]}</small>`;
+                item.onclick = () => {
+                    playStream(station);
+                    searchResultsModal.style.display = 'none';
+                };
+                modalBody.appendChild(item);
+            });
+            searchResultsModal.style.display = 'block';
+        }
+        searchResultsModal.onclick = (e) => { if (e.target === searchResultsModal) e.target.style.display = 'none'; };
+
         // --- Custom Station Logic ---
-        function getCustomStations() {
-            return JSON.parse(localStorage.getItem('customRadioStations') || '[]');
-        }
-        function saveCustomStations(stations) {
-            localStorage.setItem('customRadioStations', JSON.stringify(stations));
-        }
+        function getCustomStations() { return JSON.parse(localStorage.getItem('customRadioStations') || '[]'); }
+        function saveCustomStations(stations) { localStorage.setItem('customRadioStations', JSON.stringify(stations)); }
         function populateCustomStations() {
             const stations = getCustomStations();
             customSelect.innerHTML = '<option value="">Play a saved station...</option>';
@@ -433,21 +501,15 @@
         addCustomBtn.addEventListener('click', () => {
             const name = customNameInput.value.trim();
             const url = customUrlInput.value.trim();
-            if (!name || !url) {
-                alert('Please enter both a name and a URL.');
-                return;
-            }
-            const newStation = { name, url };
+            if (!name || !url) return alert('Please enter both a name and a URL.');
+            const newStation = { name, url, votes: 10000 }; // Assume custom stations have max signal
             const stations = getCustomStations();
             stations.push(newStation);
             saveCustomStations(stations);
             populateCustomStations();
-            customNameInput.value = '';
-            customUrlInput.value = '';
+            customNameInput.value = ''; customUrlInput.value = '';
             customSelect.value = stations.length - 1;
-            if (isPowerOn) {
-                playStream(newStation);
-            }
+            if (isPowerOn) playStream(newStation);
         });
         removeCustomBtn.addEventListener('click', () => {
             const selectedIndex = customSelect.value;
@@ -462,9 +524,7 @@
             if (selectedIndex === "") return;
             const stations = getCustomStations();
             const station = stations[selectedIndex];
-            if (station && isPowerOn) {
-                playStream(station);
-            }
+            if (station && isPowerOn) playStream(station);
         });
 
         // --- Event Listeners ---
@@ -478,46 +538,42 @@
                     radioSourceNode = audioContext.createMediaElementSource(radioAudioElement);
                     radioSourceNode.connect(masterGain);
                 }
+                playStatic();
                 stationGenreEl.textContent = "Ready to tune.";
                 stationNameEl.textContent = "Radio ON";
+                setStaticLevel(1);
             } else {
                 radioAudioElement.pause();
                 radioAudioElement.src = '';
+                if(staticSourceNode) staticSourceNode.stop();
                 stationNameEl.textContent = 'OFF';
                 stationGenreEl.textContent = '---';
             }
         });
+        searchNameButton.addEventListener('click', () => performSearch(searchInput.value, 'name'));
+        searchInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') performSearch(searchInput.value, 'name'); });
+        searchFreqButton.addEventListener('click', () => performSearch(freqInput.value, 'name'));
+        freqInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') performSearch(freqInput.value, 'name'); });
 
-        searchButton.addEventListener('click', () => searchAndPlay(searchInput.value));
-        searchInput.addEventListener('keydown', (e) => {
-            if (e.key === 'Enter') searchAndPlay(searchInput.value);
-        });
-
-        // --- Settings Logic ---
+        // Settings Logic
         document.querySelectorAll('[data-setting]').forEach(setting => {
-            const eventType = setting.type === 'checkbox' ? 'change' : 'input';
-            setting.addEventListener(eventType, (e) => {
+            setting.addEventListener(setting.type === 'checkbox' ? 'change' : 'input', (e) => {
                 const { id, value, checked } = e.target;
                 const timeConstant = 0.02;
                 switch (id) {
                     case 'eqBass': nodes.eqBass.gain.setTargetAtTime(parseFloat(value), audioContext.currentTime, timeConstant); document.getElementById('eqBassValue').textContent = `${value} dB`; break;
-                    case 'eqMid': nodes.eqMid.gain.setTargetAtTime(parseFloat(value), audioContext.currentTime, timeConstant); document.getElementById('eqMidValue').textContent = `${value} dB`; break;
-                    case 'eqTreble': nodes.eqTreble.gain.setTargetAtTime(parseFloat(value), audioContext.currentTime, timeConstant); document.getElementById('eqTrebleValue').textContent = `${value} dB`; break;
                     case 'modeSpatial': nodes.mainPanner.panningModel = checked ? 'HRTF' : 'equalpower'; break;
-                    case 'modeVintageWarmth': nodes.vintageWarmer.curve = makeVintageCurve(checked ? 1.5 : 0); break;
-                    case 'modeVocalBoost': nodes.vocalBoost.gain.setTargetAtTime(checked ? 6 : 0, audioContext.currentTime, timeConstant); break;
                 }
             });
         });
-        
         document.querySelector('.settings-tabs').addEventListener('click', e => { if (e.target.matches('.tab-link')) { document.querySelectorAll('.tab-link, .tab-content').forEach(el => el.classList.remove('active')); e.target.classList.add('active'); document.getElementById(e.target.dataset.tab).classList.add('active'); } });
 
+        // Spatial Pad Logic
         const spatialPad = document.getElementById('spatial-pad');
         const spatialPuck = document.getElementById('spatial-puck');
         const spatialCoords = document.getElementById('spatial-coords');
         let isPuckDragging = false;
         let pannerZ = 0;
-
         function updatePannerPosition(x, y, z) { const scale = 10; const timeConstant = 0.015; nodes.mainPanner.positionX.setTargetAtTime(x * scale, audioContext.currentTime, timeConstant); nodes.mainPanner.positionY.setTargetAtTime(y * scale, audioContext.currentTime, timeConstant); nodes.mainPanner.positionZ.setTargetAtTime(z * scale, audioContext.currentTime, timeConstant); spatialCoords.textContent = `X: ${x.toFixed(2)}, Y: ${y.toFixed(2)}, Z: ${z.toFixed(2)}`; }
         function movePuck(e) { const rect = spatialPad.getBoundingClientRect(); const radius = rect.width / 2; let x = e.clientX - rect.left - radius; let y = e.clientY - rect.top - radius; let dist = Math.sqrt(x*x + y*y); if (dist > radius) { x = (x/dist) * radius; y = (y/dist) * radius; } spatialPuck.style.left = `${x + radius}px`; spatialPuck.style.top = `${y + radius}px`; updatePannerPosition(x / radius, -y / radius, pannerZ); }
         spatialPad.addEventListener('mousedown', (e) => { if(!document.getElementById('modeSpatial').checked) return; isPuckDragging = true; movePuck(e); });
@@ -525,7 +581,6 @@
         document.addEventListener('mouseup', () => { isPuckDragging = false; });
         spatialPad.addEventListener('wheel', e => { if(!document.getElementById('modeSpatial').checked) return; e.preventDefault(); pannerZ += e.deltaY * -0.01; pannerZ = Math.max(-1, Math.min(1, pannerZ)); const rect = spatialPad.getBoundingClientRect(); const radius = rect.width / 2; const currentX = (parseFloat(spatialPuck.style.left || `${radius}px`) - radius) / radius; const currentY = -(parseFloat(spatialPuck.style.top || `${radius}px`) - radius) / radius; updatePannerPosition(currentX, currentY, pannerZ); });
 
-        // --- Initial setup ---
         populateCustomStations();
     });
     </script>
