@@ -139,7 +139,7 @@
         #effects.active, #equalizer.active {
              grid-template-columns: 1fr 1fr;
         }
-        .control-group { display: flex; flex-direction: column; margin-bottom: 10px; transition: opacity 0.3s ease; border-radius: 8px; }
+        .control-group { position: relative; display: flex; flex-direction: column; margin-bottom: 10px; transition: opacity 0.3s ease; border-radius: 8px; }
         .control-group.hidden-by-search { display: none; }
         .control-group.highlight {
             box-shadow: 0 0 0 2px var(--v4-purple-accent);
@@ -171,6 +171,10 @@
             font-size: 0.85em;
             color: var(--v4-text-secondary);
         }
+        .slider-ticks { display: flex; justify-content: space-between; padding: 0 5px; margin-top: -2px; pointer-events: none; }
+        .tick { position: relative; }
+        .tick span { position: absolute; transform: translateX(-50%); font-size: 0.75em; color: #888; margin-top: 2px; white-space: nowrap; }
+        .tick span::before { content: '▼'; display: block; text-align: center; font-size: 0.8em; margin-bottom: 2px; }
         #searchResultsContainer {
             display: none;
             max-height: 350px;
@@ -328,6 +332,7 @@
                              <button class="tab-link" data-tab="modes">Audio Modes</button>
                              <button class="tab-link" data-tab="equalizer">Equalizer</button>
                              <button class="tab-link" data-tab="effects">Effects</button>
+                             <button class="tab-link" data-tab="general">General</button>
                          </nav>
                          <div class="settings-buttons-group">
                              <button id="saveSettingsBtn">Save</button>
@@ -338,6 +343,26 @@
                 </div>
                 
                 <div id="searchResultsContainer"></div>
+
+                <div id="general" class="tab-content">
+                    <div class="control-group" data-search-terms="slider soft lock snap normal">
+                        <label class="checkbox-label-v4">Enable Slider Soft Lock <input type="checkbox" id="softLockEnabled" data-setting="softLockEnabled" checked></label>
+                        <small class="mode-description">Makes sliders stop at their default value. Re-click the slider to bypass the lock.</small>
+                    </div>
+                    <div class="control-group" data-search-terms="confirm clear sounds stop all">
+                        <label class="checkbox-label-v4">Confirm Clear Sounds <input type="checkbox" id="confirmClear" data-setting="confirmClear" checked></label>
+                        <small class="mode-description">Shows a confirmation dialog before stopping all currently playing sounds.</small>
+                    </div>
+                     <div class="control-group" data-search-terms="animations visuals reduce motion">
+                        <label for="animationIntensity">Animation Intensity</label>
+                        <select id="animationIntensity" data-setting="animationIntensity">
+                            <option value="full">Full</option>
+                            <option value="reduced">Reduced</option>
+                            <option value="off">Off</option>
+                        </select>
+                        <small class="mode-description">Controls the level of visual effects and animations.</small>
+                    </div>
+                </div>
 
                 <div id="playback" class="tab-content active">
                      <div class="control-group" data-search-terms="allow multiple sounds">
@@ -416,14 +441,17 @@
                     <div class="control-group" data-search-terms="equalizer eq bass">
                         <label>Bass: <span id="eqBassValue">0 dB</span></label>
                         <input type="range" id="eqBass" min="-40" max="80" step="1" value="0" data-setting="eqBass">
+                        <div class="slider-ticks" data-ticks-for="eqBass"></div>
                     </div>
                     <div class="control-group" data-search-terms="equalizer eq mid">
                         <label>Mid: <span id="eqMidValue">0 dB</span></label>
                         <input type="range" id="eqMid" min="-20" max="20" step="1" value="0" data-setting="eqMid">
+                        <div class="slider-ticks" data-ticks-for="eqMid"></div>
                     </div>
                     <div class="control-group" data-search-terms="equalizer eq treble highs">
                         <label>Treble: <span id="eqTrebleValue">0 dB</span></label>
                         <input type="range" id="eqTreble" min="-30" max="30" step="1" value="0" data-setting="eqTreble">
+                        <div class="slider-ticks" data-ticks-for="eqTreble"></div>
                     </div>
                     <div class="control-group" data-search-terms="equalizer eq reset">
                         <button id="resetEqBtn">Reset EQ settings</button>
@@ -442,10 +470,12 @@
                     <div class="control-group" data-search-terms="speed rate tempo">
                         <label for="speed">Speed: <span id="speedValue">1.00x</span></label>
                         <input type="range" id="speed" min="0.25" max="4" step="0.01" value="1" data-setting="speed">
+                        <div class="slider-ticks" data-ticks-for="speed"></div>
                     </div>
                     <div class="control-group" data-search-terms="pitch shift detune">
                         <label for="pitch">Pitch: <span id="pitchValue">0</span></label>
                         <input type="range" id="pitch" min="-1200" max="1200" step="10" value="0" data-setting="pitch">
+                        <div class="slider-ticks" data-ticks-for="pitch"></div>
                     </div>
                 </div>
 
@@ -522,7 +552,6 @@
             awarenessGain: audioContext.createGain(),
         };
 
-        // Create a wave shaping curve for bass distortion
         function makeDistortionCurve(amount) {
             const k = typeof amount === 'number' ? amount : 50;
             const n_samples = 44100;
@@ -535,13 +564,12 @@
             return curve;
         }
 
-        nodes.bassWaveShaper.curve = makeDistortionCurve(0); // Start with no distortion
+        nodes.bassWaveShaper.curve = makeDistortionCurve(0);
         nodes.bassWaveShaper.oversample = '4x';
 
-        // REVAMPED Audio Path for Punchier Bass
         inputGain.connect(masterGain)
             .connect(nodes.eqBass)
-            .connect(nodes.bassWaveShaper) // Add wave shaper after bass EQ
+            .connect(nodes.bassWaveShaper)
             .connect(nodes.eqMid)
             .connect(nodes.eqTreble)
             .connect(nodes.stableVolume)
@@ -553,7 +581,14 @@
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
         const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start() { if (this.isActive) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); showStatus('Could not access microphone.', 'error'); }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); let voiceEnergy = 0; for (let i = 5; i < 100; i++) voiceEnergy += dataArray[i]; voiceEnergy /= 95; const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; nodes.awarenessGain.gain.linearRampToValueAtTime(newVolume, audioContext.currentTime + (isDucking ? 0.2 : 0.5)); } };
-        const clearSounds = () => { for (const [_, instances] of activeSounds.entries()) { [...instances].forEach(sound => sound.stop(parseFloat(controls.fadeOut.value || 0.1))); } };
+        const clearSounds = () => {
+            if (controls.confirmClear.checked && !confirm('Are you sure you want to stop all sounds?')) {
+                return;
+            }
+            for (const [_, instances] of activeSounds.entries()) {
+                [...instances].forEach(sound => sound.stop(parseFloat(controls.fadeOut.value || 0.1)));
+            }
+        };
         class Sound { constructor(fileName, onEnd) { this.audioElement = new Audio(`../Sounds/${fileName}`); this.sourceNode = audioContext.createMediaElementSource(this.audioElement); this.gainNode = audioContext.createGain(); this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 128; this.sourceNode.connect(this.gainNode).connect(this.analyser).connect(inputGain); this.onEnd = onEnd; this.audioElement.addEventListener('ended', () => { if (!this.audioElement.loop) this.onEnd(this); }); } async play(options) { try { await this.audioElement.setSinkId('default'); } catch (err) { console.error("Failed to set audio output device:", err); } this.audioElement.loop = options.looping; this.audioElement.playbackRate = options.speed; this.audioElement.detune = options.pitch; this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(1, audioContext.currentTime + options.fadeTime); await this.audioElement.play().catch(e => { console.error("Play Error:", e); this.onEnd(this); }); } stop(fadeTime) { this.gainNode.gain.cancelScheduledValues(audioContext.currentTime); this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, audioContext.currentTime).linearRampToValueAtTime(0.0001, audioContext.currentTime + fadeTime); setTimeout(() => { this.audioElement.pause(); this.onEnd(this); }, fadeTime * 1000 + 50); } }
         async function loadSoundsAndCreateButtons() { try { const response = await fetch('../SoundboardSN.json'); const soundsData = await response.json(); const container = document.getElementById('soundCategoriesContainerV4'); container.innerHTML = ''; for (const categoryKey in soundsData) { const categoryDiv = document.createElement('div'); categoryDiv.className = 'sound-category-v4'; categoryDiv.innerHTML = `<h2>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`; const buttonsGrid = document.createElement('div'); buttonsGrid.className = 'sound-buttons-grid-v4'; soundsData[categoryKey].sort().forEach(fileName => { const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); const button = document.createElement('button'); button.className = 'sound-button-v4'; button.textContent = displayName; button.dataset.soundFile = fileName; button.addEventListener('click', () => { if (audioContext.state === 'suspended') { audioContext.resume(); } if (!controls.allowMultiple.checked) clearSounds(); const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); }; const sound = new Sound(fileName, onEnd); activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]); sound.play({ looping: controls.looping.checked, fadeTime: parseFloat(controls.fadeIn.value || 0.1), speed: parseFloat(controls.speed.value || 1), pitch: parseFloat(controls.pitch.value || 0) }); }); buttonsGrid.appendChild(button); }); categoryDiv.appendChild(buttonsGrid); container.appendChild(categoryDiv); } } catch (error) { console.error("Failed to load sounds:", error); } }
         
@@ -585,7 +620,8 @@
             eqTreble: v => { const val = parseFloat(v); nodes.eqTreble.gain.value = val; document.getElementById('eqTrebleValue').textContent = `${val} dB`; },
             modeVocalBoost: v => nodes.vocalBoost.gain.linearRampToValueAtTime(v ? 6 : 0, 0.1), 
             modeAwareness: v => v ? awarenessEngine.start() : awarenessEngine.stop(), 
-            modeStable: v => { nodes.stableVolume.ratio.linearRampToValueAtTime(v ? 12 : 1, 0.1); }, 
+            modeStable: v => { nodes.stableVolume.ratio.linearRampToValueAtTime(v ? 12 : 1, 0.1); },
+            animationIntensity: v => { document.body.setAttribute('data-animation-intensity', v); }
         };
         
         function updateButtonVisuals() { requestAnimationFrame(updateButtonVisuals); document.querySelectorAll('.sound-button-v4[data-sound-file]').forEach(button => { const fileName = button.dataset.soundFile; const instances = activeSounds.get(fileName); if (instances && instances.length > 0) { button.classList.add('playing'); if (instances.length > 1) { button.classList.add('pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } else { button.classList.remove('pulsating'); const analyser = instances[0].analyser; const dataArray = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(dataArray); const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length; const scale = 1 + (avg / 255) * 0.05; const shadowSpread = 2 + (avg / 255) * 8; button.style.transform = `scale(${scale})`; button.style.boxShadow = `0 0 ${shadowSpread}px rgba(103, 32, 189, 0.7)`; } } else { button.classList.remove('playing', 'pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } }); }
@@ -598,12 +634,93 @@
         function updateSaveButtonText(isoTimestamp) { if (!isoTimestamp) { saveSettingsBtn.textContent = "Save"; return; } const savedDate = new Date(isoTimestamp); const now = new Date(); const isToday = savedDate.toDateString() === now.toDateString(); if (isToday) { saveSettingsBtn.textContent = `Saved at ${savedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`; } else { saveSettingsBtn.textContent = `Saved ${savedDate.toLocaleDateString()}`; } }
         function saveSettings() { const settingsToSave = {}; document.querySelectorAll('[data-setting]').forEach(el => { const key = el.dataset.setting; settingsToSave[key] = (el.type === 'checkbox') ? el.checked : el.value; }); settingsToSave.savedAt = new Date().toISOString(); localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(settingsToSave)); updateSaveButtonText(settingsToSave.savedAt); showStatus('Settings saved successfully!', 'success'); }
         function loadSettings() { const savedSettings = localStorage.getItem(LOCAL_STORAGE_KEY); if (savedSettings) { const settings = JSON.parse(savedSettings); Object.keys(settings).forEach(key => { const control = controls[key]; if (control) { if (control.type === 'checkbox') { control.checked = settings[key]; } else { control.value = settings[key]; } control.dispatchEvent(new Event(control.type === 'checkbox' ? 'change' : 'input')); } }); updateSaveButtonText(settings.savedAt); showStatus('Settings loaded.', 'info'); } }
+        
+        const sliderSnapPoints = {
+            eqBass: [0],
+            eqMid: [0],
+            eqTreble: [0],
+            speed: [1],
+            pitch: [0]
+        };
+
+        const sliderLockState = {};
+
+        function handleSliderInput(e) {
+            const slider = e.target;
+            const id = slider.id;
+            const value = parseFloat(slider.value);
+            const snapPoint = sliderSnapPoints[id] ? sliderSnapPoints[id][0] : null;
+
+            if (snapPoint === null || !controls.softLockEnabled.checked) {
+                if(sliderLockState[id]) sliderLockState[id].prevValue = value;
+                return;
+            }
+            
+            const state = sliderLockState[id] || {};
+            const prevValue = state.prevValue || value;
+
+            const isCrossing = (prevValue < snapPoint && value >= snapPoint) || (prevValue > snapPoint && value <= snapPoint);
+
+            if (isCrossing && !state.hasPassed) {
+                slider.value = snapPoint;
+                const key = slider.dataset.setting;
+                if(updateFunctions[key]) {
+                    updateFunctions[key](slider.value);
+                }
+            } else {
+                if (value !== snapPoint) {
+                    state.hasPassed = false;
+                }
+            }
+            
+            state.prevValue = value;
+            sliderLockState[id] = state;
+        }
+
+        function handleSliderMouseDown(e) {
+            const slider = e.target;
+            const id = slider.id;
+            const value = parseFloat(slider.value);
+            const snapPoint = sliderSnapPoints[id] ? sliderSnapPoints[id][0] : null;
+
+            if (snapPoint === null || !controls.softLockEnabled.checked) return;
+            
+            if (!sliderLockState[id]) sliderLockState[id] = {};
+            
+            if (value === snapPoint) {
+                sliderLockState[id].hasPassed = true;
+            }
+            sliderLockState[id].prevValue = value;
+        }
+        
+        function createSliderTicks() {
+            Object.keys(sliderSnapPoints).forEach(sliderId => {
+                const slider = document.getElementById(sliderId);
+                const ticksContainer = document.querySelector(`[data-ticks-for="${sliderId}"]`);
+                if (!slider || !ticksContainer) return;
+                
+                const points = sliderSnapPoints[sliderId];
+                const min = parseFloat(slider.min);
+                const max = parseFloat(slider.max);
+                const range = max - min;
+                
+                points.forEach(point => {
+                    const tick = document.createElement('div');
+                    tick.className = 'tick';
+                    const percent = ((point - min) / range) * 100;
+                    tick.style.left = `${percent}%`;
+                    tick.innerHTML = `<span>Normal</span>`;
+                    ticksContainer.appendChild(tick);
+                });
+            });
+        }
 
         async function initialize() {
             await loadSoundsAndCreateButtons();
             requestAnimationFrame(updateButtonVisuals);
+            createSliderTicks();
             saveSettingsBtn.addEventListener('click', saveSettings);
-            document.getElementById('resetSettingsBtn').addEventListener('click', () => { if (confirm('Are you sure you want to reset all settings?')) { localStorage.removeItem(LOCAL_STORAGE_KEY); window.location.reload(); } });
+            document.getElementById('resetSettingsBtn').addEventListener('click', () => { if (confirm('Are you sure you want to reset all settings on this page? This cannot be undone.')) { localStorage.removeItem(LOCAL_STORAGE_KEY); window.location.reload(); } });
             document.getElementById('clearSoundsBtn').addEventListener('click', clearSounds);
             document.getElementById('settingsSearch').addEventListener('input', handleSettingsSearch);
             document.getElementById('soundSearchInput').addEventListener('input', debouncedSoundSearch);
@@ -621,7 +738,22 @@
                 });
             });
 
-            Object.values(controls).forEach(el => { const key = el.dataset.setting; if (!key) return; const eventType = el.type === 'checkbox' ? 'change' : 'input'; if(updateFunctions[key]) { el.addEventListener(eventType, e => { const value = el.type === 'checkbox' ? e.target.checked : e.target.value; updateFunctions[key](value); }); } });
+            Object.values(controls).forEach(el => { 
+                const key = el.dataset.setting; 
+                if (!key) return; 
+                const eventType = el.type === 'checkbox' || el.tagName === 'SELECT' ? 'change' : 'input'; 
+                if(updateFunctions[key]) { 
+                    el.addEventListener(eventType, e => { 
+                        const value = el.type === 'checkbox' ? e.target.checked : e.target.value; 
+                        updateFunctions[key](value); 
+                    });
+                }
+                if (el.type === 'range') {
+                    el.addEventListener('mousedown', handleSliderMouseDown);
+                    el.addEventListener('touchstart', handleSliderMouseDown, { passive: true });
+                    el.addEventListener('input', handleSliderInput);
+                }
+            });
             
             const micPrompt = document.getElementById('mic-permission-prompt');
             try { const permissionStatus = await navigator.permissions.query({name: 'microphone'}); const handlePermission = (status) => { const micDependentModes = document.querySelectorAll('[data-setting="modeAwareness"]'); if (status.state === 'granted') { micPrompt.style.display = 'none'; micDependentModes.forEach(el => el.closest('.control-group').classList.remove('disabled')); } else { micPrompt.style.display = 'block'; micDependentModes.forEach(el => { el.checked = false; el.dispatchEvent(new Event('change')); el.closest('.control-group').classList.add('disabled'); }); micPrompt.querySelector('p').textContent = status.state === 'denied' ? 'Microphone access was denied. Please enable it in your browser settings.' : 'Conversation Awareness requires microphone access.'; micPrompt.querySelector('button').disabled = status.state === 'denied'; } }; permissionStatus.onchange = () => handlePermission(permissionStatus); handlePermission(permissionStatus); document.getElementById('enable-mic-btn').onclick = async () => { try { await navigator.mediaDevices.getUserMedia({ audio: true }); } catch(e) { showStatus('Microphone access was not granted.', 'error'); } }; } catch(e) { document.querySelectorAll('[data-setting="modeAwareness"]').forEach(el => el.closest('.control-group').classList.add('disabled')); }
