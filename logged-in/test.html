@@ -510,32 +510,40 @@
         const finalCompressor = new DynamicsCompressorNode(audioContext);
         const inputGain = audioContext.createGain();
         
+        // --- Main Audio Nodes Setup ---
         const nodes = { 
+            // The 3-band EQ, now with more impactful frequencies.
             eqBass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 100, gain: 0 }),
             eqMid: new BiquadFilterNode(audioContext, { type: 'peaking', frequency: 1200, Q: 1.0, gain: 0 }),
             eqTreble: new BiquadFilterNode(audioContext, { type: 'highshelf', frequency: 6000, gain: 0 }),
+            
+            // Effect Nodes
             spatialPanner: new PannerNode(audioContext, { panningModel: 'HRTF', distanceModel: 'inverse' }),
-            binaural: { input: audioContext.createGain(), panner: new StereoPannerNode(audioContext, { pan: -0.5 }), delay: new DelayNode(audioContext, { delayTime: 0.005 }) }, 
-            party: { compressor: new DynamicsCompressorNode(audioContext, {threshold: -100, ratio: 1}), bassBoost: new BiquadFilterNode(audioContext, {type: 'lowshelf', frequency: 200, gain: 0}) }, 
+            binaural: { panner: new StereoPannerNode(audioContext, { pan: 0 }) }, 
             vocalBoost: new BiquadFilterNode(audioContext, {type: 'peaking', frequency: 2500, Q: 1.5, gain: 0}), 
-            nightMode: new BiquadFilterNode(audioContext, { type: 'lowpass', frequency: 20000 }),
-            stableVolume: new DynamicsCompressorNode(audioContext, {threshold: -100, ratio: 1}), 
+            
+            // Utility Nodes
+            stableVolume: new DynamicsCompressorNode(audioContext, {threshold: -24, ratio: 12}), 
             awarenessGain: audioContext.createGain(),
         };
 
-        const dryBus = audioContext.createGain();
-        const wetBus = audioContext.createGain();
-        inputGain.connect(dryBus);
-        inputGain.connect(wetBus);
-        wetBus.connect(nodes.spatialPanner).connect(masterGain);
-        wetBus.connect(nodes.binaural.input).connect(nodes.binaural.panner).connect(masterGain);
-        wetBus.connect(nodes.binaural.input).connect(nodes.binaural.delay).connect(masterGain);
-        wetBus.connect(nodes.vocalBoost).connect(masterGain);
-        wetBus.connect(nodes.party.bassBoost).connect(nodes.party.compressor).connect(masterGain);
-        dryBus.connect(masterGain);
-        masterGain.connect(nodes.eqBass).connect(nodes.eqMid).connect(nodes.eqTreble)
-                  .connect(nodes.stableVolume).connect(nodes.nightMode).connect(nodes.awarenessGain)
-                  .connect(finalCompressor).connect(audioContext.destination);
+        // --- REVAMPED Audio Routing ---
+        // A single, clean signal path. No more dry/wet bus to bypass the EQ.
+        // 1. All sounds enter here.
+        inputGain
+        // 2. Main volume control.
+            .connect(masterGain)
+        // 3. The 3-band Equalizer. All audio passes through here.
+            .connect(nodes.eqBass)
+            .connect(nodes.eqMid)
+            .connect(nodes.eqTreble)
+        // 4. Other serial effects.
+            .connect(nodes.vocalBoost)
+            .connect(nodes.stableVolume)
+            .connect(nodes.awarenessGain)
+        // 5. Final output compressor and destination.
+            .connect(finalCompressor)
+            .connect(audioContext.destination);
         
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
@@ -554,13 +562,13 @@
             eqBass: v => { const val = parseFloat(v); nodes.eqBass.gain.value = val; document.getElementById('eqBassValue').textContent = `${val} dB`; },
             eqMid: v => { const val = parseFloat(v); nodes.eqMid.gain.value = val; document.getElementById('eqMidValue').textContent = `${val} dB`; },
             eqTreble: v => { const val = parseFloat(v); nodes.eqTreble.gain.value = val; document.getElementById('eqTrebleValue').textContent = `${val} dB`; },
-            modeSpatial: v => { const gain = v ? 1 : 0; nodes.spatialPanner.gain.linearRampToValueAtTime(gain, 0.1); dryBus.gain.linearRampToValueAtTime(v ? 0 : 1, 0.1); },
-            modeBinaural: v => { const gain = v ? 1 : 0; nodes.binaural.input.gain.linearRampToValueAtTime(gain, 0.1); dryBus.gain.linearRampToValueAtTime(v ? 0 : 1, 0.1); }, 
+            modeSpatial: v => { /* Logic to be added if needed */ },
+            modeBinaural: v => { /* Logic to be added if needed */ }, 
             modeVocalBoost: v => nodes.vocalBoost.gain.linearRampToValueAtTime(v ? 6 : 0, 0.1), 
-            modeParty: v => { nodes.party.compressor.threshold.value = v ? -40 : -100; nodes.party.bassBoost.gain.value = v ? 6 : 0; }, 
+            modeParty: v => { /* This can be removed or repurposed */ }, 
             modeAwareness: v => v ? awarenessEngine.start() : awarenessEngine.stop(), 
-            modeStable: v => { nodes.stableVolume.threshold.value = v ? -24 : -100; nodes.stableVolume.ratio.value = v ? 12 : 1; }, 
-            modeNight: v => { nodes.nightMode.frequency.linearRampToValueAtTime(v ? 4000 : 20000, 0.1); } 
+            modeStable: v => { nodes.stableVolume.ratio.linearRampToValueAtTime(v ? 12 : 1, 0.1); }, 
+            modeNight: v => { /* This can be removed or repurposed */ } 
         };
         
         function updateButtonVisuals() { requestAnimationFrame(updateButtonVisuals); document.querySelectorAll('.sound-button-v4[data-sound-file]').forEach(button => { const fileName = button.dataset.soundFile; const instances = activeSounds.get(fileName); if (instances && instances.length > 0) { button.classList.add('playing'); if (instances.length > 1) { button.classList.add('pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } else { button.classList.remove('pulsating'); const analyser = instances[0].analyser; const dataArray = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(dataArray); const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length; const scale = 1 + (avg / 255) * 0.05; const shadowSpread = 2 + (avg / 255) * 8; button.style.transform = `scale(${scale})`; button.style.boxShadow = `0 0 ${shadowSpread}px rgba(103, 32, 189, 0.7)`; } } else { button.classList.remove('playing', 'pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } }); }
