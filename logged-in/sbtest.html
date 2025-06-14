@@ -353,7 +353,7 @@
                         <label class="checkbox-label-v4">Confirm Clear Sounds <input type="checkbox" id="confirmClear" data-setting="confirmClear" checked></label>
                         <small class="mode-description">Shows a confirmation dialog before stopping all currently playing sounds.</small>
                     </div>
-                    <div class="control-group" data-search-terms="animations visuals reduce motion">
+                     <div class="control-group" data-search-terms="animations visuals reduce motion">
                         <label for="animationIntensity">Animation Intensity</label>
                         <select id="animationIntensity" data-setting="animationIntensity">
                             <option value="full">Full</option>
@@ -643,22 +643,48 @@
             pitch: [0]
         };
 
+        const sliderLockState = {};
+
         function handleSliderInput(e) {
             const slider = e.target;
             if (!controls.softLockEnabled.checked) return;
-
-            const snapPoints = sliderSnapPoints[slider.id];
-            if (!snapPoints) return;
             
+            if (sliderLockState[slider.id] && sliderLockState[slider.id].locked) {
+                slider.value = sliderLockState[slider.id].snapPoint;
+                // Manually trigger the update function to ensure the audio param changes
+                const key = slider.dataset.setting;
+                if(updateFunctions[key]) {
+                    updateFunctions[key](slider.value);
+                }
+            }
+        }
+
+        function handleSliderMouseDown(e) {
+            const slider = e.target;
+            const id = slider.id;
+            
+            // If the user clicks on a slider that was locked, unlock it for the next drag.
+            if (sliderLockState[id] && sliderLockState[id].locked) {
+                sliderLockState[id].locked = false;
+                return;
+            }
+
+            // Otherwise, determine if it should be locked for this new drag.
+            sliderLockState[id] = { locked: false, snapPoint: null };
+            if (!controls.softLockEnabled.checked) return;
+            
+            const snapPoints = sliderSnapPoints[id];
+            if (!snapPoints) return;
+
             let value = parseFloat(slider.value);
             const step = parseFloat(slider.step) || 1;
             const range = parseFloat(slider.max) - parseFloat(slider.min);
-            const snapThreshold = Math.max(step * 2, range * 0.05);
+            const snapThreshold = Math.max(step, range * 0.025);
 
             for (const point of snapPoints) {
                 if (Math.abs(value - point) < snapThreshold) {
-                    value = point;
-                    slider.value = value;
+                    sliderLockState[id] = { locked: true, snapPoint: point };
+                    slider.value = point;
                     slider.dispatchEvent(new Event('input', { bubbles: true }));
                     break;
                 }
@@ -692,7 +718,7 @@
             requestAnimationFrame(updateButtonVisuals);
             createSliderTicks();
             saveSettingsBtn.addEventListener('click', saveSettings);
-            document.getElementById('resetSettingsBtn').addEventListener('click', () => { if (confirm('Are you sure you want to reset all settings on this page?')) { localStorage.removeItem(LOCAL_STORAGE_KEY); window.location.reload(); } });
+            document.getElementById('resetSettingsBtn').addEventListener('click', () => { if (confirm('Are you sure you want to reset all settings on this page? This cannot be undone.')) { localStorage.removeItem(LOCAL_STORAGE_KEY); window.location.reload(); } });
             document.getElementById('clearSoundsBtn').addEventListener('click', clearSounds);
             document.getElementById('settingsSearch').addEventListener('input', handleSettingsSearch);
             document.getElementById('soundSearchInput').addEventListener('input', debouncedSoundSearch);
@@ -721,8 +747,9 @@
                     });
                 }
                 if (el.type === 'range') {
-                    el.addEventListener('mouseup', handleSliderInput);
-                    el.addEventListener('touchend', handleSliderInput);
+                    el.addEventListener('mousedown', handleSliderMouseDown);
+                    el.addEventListener('touchstart', handleSliderMouseDown, { passive: true });
+                    el.addEventListener('input', handleSliderInput);
                 }
             });
             
