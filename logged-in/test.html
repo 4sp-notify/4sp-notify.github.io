@@ -146,11 +146,7 @@
             border-radius: 8px;
             transition: box-shadow 0.3s ease-in-out;
         }
-        .control-group.disabled, .control-group.volume-locked { 
-            opacity: 0.5; 
-            pointer-events: none; 
-            cursor: not-allowed;
-        }
+        .control-group.disabled { opacity: 0.4; pointer-events: none; }
         .control-group label, .checkbox-label-v4 { 
             font-family: var(--v4-font-primary); 
             font-weight: 600;
@@ -377,7 +373,7 @@
                      <div class="control-group" data-search-terms="sound looping">
                          <label class="checkbox-label-v4">Sound Looping <input type="checkbox" id="soundLooping" data-setting="looping"></label>
                      </div>
-                     <div class="control-group" id="masterVolumeControl" data-search-terms="master volume">
+                     <div class="control-group" data-search-terms="master volume">
                          <label for="masterVolume">Master Volume: <span id="masterVolumeValue">100%</span></label>
                          <div class="slider-input-container">
                             <input type="range" id="masterVolume" min="0" max="1" step="0.01" value="1" data-setting="masterVolume">
@@ -413,29 +409,33 @@
 
                 <div id="modes" class="tab-content">
                     <div class="control-group" data-search-terms="spatial audio apple music 3d hrtf">
-                         <label class="checkbox-label-v4">Spatial Audio <input type="checkbox" id="modeSpatial" data-setting="modeSpatial"></label>
-                         <small class="mode-description">Positions sound in 3D space for an immersive effect (HRTF).</small>
+                         <label class="checkbox-label-v4">Spatial Audio <input type="checkbox" data-setting="modeSpatial"></label>
+                         <small class="mode-description">Simulates 3D space for an immersive surround effect (HRTF).</small>
                     </div>
-                     <div class="control-group" data-search-terms="binaural audio headphones 3d stereo wide">
-                         <label class="checkbox-label-v4">Binaural Widening <input type="checkbox" id="modeBinaural" data-setting="modeBinaural"></label>
-                         <small class="mode-description">Creates an ultra-wide stereo effect, best with headphones.</small>
+                     <div class="control-group" data-search-terms="binaural audio headphones 3d">
+                         <label class="checkbox-label-v4">Binaural Audio <input type="checkbox" data-setting="modeBinaural"></label>
+                         <small class="mode-description">Creates a wide stereo effect, best experienced with headphones.</small>
                     </div>
                      <div class="control-group" data-search-terms="vocal boost voice clarity">
-                         <label class="checkbox-label-v4">Vocal Boost <input type="checkbox" id="modeVocalBoost" data-setting="modeVocalBoost"></label>
-                         <small class="mode-description">Emphasizes frequencies in human speech to improve clarity.</small>
+                         <label class="checkbox-label-v4">Vocal Boost <input type="checkbox" data-setting="modeVocalBoost"></label>
+                         <small class="mode-description">Emphasizes frequencies common in human speech to improve clarity.</small>
+                    </div>
+                     <div class="control-group" data-search-terms="party mode echo bass boost">
+                         <label class="checkbox-label-v4">Party Mode <input type="checkbox" data-setting="modeParty"></label>
+                         <small class="mode-description">Adds bass boost and audio compression for a punchier, louder sound.</small>
                     </div>
                      <div class="control-group" data-search-terms="stable volume normalize compression">
-                         <label class="checkbox-label-v4">Stable Volume <input type="checkbox" id="modeStable" data-setting="modeStable"></label>
+                         <label class="checkbox-label-v4">Stable Volume <input type="checkbox" data-setting="modeStable"></label>
                          <small class="mode-description">Reduces the difference between loud and quiet parts (normalization).</small>
                     </div>
-                     <div class="control-group" data-search-terms="night mode quiet listening volume lock">
-                           <label class="checkbox-label-v4">Night Mode <input type="checkbox" id="modeNight" data-setting="modeNight"></label>
-                           <small class="mode-description">Reduces loud sounds, locks volume at a low level for late-night use.</small>
-                     </div>
-                    <div class="control-group" data-search-terms="conversation awareness ducking microphone">
+                     <div class="control-group" data-search-terms="conversation awareness ducking microphone">
                          <label class="checkbox-label-v4">Conversation Awareness <input type="checkbox" data-setting="modeAwareness"></label>
                          <small class="mode-description">Automatically lowers volume when you speak (mic required).</small>
                     </div>
+                     <div class="control-group" data-search-terms="night mode quiet listening">
+                           <label class="checkbox-label-v4">Night Mode <input type="checkbox" data-setting="modeNight"></label>
+                           <small class="mode-description">Reduces loud sounds and boosts quiet ones for late-night listening.</small>
+                     </div>
                     <div id="mic-permission-prompt" style="display: none;">
                          <p>Conversation Awareness requires microphone access.</p>
                          <button id="enable-mic-btn" class="btn">Enable Microphone</button>
@@ -446,8 +446,8 @@
                     <div class="control-group" data-search-terms="equalizer eq bass">
                         <label for="eqBass">Bass: <span id="eqBassValue">0 dB</span></label>
                         <div class="slider-input-container">
-                            <input type="range" id="eqBass" min="-40" max="40" step="1" value="0" data-setting="eqBass">
-                            <input type="number" class="slider-value-input" data-slider-id="eqBass" min="-40" max="40" step="1">
+                            <input type="range" id="eqBass" min="-40" max="80" step="1" value="0" data-setting="eqBass">
+                            <input type="number" class="slider-value-input" data-slider-id="eqBass" min="-40" max="80" step="1">
                         </div>
                     </div>
                     <div class="control-group" data-search-terms="equalizer eq mid">
@@ -556,80 +556,134 @@
         let activeSounds = new Map();
         let isMuted = false;
         let lastVolumeBeforeMute = 1;
-        let lastVolumeBeforeNightMode = 1;
         
-        const inputGain = audioContext.createGain();
         const masterGain = audioContext.createGain();
-
-        const nodes = {
+        const finalCompressor = new DynamicsCompressorNode(audioContext, { threshold: -12.0, ratio: 6.0 });
+        const inputGain = audioContext.createGain();
+        
+        const nodes = { 
             eqBass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 100, gain: 0 }),
+            bassWaveShaper: audioContext.createWaveShaper(),
             eqMid: new BiquadFilterNode(audioContext, { type: 'peaking', frequency: 1200, Q: 1.0, gain: 0 }),
             eqTreble: new BiquadFilterNode(audioContext, { type: 'highshelf', frequency: 6000, gain: 0 }),
-            vocalBoost: new BiquadFilterNode(audioContext, { type: 'peaking', frequency: 2500, Q: 1.5, gain: 0 }),
-            stableVolume: new DynamicsCompressorNode(audioContext, { threshold: -24, ratio: 1, knee: 0 }),
+            spatialPanner: new PannerNode(audioContext, { panningModel: 'HRTF', distanceModel: 'inverse' }),
+            binaural: { panner: new StereoPannerNode(audioContext, { pan: 0 }) }, 
+            vocalBoost: new BiquadFilterNode(audioContext, {type: 'peaking', frequency: 2500, Q: 1.5, gain: 0}), 
+            stableVolume: new DynamicsCompressorNode(audioContext, {threshold: -24, ratio: 12}), 
             awarenessGain: audioContext.createGain(),
-            monoMerger: audioContext.createChannelMerger(1),
-            spatialPanner: new PannerNode(audioContext, { panningModel: 'HRTF', distanceModel: 'inverse', positionX: 1, positionY: 2, positionZ: 3, orientationX: 0, orientationY: 0, orientationZ: -1 }),
-            binauralSplitter: audioContext.createChannelSplitter(2),
-            binauralDelay: audioContext.createDelay(0.1),
-            binauralMerger: audioContext.createChannelMerger(2),
-            nightModeLimiter: new DynamicsCompressorNode(audioContext),
-            finalCompressor: new DynamicsCompressorNode(audioContext, { threshold: -12.0, ratio: 6.0 }),
-            dryGain: audioContext.createGain(),
-            spatialGain: audioContext.createGain(),
-            binauralGain: audioContext.createGain(),
-            postEffectGain: audioContext.createGain(),
         };
 
-        // --- Routing ---
-        inputGain.connect(masterGain);
-        masterGain.connect(nodes.eqBass).connect(nodes.eqMid).connect(nodes.eqTreble).connect(nodes.postEffectGain);
+        function makeDistortionCurve(amount) {
+            const k = typeof amount === 'number' ? amount : 50;
+            const n_samples = 44100;
+            const curve = new Float32Array(n_samples);
+            const deg = Math.PI / 180;
+            for (let i = 0; i < n_samples; i++) {
+                const x = i * 2 / n_samples - 1;
+                curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x));
+            }
+            return curve;
+        }
+
+        nodes.bassWaveShaper.curve = makeDistortionCurve(0);
+        nodes.bassWaveShaper.oversample = '4x';
+
+        inputGain.connect(masterGain)
+            .connect(nodes.eqBass)
+            .connect(nodes.bassWaveShaper)
+            .connect(nodes.eqMid)
+            .connect(nodes.eqTreble)
+            .connect(nodes.stableVolume)
+            .connect(nodes.vocalBoost)
+            .connect(nodes.awarenessGain)
+            .connect(finalCompressor)
+            .connect(audioContext.destination);
         
-        // Dry Path
-        nodes.postEffectGain.connect(nodes.dryGain).connect(nodes.vocalBoost);
-        // Spatial Path
-        nodes.postEffectGain.connect(nodes.monoMerger, 0, 0);
-        nodes.postEffectGain.connect(nodes.monoMerger, 0, 1);
-        nodes.monoMerger.connect(nodes.spatialPanner).connect(nodes.spatialGain).connect(nodes.vocalBoost);
-        // Binaural Path
-        nodes.postEffectGain.connect(nodes.binauralSplitter);
-        nodes.binauralSplitter.connect(nodes.binauralMerger, 0, 0);
-        nodes.binauralSplitter.connect(nodes.binauralDelay, 1);
-        nodes.binauralDelay.connect(nodes.binauralMerger, 0, 1);
-        nodes.binauralMerger.connect(nodes.binauralGain).connect(nodes.vocalBoost);
-
-        // Final Chain
-        nodes.vocalBoost.connect(nodes.stableVolume).connect(nodes.awarenessGain).connect(nodes.nightModeLimiter).connect(nodes.finalCompressor).connect(audioContext.destination);
-
-        // Initial Gains
-        nodes.dryGain.gain.value = 1;
-        nodes.spatialGain.gain.value = 0;
-        nodes.binauralGain.gain.value = 0;
-        nodes.binauralDelay.delayTime.value = 0.005;
-
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.dataset.setting, el]));
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
         const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start() { if (this.isActive) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); showStatus('Could not access microphone.', 'error'); }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); let voiceEnergy = 0; for (let i = 5; i < 100; i++) voiceEnergy += dataArray[i]; voiceEnergy /= 95; const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; nodes.awarenessGain.gain.linearRampToValueAtTime(newVolume, audioContext.currentTime + (isDucking ? 0.2 : 0.5)); } };
-        const clearSounds = () => { if (confirm('Are you sure you want to stop all sounds?')) { for (const [_, instances] of activeSounds.entries()) { [...instances].forEach(sound => sound.stop(parseFloat(controls.fadeOut.value || 0.1))); } }};
+        const clearSounds = () => {
+            if (controls.confirmClear && controls.confirmClear.checked && !confirm('Are you sure you want to stop all sounds?')) {
+                return;
+            }
+            for (const [_, instances] of activeSounds.entries()) {
+                [...instances].forEach(sound => sound.stop(parseFloat(controls.fadeOut.value || 0.1)));
+            }
+        };
         class Sound { constructor(fileName, onEnd) { this.audioElement = new Audio(`../Sounds/${fileName}`); this.sourceNode = audioContext.createMediaElementSource(this.audioElement); this.gainNode = audioContext.createGain(); this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 128; this.sourceNode.connect(this.gainNode).connect(this.analyser).connect(inputGain); this.onEnd = onEnd; this.audioElement.addEventListener('ended', () => { if (!this.audioElement.loop) this.onEnd(this); }); } async play(options) { try { await this.audioElement.setSinkId('default'); } catch (err) { console.error("Failed to set audio output device:", err); } this.audioElement.loop = options.looping; this.audioElement.playbackRate = options.speed; this.audioElement.detune = options.pitch; this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(1, audioContext.currentTime + options.fadeTime); await this.audioElement.play().catch(e => { console.error("Play Error:", e); this.onEnd(this); }); } stop(fadeTime) { this.gainNode.gain.cancelScheduledValues(audioContext.currentTime); this.gainNode.gain.setValueAtTime(this.gainNode.gain.value, audioContext.currentTime).linearRampToValueAtTime(0.0001, audioContext.currentTime + fadeTime); setTimeout(() => { this.audioElement.pause(); this.onEnd(this); }, fadeTime * 1000 + 50); } }
         async function loadSoundsAndCreateButtons() { try { const response = await fetch('../SoundboardSN.json'); const soundsData = await response.json(); const container = document.getElementById('soundCategoriesContainerV4'); container.innerHTML = ''; for (const categoryKey in soundsData) { const categoryDiv = document.createElement('div'); categoryDiv.className = 'sound-category-v4'; categoryDiv.innerHTML = `<h2>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`; const buttonsGrid = document.createElement('div'); buttonsGrid.className = 'sound-buttons-grid-v4'; soundsData[categoryKey].sort().forEach(fileName => { const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); const button = document.createElement('button'); button.className = 'sound-button-v4'; button.textContent = displayName; button.dataset.soundFile = fileName; button.addEventListener('click', () => { if (audioContext.state === 'suspended') { audioContext.resume(); } if (!controls.allowMultiple.checked) clearSounds(); const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); }; const sound = new Sound(fileName, onEnd); activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]); sound.play({ looping: controls.looping.checked, fadeTime: parseFloat(controls.fadeIn.value || 0.1), speed: parseFloat(controls.speed.value || 1), pitch: parseFloat(controls.pitch.value || 0) }); }); buttonsGrid.appendChild(button); }); categoryDiv.appendChild(buttonsGrid); container.appendChild(categoryDiv); } } catch (error) { console.error("Failed to load sounds:", error); } }
         
         const toggleMute = () => { isMuted = !isMuted; const muteIndicator = document.getElementById('muteIndicator'); if (isMuted) { lastVolumeBeforeMute = masterGain.gain.value; masterGain.gain.value = 0; muteIndicator.classList.add('visible'); } else { masterGain.gain.value = lastVolumeBeforeMute; muteIndicator.classList.remove('visible'); } controls.masterVolume.value = masterGain.gain.value; document.getElementById('masterVolumeValue').textContent = `${Math.round(masterGain.gain.value * 100)}%`; };
         const updateFunctions = { 
-            masterVolume: v => { const newVol = parseFloat(v); masterGain.gain.value = newVol; if (newVol > 0 && !document.getElementById('modeNight').checked) { lastVolumeBeforeMute = newVol; } isMuted = (newVol === 0); document.getElementById('muteIndicator').classList.toggle('visible', isMuted); document.getElementById('masterVolumeValue').textContent = `${Math.round(newVol*100)}%`; const numInput = document.querySelector(`[data-slider-id="masterVolume"]`); if(numInput) numInput.value = Math.round(newVol*100); },
-            fadeIn: v => { document.getElementById('fadeInValue').textContent = `${parseFloat(v).toFixed(1)}s`; if(document.querySelector(`[data-slider-id="fadeIn"]`)) document.querySelector(`[data-slider-id="fadeIn"]`).value = v; },
-            fadeOut: v => { document.getElementById('fadeOutValue').textContent = `${parseFloat(v).toFixed(1)}s`; if(document.querySelector(`[data-slider-id="fadeOut"]`)) document.querySelector(`[data-slider-id="fadeOut"]`).value = v; },
-            speed: v => { document.getElementById('speedValue').textContent = `${parseFloat(v).toFixed(2)}x`; activeSounds.forEach(i => i.forEach(s => s.audioElement.playbackRate = v)); if(document.querySelector(`[data-slider-id="speed"]`)) document.querySelector(`[data-slider-id="speed"]`).value = v; },
-            pitch: v => { const pitchValue = parseFloat(v); document.getElementById('pitchValue').textContent = pitchValue; activeSounds.forEach(instances => instances.forEach(s => s.audioElement.detune = pitchValue)); if(document.querySelector(`[data-slider-id="pitch"]`)) document.querySelector(`[data-slider-id="pitch"]`).value = v; },
-            eqBass: v => { const val = parseFloat(v); nodes.eqBass.gain.value = val; document.getElementById('eqBassValue').textContent = `${val} dB`; if(document.querySelector(`[data-slider-id="eqBass"]`)) document.querySelector(`[data-slider-id="eqBass"]`).value = v; },
-            eqMid: v => { const val = parseFloat(v); nodes.eqMid.gain.value = val; document.getElementById('eqMidValue').textContent = `${val} dB`; if(document.querySelector(`[data-slider-id="eqMid"]`)) document.querySelector(`[data-slider-id="eqMid"]`).value = v; },
-            eqTreble: v => { const val = parseFloat(v); nodes.eqTreble.gain.value = val; document.getElementById('eqTrebleValue').textContent = `${val} dB`; if(document.querySelector(`[data-slider-id="eqTreble"]`)) document.querySelector(`[data-slider-id="eqTreble"]`).value = v; },
-            modeSpatial: (v) => { if (v) { controls.modeBinaural.checked = false; controls.modeBinaural.dispatchEvent(new Event('change')); } nodes.dryGain.gain.linearRampToValueAtTime(v ? 0 : 1, audioContext.currentTime + 0.05); nodes.spatialGain.gain.linearRampToValueAtTime(v ? 1 : 0, audioContext.currentTime + 0.05); },
-            modeBinaural: (v) => { if (v) { controls.modeSpatial.checked = false; controls.modeSpatial.dispatchEvent(new Event('change')); } nodes.dryGain.gain.linearRampToValueAtTime(v ? 0 : 1, audioContext.currentTime + 0.05); nodes.binauralGain.gain.linearRampToValueAtTime(v ? 1 : 0, audioContext.currentTime + 0.05); },
-            modeNight: (v) => { const volControl = document.getElementById('masterVolumeControl'); if (v) { lastVolumeBeforeNightMode = controls.masterVolume.value; volControl.classList.add('volume-locked'); controls.masterVolume.value = 0.15; controls.masterVolume.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeLimiter.threshold.setValueAtTime(-40, audioContext.currentTime); nodes.nightModeLimiter.knee.setValueAtTime(30, audioContext.currentTime); nodes.nightModeLimiter.ratio.setValueAtTime(20, audioContext.currentTime); } else { volControl.classList.remove('volume-locked'); controls.masterVolume.value = lastVolumeBeforeNightMode; controls.masterVolume.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeLimiter.threshold.setValueAtTime(0, audioContext.currentTime); nodes.nightModeLimiter.knee.setValueAtTime(0, audioContext.currentTime); nodes.nightModeLimiter.ratio.setValueAtTime(1, audioContext.currentTime); } },
-            modeVocalBoost: v => { nodes.vocalBoost.gain.linearRampToValueAtTime(v ? 6 : 0, audioContext.currentTime + 0.1) },
-            modeStable: v => { nodes.stableVolume.ratio.linearRampToValueAtTime(v ? 12 : 1, audioContext.currentTime + 0.1); },
-            modeAwareness: v => v ? awarenessEngine.start() : awarenessEngine.stop(),
+            masterVolume: v => { 
+                const newVol = parseFloat(v); 
+                masterGain.gain.value = newVol; 
+                if (newVol > 0) { lastVolumeBeforeMute = newVol; } 
+                isMuted = (newVol === 0); 
+                document.getElementById('muteIndicator').classList.toggle('visible', isMuted); 
+                document.getElementById('masterVolumeValue').textContent = `${Math.round(newVol*100)}%`;
+                const numInput = document.querySelector(`[data-slider-id="masterVolume"]`);
+                if(numInput) numInput.value = Math.round(newVol*100);
+            }, 
+            fadeIn: v => { 
+                document.getElementById('fadeInValue').textContent = `${parseFloat(v).toFixed(1)}s`; 
+                const numInput = document.querySelector(`[data-slider-id="fadeIn"]`);
+                if(numInput) numInput.value = v;
+            }, 
+            fadeOut: v => { 
+                document.getElementById('fadeOutValue').textContent = `${parseFloat(v).toFixed(1)}s`;
+                const numInput = document.querySelector(`[data-slider-id="fadeOut"]`);
+                if(numInput) numInput.value = v;
+            }, 
+            speed: v => { 
+                document.getElementById('speedValue').textContent = `${parseFloat(v).toFixed(2)}x`; 
+                activeSounds.forEach(i => i.forEach(s => s.audioElement.playbackRate = v)); 
+                const numInput = document.querySelector(`[data-slider-id="speed"]`);
+                if(numInput) numInput.value = v;
+            }, 
+            pitch: v => { 
+                const pitchValue = parseFloat(v); 
+                document.getElementById('pitchValue').textContent = pitchValue; 
+                activeSounds.forEach(instances => instances.forEach(s => s.audioElement.detune = pitchValue)); 
+                const numInput = document.querySelector(`[data-slider-id="pitch"]`);
+                if(numInput) numInput.value = v;
+            }, 
+            eqBass: v => { 
+                const val = parseFloat(v);
+                if (val <= 40) {
+                    nodes.eqBass.gain.value = val; 
+                    nodes.bassWaveShaper.curve = makeDistortionCurve(0);
+                    document.getElementById('eqBassValue').textContent = `${val} dB`;
+                } else {
+                    nodes.eqBass.gain.value = 40;
+                    const distortionAmount = (val - 40) * 10;
+                    nodes.bassWaveShaper.curve = makeDistortionCurve(distortionAmount);
+                    document.getElementById('eqBassValue').textContent = `+40 dB (Punch ${Math.round((val - 40) / 40 * 100)}%)`;
+                    if ('vibrate' in navigator) {
+                        const vibrationIntensity = Math.min(200, (val - 40) * 5);
+                        navigator.vibrate(vibrationIntensity);
+                    }
+                }
+                const numInput = document.querySelector(`[data-slider-id="eqBass"]`);
+                if(numInput) numInput.value = v;
+            },
+            eqMid: v => { 
+                const val = parseFloat(v); 
+                nodes.eqMid.gain.value = val; 
+                document.getElementById('eqMidValue').textContent = `${val} dB`;
+                const numInput = document.querySelector(`[data-slider-id="eqMid"]`);
+                if(numInput) numInput.value = v;
+            },
+            eqTreble: v => { 
+                const val = parseFloat(v); 
+                nodes.eqTreble.gain.value = val; 
+                document.getElementById('eqTrebleValue').textContent = `${val} dB`;
+                const numInput = document.querySelector(`[data-slider-id="eqTreble"]`);
+                if(numInput) numInput.value = v;
+            },
+            modeVocalBoost: v => nodes.vocalBoost.gain.linearRampToValueAtTime(v ? 6 : 0, 0.1), 
+            modeAwareness: v => v ? awarenessEngine.start() : awarenessEngine.stop(), 
+            modeStable: v => { nodes.stableVolume.ratio.linearRampToValueAtTime(v ? 12 : 1, 0.1); }
         };
         
         function updateButtonVisuals() { requestAnimationFrame(updateButtonVisuals); document.querySelectorAll('.sound-button-v4[data-sound-file]').forEach(button => { const fileName = button.dataset.soundFile; const instances = activeSounds.get(fileName); if (instances && instances.length > 0) { button.classList.add('playing'); if (instances.length > 1) { button.classList.add('pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } else { button.classList.remove('pulsating'); const analyser = instances[0].analyser; const dataArray = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(dataArray); const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length; const scale = 1 + (avg / 255) * 0.05; const shadowSpread = 2 + (avg / 255) * 8; button.style.transform = `scale(${scale})`; button.style.boxShadow = `0 0 ${shadowSpread}px rgba(103, 32, 189, 0.7)`; } } else { button.classList.remove('playing', 'pulsating'); button.style.transform = ''; button.style.boxShadow = ''; } }); }
@@ -666,6 +720,7 @@
                 });
             });
 
+            // Initialize all controls and sync number inputs
             Object.values(controls).forEach(el => { 
                 const key = el.dataset.setting; 
                 if (!key) return; 
@@ -678,6 +733,7 @@
                 }
             });
             
+            // Sync Number Inputs to Sliders
             document.querySelectorAll('.slider-value-input').forEach(numInput => {
                 numInput.addEventListener('change', (e) => {
                     const sliderId = e.target.dataset.sliderId;
@@ -688,8 +744,12 @@
                     const min = parseFloat(slider.min);
                     const max = parseFloat(slider.max);
                     
-                    if (slider.id === 'masterVolume') { value = value / 100; }
+                    // For master volume, the input is 0-100 but slider is 0-1
+                    if (slider.id === 'masterVolume') {
+                         value = value / 100;
+                    }
 
+                    // Clamp the value to the slider's boundaries
                     if (value < min) value = min;
                     if (value > max) value = max;
                     
