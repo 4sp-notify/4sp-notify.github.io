@@ -636,35 +636,34 @@
     }
 
     // --- Actions ---
-    // ✅ FIXED: This function has been restored with its full logic.
     async function handleDeleteRequest(requestId) {
         const db = firebase.firestore();
         const requestRef = db.collection('requests').doc(requestId);
-        const doc = await requestRef.get();
-        if (!doc.exists) return;
-        const requestData = doc.data();
+        try {
+            const doc = await requestRef.get();
+            if (!doc.exists) return;
+            const requestData = doc.data();
 
-        const isCreator = currentUser && requestData.userId === currentUser.uid;
-        let reason = '';
-        let confirmDelete = false;
-        
-        if (IS_ADMIN_ACCOUNT && !isCreator) {
-            const promptReason = prompt("ADMIN: Provide a reason for deleting this request. (Optional)");
-            if (promptReason === null) return; 
-            reason = promptReason.trim() === '' ? "Request removed by an administrator." : promptReason;
-            confirmDelete = true;
-        } else if (isCreator) {
-            if (confirm("Are you sure you want to delete your request? This action cannot be undone.")) {
-                reason = 'Deleted by creator.';
+            const isCreator = currentUser && requestData.userId === currentUser.uid;
+            let reason = '';
+            let confirmDelete = false;
+            
+            if (IS_ADMIN_ACCOUNT && !isCreator) {
+                const promptReason = prompt("ADMIN: Provide a reason for deleting this request. (Optional)");
+                if (promptReason === null) return; 
+                reason = promptReason.trim() === '' ? "Request removed by an administrator." : promptReason;
                 confirmDelete = true;
+            } else if (isCreator) {
+                if (confirm("Are you sure you want to delete your request? This action cannot be undone.")) {
+                    reason = 'Deleted by creator.';
+                    confirmDelete = true;
+                }
+            } else {
+                alert("You do not have permission to delete this request.");
+                return;
             }
-        } else {
-            alert("You do not have permission to delete this request.");
-            return;
-        }
 
-        if (confirmDelete) {
-            try {
+            if (confirmDelete) {
                 await requestRef.update({
                     status: 'deleted',
                     deletionReason: reason,
@@ -672,14 +671,13 @@
                 });
                 detailsModal.style.display = 'none';
                 fetchAndDisplayRequests();
-            } catch (error) {
-                console.error("Error deleting request:", error);
-                alert("An error occurred while trying to delete the request. Please check the console for details.");
             }
+        } catch (error) {
+            console.error("Error deleting request:", error);
+            alert("An error occurred while trying to delete the request. Please check the console for details.");
         }
     }
     
-    // ✅ FIXED: This function has been restored with its full logic.
     async function handleVote(requestId, isUpvote) {
         if (!currentUser) { alert("You must be logged in to vote."); return; }
         const db = firebase.firestore();
@@ -750,45 +748,53 @@
     
     // --- Scheduling Logic ---
     function handleSubmissionSchedule() {
+        // Admins are not affected by the schedule
         if (IS_ADMIN_ACCOUNT) {
             createRequestBtn.disabled = false;
-            createRequestBtn.title = '';
+            createRequestBtn.title = 'Admin account: Submissions always open.';
+            // Set schedule modal text for admin view
+            document.getElementById('scheduleStatus').textContent = 'ALWAYS OPEN (Admin)';
+            document.getElementById('scheduleStatus').className = 'open';
+            document.getElementById('countdownTimer').textContent = 'Your account is not affected by the schedule.';
             return;
         }
 
         const now = new Date();
-        const day = now.getDay(); // 0=Sun, 1=Mon, ..., 5=Fri, 6=Sat
+        const day = now.getDay();   // 0 = Sunday, 1 = Monday, ..., 5 = Friday, 6 = Saturday
         const hour = now.getHours();
 
-        // Submissions are open Mon 6 AM to Fri 3 PM (15:00)
-        // Note: This uses the user's local browser time.
-        const isClosed = (day === 0) || (day === 6) || // Weekend
-                       (day === 5 && hour >= 15) ||   // Friday after 3 PM
-                       (day === 1 && hour < 6);    // Monday before 6 AM
+        // Submissions are closed on the weekend (Sat/Sun), after 3 PM on Friday, or before 6 AM on Monday.
+        const isClosed = (day === 6 || day === 0) || (day === 5 && hour >= 15) || (day === 1 && hour < 6);
 
         const statusEl = document.getElementById('scheduleStatus');
         const countdownEl = document.getElementById('countdownTimer');
         
+        createRequestBtn.disabled = isClosed;
+        
         if (!isClosed) {
-            createRequestBtn.disabled = false;
+            // State: OPEN
+            createRequestBtn.textContent = 'Create Request';
             createRequestBtn.title = 'Submissions are currently open.';
-            statusEl.textContent = 'OPEN';
+            statusEl.textContent = 'ACTIVE';
             statusEl.className = 'open';
 
+            // Calculate time until Friday 3 PM
             let nextClose = new Date(now);
-            nextClose.setDate(now.getDate() + (5 - day));
+            const daysUntilFriday = (5 - day + 7) % 7;
+            nextClose.setDate(now.getDate() + daysUntilFriday);
             nextClose.setHours(15, 0, 0, 0);
             countdownEl.textContent = `Submissions close in: ${getCountdownText(nextClose)}`;
-
         } else {
-            createRequestBtn.disabled = true;
+            // State: CLOSED
+            createRequestBtn.textContent = 'Submissions Closed';
             createRequestBtn.title = 'Submissions are currently closed. See schedule for details.';
-            statusEl.textContent = 'CLOSED';
+            statusEl.textContent = 'INACTIVE';
             statusEl.className = 'closed';
 
+            // Calculate time until Monday 6 AM
             let nextOpen = new Date(now);
-            const daysUntilMonday = (8 - day) % 7;
-            nextOpen.setDate(now.getDate() + (daysUntilMonday === 0 ? 1 : daysUntilMonday)); // Handle Sunday case
+            const daysUntilMonday = (1 - day + 7) % 7;
+            nextOpen.setDate(now.getDate() + (daysUntilMonday === 0 ? 7 : daysUntilMonday)); // Add 7 if it's already Monday but before 6 AM
             nextOpen.setHours(6, 0, 0, 0);
             countdownEl.textContent = `Submissions open in: ${getCountdownText(nextOpen)}`;
         }
@@ -796,13 +802,13 @@
 
     function getCountdownText(targetDate) {
         const now = new Date();
-        let delta = Math.max(0, targetDate - now) / 1000;
+        let delta = Math.max(0, targetDate.getTime() - now.getTime()) / 1000;
 
         const days = Math.floor(delta / 86400);
         delta -= days * 86400;
-        const hours = Math.floor(delta / 3600) % 24;
+        const hours = Math.floor(delta / 3600);
         delta -= hours * 3600;
-        const minutes = Math.floor(delta / 60) % 60;
+        const minutes = Math.floor(delta / 60);
         
         return `${days}d ${hours}h ${minutes}m`;
     }
@@ -823,7 +829,7 @@
         
         if (scheduleBtn) scheduleBtn.addEventListener('click', () => scheduleModal.style.display = 'flex');
         
-        setInterval(handleSubmissionSchedule, 60000); 
+        setInterval(handleSubmissionSchedule, 60000); // Check the schedule every minute
     });
 
     const handleLogout = () => firebase.auth().signOut().then(() => location.href = '../login.html');
@@ -832,6 +838,10 @@
 
     createRequestBtn.addEventListener('click', () => {
         if (!currentUser) { alert('Please log in to create a request.'); return; }
+        if (createRequestBtn.disabled) {
+            alert('Submissions are currently closed. Please check the schedule for opening times.');
+            return;
+        }
         requestForm.reset();
         soundOptionsContainer.style.display = 'none';
         formStatusEl.style.display = 'none';
