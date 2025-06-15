@@ -134,9 +134,21 @@
         overflow: hidden; line-height: 1.7; font-family: SecondaryFont, sans-serif;
     }
     .request-footer { 
-        display: flex; justify-content: space-between; align-items: center;
+        display: flex; justify-content: space-between; align-items: flex-end;
         margin-top: 12px; font-size: 0.8em; color: #777; 
         border-top: 1px solid #f0f0f0; padding-top: 8px; font-family: SecondaryFont, sans-serif;
+    }
+    .footer-info-left {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .admin-info {
+        font-size: 0.9em;
+        color: #666;
+        display: flex;
+        align-items: center;
+        gap: 5px;
     }
     .request-url a {
         color: #007bff; text-decoration: none; font-weight: 500; font-family: PrimaryFont, sans-serif;
@@ -250,7 +262,7 @@
           <li><a href="proxies.html"><span class="icon">🛡️</span><span class="label">Proxies</span></a></li>
           <li><a href="soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
           <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
-          <li><a href="others.html" class="active"><span class="icon">✨</span><span class="label">Others</span></a></li>
+          <li><a href="requests.html" class="active"><span class="icon">✨</span><span class="label">Requests</span></a></li>
           <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
           <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
         </ul>
@@ -443,12 +455,9 @@
                 const snapshot = await db.collection('requests').where('status', '==', 'deleted').orderBy('deletedAt', 'desc').get();
                 snapshot.forEach(doc => activeRequests.push({ id: doc.id, ...doc.data() }));
             } else {
-                // Fetch ALL active documents and sort them on the client.
-                // This avoids Firestore index errors if indexes for specific sort orders don't exist.
                 const activeSnapshot = await db.collection('requests').where('status', '==', 'active').get();
                 activeSnapshot.forEach(doc => activeRequests.push({ id: doc.id, ...doc.data() }));
 
-                // Client-side sorting
                 activeRequests.sort((a, b) => {
                     if (sortBy === 'top') {
                         return (b.upvotes || 0) - (a.upvotes || 0);
@@ -461,7 +470,6 @@
                     return dateB - dateA; // Default to 'newest'
                 });
 
-                // Fetch the current user's deleted requests to show in their own view.
                 const deletedSnapshot = await db.collection('requests').where('status', '==', 'deleted').where('userId', '==', currentUser.uid).get();
                 deletedSnapshot.forEach(doc => deletedRequests.push({ id: doc.id, ...doc.data() }));
                 deletedRequests.sort((a, b) => (b.deletedAt?.toMillis() || 0) - (a.deletedAt?.toMillis() || 0));
@@ -480,11 +488,16 @@
                 li.className = 'request-item';
                 li.dataset.id = request.id;
                 
+                // --- PERMISSION LOGIC ---
                 const isCreator = currentUser && request.userId === currentUser.uid;
+                // You can edit only if you are the creator, it's not deleted, and it hasn't been edited before.
+                // Admins cannot edit other people's posts.
                 const canEdit = isCreator && request.status !== 'deleted' && !request.edited;
-                const canDelete = (IS_ADMIN_ACCOUNT || isCreator) && request.status !== 'deleted';
+                // You can delete if you are the creator OR you are an admin.
+                const canDelete = (isCreator || IS_ADMIN_ACCOUNT) && request.status !== 'deleted';
 
-                // Censor content before rendering using the pre-fetched list
+
+                // Censor content before rendering
                 const censoredTitle = censorText(request.title);
                 const censoredDescription = censorText(request.description);
                 const censoredUsername = censorText(request.username);
@@ -497,12 +510,29 @@
                 if(request.type === 'sound' && request.soundCategory) badges += `<span class="request-type-badge ${ {Normal: 'badge-cat-normal', Explicit: 'badge-cat-explicit'}[request.soundCategory] || '' }">${request.soundCategory}</span>`;
 
                 const showUsername = !request.isAnonymous || IS_ADMIN_ACCOUNT;
-                const submittedDate = request.timestamp?.toDate().toLocaleDateString() || 'N/A';
+                
+                // --- TIMESTAMP and ADMIN INFO LOGIC ---
+                let submittedDate = 'N/A';
+                let adminInfoHTML = '';
+
+                if (request.timestamp) {
+                    // Admins see precise date and time.
+                    if (IS_ADMIN_ACCOUNT) {
+                        submittedDate = request.timestamp.toDate().toLocaleString();
+                        if (request.email) {
+                            adminInfoHTML = `<div class="admin-info"><i class="fas fa-envelope"></i> ${escapeHTML(request.email)}</div>`;
+                        }
+                    } else {
+                        // Regular users see only the date.
+                        submittedDate = request.timestamp.toDate().toLocaleDateString();
+                    }
+                }
                 
                 let fullUrl = request.soundUrl || '';
                 if (fullUrl && !fullUrl.startsWith('http')) fullUrl = 'https://' + fullUrl;
 
                 let actionButtonsHTML = '';
+                // The 'canEdit' and 'canDelete' variables now control the button visibility.
                 if (canEdit || canDelete) {
                     actionButtonsHTML += '<div class="card-actions">';
                     if (canEdit) actionButtonsHTML += `<button class="card-action-btn edit-btn-card" title="Edit Request"><i class="fas fa-pencil-alt"></i></button>`;
@@ -523,7 +553,10 @@
                         <h4 class="request-title" title="${escapeHTML(request.title)}">${escapeHTML(censoredTitle)}</h4>
                         <p class="request-description">${escapeHTML(censoredDescription)}</p>
                         <div class="request-footer">
-                            <span>By <strong style="font-family: PrimaryFont, sans-serif;">${showUsername ? (escapeHTML(censoredUsername) || 'Anonymous') : 'Anonymous'}</strong> on ${submittedDate}</span>
+                            <div class="footer-info-left">
+                                <span>By <strong style="font-family: PrimaryFont, sans-serif;">${showUsername ? (escapeHTML(censoredUsername) || 'Anonymous') : 'Anonymous'}</strong> on ${submittedDate}</span>
+                                ${adminInfoHTML}
+                            </div>
                             ${request.type === 'sound' && request.soundUrl ? `<span class="request-url"><a href="${fullUrl}" target="_blank" rel="noopener noreferrer" title="${escapeHTML(request.soundUrl)}"><i class="fas fa-link"></i> Source URL</a></span>` : ''}
                         </div>
                     </div>
@@ -611,26 +644,21 @@
         const isCreator = currentUser && requestData.userId === currentUser.uid;
         let reason = '';
         let confirmDelete = false;
-
-        if (IS_ADMIN_ACCOUNT) {
-            if (isCreator) {
-                reason = 'Deleted by creator.';
-                confirmDelete = true;
-            } else {
-                const promptReason = prompt("ADMIN (Optional): Provide a reason for deleting this request.");
-                if (promptReason === null) {
-                    reason = "Deleted by administrator for content review.";
-                } else {
-                    reason = promptReason.trim() === '' ? "Deleted by administrator for content review." : promptReason;
-                }
-                confirmDelete = true;
-            }
+        
+        // This logic correctly handles deletion permissions for admins and creators.
+        if (IS_ADMIN_ACCOUNT && !isCreator) {
+            const promptReason = prompt("ADMIN: Provide a reason for deleting this request. (Optional)");
+            // If admin cancels the prompt, don't delete.
+            if (promptReason === null) return; 
+            reason = promptReason.trim() === '' ? "Request removed by an administrator." : promptReason;
+            confirmDelete = true;
         } else if (isCreator) {
             if (confirm("Are you sure you want to delete your request? This action cannot be undone.")) {
                 reason = 'Deleted by creator.';
                 confirmDelete = true;
             }
         } else {
+            // This case should not be reachable if buttons are rendered correctly, but it's a safeguard.
             alert("You do not have permission to delete this request.");
             return;
         }
@@ -715,15 +743,9 @@
     
     // --- All Other Event Listeners ---
     document.addEventListener('DOMContentLoaded', () => {
-        /**
-         * Fetches your static JSON list when the page loads.
-         * This URL points directly to your Protify repository.
-         */
         fetch('https://4simpleproblems.github.io/Protify/protify-list.json')
             .then(response => {
-                if (!response.ok) {
-                    throw new Error('Network response for wordlist was not ok');
-                }
+                if (!response.ok) throw new Error('Network response for wordlist was not ok');
                 return response.json();
             })
             .then(data => {
@@ -731,21 +753,15 @@
                     badWordsList = data.words;
                     console.log('Protify profanity list loaded successfully.');
                 }
-                // Once the list is loaded, refresh the requests if a user is already logged in
-                // to ensure any early-loaded content gets censored.
-                if (currentUser) {
-                    fetchAndDisplayRequests();
-                }
+                if (currentUser) fetchAndDisplayRequests();
             })
             .catch(error => {
                 console.error('Failed to load Protify profanity list:', error);
-                // The application will continue to function, just without censoring.
             });
 
         if (toggleSidebarBtn && sidebar) {
             toggleSidebarBtn.addEventListener('click', () => sidebar.classList.toggle('collapsed'));
         }
-
         if (refreshRequestsBtn) {
             refreshRequestsBtn.addEventListener('click', fetchAndDisplayRequests);
         }
@@ -809,7 +825,7 @@
 
         try {
             const userRequestsToday = await db.collection('requests').where('userId', '==', currentUser.uid).where('timestamp', '>=', today).where('timestamp', '<', tomorrow).get();
-            if (userRequestsToday.size >= MAX_REQUESTS_PER_DAY) {
+            if (userRequestsToday.size >= MAX_REQUESTS_PER_DAY && !IS_ADMIN_ACCOUNT) {
                 throw new Error(`You have reached the daily limit of ${MAX_REQUESTS_PER_DAY} requests.`);
             }
 
@@ -853,10 +869,7 @@
         
         if (target.closest('.vote-btn')) {
             e.stopPropagation();
-            if (!currentUser) return;
-            if (requestItem.classList.contains('deleted')) {
-                alert("You cannot vote on a deleted request."); return;
-            }
+            if (!currentUser || requestItem.classList.contains('deleted')) return;
             const isUpvote = target.closest('.vote-btn').classList.contains('upvote-btn');
             handleVote(requestId, isUpvote);
             return;
