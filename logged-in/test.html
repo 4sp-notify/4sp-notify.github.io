@@ -470,8 +470,7 @@
         requestsListEl.innerHTML = '<li><i class="fas fa-spinner fa-spin"></i> Loading...</li>';
         const db = firebase.firestore();
         const sortBy = sortRequestsEl.value;
-        let activeRequests = [];
-        let deletedRequests = [];
+        let allRequests = [];
 
         try {
             let query = db.collection('requests');
@@ -485,14 +484,12 @@
             }
 
             const snapshot = await query.get();
-            snapshot.forEach(doc => activeRequests.push({ id: doc.id, ...doc.data() }));
+            snapshot.forEach(doc => allRequests.push({ id: doc.id, ...doc.data() }));
 
             if (sortBy !== 'deleted') {
                 const deletedSnapshot = await db.collection('requests').where('status', '==', 'deleted').where('userId', '==', currentUser.uid).get();
-                deletedSnapshot.forEach(doc => deletedRequests.push({ id: doc.id, ...doc.data() }));
+                deletedSnapshot.forEach(doc => allRequests.push({ id: doc.id, ...doc.data() }));
             }
-            
-            const allRequests = [...activeRequests, ...deletedRequests];
             
             requestsListEl.innerHTML = ''; 
             if (allRequests.length === 0) {
@@ -639,12 +636,79 @@
     }
 
     // --- Actions ---
+    // ✅ FIXED: This function has been restored with its full logic.
     async function handleDeleteRequest(requestId) {
-        // ... (This function remains unchanged)
+        const db = firebase.firestore();
+        const requestRef = db.collection('requests').doc(requestId);
+        const doc = await requestRef.get();
+        if (!doc.exists) return;
+        const requestData = doc.data();
+
+        const isCreator = currentUser && requestData.userId === currentUser.uid;
+        let reason = '';
+        let confirmDelete = false;
+        
+        if (IS_ADMIN_ACCOUNT && !isCreator) {
+            const promptReason = prompt("ADMIN: Provide a reason for deleting this request. (Optional)");
+            if (promptReason === null) return; 
+            reason = promptReason.trim() === '' ? "Request removed by an administrator." : promptReason;
+            confirmDelete = true;
+        } else if (isCreator) {
+            if (confirm("Are you sure you want to delete your request? This action cannot be undone.")) {
+                reason = 'Deleted by creator.';
+                confirmDelete = true;
+            }
+        } else {
+            alert("You do not have permission to delete this request.");
+            return;
+        }
+
+        if (confirmDelete) {
+            try {
+                await requestRef.update({
+                    status: 'deleted',
+                    deletionReason: reason,
+                    deletedAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                detailsModal.style.display = 'none';
+                fetchAndDisplayRequests();
+            } catch (error) {
+                console.error("Error deleting request:", error);
+                alert("An error occurred while trying to delete the request. Please check the console for details.");
+            }
+        }
     }
     
+    // ✅ FIXED: This function has been restored with its full logic.
     async function handleVote(requestId, isUpvote) {
-        // ... (This function remains unchanged)
+        if (!currentUser) { alert("You must be logged in to vote."); return; }
+        const db = firebase.firestore();
+        const requestRef = db.collection('requests').doc(requestId);
+        try {
+            await db.runTransaction(async (transaction) => {
+                const doc = await transaction.get(requestRef);
+                if (!doc.exists) throw "Document not found.";
+                
+                const data = doc.data();
+                if (data.userId === currentUser.uid) {
+                    alert("You cannot vote on your own request."); return; 
+                }
+
+                let { upvotedBy = [], downvotedBy = [] } = data;
+                const upvoteIndex = upvotedBy.indexOf(currentUser.uid);
+                const downvoteIndex = downvotedBy.indexOf(currentUser.uid);
+
+                if (isUpvote) {
+                    if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); } else { upvotedBy.push(currentUser.uid); }
+                    if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); }
+                } else {
+                    if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); } else { downvotedBy.push(currentUser.uid); }
+                    if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); }
+                }
+                transaction.update(requestRef, { upvotedBy, downvotedBy, upvotes: upvotedBy.length, downvotes: downvotedBy.length });
+            });
+            fetchAndDisplayRequests();
+        } catch (error) { console.error("Vote failed: ", error); }
     }
 
     // --- Authentication and Initial Setup ---
@@ -697,21 +761,22 @@
         const hour = now.getHours();
 
         // Submissions are open Mon 6 AM to Fri 3 PM (15:00)
-        const isOpen = (day >= 1 && day <= 4) || // Monday to Thursday
-                       (day === 5 && hour < 15) ||   // Friday before 3 PM
-                       (day === 1 && hour >= 6);    // Monday after 6 AM
+        // Note: This uses the user's local browser time.
+        const isClosed = (day === 0) || (day === 6) || // Weekend
+                       (day === 5 && hour >= 15) ||   // Friday after 3 PM
+                       (day === 1 && hour < 6);    // Monday before 6 AM
 
         const statusEl = document.getElementById('scheduleStatus');
         const countdownEl = document.getElementById('countdownTimer');
         
-        if (isOpen) {
+        if (!isClosed) {
             createRequestBtn.disabled = false;
             createRequestBtn.title = 'Submissions are currently open.';
             statusEl.textContent = 'OPEN';
             statusEl.className = 'open';
 
             let nextClose = new Date(now);
-            nextClose.setDate(now.getDate() + (5 - day)); // Find Friday
+            nextClose.setDate(now.getDate() + (5 - day));
             nextClose.setHours(15, 0, 0, 0);
             countdownEl.textContent = `Submissions close in: ${getCountdownText(nextClose)}`;
 
@@ -722,9 +787,8 @@
             statusEl.className = 'closed';
 
             let nextOpen = new Date(now);
-            if (day > 5 || (day === 5 && hour >= 15)) { // If it's Fri/Sat/Sun
-                nextOpen.setDate(now.getDate() + (8 - day)); // Find next Monday
-            }
+            const daysUntilMonday = (8 - day) % 7;
+            nextOpen.setDate(now.getDate() + (daysUntilMonday === 0 ? 1 : daysUntilMonday)); // Handle Sunday case
             nextOpen.setHours(6, 0, 0, 0);
             countdownEl.textContent = `Submissions open in: ${getCountdownText(nextOpen)}`;
         }
@@ -743,7 +807,6 @@
         return `${days}d ${hours}h ${minutes}m`;
     }
 
-
     // --- All Other Event Listeners ---
     document.addEventListener('DOMContentLoaded', () => {
         fetch('https://4simpleproblems.github.io/Protify/protify-list.json')
@@ -758,10 +821,8 @@
         if (toggleSidebarBtn && sidebar) toggleSidebarBtn.addEventListener('click', () => sidebar.classList.toggle('collapsed'));
         if (refreshRequestsBtn) refreshRequestsBtn.addEventListener('click', fetchAndDisplayRequests);
         
-        // Schedule button and modal listeners
         if (scheduleBtn) scheduleBtn.addEventListener('click', () => scheduleModal.style.display = 'flex');
         
-        // Set schedule to update every minute
         setInterval(handleSubmissionSchedule, 60000); 
     });
 
@@ -822,7 +883,6 @@
         tomorrow.setDate(tomorrow.getDate() + 1);
 
         try {
-            // ✅ MODIFIED: Daily request limit check now ignores admins.
             if (!IS_ADMIN_ACCOUNT) {
                 const userRequestsToday = await db.collection('requests')
                     .where('userId', '==', currentUser.uid)
@@ -901,7 +961,6 @@
         });
 
         if (saveBtn) saveBtn.addEventListener('click', async () => {
-            // ✅ ADDED: Confirmation dialog before saving the edit.
             const isConfirmed = confirm("Are you sure you want to save these changes? You will not be able to edit this request again.");
             if (!isConfirmed) return;
 
