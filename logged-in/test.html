@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>4SP - Requests & Reports</title>
+  <title>4SP - REQUESTS</title>
   <link rel="stylesheet" href="../css/style.css" />
   <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
@@ -68,9 +68,19 @@
     .requests-display-card { background: #fff; padding: 25px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
     .requests-controls { display: flex; gap: 15px; align-items: center; margin-bottom: 20px; flex-wrap: wrap; }
     .requests-controls label { font-weight: 600; color: #444; font-family: PrimaryFont, sans-serif; }
-    .requests-controls select, .requests-controls input[type="search"] { padding: 8px 12px; border-radius: 8px; border: 1px solid #ccc; font-family: PrimaryFont, sans-serif; }
+    .requests-controls select, .requests-controls input[type="search"] { padding: 8px 12px; border-radius: 8px; border: 1px solid #ccc; font-family: PrimaryFont, sans-serif; height: 38px; box-sizing: border-box; }
     #sortDeletedOption { display: none; }
     .requests-controls input[type="search"] { flex-grow: 1; min-width: 200px; }
+    #refreshRequestsBtn {
+        background-color: #fff; border: 1px solid #ccc; border-radius: 50%; width: 38px; height: 38px;
+        cursor: pointer; display: flex; align-items: center; justify-content: center;
+        transition: all 0.3s ease; padding: 0;
+    }
+    #refreshRequestsBtn:hover {
+        background-color: #f8f9fa; border-color: #999; transform: rotate(180deg);
+    }
+    #refreshRequestsBtn img { width: 18px; height: 18px; }
+
 
     #requestsList { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 15px; }
     .request-item {
@@ -102,9 +112,15 @@
     .request-content { width: 100%; overflow: hidden; }
     .request-header { display: flex; align-items: center; gap: 8px; margin-bottom: 5px; flex-wrap: wrap; }
     .request-type-badge { padding: 4px 8px; border-radius: 8px; font-size: 0.8em; font-weight: bold; color: white; font-family: PrimaryFont, sans-serif; }
-    .badge-sound { background-color: #007bff; } .badge-feature { background-color: #28a745; } .badge-issue { background-color: #dc3545; }
-    .badge-cat-normal { background-color: #17a2b8; } .badge-cat-explicit { background-color: #6c757d; }
-    .badge-example { background-color: #ffc107; color: #212529;}
+    
+    /* Vibrant Badge Colors */
+    .badge-sound { background: linear-gradient(135deg, #5f72bd 0%, #967adc 100%); }
+    .badge-feature { background: linear-gradient(135deg, #38ef7d 0%, #11998e 100%); }
+    .badge-issue { background: linear-gradient(135deg, #f5515f 0%, #a1051d 100%); }
+    .badge-cat-normal { background: linear-gradient(135deg, #29a0b1 0%, #29a0b1 100%); }
+    .badge-cat-explicit { background: linear-gradient(135deg, #757f9a 0%, #d7dde8 100%); color: #333; }
+    .badge-example { background: linear-gradient(135deg, #f7971e 0%, #ffd200 100%); color: #212529; }
+
 
     .request-title {
         font-size: 1.15em; font-weight: 600; color: #2c3e50;
@@ -247,8 +263,17 @@
       </div>
       <div class="requests-display-card">
           <div class="requests-controls">
-              <input type="search" id="searchBar" placeholder="Search requests..."><label for="sortRequests">Sort by:</label>
-              <select id="sortRequests"><option value="newest">Newest First</option><option value="top">Most Upvotes</option><option value="oldest">Oldest First</option><option id="sortDeletedOption" value="deleted">Deleted</option></select>
+              <input type="search" id="searchBar" placeholder="Search requests...">
+              <label for="sortRequests">Sort by:</label>
+              <select id="sortRequests">
+                  <option value="newest">Newest First</option>
+                  <option value="top">Most Upvotes</option>
+                  <option value="oldest">Oldest First</option>
+                  <option id="sortDeletedOption" value="deleted">Deleted</option>
+              </select>
+              <button id="refreshRequestsBtn" title="Refresh Requests">
+                  <img src="../images/refresh-dark.png" alt="Refresh">
+              </button>
           </div>
           <ul id="requestsList"><li>Loading...</li></ul>
       </div>
@@ -360,6 +385,7 @@
     const sortRequestsEl = document.getElementById('sortRequests');
     const sortDeletedOption = document.getElementById('sortDeletedOption');
     const searchBar = document.getElementById('searchBar');
+    const refreshRequestsBtn = document.getElementById('refreshRequestsBtn');
     const requestTypeSelect = document.getElementById('requestType');
     const soundOptionsContainer = document.getElementById('soundOptionsContainer');
     const anonymousCheckbox = document.getElementById('anonymousCheckbox');
@@ -409,34 +435,40 @@
         requestsListEl.innerHTML = '<li><i class="fas fa-spinner fa-spin"></i> Loading...</li>';
         const db = firebase.firestore();
         const sortBy = sortRequestsEl.value;
-        let allRequests = [];
+        let activeRequests = [];
+        let deletedRequests = [];
 
         try {
             if (sortBy === 'deleted' && IS_ADMIN_ACCOUNT) {
                 const snapshot = await db.collection('requests').where('status', '==', 'deleted').orderBy('deletedAt', 'desc').get();
-                snapshot.forEach(doc => allRequests.push({ id: doc.id, ...doc.data() }));
+                snapshot.forEach(doc => activeRequests.push({ id: doc.id, ...doc.data() }));
             } else {
-                let activeQuery = db.collection('requests').where('status', '==', 'active');
-                if (sortBy === 'newest') activeQuery = activeQuery.orderBy('timestamp', 'desc');
-                else if (sortBy === 'oldest') activeQuery = activeQuery.orderBy('timestamp', 'asc');
-                else if (sortBy === 'top') activeQuery = activeQuery.orderBy('upvotes', 'desc');
-                
-                const activeSnapshot = await activeQuery.get();
-                activeSnapshot.forEach(doc => allRequests.push({ id: doc.id, ...doc.data() }));
+                // Fetch ALL active documents and sort them on the client.
+                // This avoids Firestore index errors if indexes for specific sort orders don't exist.
+                const activeSnapshot = await db.collection('requests').where('status', '==', 'active').get();
+                activeSnapshot.forEach(doc => activeRequests.push({ id: doc.id, ...doc.data() }));
 
+                // Client-side sorting
+                activeRequests.sort((a, b) => {
+                    if (sortBy === 'top') {
+                        return (b.upvotes || 0) - (a.upvotes || 0);
+                    }
+                    const dateA = a.timestamp?.toMillis() || 0;
+                    const dateB = b.timestamp?.toMillis() || 0;
+                    if (sortBy === 'oldest') {
+                        return dateA - dateB;
+                    }
+                    return dateB - dateA; // Default to 'newest'
+                });
+
+                // Fetch the current user's deleted requests to show in their own view.
                 const deletedSnapshot = await db.collection('requests').where('status', '==', 'deleted').where('userId', '==', currentUser.uid).get();
-                deletedSnapshot.forEach(doc => allRequests.push({ id: doc.id, ...doc.data() }));
-                
-                if (sortBy === 'newest' || sortBy === 'oldest' || sortBy === 'top') {
-                    allRequests.sort((a, b) => {
-                        if (sortBy === 'top') return (b.upvotes || 0) - (a.upvotes || 0);
-                        const dateA = a.timestamp?.toMillis() || 0;
-                        const dateB = b.timestamp?.toMillis() || 0;
-                        return sortBy === 'newest' ? dateB - dateA : dateA - dateB;
-                    });
-                }
+                deletedSnapshot.forEach(doc => deletedRequests.push({ id: doc.id, ...doc.data() }));
+                deletedRequests.sort((a, b) => (b.deletedAt?.toMillis() || 0) - (a.deletedAt?.toMillis() || 0));
             }
 
+            const allRequests = [...activeRequests, ...deletedRequests];
+            
             requestsListEl.innerHTML = ''; 
             if (allRequests.length === 0) {
                 requestsListEl.innerHTML = '<li>No requests found. Be the first to create one!</li>';
@@ -508,7 +540,7 @@
             filterRequests();
         } catch (error) {
             console.error("Firestore fetch failed:", error);
-            requestsListEl.innerHTML = '<li>There was an error loading requests. Please try again later.</li>';
+            requestsListEl.innerHTML = '<li>There was an error loading requests. Please try again later or contact support.</li>';
         }
     }
     
@@ -587,9 +619,9 @@
             } else {
                 const promptReason = prompt("ADMIN (Optional): Provide a reason for deleting this request.");
                 if (promptReason === null) {
-                     reason = "Deleted by administrator for content review.";
+                    reason = "Deleted by administrator for content review.";
                 } else {
-                     reason = promptReason.trim() === '' ? "Deleted by administrator for content review." : promptReason;
+                    reason = promptReason.trim() === '' ? "Deleted by administrator for content review." : promptReason;
                 }
                 confirmDelete = true;
             }
@@ -712,6 +744,10 @@
 
         if (toggleSidebarBtn && sidebar) {
             toggleSidebarBtn.addEventListener('click', () => sidebar.classList.toggle('collapsed'));
+        }
+
+        if (refreshRequestsBtn) {
+            refreshRequestsBtn.addEventListener('click', fetchAndDisplayRequests);
         }
     });
 
