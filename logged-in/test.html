@@ -416,17 +416,10 @@
         return p.innerHTML;
     }
     
-    /**
-     * Censors text by replacing words from a pre-fetched list with asterisks.
-     * This function is now synchronous and relies on `badWordsList` being populated.
-     * @param {string} text The input text to censor.
-     * @returns {string} The censored text.
-     */
     function censorText(text) {
         if (!text || !text.trim() || badWordsList.length === 0) {
             return text;
         }
-        // Create a regular expression from the word list for efficient, whole-word, case-insensitive matching.
         const regex = new RegExp(`\\b(${badWordsList.join('|')})\\b`, 'gi');
         return text.replace(regex, match => '*'.repeat(match.length));
     }
@@ -488,16 +481,10 @@
                 li.className = 'request-item';
                 li.dataset.id = request.id;
                 
-                // --- PERMISSION LOGIC ---
                 const isCreator = currentUser && request.userId === currentUser.uid;
-                // You can edit only if you are the creator, it's not deleted, and it hasn't been edited before.
-                // Admins cannot edit other people's posts.
                 const canEdit = isCreator && request.status !== 'deleted' && !request.edited;
-                // You can delete if you are the creator OR you are an admin.
                 const canDelete = (isCreator || IS_ADMIN_ACCOUNT) && request.status !== 'deleted';
 
-
-                // Censor content before rendering
                 const censoredTitle = censorText(request.title);
                 const censoredDescription = censorText(request.description);
                 const censoredUsername = censorText(request.username);
@@ -511,19 +498,15 @@
 
                 const showUsername = !request.isAnonymous || IS_ADMIN_ACCOUNT;
                 
-                // --- TIMESTAMP and ADMIN INFO LOGIC ---
                 let submittedDate = 'N/A';
                 let adminInfoHTML = '';
-
                 if (request.timestamp) {
-                    // Admins see precise date and time.
                     if (IS_ADMIN_ACCOUNT) {
                         submittedDate = request.timestamp.toDate().toLocaleString();
                         if (request.email) {
                             adminInfoHTML = `<div class="admin-info"><i class="fas fa-envelope"></i> ${escapeHTML(request.email)}</div>`;
                         }
                     } else {
-                        // Regular users see only the date.
                         submittedDate = request.timestamp.toDate().toLocaleDateString();
                     }
                 }
@@ -532,7 +515,6 @@
                 if (fullUrl && !fullUrl.startsWith('http')) fullUrl = 'https://' + fullUrl;
 
                 let actionButtonsHTML = '';
-                // The 'canEdit' and 'canDelete' variables now control the button visibility.
                 if (canEdit || canDelete) {
                     actionButtonsHTML += '<div class="card-actions">';
                     if (canEdit) actionButtonsHTML += `<button class="card-action-btn edit-btn-card" title="Edit Request"><i class="fas fa-pencil-alt"></i></button>`;
@@ -578,7 +560,8 @@
     }
     
     // --- Modal Control ---
-    function openModalForDetails(requestId) {
+    // ✅ FIXED: Consolidated modal logic to prevent race conditions.
+    function openModalForDetails(requestId, isEditMode = false) {
         currentOpenRequestId = requestId;
         const modal = detailsModal;
         
@@ -612,25 +595,29 @@
             }
 
             const deletionInfo = modal.querySelector('#modalDeletionInfo');
-            if(data.status === 'deleted') {
+            if (data.status === 'deleted') {
                 modal.querySelector('#modalDeletionReason').textContent = data.deletionReason || 'No reason provided.';
                 deletionInfo.style.display = 'block';
             } else {
                 deletionInfo.style.display = 'none';
             }
 
-            modal.querySelector('#editRequestContainer').style.display = 'none';
-            modal.querySelector('#modalDescription').style.display = 'block';
+            // This new block handles showing/hiding the correct view inside the modal.
+            if (isEditMode) {
+                modal.querySelector('#modalDescription').style.display = 'none';
+                modal.querySelector('#editRequestContainer').style.display = 'block';
+            } else {
+                modal.querySelector('#editRequestContainer').style.display = 'none';
+                modal.querySelector('#modalDescription').style.display = 'block';
+            }
+
             modal.style.display = 'flex';
         }).catch(error => console.error("Error opening modal:", error));
     }
     
+    // ✅ FIXED: This function is now simpler and more reliable.
     function openModalForEdit(requestId) {
-        openModalForDetails(requestId);
-        setTimeout(() => {
-            detailsModal.querySelector('#modalDescription').style.display = 'none';
-            detailsModal.querySelector('#editRequestContainer').style.display = 'block';
-        }, 50);
+        openModalForDetails(requestId, true); // Simply call the main modal function in edit mode.
     }
 
     // --- Actions ---
@@ -645,10 +632,8 @@
         let reason = '';
         let confirmDelete = false;
         
-        // This logic correctly handles deletion permissions for admins and creators.
         if (IS_ADMIN_ACCOUNT && !isCreator) {
             const promptReason = prompt("ADMIN: Provide a reason for deleting this request. (Optional)");
-            // If admin cancels the prompt, don't delete.
             if (promptReason === null) return; 
             reason = promptReason.trim() === '' ? "Request removed by an administrator." : promptReason;
             confirmDelete = true;
@@ -658,7 +643,6 @@
                 confirmDelete = true;
             }
         } else {
-            // This case should not be reachable if buttons are rendered correctly, but it's a safeguard.
             alert("You do not have permission to delete this request.");
             return;
         }
@@ -860,6 +844,7 @@
         }
     });
 
+    // ✅ FIXED: The main event listener now calls the correct, robust modal functions.
     requestsListEl.addEventListener('click', (e) => {
         const target = e.target;
         const requestItem = target.closest('.request-item');
@@ -887,6 +872,7 @@
             return;
         }
         
+        // This is the default action if no specific button above was clicked.
         openModalForDetails(requestId);
     });
 
