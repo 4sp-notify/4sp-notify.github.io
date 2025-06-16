@@ -248,19 +248,38 @@
                 
                 if (!userDoc.exists) {
                     const newUsername = currentUser.displayName || `user_${currentUser.uid.substring(0, 6)}`;
-                    const newUserProfile = {
+                    currentUserProfile = {
                         username: newUsername,
-                        // REMOVED: username_lowercase field is no longer created
                         email: currentUser.email,
                         authMethod: user.providerData[0]?.providerId || 'unknown',
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                         friends: [],
                         blocked: []
                     };
-                    await userDocRef.set(newUserProfile);
-                    currentUserProfile = newUserProfile;
+                    await userDocRef.set(currentUserProfile);
                 } else {
                     currentUserProfile = userDoc.data();
+                    
+                    // --- NEW: AUTOMATIC PROFILE MIGRATION ---
+                    // This logic checks if an existing user is missing required fields and adds them.
+                    let needsUpdate = false;
+                    const updates = {};
+
+                    if (!currentUserProfile.hasOwnProperty('friends')) {
+                        updates.friends = [];
+                        needsUpdate = true;
+                    }
+                    if (!currentUserProfile.hasOwnProperty('blocked')) {
+                        updates.blocked = [];
+                        needsUpdate = true;
+                    }
+                    
+                    if (needsUpdate) {
+                        console.log("Older user profile detected. Updating with new fields...");
+                        await userDocRef.update(updates);
+                        // Re-assign the profile object with the new fields
+                        currentUserProfile = { ...currentUserProfile, ...updates };
+                    }
                 }
 
                 loader.style.display = 'none';
@@ -274,7 +293,6 @@
             }
         });
 
-        // Debounce function for search
         function debounce(func, delay) {
             let timeout;
             return function(...args) {
@@ -284,7 +302,6 @@
         }
 
         function initializeApp() {
-            // Event listeners
             document.querySelector('.vs-nav').addEventListener('click', handleNavClick);
             document.querySelector('.friends-tabs').addEventListener('click', handleTabClick);
             searchInput.addEventListener('input', debounce(handleUserSearch, 300));
@@ -294,12 +311,8 @@
             listenForFriendRequests();
         }
         
-        // --- Navigation ---
-        // Navigation functions handleNavClick & handleTabClick remain the same
-
-        // --- Live User Search (SIMPLIFIED LOGIC) ---
         async function handleUserSearch() {
-            const searchTerm = searchInput.value.trim(); // Search term is now case-sensitive
+            const searchTerm = searchInput.value.trim();
             const resultsContainer = document.querySelector('.search-results');
             
             if (searchTerm.length === 0) {
@@ -311,49 +324,48 @@
             
             const usersRef = db.collection('users');
             
-            // Create two separate "starts-with" queries
-            const usernameQuery = usersRef
-                .where('username', '>=', searchTerm)
-                .where('username', '<=', searchTerm + '\uf8ff')
-                .limit(5);
+            const usernameQuery = usersRef.where('username', '>=', searchTerm).where('username', '<=', searchTerm + '\uf8ff').limit(5);
+            const emailQuery = usersRef.where('email', '>=', searchTerm).where('email', '<=', searchTerm + '\uf8ff').limit(5);
 
-            const emailQuery = usersRef
-                .where('email', '>=', searchTerm)
-                .where('email', '<=', searchTerm + '\uf8ff')
-                .limit(5);
-
-            // Run both queries in parallel
             const [usernameSnapshot, emailSnapshot] = await Promise.all([
                 usernameQuery.get(),
                 emailQuery.get()
             ]);
             
-            // Use a Map to combine and deduplicate results
             const resultsMap = new Map();
             usernameSnapshot.forEach(doc => resultsMap.set(doc.id, {id: doc.id, ...doc.data()}));
             emailSnapshot.forEach(doc => resultsMap.set(doc.id, {id: doc.id, ...doc.data()}));
-
-            if (resultsMap.size === 0) {
-                resultsContainer.innerHTML = '<p>No users found starting with that name or email.</p>';
-                return;
-            }
             
-            // Filter out the current user from the results
+            const foundSelf = resultsMap.has(currentUser.uid);
+            const totalResults = resultsMap.size;
+            
             resultsMap.delete(currentUser.uid);
 
             const usersData = Array.from(resultsMap.values());
             
-            if (usersData.length === 0) {
-                resultsContainer.innerHTML = '<p>No other users found.</p>';
-                return;
+            if (usersData.length > 0) {
+                resultsContainer.innerHTML = usersData.map(user => createUserItemHTML(user, 'search')).join('');
+            } else {
+                if (foundSelf && totalResults === 1) {
+                    resultsContainer.innerHTML = '<p>You cannot search for yourself. Try searching for another user.</p>';
+                } else {
+                    resultsContainer.innerHTML = '<p>No users found starting with that name or email.</p>';
+                }
             }
-
-            resultsContainer.innerHTML = usersData.map(user => createUserItemHTML(user, 'search')).join('');
         }
-
-        // --- Other Functions (renderCurrentTab, handleActionClick, etc.) remain largely the same ---
-        // The rest of the JS code from the previous version is still valid and doesn't need to change.
-        // It correctly handles rendering friends, pending requests, and actions.
+        
+        // --- Other Functions remain the same ---
+        function handleNavClick(e) { /* ... */ }
+        function handleTabClick(e) { /* ... */ }
+        async function renderCurrentTab() { /* ... */ }
+        async function renderUserList(userIds, container, context) { /* ... */ }
+        async function renderPendingRequests(container) { /* ... */ }
+        function listenForFriendRequests() { /* ... */ }
+        async function handleActionClick(e) { /* ... */ }
+        async function refreshUserProfileAndRender() { /* ... */ }
+        function createUserItemHTML(user, context) { /* ... */ }
+        
+        // Full function definitions for brevity
         function handleNavClick(e) {
             const navItem = e.target.closest('.vs-nav-item');
             if (!navItem) return;
