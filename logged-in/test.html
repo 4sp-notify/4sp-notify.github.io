@@ -157,15 +157,17 @@
         }
 
         /* --- Find Users View --- */
-        .user-search-container { display: flex; }
         #user-search-input {
-            flex-grow: 1; padding: 12px 15px; border: 1px solid var(--border-color);
-            border-radius: 8px 0 0 8px; font-size: 1em; outline: none;
+            width: 100%;
+            box-sizing: border-box;
+            padding: 12px 15px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            font-size: 1em;
+            outline: none;
         }
-        #user-search-button {
-            padding: 0 20px; border: 1px solid var(--primary-purple); border-left: none;
-            background-color: var(--primary-purple); color: white; border-radius: 0 8px 8px 0;
-            font-size: 1em; cursor: pointer;
+        #user-search-input:focus {
+            border-color: var(--primary-purple);
         }
     </style>
 </head>
@@ -188,7 +190,7 @@
         <aside class="vs-nav" style="display: none;">
             <a class="vs-nav-item active" data-view="friends"><span class="icon">👥</span> Friends</a>
             <a class="vs-nav-item" data-view="find-users"><span class="icon">🔍</span> Find Users</a>
-            </aside>
+        </aside>
 
         <main class="vs-main-content" style="display: none;">
             <div id="friends-view" class="vs-view active">
@@ -205,13 +207,10 @@
             <div id="find-users-view" class="vs-view">
                 <div class="vs-view-header">
                     <h2>Find New Users</h2>
-                    <p style="margin: 5px 0 0; color: #555;">Search for users by their exact username.</p>
+                    <p style="margin: 5px 0 0; color: #555;">Live search for users by their username.</p>
                 </div>
                 <div class="vs-view-body">
-                    <div class="user-search-container">
-                        <input id="user-search-input" type="text" placeholder="Enter a username...">
-                        <button id="user-search-button">Search</button>
-                    </div>
+                    <input id="user-search-input" type="text" placeholder="Start typing a username...">
                     <div class="search-results friends-list"></div>
                 </div>
             </div>
@@ -233,11 +232,12 @@
         const loader = document.getElementById('loader');
         const navPanel = document.querySelector('.vs-nav');
         const contentPanel = document.querySelector('.vs-main-content');
+        const searchInput = document.getElementById('user-search-input');
 
         // Global state
         let currentUser = null;
         let currentUserProfile = null;
-        let requestListener = null; // To hold the listener unsubscribe function
+        let requestListener = null;
 
         // AUTHENTICATION LISTENER
         auth.onAuthStateChanged(async user => {
@@ -247,9 +247,10 @@
                 const userDoc = await userDocRef.get();
                 
                 if (!userDoc.exists) {
-                    // Create a new user document that complies with the ruleset
+                    const newUsername = currentUser.displayName || `user_${currentUser.uid.substring(0, 6)}`;
                     const newUserProfile = {
-                        username: currentUser.displayName || `user_${currentUser.uid.substring(0, 6)}`,
+                        username: newUsername,
+                        username_lowercase: newUsername.toLowerCase(), // NEW: Add lowercase field
                         email: currentUser.email,
                         authMethod: user.providerData[0]?.providerId || 'unknown',
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -267,17 +268,26 @@
                 contentPanel.style.display = 'flex';
                 initializeApp();
             } else {
-                if(requestListener) requestListener(); // Unsubscribe from listener on logout
+                if(requestListener) requestListener();
                 loader.innerHTML = '<p>You must be logged in. Redirecting...</p>';
                 setTimeout(() => window.location.href = '../login.html', 2000);
             }
         });
 
+        // --- Debounce function for search ---
+        function debounce(func, delay) {
+            let timeout;
+            return function(...args) {
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(this, args), delay);
+            };
+        }
+
+        // --- App Initialization & Event Listeners ---
         function initializeApp() {
-            // Event listeners
             document.querySelector('.vs-nav').addEventListener('click', handleNavClick);
             document.querySelector('.friends-tabs').addEventListener('click', handleTabClick);
-            document.getElementById('user-search-button').addEventListener('click', handleUserSearch);
+            searchInput.addEventListener('input', debounce(handleUserSearch, 300)); // UPDATED
             document.body.addEventListener('click', handleActionClick);
             
             renderCurrentTab();
@@ -341,7 +351,7 @@
         }
 
         function listenForFriendRequests() {
-            if(requestListener) requestListener(); // Unsubscribe from previous listener
+            if(requestListener) requestListener();
             const requestCountEl = document.querySelector('.request-count');
             requestListener = db.collection('friend_requests').where('receiverId', '==', currentUser.uid).where('status', '==', 'pending')
               .onSnapshot(snapshot => {
@@ -352,15 +362,30 @@
 
         // --- Action Handlers & Firestore Logic ---
         async function handleUserSearch() {
-            const searchTerm = document.getElementById('user-search-input').value.trim();
+            const searchTerm = searchInput.value.trim().toLowerCase(); // UPDATED
             const resultsContainer = document.querySelector('.search-results');
-            if (!searchTerm) return;
-            resultsContainer.innerHTML = '<p>Searching...</p>';
-            const snapshot = await db.collection('users').where('username', '==', searchTerm).get();
-            if (snapshot.empty) {
-                resultsContainer.innerHTML = '<p>No user found with that username.</p>';
+            
+            if (searchTerm.length === 0) {
+                resultsContainer.innerHTML = '';
                 return;
             }
+
+            resultsContainer.innerHTML = '<p>Searching...</p>';
+            
+            // NEW: "Starts-with" query on the lowercase field
+            const usersRef = db.collection('users');
+            const query = usersRef
+                .where('username_lowercase', '>=', searchTerm)
+                .where('username_lowercase', '<=', searchTerm + '\uf8ff')
+                .limit(10);
+
+            const snapshot = await query.get();
+            
+            if (snapshot.empty) {
+                resultsContainer.innerHTML = '<p>No users found starting with that name.</p>';
+                return;
+            }
+
             const usersData = snapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
             resultsContainer.innerHTML = usersData.map(user => createUserItemHTML(user, 'search')).join('');
         }
@@ -396,7 +421,6 @@
                         blocked: firebase.firestore.FieldValue.arrayUnion(userid),
                         friends: firebase.firestore.FieldValue.arrayRemove(userid) 
                     });
-                    // Also remove from the other user's friend list if they were friends
                     await db.collection('users').doc(userid).update({ friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
                 } else if (action === 'unblock') {
                     await db.collection('users').doc(currentUser.uid).update({ blocked: firebase.firestore.FieldValue.arrayRemove(userid) });
@@ -416,7 +440,6 @@
 
         // --- HTML Generation ---
         function createUserItemHTML(user, context) {
-            // HTML generation logic from previous response remains valid
             let actions = '';
             if (user.id === currentUser.uid) {
                 actions = '<span>This is you</span>';
