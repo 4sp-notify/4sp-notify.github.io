@@ -420,18 +420,15 @@
             const _encryptedUrl = _multiLayerDecode(_encryptedUrl_L5, _decodeLayers);
             const _finalUrl = _decryptMessage(_encryptedUrl, _decryptionKey);
             
-            console.log('[DEBUG] Decrypted URL:', _finalUrl); // You can remove this for production
+            console.log('[DEBUG] Decrypted URL:', _finalUrl);
 
-            // **FIXED HERE:** The `<\/script>` is now correctly written as `</script>` inside the template literal.
             const _blobContent = `
                 <html><head><style>body,html{margin:0;padding:0;height:100%;width:100%;overflow:hidden;}</style></head>
                 <body><script>
-                    // Improved Handshake: Announce readiness to parent
-                    window.parent.postMessage({ status: 'ready' }, '*');
-                    
-                    // Listen for the URL from the parent
                     window.addEventListener('message', function(event) {
-                        if (event.data.url) {
+                        // More secure: Check the origin if possible, but for blobs this is tricky.
+                        // For now, just ensure the message has a URL property.
+                        if (event.data && event.data.url) {
                             window.location.href = event.data.url;
                         }
                     }, { once: true });
@@ -448,19 +445,19 @@
             _instance.allow = "accelerometer; ambient-light-sensor; autoplay; battery; camera; cross-origin-isolated; display-capture; document-domain; encrypted-media; execution-while-not-rendered; execution-while-out-of-viewport; fullscreen; geolocation; gyroscope; keyboard-map; magnetometer; microphone; midi; navigation-override; payment; picture-in-picture; publickey-credentials-get; screen-wake-lock; sync-xhr; usb; web-share; xr-spatial-tracking";
             _instance.title = "VernMax Proxy";
             
-            // **IMPROVED HANDSHAKE:** Listen for the "ready" message from the iframe
-            const messageListener = (event) => {
-                if (event.source === _instance.contentWindow && event.data.status === 'ready') {
-                    console.log('[DEBUG] Instance is ready. Posting final URL.');
-                    _instance.contentWindow.postMessage({ url: _finalUrl }, '*');
-                    URL.revokeObjectURL(_blobUrl); // Clean up
-                    window.removeEventListener('message', messageListener); // Clean up listener
-                }
+            // **SIMPLIFIED LOGIC:** Use the 'onload' event for one-way communication.
+            // This is more reliable and avoids race conditions.
+            _instance.onload = () => {
+                console.log('[DEBUG] Instance loaded. Posting final URL.');
+                // The iframe is loaded, now we can safely send it the URL.
+                _instance.contentWindow.postMessage({ url: _finalUrl }, '*');
+                // Clean up the blob URL as it's no longer needed.
+                URL.revokeObjectURL(_blobUrl);
             };
-            window.addEventListener('message', messageListener);
 
             _instance.src = _blobUrl;
             
+            // Ensure the container is empty before adding the new instance.
             while (targetContainer.firstChild) {
                 targetContainer.removeChild(targetContainer.firstChild);
             }
@@ -482,6 +479,7 @@
             clearTimeout(authTimeout);
 
             if (user) {
+                // USER IS LOGGED IN - This block should now execute without issue.
                 appContainer.classList.add('is-visible');
                 loadingOverlay.classList.add('is-hiding');
                 
@@ -496,6 +494,7 @@
 
                 document.body.style.overflow = 'auto';
             } else {
+                // NO USER, REDIRECT IMMEDIATELY
                 window.location.href = '/login.html';
             }
         });
@@ -510,11 +509,11 @@
             fullscreenBtn.addEventListener('click', () => {
                 if (vernMaxInstance && vernMaxInstance.requestFullscreen) {
                     vernMaxInstance.requestFullscreen();
-                } else if (vernMaxInstance && vernMaxInstance.mozRequestFullScreen) {
+                } else if (vernMaxInstance && vernMaxInstance.mozRequestFullScreen) { // Firefox
                     vernMaxInstance.mozRequestFullScreen();
-                } else if (vernMaxInstance && vernMaxInstance.webkitRequestFullscreen) {
+                } else if (vernMaxInstance && vernMaxInstance.webkitRequestFullscreen) { // Chrome, Safari & Opera
                     vernMaxInstance.webkitRequestFullscreen();
-                } else if (vernMaxInstance && vernMaxInstance.msRequestFullscreen) {
+                } else if (vernMaxInstance && vernMaxInstance.msRequestFullscreen) { // IE/Edge
                     vernMaxInstance.msRequestFullscreen();
                 }
             });
