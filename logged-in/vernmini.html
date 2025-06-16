@@ -33,7 +33,7 @@
       flex-direction: column;
     }
 
-    /* --- NEW: Loading Screen Styles --- */
+    /* --- Loading Screen Styles --- */
     #loading-overlay {
         position: fixed;
         inset: 0;
@@ -47,13 +47,12 @@
         color: var(--dark-text-primary);
         font-family: 'PrimaryFont', sans-serif;
         opacity: 1;
-        /* Define the fade/zoom-out transition */
         transition: opacity 0.6s ease-out, transform 0.6s ease-out;
     }
     #loading-overlay.is-hiding {
         opacity: 0;
         transform: scale(1.1);
-        pointer-events: none; /* Disable interaction during fade out */
+        pointer-events: none;
     }
     #loading-spinner {
         border: 4px solid var(--dark-bg-tertiary);
@@ -83,7 +82,6 @@
       height: 100%;
       display: flex;
       flex-direction: column;
-      /* Fade-in transition for the main app */
       transition: opacity 0.5s ease-in;
     }
     #app-container.is-visible {
@@ -176,7 +174,7 @@
       width: 100%;
       height: 100%;
       border: none;
-      background: white;
+      background: var(--dark-bg-primary);
     }
 
     /* --- Tab Cloak Modal --- */
@@ -338,7 +336,7 @@
           </button>
           <button id="fullscreenBtn" class="header-icon-btn" title="Fullscreen">
               <img src="../images/zoom-in-white.png" alt="Fullscreen Icon">
-            <span>Fullscreen</span>
+              <span>Fullscreen</span>
           </button>
           <button class="btn" onclick="window.location.href='../logged-in/dashboard.html'">DASHBOARD</button>
           <button id="logoutBtn" class="btn">LOG OUT</button>
@@ -350,10 +348,10 @@
         <iframe
           id="proxyFrame"
           class="proxy-iframe"
-          src="https://vernmini.surge.sh"
+          src="about:blank"
           sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts"
           allow="accelerometer; ambient-light-sensor; autoplay; battery; camera; cross-origin-isolated; display-capture; document-domain; encrypted-media; execution-while-not-rendered; execution-while-out-of-viewport; fullscreen; geolocation; gyroscope; keyboard-map; magnetometer; microphone; midi; navigation-override; payment; picture-in-picture; publickey-credentials-get; screen-wake-lock; sync-xhr; usb; web-share; xr-spatial-tracking"
-          title="VernMini Proxy">
+          title="VernMax Proxy">
         </iframe>
       </div>
     </main>
@@ -383,16 +381,19 @@
 
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
-  <script src="/firebase-config.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+  <script src="../firebase-config.js"></script>
 
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-        // --- Get Element References ---
+        // --- Element References ---
         const loadingOverlay = document.getElementById('loading-overlay');
         const appContainer = document.getElementById('app-container');
         const proxyFrame = document.getElementById('proxyFrame');
         const favicon = document.getElementById('dynamic-favicon');
         const openNewTabBtn = document.getElementById('openNewTabBtn');
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
         const cloakBtn = document.getElementById('cloakBtn');
         const cloakModalOverlay = document.getElementById('cloak-modal-overlay');
         const cloakModalClose = document.getElementById('cloak-modal-close');
@@ -400,60 +401,92 @@
         const savedCloakList = document.getElementById('saved-cloak-list');
         const customUrlInput = document.getElementById('custom-url-input');
         const customCloakBtn = document.getElementById('custom-cloak-btn');
-        const logoutBtn = document.getElementById('logoutBtn');
-        const fullscreenBtn = document.getElementById('fullscreenBtn');
 
-        // --- Authentication Logic ---
-        // Failsafe: if auth takes too long, redirect to login page.
+        // --- Core Application Logic (Auth & Iframe Loading) ---
+
+        const initializeProxy = async () => {
+            try {
+                const db = firebase.firestore();
+                // *** UPDATED FOR VERN MINI ***
+                // This now points to the 'proxymini' document instead of 'proxy'.
+                const docRef = db.collection('config').doc('proxymini');
+                const docSnap = await docRef.get();
+
+                if (docSnap.exists) {
+                    const data = docSnap.data();
+                    // This logic is robust: it checks for 'obfuscatedUrl' first,
+                    // then falls back to 'obfuscatedUr1' to match your screenshot.
+                    const obfuscatedValue = data.obfuscatedUrl || data.obfuscatedUr1;
+
+                    if (obfuscatedValue) {
+                      const finalUrl = atob(obfuscatedValue);
+                      if (proxyFrame) {
+                          proxyFrame.src = 'https://' + finalUrl;
+                      }
+                    } else {
+                      throw new Error("Field 'obfuscatedUrl' or 'obfuscatedUr1' was not found in your 'config/proxymini' document.");
+                    }
+                } else {
+                    throw new Error("The 'proxymini' document was not found in your 'config' collection.");
+                }
+            } catch (error) {
+                console.error("Fatal Error in initializeProxy:", error);
+                alert("Could not load the application content: " + error.message);
+            }
+        };
+
         const authTimeout = setTimeout(() => {
-            console.error("Authentication timed out. Redirecting...");
+            console.error("Authentication timed out. Redirecting to login.");
             window.location.href = '/login.html';
-        }, 8000); // 8-second timeout
+        }, 8000);
 
-        firebase.auth().onAuthStateChanged(user => {
-            clearTimeout(authTimeout); // Auth state confirmed, clear the failsafe timeout.
-
-            if (user) {
-                // USER IS LOGGED IN
-                appContainer.classList.add('is-visible');
-                loadingOverlay.classList.add('is-hiding');
-
-                // Once the fade-out is done, remove the overlay entirely to save resources.
-                loadingOverlay.addEventListener('transitionend', () => {
-                    loadingOverlay.style.display = 'none';
-                }, { once: true });
-
-                document.body.style.overflow = 'auto'; // Restore scrolling
-            } else {
-                // NO USER, REDIRECT IMMEDIATELY
+        firebase.auth().onAuthStateChanged(async (user) => {
+            clearTimeout(authTimeout);
+            try {
+                if (user) {
+                    appContainer.classList.add('is-visible');
+                    loadingOverlay.classList.add('is-hiding');
+                    await initializeProxy();
+                    loadingOverlay.addEventListener('transitionend', () => {
+                        loadingOverlay.style.display = 'none';
+                    }, { once: true });
+                    document.body.style.overflow = 'auto'; 
+                } else {
+                    console.log("No authenticated user found. Redirecting to login.");
+                    window.location.href = '/login.html';
+                }
+            } catch (error) {
+                console.error("A critical error occurred during the authentication check:", error);
+                alert("A critical error occurred. Please try logging in again.");
                 window.location.href = '/login.html';
             }
         });
 
-        // --- Logout Button ---
+        // --- Header Button Features ---
+
         if(logoutBtn) {
             logoutBtn.addEventListener('click', () => {
                 firebase.auth().signOut().catch(error => console.error('Logout Error:', error));
             });
         }
 
-        // --- Fullscreen Button Logic ---
         if(fullscreenBtn) {
             fullscreenBtn.addEventListener('click', () => {
-                if (proxyFrame.requestFullscreen) {
-                    proxyFrame.requestFullscreen();
-                } else if (proxyFrame.mozRequestFullScreen) { /* Firefox */
-                    proxyFrame.mozRequestFullScreen();
-                } else if (proxyFrame.webkitRequestFullscreen) { /* Chrome, Safari & Opera */
-                    proxyFrame.webkitRequestFullscreen();
-                } else if (proxyFrame.msRequestFullscreen) { /* IE/Edge */
-                    proxyFrame.msRequestFullscreen();
+                if (!document.fullscreenElement) {
+                    proxyFrame.requestFullscreen().catch(err => {
+                        alert(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+                    });
+                } else {
+                    document.exitFullscreen();
                 }
             });
         }
-
-        // --- "About:Blank" Iframe Control ---
+        
         function openInNewTab() {
+            if (proxyFrame.src === 'about:blank' || !proxyFrame.src) {
+                alert('The content is still loading. Please try again in a moment.');
+                return;
+            }
             const newTab = window.open('about:blank', '_blank');
             if (newTab) {
                 newTab.document.title = document.title;
@@ -468,8 +501,8 @@
                 iframe.style.width = '100vw';
                 iframe.style.height = '100vh';
                 iframe.style.border = 'none';
-                iframe.sandbox = "allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts";
-                iframe.allow = "accelerometer; ambient-light-sensor; autoplay; battery; camera; cross-origin-isolated; display-capture; document-domain; encrypted-media; execution-while-not-rendered; execution-while-out-of-viewport; fullscreen; geolocation; gyroscope; keyboard-map; magnetometer; microphone; midi; navigation-override; payment; picture-in-picture; publickey-credentials-get; screen-wake-lock; sync-xhr; usb; web-share; xr-spatial-tracking";
+                iframe.sandbox = proxyFrame.sandbox;
+                iframe.allow = proxyFrame.allow;
                 newTab.document.body.appendChild(iframe);
             } else {
                 alert('Popup blocked! Please allow popups for this site.');
@@ -577,7 +610,7 @@
             }
         }
 
-        // --- Event Listeners for Page Features ---
+        // --- Event Listeners ---
         openNewTabBtn.addEventListener('click', openInNewTab);
         cloakBtn.addEventListener('click', () => {
             cloakModalOverlay.classList.add('visible');
