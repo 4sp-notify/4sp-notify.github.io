@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>4SP - MEDIA CENTER</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="../firebase-config.js"></script>
+
+    <style>
+        :root {
+            --v4-bg-gradient: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
+            --v4-card-bg: #fff;
+            --v4-text-primary: #333;
+            --v4-text-secondary: #555;
+            --v4-purple-accent: #6720bd;
+            --v4-purple-accent-darker: #5a1aa8;
+            --v4-purple-gradient: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+            --v4-border-light: #ddd;
+            --v4-border-softer: #eee;
+            --v4-input-bg: #f8f9fa;
+            --v4-input-border: #ccc;
+            --v4-font-primary: 'PrimaryFont', sans-serif;
+            --v4-font-secondary: 'SecondaryFont', sans-serif;
+        }
+        body {
+            display: flex; flex-direction: column; min-height: 100vh;
+            margin: 0; font-family: var(--v4-font-primary);
+            background: var(--v4-bg-gradient); color: var(--v4-text-primary);
+            line-height: 1.6;
+            overflow: hidden; /* Prevent body scroll when iframes are active */
+        }
+        .soundboard-container-wrapper { display: flex; flex: 1; overflow: hidden; }
+        .sidebar {
+            width: 200px; background: linear-gradient(180deg, #333 0%, #2a2a2a 100%);
+            color: #fff; padding: 20px 10px; display: flex; flex-direction: column;
+            border-right: 1px solid #444; transition: width 0.5s ease-in-out;
+            position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            z-index: 10; /* Ensure sidebar is above iframe content */
+        }
+        .sidebar.collapsed { width: 85px; }
+        #toggleSidebar {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            background: none; border: none; color: #fff; font-size: 1.2em;
+            cursor: pointer; padding: 4px; transition: transform 0.5s ease-in-out;
+        }
+        .sidebar.collapsed #toggleSidebar { transform: translateX(-50%) rotate(180deg); }
+        .user-info { text-align: center; margin: 60px 0 30px; border-bottom: 1px solid #555; padding-bottom: 20px; overflow: visible; }
+        .marquee-container { overflow: hidden; white-space: nowrap; position: relative; width: 100%; height: 1.8em; line-height: 1.8em; }
+        .marquee-content { display: inline-block; padding-left: 100%; transform: translateX(0); animation: none; line-height: 1.8em; }
+        .marquee-active { animation: scroll-left-soundboard 12s linear infinite; }
+        @keyframes scroll-left-soundboard { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+        .user-info .username { font-family: var(--v4-font-primary); font-size: 1.3em; margin-bottom: 8px; line-height: 0.2em; font-weight: bold;}
+        .user-info .email { font-family: var(--v4-font-secondary); font-size: 0.9em; color: #bbb; }
+        .sidebar nav ul { list-style: none; padding: 0; margin: 60px 0 0; }
+        .sidebar nav li { margin-bottom: 10px; }
+        .sidebar nav a {
+            display: flex; align-items: center; padding: 12px 15px; color: #fff;
+            text-decoration: none; border-radius: 8px; transition: all 0.3s ease;
+            font-family: var(--v4-font-primary); text-transform: uppercase;
+            position: relative; overflow: hidden; font-size: 1em;
+        }
+        .sidebar nav a:hover, .sidebar nav a.active { background: var(--v4-purple-gradient); transform: translateX(5px); color: #fff; }
+        .sidebar nav a .icon { font-size: 1.2em; width: 24px; text-align: center; }
+        .sidebar nav a .label { margin-left: 10px; white-space: nowrap; }
+        .sidebar.collapsed nav a .label { display: none; }
+        
+        /* Main content area adjusted for full-height iframe */
+        .main-soundboard-content {
+            flex: 1; padding: 30px; background: var(--v4-bg-gradient);
+            overflow-y: hidden; /* Let the iframe handle scrolling */
+            display: flex;
+            flex-direction: column;
+        }
+        .soundboard-header-v4 {
+            margin-bottom: 25px; background: var(--v4-card-bg); padding: 20px 30px; border-radius: 15px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+            flex-shrink: 0; /* Prevent header from shrinking */
+        }
+        .soundboard-title-v4 {
+            font-size: 2.2em; font-weight: bold; background: var(--v4-purple-gradient);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+        }
+
+        /* Styles for the new Media/Iframe container */
+        .media-container {
+            flex-grow: 1; /* Make this container take all available vertical space */
+            display: flex;
+            flex-direction: column;
+            background: var(--v4-card-bg); 
+            border-radius: 15px; 
+            box-shadow: 0 6px 30px rgba(0,0,0,0.08);
+            overflow: hidden; /* Important for containing the rounded corners */
+        }
+        
+        .media-tabs {
+            display: flex;
+            flex-wrap: wrap;
+            padding: 0 15px;
+            border-bottom: 1px solid var(--v4-border-softer);
+            flex-shrink: 0;
+        }
+        
+        .tab-link {
+            background: none; border: none; padding: 15px 20px; cursor: pointer;
+            font-size: 1.1em; font-family: var(--v4-font-primary); color: var(--v4-text-secondary);
+            border-bottom: 3px solid transparent; margin-bottom: -1px; transition: all 0.2s ease-in-out;
+        }
+        
+        .tab-link.active, .tab-link:hover {
+            color: var(--v4-purple-accent);
+        }
+        
+        .tab-link.active {
+            border-bottom-color: var(--v4-purple-accent);
+            font-weight: bold;
+        }
+        
+        .media-content-area {
+            flex-grow: 1; /* The area for the iframes will take up the remaining space */
+            position: relative;
+        }
+        
+        .media-content {
+            display: none;
+            width: 100%;
+            height: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        
+        .media-content.active {
+            display: block;
+        }
+        
+        .media-content iframe {
+            width: 100%;
+            height: 100%;
+            border: none;
+        }
+
+    </style>
+</head>
+<body class="soundboard-page">
+
+    <header class="main-header light-bg">
+        <div class="container">
+            <div class="logo"><a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer;"/></a></div>
+            <div class="auth-buttons">
+                <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="soundboard-container-wrapper">
+        <aside class="sidebar slide-in" id="sidebar">
+            <button id="toggleSidebar">☰</button>
+            <div class="user-info">
+                <div class="marquee-container"> <span id="userName" class="marquee-content username">Loading…</span> </div>
+                <div class="marquee-container"> <span id="userEmail" class="marquee-content email">Loading…</span> </div>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
+                    <li><a href="proxies.html"><span class="icon">🛡️</span><span class="label">Proxies</span></a></li>
+                    <li><a href="soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
+                    <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
+                    <li><a href="others.html" class="active"><span class="icon">✨</span><span class="label">Others</span></a></li>
+                    <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                    <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-soundboard-content">
+            <div class="soundboard-header-v4"> <h2 class="soundboard-title-v4">Media Center</h2> </div>
+            
+            <div class="media-container">
+                <nav class="media-tabs" id="mediaTabs">
+                    <button class="tab-link active" data-tab="apple-music">Apple Music</button>
+                    <button class="tab-link" data-tab="youtube">YouTube</button>
+                </nav>
+                <div class="media-content-area">
+                    <div id="apple-music" class="media-content active">
+                        <iframe src="https://music.apple.com/us/browse"></iframe>
+                    </div>
+                    <div id="youtube" class="media-content">
+                        <iframe src="https://www.youtube.com/"></iframe>
+                    </div>
+                </div>
+            </div>
+            </main>
+    </div>
+
+    <script>
+    // --- Standard Setup (Auth, Sidebar, User Info) ---
+    const dbRef_ = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
+    const marqueeEls_ = document.querySelectorAll('.marquee-content');
+    firebase.auth().onAuthStateChanged(async user => {
+        if (!user) { window.location.href = '../login.html'; }
+        else {
+            const userEmailEl = document.getElementById('userEmail');
+            const userNameEl = document.getElementById('userName');
+            if (userEmailEl) userEmailEl.textContent = user.email;
+            if (userNameEl) {
+                try {
+                    const doc = await dbRef_().get();
+                    userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User');
+                } catch (error) { userNameEl.textContent = 'User'; console.error("Error fetching username:", error); }
+            }
+            updateMarquees_();
+        }
+    });
+    document.getElementById('logoutBtn')?.addEventListener('click', () => { firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
+    document.getElementById('signOutLink')?.addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
+    const sidebar_ = document.getElementById('sidebar');
+    const toggleSidebarBtn_ = document.getElementById('toggleSidebar');
+    if (toggleSidebarBtn_ && sidebar_) { toggleSidebarBtn_.addEventListener('click', () => { sidebar_.classList.toggle('collapsed'); setTimeout(updateMarquees_, 550); }); }
+    function updateMarquees_() {
+        marqueeEls_.forEach(el => {
+            if (!el || !el.parentElement) return;
+            const parent = el.parentElement; const overflow = el.scrollWidth > parent.clientWidth;
+            const shouldScroll = sidebar_.classList.contains('collapsed') || (overflow && !sidebar_.classList.contains('collapsed'));
+            el.classList.toggle('marquee-active', shouldScroll);
+            if (!overflow && !sidebar_.classList.contains('collapsed')) { el.classList.remove('marquee-active'); }
+        });
+    }
+    window.addEventListener('resize', updateMarquees_);
+    // --- End Standard Setup ---
+
+    // --- New Media Tab Logic ---
+    document.addEventListener('DOMContentLoaded', () => {
+        const mediaTabsContainer = document.getElementById('mediaTabs');
+        if (mediaTabsContainer) {
+            mediaTabsContainer.addEventListener('click', (e) => {
+                if (e.target.matches('.tab-link')) {
+                    // Remove active class from all tabs and content
+                    document.querySelectorAll('.tab-link').forEach(tab => tab.classList.remove('active'));
+                    document.querySelectorAll('.media-content').forEach(content => content.classList.remove('active'));
+
+                    // Add active class to the clicked tab
+                    e.target.classList.add('active');
+                    
+                    // Add active class to the corresponding content
+                    const tabId = e.target.dataset.tab;
+                    const contentToShow = document.getElementById(tabId);
+                    if (contentToShow) {
+                        contentToShow.classList.add('active');
+                    }
+                }
+            });
+        }
+    });
+
+    </script>
+</body>
+</html>
