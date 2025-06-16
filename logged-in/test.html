@@ -207,10 +207,10 @@
             <div id="find-users-view" class="vs-view">
                 <div class="vs-view-header">
                     <h2>Find New Users</h2>
-                    <p style="margin: 5px 0 0; color: #555;">Live search for users by their username.</p>
+                    <p style="margin: 5px 0 0; color: #555;">Live search for users by their username or email.</p>
                 </div>
                 <div class="vs-view-body">
-                    <input id="user-search-input" type="text" placeholder="Start typing a username...">
+                    <input id="user-search-input" type="text" placeholder="Search by username or email (case-sensitive)...">
                     <div class="search-results friends-list"></div>
                 </div>
             </div>
@@ -228,7 +228,7 @@
         const auth = firebase.auth();
         const db = firebase.firestore();
 
-        // App sections
+        // DOM Elements
         const loader = document.getElementById('loader');
         const navPanel = document.querySelector('.vs-nav');
         const contentPanel = document.querySelector('.vs-main-content');
@@ -239,7 +239,7 @@
         let currentUserProfile = null;
         let requestListener = null;
 
-        // AUTHENTICATION LISTENER
+        // AUTHENTICATION
         auth.onAuthStateChanged(async user => {
             if (user) {
                 currentUser = user;
@@ -250,7 +250,7 @@
                     const newUsername = currentUser.displayName || `user_${currentUser.uid.substring(0, 6)}`;
                     const newUserProfile = {
                         username: newUsername,
-                        username_lowercase: newUsername.toLowerCase(), // NEW: Add lowercase field
+                        // REMOVED: username_lowercase field is no longer created
                         email: currentUser.email,
                         authMethod: user.providerData[0]?.providerId || 'unknown',
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
@@ -274,7 +274,7 @@
             }
         });
 
-        // --- Debounce function for search ---
+        // Debounce function for search
         function debounce(func, delay) {
             let timeout;
             return function(...args) {
@@ -283,11 +283,11 @@
             };
         }
 
-        // --- App Initialization & Event Listeners ---
         function initializeApp() {
+            // Event listeners
             document.querySelector('.vs-nav').addEventListener('click', handleNavClick);
             document.querySelector('.friends-tabs').addEventListener('click', handleTabClick);
-            searchInput.addEventListener('input', debounce(handleUserSearch, 300)); // UPDATED
+            searchInput.addEventListener('input', debounce(handleUserSearch, 300));
             document.body.addEventListener('click', handleActionClick);
             
             renderCurrentTab();
@@ -295,6 +295,65 @@
         }
         
         // --- Navigation ---
+        // Navigation functions handleNavClick & handleTabClick remain the same
+
+        // --- Live User Search (SIMPLIFIED LOGIC) ---
+        async function handleUserSearch() {
+            const searchTerm = searchInput.value.trim(); // Search term is now case-sensitive
+            const resultsContainer = document.querySelector('.search-results');
+            
+            if (searchTerm.length === 0) {
+                resultsContainer.innerHTML = '';
+                return;
+            }
+
+            resultsContainer.innerHTML = '<p>Searching...</p>';
+            
+            const usersRef = db.collection('users');
+            
+            // Create two separate "starts-with" queries
+            const usernameQuery = usersRef
+                .where('username', '>=', searchTerm)
+                .where('username', '<=', searchTerm + '\uf8ff')
+                .limit(5);
+
+            const emailQuery = usersRef
+                .where('email', '>=', searchTerm)
+                .where('email', '<=', searchTerm + '\uf8ff')
+                .limit(5);
+
+            // Run both queries in parallel
+            const [usernameSnapshot, emailSnapshot] = await Promise.all([
+                usernameQuery.get(),
+                emailQuery.get()
+            ]);
+            
+            // Use a Map to combine and deduplicate results
+            const resultsMap = new Map();
+            usernameSnapshot.forEach(doc => resultsMap.set(doc.id, {id: doc.id, ...doc.data()}));
+            emailSnapshot.forEach(doc => resultsMap.set(doc.id, {id: doc.id, ...doc.data()}));
+
+            if (resultsMap.size === 0) {
+                resultsContainer.innerHTML = '<p>No users found starting with that name or email.</p>';
+                return;
+            }
+            
+            // Filter out the current user from the results
+            resultsMap.delete(currentUser.uid);
+
+            const usersData = Array.from(resultsMap.values());
+            
+            if (usersData.length === 0) {
+                resultsContainer.innerHTML = '<p>No other users found.</p>';
+                return;
+            }
+
+            resultsContainer.innerHTML = usersData.map(user => createUserItemHTML(user, 'search')).join('');
+        }
+
+        // --- Other Functions (renderCurrentTab, handleActionClick, etc.) remain largely the same ---
+        // The rest of the JS code from the previous version is still valid and doesn't need to change.
+        // It correctly handles rendering friends, pending requests, and actions.
         function handleNavClick(e) {
             const navItem = e.target.closest('.vs-nav-item');
             if (!navItem) return;
@@ -312,7 +371,6 @@
             renderCurrentTab();
         }
 
-        // --- Data Rendering ---
         async function renderCurrentTab() {
             const activeTab = document.querySelector('.friend-tab.active').dataset.tab;
             const listContainer = document.querySelector('#friends-view .friends-list');
@@ -360,41 +418,11 @@
               });
         }
 
-        // --- Action Handlers & Firestore Logic ---
-        async function handleUserSearch() {
-            const searchTerm = searchInput.value.trim().toLowerCase(); // UPDATED
-            const resultsContainer = document.querySelector('.search-results');
-            
-            if (searchTerm.length === 0) {
-                resultsContainer.innerHTML = '';
-                return;
-            }
-
-            resultsContainer.innerHTML = '<p>Searching...</p>';
-            
-            // NEW: "Starts-with" query on the lowercase field
-            const usersRef = db.collection('users');
-            const query = usersRef
-                .where('username_lowercase', '>=', searchTerm)
-                .where('username_lowercase', '<=', searchTerm + '\uf8ff')
-                .limit(10);
-
-            const snapshot = await query.get();
-            
-            if (snapshot.empty) {
-                resultsContainer.innerHTML = '<p>No users found starting with that name.</p>';
-                return;
-            }
-
-            const usersData = snapshot.docs.map(doc => ({id: doc.id, ...doc.data()}));
-            resultsContainer.innerHTML = usersData.map(user => createUserItemHTML(user, 'search')).join('');
-        }
-
         async function handleActionClick(e) {
             const button = e.target.closest('button[data-action]');
             if (!button) return;
             const { action, userid, requestid } = button.dataset;
-            button.disabled = true; // Prevent double clicks
+            button.disabled = true;
             try {
                 if (action === 'add-friend') {
                     await db.collection('friend_requests').add({
@@ -438,7 +466,6 @@
             renderCurrentTab();
         }
 
-        // --- HTML Generation ---
         function createUserItemHTML(user, context) {
             let actions = '';
             if (user.id === currentUser.uid) {
