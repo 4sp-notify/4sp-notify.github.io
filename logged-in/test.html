@@ -34,7 +34,7 @@
     /* --- VERN SOCIAL SPECIFIC STYLES --- */
     .social-container { flex: 3; display: flex; flex-direction: column; gap: 20px; }
     .chat-container { flex: 2; background: #fff; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.07); display: flex; flex-direction: column; overflow: hidden; transition: all 0.3s ease; max-width: 450px; }
-    .chat-container.hidden { flex: 0; width: 0; padding: 0; border: none; }
+    .chat-container.hidden { flex: 0; width: 0; padding: 0; border: none; margin:0; }
     
     .card { background: #fff; padding: 20px 25px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
     .tabs { display: flex; gap: 10px; border-bottom: 2px solid #eee; margin-bottom: 20px; }
@@ -43,25 +43,24 @@
     .tab-content { display: none; animation: fadeInView 0.5s; }
     .tab-content.active { display: block; }
 
-    #allUsersView .search-bar { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ccc; margin-bottom: 15px; }
+    #allUsersView .search-bar { width: 100%; padding: 10px; border-radius: 8px; border: 1px solid #ccc; margin-bottom: 15px; box-sizing: border-box; }
     .user-list { list-style: none; padding: 0; margin: 0; max-height: 500px; overflow-y: auto; }
     .user-list-item { display: flex; align-items: center; justify-content: space-between; padding: 12px 8px; border-bottom: 1px solid #f0f0f0; }
     .user-list-item:last-child { border-bottom: none; }
     .user-list-item .user-details .username { font-weight: bold; color: #333; }
     .user-list-item .user-details .email { font-size: 0.85em; color: #888; }
     
-    .action-btn { border: none; padding: 8px 12px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.8em; transition: all 0.2s ease; }
+    .action-btn { border: none; padding: 8px 12px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.8em; transition: all 0.2s ease; margin-left: 5px; }
     .btn-add { background-color: #28a745; color: white; }
     .btn-accept { background-color: #007bff; color: white; }
     .btn-cancel, .btn-decline { background-color: #6c757d; color: white; }
     .btn-unfriend, .btn-block { background-color: #dc3545; color: white; }
     .btn-unblock { background-color: #ffc107; color: #212529; }
     .btn-chat { background-color: #17a2b8; color: white; }
-    .btn-pending { background-color: #ffc107; color: #212529; cursor: not-allowed; }
-    .btn-friend-status { background-color: #e9ecef; color: #495057; cursor: default; }
+    .btn-pending { background-color: #ffc107; color: #212529; cursor: default; }
 
     .requests-section h4 { margin-top: 20px; margin-bottom: 10px; color: #555; border-bottom: 1px solid #ddd; padding-bottom: 5px; }
-    #incomingRequestsList, #outgoingRequestsList, #friendsList, #blockedList { margin-top: 10px; }
+    #incomingRequestsList, #outgoingRequestsList { margin-top: 10px; }
 
     /* CHAT STYLES */
     #chatHeader { padding: 15px 20px; border-bottom: 1px solid #eee; background-color: #f8f9fa; }
@@ -173,10 +172,12 @@
         // --- Firebase & Global State ---
         const db = firebase.firestore();
         let currentUser = null;
-        let currentUserProfile = null;
-        let allUsersCache = [];
-        let friendRequestsCache = [];
-        let activeChatListener = null;
+        let localState = {
+            profile: null,
+            users: [],
+            requests: [],
+        };
+        let listeners = []; // To store unsubscribe functions
 
         // --- DOM Elements ---
         const sidebarUserNameEl = document.getElementById('userName');
@@ -189,9 +190,7 @@
         const blockedListEl = document.getElementById('blockedList');
         const chatContainer = document.getElementById('chatContainer');
         const chatWelcomeEl = document.getElementById('chatWelcome');
-        const chatHeader = document.getElementById('chatHeader');
         const chattingWithEl = document.getElementById('chattingWith');
-        const chatMessagesEl = document.getElementById('chatMessages');
         const chatMessagesContainer = document.getElementById('chatMessagesContainer');
         const chatInputForm = document.getElementById('chatInputForm');
         const chatInput = document.getElementById('chatInput');
@@ -204,97 +203,132 @@
             return p.innerHTML;
         };
 
+        const showStatus = (message, type = 'info') => {
+            console.log(`[${type.toUpperCase()}] ${message}`);
+            // In a real app, you'd want a proper notification UI element here.
+        };
+
         // --- Initialization & Auth ---
         firebase.auth().onAuthStateChanged(async (user) => {
             if (user) {
                 currentUser = user;
                 sidebarUserEmailEl.textContent = user.email;
-                await initializeSocialFeatures();
+                await attachRealtimeListeners();
             } else {
+                detachAllListeners();
                 window.location.href = '../login.html';
             }
         });
 
-        async function initializeSocialFeatures() {
+        function detachAllListeners() {
+            listeners.forEach(unsubscribe => unsubscribe());
+            listeners = [];
+        }
+
+        async function attachRealtimeListeners() {
             if (!currentUser) return;
-            // Fetch all necessary data in parallel
-            const [userProfileSnap, allUsersSnap, friendRequestsSnap] = await Promise.all([
-                db.collection('users').doc(currentUser.uid).get(),
-                db.collection('users').get(),
-                db.collection('friend_requests').get() // Fetch all for initial caching
-            ]);
+            detachAllListeners(); // Clean up previous listeners
 
-            // Process current user profile
-            if (userProfileSnap.exists) {
-                currentUserProfile = { id: userProfileSnap.id, ...userProfileSnap.data() };
-                sidebarUserNameEl.textContent = currentUserProfile.username || 'User';
-            } else {
-                // If user has no profile, create one. This is a fallback.
-                const profile = {
-                    email: currentUser.email,
-                    username: currentUser.email.split('@')[0],
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    authMethod: 'email',
-                    friends: [],
-                    blocked: []
-                };
-                await db.collection('users').doc(currentUser.uid).set(profile);
-                currentUserProfile = { id: currentUser.uid, ...profile };
-                sidebarUserNameEl.textContent = currentUserProfile.username;
-            }
+            // 1. Listen to current user's profile changes
+            const profileUnsub = db.collection('users').doc(currentUser.uid)
+                .onSnapshot(async (doc) => {
+                    if (doc.exists) {
+                        localState.profile = { id: doc.id, ...doc.data() };
+                        sidebarUserNameEl.textContent = localState.profile.username || 'User';
+                        renderAllTabs(); // Re-render when profile changes (friends/blocked list)
+                    } else {
+                        // Create profile if it doesn't exist
+                        const profile = {
+                            email: currentUser.email,
+                            username: currentUser.email.split('@')[0],
+                            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                            authMethod: 'email', friends: [], blocked: []
+                        };
+                        await db.collection('users').doc(currentUser.uid).set(profile);
+                    }
+                }, err => console.error("Profile listener error: ", err));
+            listeners.push(profileUnsub);
 
-            // Process all users cache
-            allUsersCache = allUsersSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            // 2. Listen to all users collection
+            const usersUnsub = db.collection('users').onSnapshot((snapshot) => {
+                localState.users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderAllTabs();
+            }, err => console.error("Users listener error: ", err));
+            listeners.push(usersUnsub);
 
-            // Process friend requests cache
-            friendRequestsCache = friendRequestsSnap.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            
-            // Initial render
+            // 3. Listen to relevant friend requests
+            const incomingUnsub = db.collection('friend_requests').where('receiverId', '==', currentUser.uid)
+                .onSnapshot(handleRequestSnapshot, err => console.error("Incoming req listener error:", err));
+            const outgoingUnsub = db.collection('friend_requests').where('senderId', '==', currentUser.uid)
+                .onSnapshot(handleRequestSnapshot, err => console.error("Outgoing req listener error:", err));
+            listeners.push(incomingUnsub, outgoingUnsub);
+        }
+
+        function handleRequestSnapshot(snapshot) {
+            snapshot.docChanges().forEach((change) => {
+                const docData = { id: change.doc.id, ...change.doc.data() };
+                if (change.type === "added") {
+                    // Avoid duplicates
+                    if (!localState.requests.find(r => r.id === docData.id)) {
+                        localState.requests.push(docData);
+                    }
+                }
+                if (change.type === "modified") {
+                    const index = localState.requests.findIndex(r => r.id === docData.id);
+                    if (index > -1) localState.requests[index] = docData;
+                }
+                if (change.type === "removed") {
+                    localState.requests = localState.requests.filter(r => r.id !== docData.id);
+                }
+            });
             renderAllTabs();
         }
-        
+
         function renderAllTabs() {
+            if (!localState.profile) return;
             renderAllUsers();
             renderFriendsList();
             renderRequests();
             renderBlockedList();
         }
-
-        // --- User & Relationship Rendering ---
-        function getUserRelationship(otherUserId) {
-            if (currentUserProfile.id === otherUserId) return { status: 'self', text: 'You' };
-            if (currentUserProfile.blocked?.includes(otherUserId)) return { status: 'blocked', text: 'Unblock' };
-            if (currentUserProfile.friends?.includes(otherUserId)) return { status: 'friend', text: 'Friend' };
-            
-            const incoming = friendRequestsCache.find(req => req.senderId === otherUserId && req.receiverId === currentUserProfile.id);
-            if (incoming) return { status: 'incoming_request', text: 'Accept', requestId: incoming.id };
-
-            const outgoing = friendRequestsCache.find(req => req.senderId === currentUserProfile.id && req.receiverId === otherUserId);
-            if (outgoing) return { status: 'outgoing_request', text: 'Pending', requestId: outgoing.id };
-
-            return { status: 'none', text: 'Add Friend' };
-        }
         
+        // --- RELATIONSHIP LOGIC ---
+        function getRelationship(otherUserId) {
+            const profile = localState.profile;
+            if (!profile) return { status: 'loading' };
+            if (profile.id === otherUserId) return { status: 'self' };
+            if (profile.blocked?.includes(otherUserId)) return { status: 'blocked' };
+            if (profile.friends?.includes(otherUserId)) return { status: 'friend' };
+            
+            const incoming = localState.requests.find(r => r.senderId === otherUserId && r.receiverId === profile.id);
+            if (incoming) return { status: 'incoming_request', requestId: incoming.id };
+            
+            const outgoing = localState.requests.find(r => r.senderId === profile.id && r.receiverId === otherUserId);
+            if (outgoing) return { status: 'outgoing_request', requestId: outgoing.id };
+            
+            return { status: 'none' };
+        }
+
         function renderUserListItem(user, container) {
-            if (user.id === currentUser.uid) return; // Don't render self
+            const relationship = getRelationship(user.id);
+            if (relationship.status === 'self') return;
+            
             const li = document.createElement('li');
             li.className = 'user-list-item';
             li.dataset.userId = user.id;
 
-            const relationship = getUserRelationship(user.id);
             let buttonsHTML = '';
-            
             switch (relationship.status) {
                 case 'none':
-                    buttonsHTML = `<button class="action-btn btn-add" data-action="add" data-user-id="${user.id}">Add Friend</button>`;
+                    buttonsHTML = `<button class="action-btn btn-add" data-action="add">Add Friend</button>`;
                     break;
                 case 'friend':
-                    buttonsHTML = `<button class="action-btn btn-chat" data-action="chat" data-user-id="${user.id}">Chat</button>
-                                 <button class="action-btn btn-unfriend" data-action="unfriend" data-user-id="${user.id}">Unfriend</button>
-                                 <button class="action-btn btn-block" data-action="block" data-user-id="${user.id}">Block</button>`;
+                    buttonsHTML = `<button class="action-btn btn-chat" data-action="chat">Chat</button>
+                                 <button class="action-btn btn-unfriend" data-action="unfriend">Unfriend</button>
+                                 <button class="action-btn btn-block" data-action="block">Block</button>`;
                     break;
                 case 'incoming_request':
-                    buttonsHTML = `<button class="action-btn btn-accept" data-action="accept" data-user-id="${user.id}" data-request-id="${relationship.requestId}">Accept</button>
+                    buttonsHTML = `<button class="action-btn btn-accept" data-action="accept" data-request-id="${relationship.requestId}">Accept</button>
                                  <button class="action-btn btn-decline" data-action="decline" data-request-id="${relationship.requestId}">Decline</button>`;
                     break;
                 case 'outgoing_request':
@@ -302,10 +336,11 @@
                                  <button class="action-btn btn-cancel" data-action="cancel" data-request-id="${relationship.requestId}">Cancel</button>`;
                     break;
                 case 'blocked':
-                     buttonsHTML = `<button class="action-btn btn-unblock" data-action="unblock" data-user-id="${user.id}">Unblock</button>`;
-                     break;
+                    buttonsHTML = `<button class="action-btn btn-unblock" data-action="unblock">Unblock</button>`;
+                    break;
+                default:
+                    buttonsHTML = `<span>Loading...</span>`;
             }
-
             li.innerHTML = `
                 <div class="user-details">
                     <div class="username">${escapeHTML(user.username)}</div>
@@ -315,240 +350,163 @@
             container.appendChild(li);
         }
 
+        // --- UI Rendering ---
         function renderAllUsers() {
             allUsersListEl.innerHTML = '';
             const query = userSearchEl.value.toLowerCase();
-            const filteredUsers = allUsersCache.filter(u => u.username.toLowerCase().includes(query) || u.email.toLowerCase().includes(query));
-            
-            if (filteredUsers.length === 0) {
-                allUsersListEl.innerHTML = '<li>No users found.</li>';
-                return;
-            }
-            filteredUsers.forEach(user => renderUserListItem(user, allUsersListEl));
+            const filteredUsers = localState.users.filter(u => u.username.toLowerCase().includes(query) || u.email.toLowerCase().includes(query));
+            if (filteredUsers.length === 0) allUsersListEl.innerHTML = '<li>No users found.</li>';
+            else filteredUsers.forEach(user => renderUserListItem(user, allUsersListEl));
         }
 
         function renderFriendsList() {
             friendsListEl.innerHTML = '';
-            const friendIds = currentUserProfile.friends || [];
+            const friendIds = localState.profile?.friends || [];
             if (friendIds.length === 0) {
                 friendsListEl.innerHTML = '<li>You have no friends yet. Find some!</li>';
                 return;
             }
-            const friends = allUsersCache.filter(user => friendIds.includes(user.id));
+            const friends = localState.users.filter(user => friendIds.includes(user.id));
             friends.forEach(friend => renderUserListItem(friend, friendsListEl));
         }
         
         function renderRequests() {
             incomingRequestsListEl.innerHTML = '';
             outgoingRequestsListEl.innerHTML = '';
+            const incoming = localState.requests.filter(r => r.receiverId === currentUser.uid);
+            const outgoing = localState.requests.filter(r => r.senderId === currentUser.uid);
 
-            const incoming = friendRequestsCache.filter(req => req.receiverId === currentUser.uid);
-            const outgoing = friendRequestsCache.filter(req => req.senderId === currentUser.uid);
-
-            if (incoming.length > 0) {
-                incoming.forEach(req => {
-                    const sender = allUsersCache.find(u => u.id === req.senderId);
-                    if(sender) renderUserListItem(sender, incomingRequestsListEl);
-                });
-            } else {
-                incomingRequestsListEl.innerHTML = '<li>No incoming requests.</li>';
-            }
-
-            if (outgoing.length > 0) {
-                outgoing.forEach(req => {
-                    const receiver = allUsersCache.find(u => u.id === req.receiverId);
-                    if(receiver) renderUserListItem(receiver, outgoingRequestsListEl);
-                });
-            } else {
-                outgoingRequestsListEl.innerHTML = '<li>No outgoing requests.</li>';
-            }
+            if (incoming.length > 0) incoming.forEach(req => {
+                const sender = localState.users.find(u => u.id === req.senderId);
+                if (sender) renderUserListItem(sender, incomingRequestsListEl);
+            }); else incomingRequestsListEl.innerHTML = '<li>No incoming requests.</li>';
+            
+            if (outgoing.length > 0) outgoing.forEach(req => {
+                const receiver = localState.users.find(u => u.id === req.receiverId);
+                if (receiver) renderUserListItem(receiver, outgoingRequestsListEl);
+            }); else outgoingRequestsListEl.innerHTML = '<li>No outgoing requests.</li>';
         }
         
         function renderBlockedList() {
             blockedListEl.innerHTML = '';
-            const blockedIds = currentUserProfile.blocked || [];
-             if (blockedIds.length === 0) {
+            const blockedIds = localState.profile?.blocked || [];
+            if (blockedIds.length === 0) {
                 blockedListEl.innerHTML = '<li>You have not blocked anyone.</li>';
                 return;
             }
-            const blockedUsers = allUsersCache.filter(user => blockedIds.includes(user.id));
+            const blockedUsers = localState.users.filter(user => blockedIds.includes(user.id));
             blockedUsers.forEach(user => renderUserListItem(user, blockedListEl));
         }
 
         // --- Social Actions ---
         async function sendFriendRequest(receiverId) {
-            const request = {
-                senderId: currentUser.uid,
-                receiverId: receiverId,
-                status: 'pending',
+            await db.collection('friend_requests').add({
+                senderId: currentUser.uid, receiverId, status: 'pending',
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            };
-            const newRequestRef = await db.collection('friend_requests').add(request);
-            friendRequestsCache.push({id: newRequestRef.id, ...request});
-            renderAllTabs();
+            }).catch(e => showStatus(`Error sending request: ${e.message}`, 'error'));
         }
         
         async function cancelOrDeclineRequest(requestId) {
-            await db.collection('friend_requests').doc(requestId).delete();
-            friendRequestsCache = friendRequestsCache.filter(r => r.id !== requestId);
-            renderAllTabs();
+            await db.collection('friend_requests').doc(requestId).delete()
+                .catch(e => showStatus(`Error declining request: ${e.message}`, 'error'));
         }
 
-        async function acceptFriendRequest(senderId) {
-            // First, find and delete the request
-            const request = friendRequestsCache.find(req => req.senderId === senderId && req.receiverId === currentUser.uid);
-            if(request) await db.collection('friend_requests').doc(request.id).delete();
-            
-            // Use batch write for atomicity
+        async function acceptFriendRequest(senderId, requestId) {
             const batch = db.batch();
-            const currentUserRef = db.collection('users').doc(currentUser.uid);
-            const senderUserRef = db.collection('users').doc(senderId);
-
-            batch.update(currentUserRef, { friends: firebase.firestore.FieldValue.arrayUnion(senderId) });
-            batch.update(senderUserRef, { friends: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
-            
-            await batch.commit();
-
-            // Update local state and re-render
-            currentUserProfile.friends.push(senderId);
-            friendRequestsCache = friendRequestsCache.filter(r => r.id !== request.id);
-            renderAllTabs();
+            batch.delete(db.collection('friend_requests').doc(requestId));
+            batch.update(db.collection('users').doc(currentUser.uid), { friends: firebase.firestore.FieldValue.arrayUnion(senderId) });
+            batch.update(db.collection('users').doc(senderId), { friends: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
+            await batch.commit().catch(e => showStatus(`Error accepting request: ${e.message}`, 'error'));
         }
         
         async function unfriendUser(friendId) {
             if (!confirm("Are you sure you want to unfriend this user?")) return;
-            
             const batch = db.batch();
-            const currentUserRef = db.collection('users').doc(currentUser.uid);
-            const friendUserRef = db.collection('users').doc(friendId);
-            
-            batch.update(currentUserRef, { friends: firebase.firestore.FieldValue.arrayRemove(friendId) });
-            batch.update(friendUserRef, { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
-            
-            await batch.commit();
-            
-            currentUserProfile.friends = currentUserProfile.friends.filter(id => id !== friendId);
-            renderAllTabs();
+            batch.update(db.collection('users').doc(currentUser.uid), { friends: firebase.firestore.FieldValue.arrayRemove(friendId) });
+            batch.update(db.collection('users').doc(friendId), { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
+            await batch.commit().catch(e => showStatus(`Error unfriending: ${e.message}`, 'error'));
         }
         
         async function blockUser(userIdToBlock) {
-             if (!confirm("Are you sure you want to block this user? This will also unfriend them if you are friends.")) return;
-
-            const isFriend = currentUserProfile.friends?.includes(userIdToBlock);
+            if (!confirm("Blocking will also unfriend the user. Continue?")) return;
             const batch = db.batch();
             const currentUserRef = db.collection('users').doc(currentUser.uid);
-            
-            // Add to blocked list
-            batch.update(currentUserRef, { blocked: firebase.firestore.FieldValue.arrayUnion(userIdToBlock) });
-            
-            // If they are friends, unfriend them
-            if (isFriend) {
-                const friendUserRef = db.collection('users').doc(userIdToBlock);
-                batch.update(currentUserRef, { friends: firebase.firestore.FieldValue.arrayRemove(userIdToBlock) });
-                batch.update(friendUserRef, { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
-            }
-            
-            await batch.commit();
-            
-            // Update local state
-            if (!currentUserProfile.blocked) currentUserProfile.blocked = [];
-            currentUserProfile.blocked.push(userIdToBlock);
-            if(isFriend) currentUserProfile.friends = currentUserProfile.friends.filter(id => id !== userIdToBlock);
-            
-            renderAllTabs();
+            batch.update(currentUserRef, {
+                blocked: firebase.firestore.FieldValue.arrayUnion(userIdToBlock),
+                friends: firebase.firestore.FieldValue.arrayRemove(userIdToBlock) // Also remove from friends
+            });
+            // Also remove current user from the other person's friend list
+            batch.update(db.collection('users').doc(userIdToBlock), { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
+            await batch.commit().catch(e => showStatus(`Error blocking user: ${e.message}`, 'error'));
         }
         
         async function unblockUser(userIdToUnblock) {
             await db.collection('users').doc(currentUser.uid).update({
                 blocked: firebase.firestore.FieldValue.arrayRemove(userIdToUnblock)
-            });
-            currentUserProfile.blocked = currentUserProfile.blocked.filter(id => id !== userIdToUnblock);
-            renderAllTabs();
+            }).catch(e => showStatus(`Error unblocking user: ${e.message}`, 'error'));
         }
 
         // --- Chat ---
+        // Chat functionality remains largely the same...
         function openChatWith(friendUser) {
             chatContainer.classList.remove('hidden');
             chatWelcomeEl.style.display = 'none';
             chatInputForm.style.display = 'flex';
             chattingWithEl.textContent = friendUser.username;
-
-            // Generate a consistent chat ID
             const chatId = [currentUser.uid, friendUser.id].sort().join('_');
-
-            // Detach any previous listener
-            if (activeChatListener) activeChatListener();
+            if (listeners.chat) listeners.chat(); // Detach previous chat listener
             
-            chatMessagesContainer.innerHTML = ''; // Clear previous messages
+            chatMessagesContainer.innerHTML = '';
+            const messagesRef = db.collection('chats').doc(chatId).collection('messages').orderBy('createdAt', 'desc').limit(50);
             
-            // Attach new listener
-            const messagesRef = db.collection('chats').doc(chatId).collection('messages').orderBy('createdAt', 'desc');
-            activeChatListener = messagesRef.onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
+            listeners.chat = messagesRef.onSnapshot(snapshot => {
+                snapshot.docChanges().reverse().forEach(change => { // reverse to process oldest first
                     if (change.type === 'added') {
                         renderMessage(change.doc.data());
                     }
                 });
             });
             
-            chatInputForm.onsubmit = (e) => {
-                e.preventDefault();
-                sendMessage(chatId);
-            };
+            chatInputForm.onsubmit = (e) => { e.preventDefault(); sendMessage(chatId, friendUser.id); };
+        }
+        
+        async function sendMessage(chatId, friendId) {
+            const text = chatInput.value.trim();
+            if (!text) return;
+            chatInput.value = '';
+            
+            const chatRef = db.collection('chats').doc(chatId);
+            const msgRef = chatRef.collection('messages').doc();
+
+            const batch = db.batch();
+            batch.set(chatRef, { members: [currentUser.uid, friendId] }, { merge: true });
+            batch.set(msgRef, {
+                text, authorId: currentUser.uid,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
+            });
+            await batch.commit();
+        }
+
+        function renderMessage(msg) {
+            const bubble = document.createElement('div');
+            bubble.className = 'message-bubble ' + (msg.authorId === currentUser.uid ? 'sent' : 'received');
+            const time = msg.createdAt?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
+            bubble.innerHTML = `<div>${escapeHTML(msg.text)}</div><span class="timestamp">${time}</span>`;
+            chatMessagesContainer.appendChild(bubble); // Append at the end
+            chatMessages.scrollTop = chatMessages.scrollHeight; // Scroll to bottom
         }
 
         function closeChat() {
             chatContainer.classList.add('hidden');
             chatWelcomeEl.style.display = 'block';
             chatInputForm.style.display = 'none';
-            if (activeChatListener) {
-                activeChatListener();
-                activeChatListener = null;
-            }
+            if (listeners.chat) { listeners.chat(); delete listeners.chat; }
             chatInputForm.onsubmit = null;
-        }
-
-        function renderMessage(msg) {
-            const bubble = document.createElement('div');
-            bubble.className = 'message-bubble';
-            const messageClass = msg.authorId === currentUser.uid ? 'sent' : 'received';
-            bubble.classList.add(messageClass);
-            
-            const time = msg.createdAt?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
-            bubble.innerHTML = `<div>${escapeHTML(msg.text)}</div><span class="timestamp">${time}</span>`;
-            
-            // Insert at the beginning of the container because of flex-direction: column-reverse
-            chatMessagesContainer.insertBefore(bubble, chatMessagesContainer.firstChild);
-        }
-
-        async function sendMessage(chatId) {
-            const text = chatInput.value.trim();
-            if (!text) return;
-
-            chatInput.value = '';
-            
-            const members = chatId.split('_');
-
-            const message = {
-                text: text,
-                authorId: currentUser.uid,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp()
-            };
-            
-            const chatRef = db.collection('chats').doc(chatId);
-            
-            // Check if chat doc exists, if not create it with members array
-            const chatDoc = await chatRef.get();
-            if (!chatDoc.exists) {
-                await chatRef.set({ members: members });
-            }
-            
-            await chatRef.collection('messages').add(message);
         }
 
         // --- Event Listeners ---
         document.querySelector('.tabs').addEventListener('click', e => {
-            if (e.target.classList.contains('tab-btn')) {
+            if (e.target.matches('.tab-btn')) {
                 document.querySelectorAll('.tab-btn, .tab-content').forEach(el => el.classList.remove('active'));
                 e.target.classList.add('active');
                 document.getElementById(e.target.dataset.tab).classList.add('active');
@@ -558,21 +516,23 @@
         document.querySelector('.social-container').addEventListener('click', e => {
             const button = e.target.closest('.action-btn');
             if (!button) return;
+            const li = button.closest('.user-list-item');
+            if (!li) return;
             
             const action = button.dataset.action;
-            const userId = button.dataset.userId;
+            const userId = li.dataset.userId;
             const requestId = button.dataset.requestId;
 
             switch (action) {
                 case 'add': sendFriendRequest(userId); break;
-                case 'accept': acceptFriendRequest(userId); break;
+                case 'accept': acceptFriendRequest(userId, requestId); break;
                 case 'cancel':
                 case 'decline': cancelOrDeclineRequest(requestId); break;
                 case 'unfriend': unfriendUser(userId); break;
                 case 'block': blockUser(userId); break;
                 case 'unblock': unblockUser(userId); break;
                 case 'chat': 
-                    const friend = allUsersCache.find(u => u.id === userId);
+                    const friend = localState.users.find(u => u.id === userId);
                     if(friend) openChatWith(friend);
                     break;
             }
