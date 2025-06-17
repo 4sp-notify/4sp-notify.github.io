@@ -416,11 +416,6 @@
         }
         
         async function unfriendUser(friendId) {
-            const friendToUnfriend = localState.users.find(u => u.id === friendId);
-            const friendName = friendToUnfriend ? friendToUnfriend.username : 'this user';
-            if (!confirm(`Are you sure you want to unfriend ${friendName}?`)) {
-                return;
-            }
             const batch = db.batch();
             batch.update(db.collection('users').doc(currentUser.uid), { friends: firebase.firestore.FieldValue.arrayRemove(friendId) });
             batch.update(db.collection('users').doc(friendId), { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
@@ -428,11 +423,6 @@
         }
         
         async function blockUser(userIdToBlock) {
-            const userToBlock = localState.users.find(u => u.id === userIdToBlock);
-            const userName = userToBlock ? userToBlock.username : 'this user';
-            if (!confirm(`Blocking ${userName} will also unfriend them. Are you sure?`)) {
-                return;
-            }
             const batch = db.batch();
             const currentUserRef = db.collection('users').doc(currentUser.uid);
             batch.update(currentUserRef, {
@@ -516,28 +506,59 @@
             }
         });
 
-        document.querySelector('.social-container').addEventListener('click', e => {
+        document.querySelector('.social-container').addEventListener('click', async e => {
             const button = e.target.closest('.action-btn');
-            if (!button) return;
+            if (!button || button.disabled) return;
             const li = button.closest('.user-list-item');
             if (!li) return;
-            
+
+            button.disabled = true; // Prevent double clicks
+
             const action = button.dataset.action;
             const userId = li.dataset.userId;
             const requestId = button.dataset.requestId;
 
-            switch (action) {
-                case 'add': sendFriendRequest(userId); break;
-                case 'accept': acceptFriendRequest(userId, requestId); break;
-                case 'cancel':
-                case 'decline': cancelOrDeclineRequest(requestId); break;
-                case 'unfriend': unfriendUser(userId); break;
-                case 'block': blockUser(userId); break;
-                case 'unblock': unblockUser(userId); break;
-                case 'chat': 
-                    const friend = localState.users.find(u => u.id === userId);
-                    if(friend) openChatWith(friend);
-                    break;
+            let shouldProceed = true;
+            // Handle confirms for destructive actions
+            if (action === 'unfriend') {
+                const friendToUnfriend = localState.users.find(u => u.id === userId);
+                const friendName = friendToUnfriend ? friendToUnfriend.username : 'this user';
+                shouldProceed = confirm(`Are you sure you want to unfriend ${friendName}?`);
+            } else if (action === 'block') {
+                const userToBlock = localState.users.find(u => u.id === userId);
+                const userName = userToBlock ? userToBlock.username : 'this user';
+                shouldProceed = confirm(`Blocking ${userName} will also unfriend them. Are you sure?`);
+            }
+
+            if (!shouldProceed) {
+                button.disabled = false; // Re-enable if user cancels
+                return;
+            }
+
+            try {
+                switch (action) {
+                    case 'add': await sendFriendRequest(userId); break;
+                    case 'accept': await acceptFriendRequest(userId, requestId); break;
+                    case 'cancel':
+                    case 'decline': await cancelOrDeclineRequest(requestId); break;
+                    case 'unfriend': await unfriendUser(userId); break;
+                    case 'block': await blockUser(userId); break;
+                    case 'unblock': await unblockUser(userId); break;
+                    case 'chat': 
+                        const friend = localState.users.find(u => u.id === userId);
+                        if (friend) openChatWith(friend);
+                        button.disabled = false; // Chat isn't a destructive/state-changing action in the same way
+                        break;
+                }
+            } catch (err) {
+                showStatus(`Action '${action}' failed. Please try again.`, 'error');
+                // On failure, re-render everything to restore the button state
+                // The realtime listener should handle this, but as a fallback:
+                if (!button.isConnected) { // Check if the button was removed by a re-render
+                   renderAllTabs();
+                } else {
+                   button.disabled = false;
+                }
             }
         });
         
