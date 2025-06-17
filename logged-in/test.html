@@ -507,56 +507,56 @@
             }
         });
 
-        document.querySelector('.social-container').addEventListener('click', async e => {
+        document.querySelector('.social-container').addEventListener('click', async (e) => {
             const button = e.target.closest('.action-btn');
             if (!button || button.disabled) return;
+        
             const li = button.closest('.user-list-item');
             if (!li) return;
-
-            button.disabled = true; // Prevent double clicks
-
+        
+            button.disabled = true; // Immediately disable button to prevent double-clicks.
+        
             const action = button.dataset.action;
             const userId = li.dataset.userId;
             const requestId = button.dataset.requestId;
-            
-            // This is the core logic fix: wrap the entire handling in a try/finally
-            // to ensure the button is re-enabled if the user cancels the confirmation.
+        
+            let shouldProceed = true;
+        
+            if (action === 'unfriend') {
+                const friendToUnfriend = localState.users.find(u => u.id === userId);
+                const friendName = friendToUnfriend ? friendToUnfriend.username : 'this user';
+                shouldProceed = confirm(`Are you sure you want to unfriend ${friendName}?`);
+            } else if (action === 'block') {
+                const userToBlock = localState.users.find(u => u.id === userId);
+                const userName = userToBlock ? userToBlock.username : 'this user';
+                shouldProceed = confirm(`Blocking ${userName} will also unfriend them. Are you sure?`);
+            }
+        
+            if (!shouldProceed) {
+                button.disabled = false; // Re-enable if the user cancels.
+                return;
+            }
+        
             try {
-                // Handle confirms for destructive actions
-                if (action === 'unfriend') {
-                    const friendToUnfriend = localState.users.find(u => u.id === userId);
-                    const friendName = friendToUnfriend ? friendToUnfriend.username : 'this user';
-                    if (!confirm(`Are you sure you want to unfriend ${friendName}?`)) {
-                        return; // If user cancels, exit the handler.
-                    }
-                } else if (action === 'block') {
-                    const userToBlock = localState.users.find(u => u.id === userId);
-                    const userName = userToBlock ? userToBlock.username : 'this user';
-                     if (!confirm(`Blocking ${userName} will also unfriend them. Are you sure?`)) {
-                        return; // If user cancels, exit the handler.
-                    }
-                }
-
                 switch (action) {
                     case 'add': await sendFriendRequest(userId); break;
                     case 'accept': await acceptFriendRequest(userId, requestId); break;
-                    case 'cancel':
+                    case 'cancel': await cancelOrDeclineRequest(requestId); break;
                     case 'decline': await cancelOrDeclineRequest(requestId); break;
                     case 'unfriend': await unfriendUser(userId); break;
                     case 'block': await blockUser(userId); break;
                     case 'unblock': await unblockUser(userId); break;
-                    case 'chat': 
+                    case 'chat':
                         const friend = localState.users.find(u => u.id === userId);
                         if (friend) openChatWith(friend);
+                        button.disabled = false; // Chat is non-destructive, re-enable immediately.
                         break;
                 }
             } catch (err) {
-                showStatus(`Action '${action}' failed. Error: ${err.message}`, 'error');
+                showStatus(`Action '${action}' failed: ${err.message}`, 'error');
                 console.error("Action failed:", err);
-            } finally {
-                // The realtime listener will redraw the UI correctly. 
-                // We only need to re-enable the button if it still exists in the DOM after potential errors
-                // and was NOT part of a confirmation that was cancelled.
+                // The realtime listener will eventually correct the UI.
+                // If the button is still in the DOM, re-enable it on error.
                 if (button.isConnected) {
                     button.disabled = false;
                 }
