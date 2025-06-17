@@ -13,7 +13,7 @@
             --font-primary: 'PrimaryFont', sans-serif;
             --color-accent: #6720bd;
             --color-accent-gradient: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
-            --color-danger: #F02849;
+            --color-danger: #dc3545;
             --color-success: #28a745;
             --color-warning: #ffc107;
         }
@@ -153,6 +153,8 @@
             padding: 2px 7px; border-radius: 10px; margin-left: 8px;
         }
         #friendsList .item-name.active-chat { color: #a16eff; font-weight: 700; }
+        
+        /* Sidebar Action Buttons */
         .item-list .item-actions button {
             background: none; border: none; color: #ccc;
             cursor: pointer; font-size: 1.1em; padding: 5px;
@@ -161,6 +163,21 @@
         .item-list .item-actions button:hover { transform: scale(1.1); }
         .item-list .item-actions .accept-btn:hover { color: var(--color-success); }
         .item-list .item-actions .decline-btn:hover { color: var(--color-danger); }
+        .item-list .item-actions .btn-add {
+            padding: 6px 12px;
+            font-size: 0.9em;
+            font-weight: 600;
+            border-radius: 6px;
+            background: var(--color-accent-gradient);
+            color: white;
+        }
+        .item-list .item-actions .btn-add:hover { transform: scale(1.05); }
+        .item-list .item-actions .btn-disabled {
+            padding: 6px 12px; font-size: 0.9em;
+            font-weight: 600; border-radius: 6px;
+            background: #666; color: #aaa; cursor: not-allowed;
+        }
+
         .item-list .empty-state { color: #888; font-style: italic; padding: 10px; cursor: default; }
 
         /* --- Chat Area Layout --- */
@@ -332,6 +349,25 @@
         .modal-actions .btn-primary { background: var(--color-accent-gradient); color: #fff; }
         .modal-actions .btn-danger { background: var(--color-danger); color: #fff; }
 
+        /* Custom HTML Notifications */
+        .notification {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 12px 20px;
+            border-radius: 8px;
+            color: white;
+            font-weight: 600;
+            z-index: 10001;
+            transform: translateY(150%);
+            transition: transform 0.4s ease-in-out, background 0.3s;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            font-family: var(--font-primary);
+        }
+        .notification.success { background: linear-gradient(135deg, #28a745, #20c997); }
+        .notification.error { background: linear-gradient(135deg, #dc3545, #e83e8c); }
+        .notification.info { background: linear-gradient(135deg, #6720bd, #8a2be2); }
+
         .hidden { display: none !important; }
     </style>
 </head>
@@ -473,6 +509,21 @@
         let friendsUnsubscribe = () => {}, requestsUnsubscribe = () => {}, chatUnsubscribe = () => {};
         let confirmCallback = null;
 
+        // --- NEW: Custom Notification Function ---
+        function showNotification(message, type = 'info', duration = 3000) {
+            const notification = document.createElement('div');
+            notification.className = `notification ${type}`;
+            notification.textContent = message;
+            document.body.appendChild(notification);
+            
+            setTimeout(() => { notification.style.transform = 'translateY(0)'; }, 100);
+            
+            setTimeout(() => {
+                notification.style.transform = 'translateY(150%)';
+                setTimeout(() => { if (document.body.contains(notification)) document.body.removeChild(notification); }, 400);
+            }, duration);
+        }
+
         // --- Encryption & Decryption Functions ---
         function getChatSecret(uidA, uidB) {
             return CryptoJS.SHA256([uidA, uidB].sort().join("_4spSecretKey")).toString();
@@ -551,17 +602,12 @@
             const lastReadTimestamp = JSON.parse(localStorage.getItem(`lastRead_${currentUser.uid}_${friendId}`)) || 0;
             const chatId = [currentUser.uid, friendId].sort().join('_');
             const messagesRef = firebase.firestore().collection('chats').doc(chatId).collection('messages');
-            
-            // We get messages sent by the friend AFTER the last time we read.
-            const q = messagesRef
-                .where('authorId', '==', friendId)
-                .where('createdAt', '>', new Date(lastReadTimestamp));
+            const q = messagesRef.where('authorId', '==', friendId).where('createdAt', '>', new Date(lastReadTimestamp));
 
             try {
                 const snapshot = await q.get();
                 return snapshot.size;
             } catch (error) {
-                // This can fail if the composite index doesn't exist. We'll ignore the count in that case.
                 if (error.code === 'failed-precondition') {
                      console.warn(`Firestore index for chat with ${friendId} not found. Unread count will not be available. The query requires an index on 'authorId' and 'createdAt'.`);
                 } else {
@@ -577,28 +623,26 @@
 
         // --- RENDERING ---
         async function renderFriendsList() {
-            const friendUids = currentUserProfile?.friends || [];
-            await fetchUsers(friendUids);
+            // FIX: Use a Set to prevent duplicate UIDs from causing visual glitches
+            const uniqueFriendUids = [...new Set(currentUserProfile?.friends || [])];
+            await fetchUsers(uniqueFriendUids);
             
             friendsListEl.innerHTML = '';
-            if (friendUids.length === 0) {
+            if (uniqueFriendUids.length === 0) {
                 friendsListEl.innerHTML = '<li class="empty-state">No friends yet. Add one!</li>';
                 return;
             }
 
-            for (const uid of friendUids) {
+            for (const uid of uniqueFriendUids) {
                 const li = document.createElement('li');
                 li.dataset.uid = uid;
-                
                 const infoDiv = document.createElement('div');
                 infoDiv.className = 'item-info';
-                
                 const nameSpan = document.createElement('span');
                 nameSpan.className = 'item-name';
                 nameSpan.textContent = getDisplayName(uid);
                 infoDiv.appendChild(nameSpan);
 
-                // Add unread badge
                 const unreadCount = await getUnreadCount(uid);
                 if (unreadCount > 0) {
                     const badge = document.createElement('span');
@@ -677,9 +721,8 @@
             await fetchUsers([friendId]);
             updateChatHeader();
             
-            // Mark messages as read by setting the timestamp
             localStorage.setItem(`lastRead_${currentUser.uid}_${friendId}`, JSON.stringify(Date.now()));
-            renderFriendsList(); // Re-render to remove the badge
+            renderFriendsList();
 
             messagesContainer.innerHTML = '<li class="empty-state">Loading messages...</li>';
             chatPlaceholder.classList.add('hidden');
@@ -715,7 +758,11 @@
         // --- SOCIAL & CHAT ACTIONS ---
         async function unsendMessage(messageId) {
             if (!activeChatId) return;
-            await firebase.firestore().collection('chats').doc(activeChatId).collection('messages').doc(messageId).delete();
+            try {
+                await firebase.firestore().collection('chats').doc(activeChatId).collection('messages').doc(messageId).delete();
+            } catch(e) {
+                showNotification('Could not delete the message.', 'error');
+            }
         }
 
         messageForm.addEventListener('submit', async (e) => {
@@ -735,7 +782,7 @@
                 });
             } catch (error) {
                 console.error("Error sending message: ", error);
-                alert("Message could not be sent.");
+                showNotification('Message could not be sent.', 'error');
                 messageInput.value = textToRestore;
             }
         });
@@ -800,12 +847,10 @@
         document.addEventListener('DOMContentLoaded', () => {
             logoutBtn.addEventListener('click', () => firebase.auth().signOut());
             
-            // Sidebar Toggle
             document.getElementById('toggleSidebar').addEventListener('click', () => {
               document.getElementById('sidebar').classList.toggle('collapsed');
             });
 
-            // Enter to send message
             messageInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
@@ -817,7 +862,6 @@
                 charCounter.textContent = `${messageInput.value.length}/2000`;
             });
 
-            // Hide settings menu on global click
             window.addEventListener('click', (e) => {
                 const settingsBtn = document.getElementById('chatSettingsBtn');
                 if (settingsBtn && !settingsMenu.contains(e.target) && e.target !== settingsBtn && !settingsBtn.contains(e.target)) {
@@ -825,7 +869,6 @@
                 }
             });
 
-            // Button actions
             document.getElementById('setNicknameBtn').onclick = () => {
                 nicknameInput.value = nicknameCache[activeFriendUid] || '';
                 nicknameModal.classList.add('modal-open');
@@ -846,11 +889,10 @@
                 confirmationModal.classList.remove('modal-open');
             };
 
-            // User Search
             userSearchInput.addEventListener('input', async () => {
                 const searchTerm = userSearchInput.value.trim();
                 userSearchResultsEl.innerHTML = '';
-                if (searchTerm.length < 3) return;
+                if (searchTerm.length < 2) return;
 
                 const snapshot = await firebase.firestore().collection('users').where('username', '==', searchTerm).get();
                 if (snapshot.empty) {
@@ -859,14 +901,18 @@
                 
                 snapshot.forEach(doc => {
                     if (doc.id === currentUser.uid) return;
-                    const { username, email } = doc.data();
+                    const { username } = doc.data();
                     const userId = doc.id;
-                    const isFriend = currentUserProfile.friends.includes(userId);
-                    const isBlocked = currentUserProfile.blocked.includes(userId);
+                    const isFriend = currentUserProfile?.friends.includes(userId) || false;
+                    const isBlocked = currentUserProfile?.blocked.includes(userId) || false;
                     
                     let actionButton = '';
-                    if (isBlocked) actionButton = `<button class="btn-warning" disabled>Blocked</button>`;
-                    else if (!isFriend) actionButton = `<button class="btn-primary" onclick="sendFriendRequest('${userId}')">Add</button>`;
+                    if (isBlocked) {
+                        actionButton = `<button class="btn-disabled" disabled>Blocked</button>`;
+                    } else if (!isFriend) {
+                        actionButton = `<button class="btn-add" onclick="sendFriendRequest('${userId}')">Add</button>`;
+                    }
+                    // No button if already friends
 
                     userSearchResultsEl.innerHTML += `
                         <li>
@@ -884,13 +930,15 @@
                 requestsRef.where('senderId', '==', currentUser.uid).where('receiverId', '==', receiverId).get(),
                 requestsRef.where('senderId', '==', receiverId).where('receiverId', '==', currentUser.uid).get()
             ]);
-            if (!q1.empty || !q2.empty) return alert("Request already exists or is pending.");
+            if (!q1.empty || !q2.empty) {
+                return showNotification("Request already exists or is pending from them.", "info");
+            }
             
             await requestsRef.add({
                 senderId: currentUser.uid, receiverId, status: 'pending',
                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
-            alert('Friend request sent!');
+            showNotification('Friend request sent!', 'success');
             userSearchInput.value = ''; userSearchResultsEl.innerHTML = '';
         };
 
