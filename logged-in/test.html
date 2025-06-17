@@ -73,7 +73,6 @@
         #friendsList .item-info.active-chat .item-name { color: var(--color-accent); font-weight: 700; }
         .item-list .empty-state { color: #888; font-style: italic; padding: 10px 5px; cursor: default; }
         
-        /* Action Buttons in Lists */
         .item-actions button {
             background: none; border: none; color: #ccc; cursor: pointer;
             font-size: 1.1em; padding: 5px; border-radius: 50%;
@@ -108,7 +107,6 @@
         }
         .chat-header .header-content { flex-grow: 1; text-align: center; }
         
-        /* Messages & Footer */
         .messages-container { flex-grow: 1; padding: 20px; overflow-y: auto; min-height: 0; }
         .message { display: flex; margin-bottom: 4px; max-width: 75%; }
         .message-content { padding: 10px 16px; border-radius: 18px; line-height: 1.5; word-break: break-word; }
@@ -124,14 +122,8 @@
         #sendMessageBtn { background: var(--color-accent-gradient); color: white; border: none; border-radius: 50%; width: 44px; height: 44px; font-size: 1.2em; cursor: pointer; flex-shrink: 0; }
         #charCounter { font-size: 0.8em; color: #aaa; text-align: right; padding-right: 55px; }
 
-        /* Custom Notifications & Helpers */
-        .notification { position: fixed; bottom: 20px; right: 20px; padding: 12px 20px; border-radius: 8px; color: white; font-weight: 600; z-index: 10001; transform: translateY(150%); transition: transform 0.4s ease-in-out; box-shadow: 0 4px 12px rgba(0,0,0,0.15); }
-        .notification.success { background: linear-gradient(135deg, #28a745, #20c997); }
-        .notification.error { background: linear-gradient(135deg, #dc3545, #e83e8c); }
-        .notification.info { background: linear-gradient(135deg, #6720bd, #8a2be2); }
         .hidden { display: none !important; }
 
-        /* Responsive Mobile Layout */
         @media (max-width: 768px) {
             .dashboard-container { overflow: hidden; }
             .sidebar { width: 100%; height: 100%; border-right: none; position: absolute; top: 0; left: 0; transform: translateX(0); z-index: 20; }
@@ -237,7 +229,7 @@
         let activeFriendUid = null;
         let friendsUnsubscribe = () => {}, requestsUnsubscribe = () => {}, chatUnsubscribe = () => {};
 
-        // --- NEW: Custom Notification Function ---
+        // --- Custom Notification Function ---
         function showNotification(message, type = 'info', duration = 3000) {
             const notification = document.createElement('div');
             notification.className = `notification ${type}`;
@@ -284,7 +276,6 @@
         function setupListeners() {
             if(friendsUnsubscribe) friendsUnsubscribe(); 
             if(requestsUnsubscribe) requestsUnsubscribe();
-
             friendsUnsubscribe = firebase.firestore().collection('users').doc(currentUser.uid).onSnapshot(doc => {
                 currentUserProfile = { id: doc.id, ...doc.data() };
                 userCache[currentUser.uid] = { username: currentUserProfile.username, email: currentUserProfile.email };
@@ -292,12 +283,7 @@
                 userEmailEl.textContent = currentUserProfile.email;
                 renderFriendsList();
                 renderBlockedList();
-                if (activeFriendUid && !currentUserProfile.friends.includes(activeFriendUid)) {
-                    closeChat();
-                    showNotification('You are no longer friends with this user.', 'info');
-                }
             });
-
             requestsUnsubscribe = firebase.firestore().collection('friend_requests').where('receiverId', '==', currentUser.uid).onSnapshot(snapshot => {
                 renderFriendRequests(snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() })));
             });
@@ -316,24 +302,16 @@
 
         // --- Rendering Functions ---
         async function renderFriendsList() {
-            // FIX: Use a Set to prevent visual duplicates
             const uniqueFriendUids = [...new Set(currentUserProfile?.friends || [])];
             await fetchUsers(uniqueFriendUids);
-            
             friendsListEl.innerHTML = '';
-            if (uniqueFriendUids.length === 0) {
-                friendsListEl.innerHTML = '<li class="empty-state">No friends yet.</li>'; return;
-            }
-
+            if (uniqueFriendUids.length === 0) { friendsListEl.innerHTML = '<li class="empty-state">No friends yet.</li>'; return; }
             for (const uid of uniqueFriendUids) {
                 const li = document.createElement('li');
                 li.dataset.uid = uid;
-
                 const itemInfo = document.createElement('div');
                 itemInfo.className = 'item-info';
                 itemInfo.innerHTML = `<span class="item-name">${userCache[uid]?.username || '...'}</span>`;
-                
-                // NEW: Unread count logic with 99+
                 const unreadCount = await getUnreadCount(uid);
                 if (unreadCount > 0) {
                     const badge = document.createElement('span');
@@ -341,11 +319,9 @@
                     badge.textContent = unreadCount > 99 ? '99+' : unreadCount;
                     itemInfo.appendChild(badge);
                 }
-
                 li.appendChild(itemInfo);
                 li.onclick = () => openChat(uid);
                 if (uid === activeFriendUid) itemInfo.classList.add('active-chat');
-                
                 friendsListEl.appendChild(li);
             }
         }
@@ -359,14 +335,11 @@
             });
         }
 
-        // NEW: Function to render the blocked users list
         async function renderBlockedList() {
             const blockedUids = currentUserProfile?.blocked || [];
             await fetchUsers(blockedUids);
             blockedUsersListEl.innerHTML = '';
-            if (blockedUids.length === 0) {
-                blockedUsersListEl.innerHTML = '<li class="empty-state">No users blocked.</li>'; return;
-            }
+            if (blockedUids.length === 0) { blockedUsersListEl.innerHTML = '<li class="empty-state">No users blocked.</li>'; return; }
             blockedUids.forEach(uid => {
                 blockedUsersListEl.innerHTML += `<li><span class="item-info">${userCache[uid]?.username || '...'}</span><div class="item-actions"><button title="Unblock User" class="unblock-btn" onclick="unblockUser('${uid}')"><i class="fas fa-unlock"></i></button></div></li>`;
             });
@@ -378,9 +351,33 @@
             const messagesRef = firebase.firestore().collection('chats').doc(chatId).collection('messages');
             const q = messagesRef.where('authorId', '==', friendId).where('createdAt', '>', new Date(lastReadTimestamp));
             try {
-                const snapshot = await q.get();
+                const snapshot = await q.get({ source: 'server' }); // Ensure we get latest from server
                 return snapshot.size;
             } catch (error) { return 0; }
+        }
+        
+        // --- NEW: Client-side cleanup function for old messages ---
+        async function cleanupOldMessages(chatId) {
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+            const messagesRef = firebase.firestore().collection('chats').doc(chatId).collection('messages');
+            
+            // Query for YOUR old messages
+            const q = messagesRef.where('createdAt', '<', sevenDaysAgo).where('authorId', '==', currentUser.uid);
+            
+            try {
+                const snapshot = await q.get();
+                if (snapshot.empty) return; // Nothing to delete
+
+                // Firestore batches are limited to 500 operations
+                const batch = firebase.firestore().batch();
+                snapshot.docs.forEach(doc => {
+                    batch.delete(doc.ref);
+                });
+                await batch.commit();
+                console.log(`Cleaned up ${snapshot.size} old messages from chat ${chatId}.`);
+            } catch (error) {
+                console.error("Error cleaning up old messages:", error);
+            }
         }
 
         // --- Chat Logic ---
@@ -392,12 +389,14 @@
 
         async function openChat(friendId) {
             if (activeFriendUid === friendId && dashboardContainer.classList.contains('mobile-chat-active')) return;
-            
             if (chatUnsubscribe) chatUnsubscribe();
             
             activeFriendUid = friendId;
             activeChatId = [currentUser.uid, friendId].sort().join('_');
             
+            // --- NEW: Run cleanup logic when opening a chat ---
+            await cleanupOldMessages(activeChatId);
+
             await fetchUsers([friendId]);
             updateChatHeader();
             
@@ -410,16 +409,10 @@
             messageInput.disabled = false;
             sendMessageBtn.disabled = false;
             
-            // MODIFIED: Only focus input on desktop to prevent mobile keyboard pop-up
-            if (window.innerWidth > 768) {
-                messageInput.focus();
-            }
-            
+            if (window.innerWidth > 768) { messageInput.focus(); }
             if (window.innerWidth <= 768) dashboardContainer.classList.add('mobile-chat-active');
             
-            const messagesRef = firebase.firestore().collection('chats').doc(activeChatId).collection('messages').orderBy('createdAt', 'asc');
-            
-            // FIX: Use docChanges for efficient, real-time message updates
+            const messagesRef = firebase.firestore().collection('chats').doc(activeChatId).collection('messages').orderBy('createdAt');
             chatUnsubscribe = messagesRef.onSnapshot(snapshot => {
                 snapshot.docChanges().forEach(change => {
                     if (change.type === "added") {
@@ -431,14 +424,9 @@
                         msgDiv.innerHTML = `<div class="message-content">${decryptMessage(msgData.text, getChatSecret(currentUser.uid, activeFriendUid))}</div>`;
                         messagesContainer.appendChild(msgDiv);
                     }
-                    if (change.type === "removed") {
-                        const msgElement = messagesContainer.querySelector(`[data-id="${change.doc.id}"]`);
-                        if(msgElement) msgElement.remove();
-                    }
                 });
                 messagesContainer.scrollTop = messagesContainer.scrollHeight;
             }, error => {
-                console.error("Chat listener error:", error);
                 showNotification("Could not load chat messages.", "error");
             });
         }
@@ -458,15 +446,17 @@
         document.addEventListener('DOMContentLoaded', () => {
             logoutBtn.addEventListener('click', () => firebase.auth().signOut());
 
-            // NEW: Enter to send message
+            // FIX: Re-added Enter to Send
             messageInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    messageForm.requestSubmit();
+                    if(!sendMessageBtn.disabled) {
+                       messageForm.requestSubmit();
+                    }
                 }
             });
 
-            // NEW: Character counter logic
+            // NEW: Character counter
             messageInput.addEventListener('input', () => {
                 const count = messageInput.value.length;
                 charCounter.textContent = `${count}/2000`;
@@ -478,7 +468,7 @@
                 const plainText = messageInput.value.trim();
                 if (!plainText || !activeChatId) return;
                 
-                messageInput.value = ''; // Clear immediately for better UX
+                messageInput.value = '';
                 charCounter.textContent = '0/2000';
                 charCounter.style.color = '#aaa';
 
@@ -486,10 +476,10 @@
                     await firebase.firestore().collection('chats').doc(activeChatId).collection('messages').add({
                         text: encryptMessage(plainText, getChatSecret(currentUser.uid, activeFriendUid)),
                         authorId: currentUser.uid,
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp() // Used for TTL
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
                     });
                 } catch(err) {
-                    messageInput.value = plainText; // Restore on error
+                    messageInput.value = plainText;
                     showNotification("Message could not be sent.", "error");
                 }
             });
