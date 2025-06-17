@@ -514,57 +514,46 @@
             const li = button.closest('.user-list-item');
             if (!li) return;
         
-            button.disabled = true; // Immediately disable button to prevent double-clicks.
+            button.disabled = true; 
         
             const action = button.dataset.action;
             const userId = li.dataset.userId;
             const requestId = button.dataset.requestId;
         
-            // Wrap the entire logic in a try block to handle potential errors
             try {
-                let shouldProceed = true;
-        
                 if (action === 'unfriend') {
                     const friendToUnfriend = localState.users.find(u => u.id === userId);
                     const friendName = friendToUnfriend ? friendToUnfriend.username : 'this user';
-                    shouldProceed = confirm(`Are you sure you want to unfriend ${friendName}?`);
+                    if (confirm(`Are you sure you want to unfriend ${friendName}?`)) {
+                        await unfriendUser(userId);
+                    }
                 } else if (action === 'block') {
                     const userToBlock = localState.users.find(u => u.id === userId);
                     const userName = userToBlock ? userToBlock.username : 'this user';
-                    shouldProceed = confirm(`Blocking ${userName} will also unfriend them. Are you sure?`);
-                }
-        
-                if (!shouldProceed) {
-                    button.disabled = false; // Re-enable if the user cancels.
-                    return;
-                }
-        
-                // Perform the action
-                switch (action) {
-                    case 'add': await sendFriendRequest(userId); break;
-                    case 'accept': await acceptFriendRequest(userId, requestId); break;
-                    case 'cancel': await cancelOrDeclineRequest(requestId); break;
-                    case 'decline': await cancelOrDeclineRequest(requestId); break;
-                    case 'unfriend': await unfriendUser(userId); break;
-                    case 'block': await blockUser(userId); break;
-                    case 'unblock': await unblockUser(userId); break;
-                    case 'chat':
-                        const friend = localState.users.find(u => u.id === userId);
-                        if (friend) openChatWith(friend);
-                        button.disabled = false; // Chat is non-destructive, re-enable immediately.
-                        break;
+                    if (confirm(`Blocking ${userName} will also unfriend them. Are you sure?`)) {
+                        await blockUser(userId);
+                    }
+                } else {
+                    // For non-confirm actions, proceed directly
+                    switch (action) {
+                        case 'add': await sendFriendRequest(userId); break;
+                        case 'accept': await acceptFriendRequest(userId, requestId); break;
+                        case 'cancel': await cancelOrDeclineRequest(requestId); break;
+                        case 'decline': await cancelOrDeclineRequest(requestId); break;
+                        case 'unblock': await unblockUser(userId); break;
+                        case 'chat':
+                            const friend = localState.users.find(u => u.id === userId);
+                            if (friend) openChatWith(friend);
+                            break;
+                    }
                 }
             } catch (err) {
                 showStatus(`Action '${action}' failed: ${err.message}`, 'error');
                 console.error("Action failed:", err);
-                 // If an error occurs, the realtime listener will eventually correct the UI.
-                 // In case it doesn't, or the button is still around, re-enable it.
-                if (button.isConnected) {
-                    button.disabled = false;
-                }
+            } finally {
+                // The realtime listener will handle redrawing, which re-enables the button if appropriate.
+                // We no longer manually re-enable here to prevent race conditions.
             }
-            // We no longer need a 'finally' block because the realtime listener is the source of truth
-            // for what the button's state should be. Disabling it at the start prevents the race condition.
         });
         
         userSearchEl.addEventListener('input', renderAllUsers);
@@ -575,4 +564,4 @@
     });
   </script>
 </body>
-</ht
+</html>
