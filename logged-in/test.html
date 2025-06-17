@@ -6,6 +6,7 @@
     <title>4SP - VERN SOCIAL</title>
     <link rel="stylesheet" href="../css/style.css" />
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
     <style>
         /* --- Font & Color Scheme --- */
         :root {
@@ -25,6 +26,7 @@
             --color-accent-gradient: linear-gradient(135deg, #8A2BE2 0%, #6A3DE8 100%);
             --color-danger: #F02849;
             --color-success: #31A24C;
+            --color-warning: #F5C33B;
         }
 
         /* --- Base Layout --- */
@@ -98,7 +100,7 @@
             transition: background-color 0.2s;
             cursor: pointer;
         }
-        .item-list li:hover:not(.empty-state) { background-color: var(--color-sidebar-alt); }
+        .item-list li:hover:not(.empty-state):not(.user-search-card) { background-color: var(--color-sidebar-alt); }
         .item-list .item-name {
             flex-grow: 1;
             white-space: nowrap;
@@ -122,6 +124,44 @@
 
         .item-list .empty-state { color: #888; font-style: italic; padding: 10px 5px; cursor: default; }
         #friendsList .item-name.active-chat { color: var(--color-accent); font-weight: 700; }
+
+        /* ADDED: Styling for User Search Cards */
+        .user-search-card {
+            background-color: var(--color-sidebar-alt);
+            padding: 12px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: default;
+        }
+        .user-search-card .item-info {
+            display: flex;
+            flex-direction: column;
+        }
+        .user-search-card .item-name {
+            font-weight: 600;
+            color: var(--color-text-light);
+        }
+        .user-search-card .item-email {
+            font-size: 0.85em;
+            color: var(--color-text-secondary);
+        }
+        .user-search-card .btn-action {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-family: var(--font-primary);
+            font-size: 0.9em;
+            transition: background-color 0.2s;
+        }
+        .btn-add-friend { background-color: var(--color-accent); color: white; }
+        .btn-add-friend:hover { background-color: #5a2ed1; }
+        .btn-unblock { background-color: var(--color-warning); color: #1C1E21; }
+        .btn-unblock:hover { background-color: #e0b02f; }
 
         /* --- Chat Area Layout --- */
         .chat-area { 
@@ -154,7 +194,6 @@
             flex-shrink: 0;
             position: relative;
         }
-        /* MODIFIED: Made settings button a perfect circle */
         #chatSettingsBtn {
             background: none;
             border: none;
@@ -163,8 +202,8 @@
             cursor: pointer;
             border-radius: 50%;
             transition: background-color 0.2s, color 0.2s;
-            width: 40px; /* Explicit width */
-            height: 40px; /* Explicit height */
+            width: 40px;
+            height: 40px;
             display: flex;
             align-items: center;
             justify-content: center;
@@ -223,7 +262,6 @@
         .message { display: flex; margin-bottom: 2px; max-width: 75%; position: relative; }
         .message-content { padding: 10px 16px; border-radius: 18px; line-height: 1.5; word-break: break-word; font-family: var(--font-primary); }
         
-        /* MODIFIED: Added align-items and gap for flexbox button placement */
         .message.sent {
             margin-left: auto;
             flex-direction: row-reverse;
@@ -235,7 +273,6 @@
         .message.received .message-content { background: #E9E9EB; color: #333; border-bottom-left-radius: 5px; }
 
         /* --- Redesigned Deletion Button --- */
-        /* MODIFIED: Changed from absolute positioning to a flexbox item */
         .message .unsend-btn { 
             display: flex;
             align-items: center;
@@ -250,7 +287,7 @@
             opacity: 0; 
             transition: opacity 0.2s ease, transform 0.2s ease;
             transform: scale(0.8);
-            flex-shrink: 0; /* Prevent button from shrinking */
+            flex-shrink: 0;
         }
         .message.sent:hover .unsend-btn { 
             opacity: 1;
@@ -337,7 +374,7 @@
                 </div>
                 <div class="sidebar-section">
                     <h2><i class="fas fa-users"></i> Friends</h2>
-                    <ul id="friendsList" class="item-list"><li class="empty-state">No friends yet.</li></ul>
+                    <ul id="friendsList" class="item-list"><li class="empty-state">No friends yet. Add one!</li></ul>
                 </div>
             </div>
         </aside>
@@ -437,6 +474,30 @@
         let activeFriendUid = null;
         let friendsUnsubscribe = () => {}, requestsUnsubscribe = () => {}, chatUnsubscribe = () => {};
         let confirmCallback = null;
+
+        // --- Encryption & Decryption Functions ---
+        function getChatSecret(uidA, uidB) {
+            // Generate a shared secret for AES using both UIDs
+            return CryptoJS.SHA256([uidA, uidB].sort().join("_4spSecretKey")).toString();
+        }
+
+        function encryptMessage(plainText, key) {
+            return CryptoJS.AES.encrypt(plainText, key).toString();
+        }
+
+        function decryptMessage(cipherText, key) {
+            try {
+                const bytes = CryptoJS.AES.decrypt(cipherText, key);
+                const originalText = bytes.toString(CryptoJS.enc.Utf8);
+                if (!originalText) {
+                    return '[Empty message after decryption]';
+                }
+                return originalText;
+            } catch (e) {
+                console.error("Decryption error:", e);
+                return '[Error decrypting message]';
+            }
+        }
 
         // --- Auth & Initialization ---
         firebase.auth().onAuthStateChanged(async (user) => {
@@ -566,31 +627,32 @@
         }
         
         function renderMessage(id, msg) {
-             const msgDiv = document.createElement('div');
-             const sentByCurrentUser = msg.authorId === currentUser.uid;
-             msgDiv.className = `message ${sentByCurrentUser ? 'sent' : 'received'}`;
-             msgDiv.dataset.id = id;
-             
-             const content = document.createElement('div');
-             content.className = 'message-content';
-             content.textContent = msg.text;
+            const msgDiv = document.createElement('div');
+            const sentByCurrentUser = msg.authorId === currentUser.uid;
+            msgDiv.className = `message ${sentByCurrentUser ? 'sent' : 'received'}`;
+            msgDiv.dataset.id = id;
 
-             if (sentByCurrentUser) {
-                 const unsendBtn = document.createElement('button');
-                 unsendBtn.className = 'unsend-btn';
-                 unsendBtn.title = 'Unsend';
-                 unsendBtn.innerHTML = '<i class="fas fa-trash"></i>';
-                 unsendBtn.onclick = () => showConfirmationModal(
-                     'Unsend Message?', 
-                     'This will permanently delete the message for everyone.',
-                     () => unsendMessage(id)
-                 );
-                 msgDiv.appendChild(unsendBtn); // Button is an item in the flex container now
-             }
-             
-             msgDiv.appendChild(content); // Add content after button for correct flex-reverse order
-             
-             messagesContainer.appendChild(msgDiv);
+            const content = document.createElement('div');
+            content.className = 'message-content';
+
+            const key = getChatSecret(currentUser.uid, activeFriendUid);
+            content.textContent = decryptMessage(msg.text, key);
+
+            if (sentByCurrentUser) {
+                const unsendBtn = document.createElement('button');
+                unsendBtn.className = 'unsend-btn';
+                unsendBtn.title = 'Unsend';
+                unsendBtn.innerHTML = '<i class="fas fa-trash"></i>';
+                unsendBtn.onclick = () => showConfirmationModal(
+                    'Unsend Message?',
+                    'This will permanently delete the message for everyone.',
+                    () => unsendMessage(id)
+                );
+                msgDiv.appendChild(unsendBtn);
+            }
+
+            msgDiv.appendChild(content);
+            messagesContainer.appendChild(msgDiv);
         }
 
         // --- CHAT ---
@@ -675,23 +737,26 @@
 
         messageForm.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const text = messageInput.value.trim();
-            if (!text || !activeChatId) return;
-            
-            const tempMessage = messageInput.value;
+            const plainText = messageInput.value.trim();
+            if (!plainText || !activeChatId || !currentUser || !activeFriendUid) return;
+
+            const key = getChatSecret(currentUser.uid, activeFriendUid);
+            const encryptedText = encryptMessage(plainText, key);
+
+            const textToRestore = messageInput.value;
             messageInput.value = '';
             charCounter.textContent = '0/2000';
-            
+
             try {
                 await firebase.firestore().collection('chats').doc(activeChatId).collection('messages').add({
-                    text: tempMessage,
+                    text: encryptedText,
                     authorId: currentUser.uid,
                     createdAt: firebase.firestore.FieldValue.serverTimestamp()
                 });
             } catch (error) {
                 console.error("Error sending message: ", error);
                 alert("Message could not be sent.");
-                messageInput.value = tempMessage;
+                messageInput.value = textToRestore;
             }
         });
         
@@ -764,8 +829,6 @@
 
         // --- Event Listeners ---
         document.addEventListener('DOMContentLoaded', () => {
-
-            // ADDED: Logout button functionality
             logoutBtn.addEventListener('click', () => {
                 firebase.auth().signOut().then(() => {
                     console.log('User signed out successfully.');
@@ -775,6 +838,7 @@
                 });
             });
 
+            // MODIFIED: User search logic completely rewritten
             userSearchInput.addEventListener('input', async () => {
                 const searchTerm = userSearchInput.value.trim();
                 userSearchResultsEl.innerHTML = '';
@@ -787,21 +851,41 @@
                     userSearchResultsEl.innerHTML = '<li class="empty-state">No users found.</li>';
                     return;
                 }
+                
                 snapshot.forEach(doc => {
-                    if (doc.id === currentUser.uid) return;
+                    if (doc.id === currentUser.uid) return; // Skip self
+
                     const userData = doc.data();
-                    const isFriend = currentUserProfile.friends.includes(doc.id);
-                    const isBlocked = currentUserProfile.blocked.includes(doc.id);
-                    if(isBlocked) return;
+                    const userId = doc.id;
+                    const isFriend = currentUserProfile.friends.includes(userId);
+                    const isBlocked = currentUserProfile.blocked.includes(userId);
 
                     const li = document.createElement('li');
-                    li.innerHTML = `<span class="item-name">${userData.username}</span>`;
-                    if (!isFriend) {
-                        const actions = document.createElement('div');
-                        actions.className = 'item-actions';
-                        actions.innerHTML = `<button title="Add Friend" onclick="sendFriendRequest('${doc.id}')"><i class="fas fa-user-plus"></i></button>`;
-                        li.appendChild(actions);
+                    li.className = 'user-search-card';
+
+                    // Info container (username and email)
+                    const infoDiv = document.createElement('div');
+                    infoDiv.className = 'item-info';
+                    
+                    let infoHTML = `<span class="item-name">${userData.username}</span>`;
+                    if (isFriend) {
+                        infoHTML += `<span class="item-email">${userData.email}</span>`;
                     }
+                    infoDiv.innerHTML = infoHTML;
+                    li.appendChild(infoDiv);
+
+                    // Actions container (buttons)
+                    const actionsDiv = document.createElement('div');
+                    actionsDiv.className = 'item-actions';
+
+                    if (isBlocked) {
+                        actionsDiv.innerHTML = `<button class="btn-action btn-unblock" onclick="unblockUser('${userId}')">Unblock</button>`;
+                    } else if (!isFriend) {
+                        actionsDiv.innerHTML = `<button class="btn-action btn-add-friend" onclick="sendFriendRequest('${userId}')">Add Friend</button>`;
+                    }
+                    // If they are a friend, no button is shown
+                    
+                    li.appendChild(actionsDiv);
                     userSearchResultsEl.appendChild(li);
                 });
             });
@@ -810,11 +894,10 @@
                 charCounter.textContent = `${messageInput.value.length}/2000`;
             });
             
-            // Added listener for Enter to send message
             messageInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault(); // Prevents adding a new line
-                    sendMessageBtn.click(); // Triggers the form's submit event
+                    e.preventDefault();
+                    sendMessageBtn.click();
                 }
             });
 
@@ -850,6 +933,22 @@
         });
         
         // --- GLOBAL HELPER FUNCTIONS ---
+        // ADDED: Function to unblock a user
+        window.unblockUser = async (userIdToUnblock) => {
+            const userDocRef = firebase.firestore().collection('users').doc(currentUser.uid);
+            try {
+                await userDocRef.update({
+                    blocked: firebase.firestore.FieldValue.arrayRemove(userIdToUnblock)
+                });
+                console.log(`User ${userIdToUnblock} unblocked.`);
+                // Refresh the search results to show the change
+                userSearchInput.dispatchEvent(new Event('input', { bubbles: true }));
+            } catch (error) {
+                console.error("Error unblocking user: ", error);
+                alert("Could not unblock the user.");
+            }
+        };
+
         window.sendFriendRequest = async (receiverId) => {
             const requestsRef = firebase.firestore().collection('friend_requests');
             const [q1, q2] = await Promise.all([
