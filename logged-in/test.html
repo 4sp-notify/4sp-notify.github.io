@@ -51,6 +51,7 @@
     .user-list-item .user-details .email { font-size: 0.85em; color: #888; }
     
     .action-btn { border: none; padding: 8px 12px; border-radius: 8px; font-weight: 600; cursor: pointer; font-size: 0.8em; transition: all 0.2s ease; margin-left: 5px; }
+    .action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
     .btn-add { background-color: #28a745; color: white; }
     .btn-accept { background-color: #007bff; color: white; }
     .btn-cancel, .btn-decline { background-color: #6c757d; color: white; }
@@ -66,7 +67,7 @@
     #chatHeader { padding: 15px 20px; border-bottom: 1px solid #eee; background-color: #f8f9fa; }
     #chatHeader h3 { margin: 0; font-size: 1.2em; color: #333; }
     #chatHeader #closeChatBtn { float: right; background: none; border: none; font-size: 1.5em; cursor: pointer; color: #888; line-height: 1; }
-    #chatMessages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; } /* Changed to column */
+    #chatMessages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; }
     #chatMessagesContainer { display: flex; flex-direction: column; gap: 12px; }
     .message-bubble { max-width: 75%; padding: 10px 15px; border-radius: 18px; line-height: 1.4; word-wrap: break-word; }
     .message-bubble.sent { background: #6720bd; color: white; border-bottom-right-radius: 4px; align-self: flex-end; }
@@ -517,25 +518,27 @@
             const action = button.dataset.action;
             const userId = li.dataset.userId;
             const requestId = button.dataset.requestId;
-
+            
+            // This is the core logic fix: wrap the entire handling in a try/finally
+            // to ensure the button is re-enabled if the user cancels the confirmation.
             let shouldProceed = true;
-            // Handle confirms for destructive actions
-            if (action === 'unfriend') {
-                const friendToUnfriend = localState.users.find(u => u.id === userId);
-                const friendName = friendToUnfriend ? friendToUnfriend.username : 'this user';
-                shouldProceed = confirm(`Are you sure you want to unfriend ${friendName}?`);
-            } else if (action === 'block') {
-                const userToBlock = localState.users.find(u => u.id === userId);
-                const userName = userToBlock ? userToBlock.username : 'this user';
-                shouldProceed = confirm(`Blocking ${userName} will also unfriend them. Are you sure?`);
-            }
-
-            if (!shouldProceed) {
-                button.disabled = false; // Re-enable if user cancels
-                return;
-            }
-
             try {
+                // Handle confirms for destructive actions
+                if (action === 'unfriend') {
+                    const friendToUnfriend = localState.users.find(u => u.id === userId);
+                    const friendName = friendToUnfriend ? friendToUnfriend.username : 'this user';
+                    shouldProceed = confirm(`Are you sure you want to unfriend ${friendName}?`);
+                } else if (action === 'block') {
+                    const userToBlock = localState.users.find(u => u.id === userId);
+                    const userName = userToBlock ? userToBlock.username : 'this user';
+                    shouldProceed = confirm(`Blocking ${userName} will also unfriend them. Are you sure?`);
+                }
+
+                if (!shouldProceed) {
+                    // If user cancels, we just return. The finally block will re-enable the button.
+                    return;
+                }
+
                 switch (action) {
                     case 'add': await sendFriendRequest(userId); break;
                     case 'accept': await acceptFriendRequest(userId, requestId); break;
@@ -547,17 +550,17 @@
                     case 'chat': 
                         const friend = localState.users.find(u => u.id === userId);
                         if (friend) openChatWith(friend);
-                        button.disabled = false; // Chat isn't a destructive/state-changing action in the same way
                         break;
                 }
             } catch (err) {
-                showStatus(`Action '${action}' failed. Please try again.`, 'error');
-                // On failure, re-render everything to restore the button state
-                // The realtime listener should handle this, but as a fallback:
-                if (!button.isConnected) { // Check if the button was removed by a re-render
-                   renderAllTabs();
-                } else {
-                   button.disabled = false;
+                showStatus(`Action '${action}' failed. Error: ${err.message}`, 'error');
+                console.error("Action failed:", err);
+            } finally {
+                // The realtime listener will redraw the UI correctly. 
+                // We only need to re-enable the button if the user cancelled the dialog
+                // or if the button still exists in the DOM after the action.
+                if (button.isConnected) {
+                    button.disabled = false;
                 }
             }
         });
