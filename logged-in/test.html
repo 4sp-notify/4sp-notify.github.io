@@ -66,7 +66,7 @@
     #chatHeader { padding: 15px 20px; border-bottom: 1px solid #eee; background-color: #f8f9fa; }
     #chatHeader h3 { margin: 0; font-size: 1.2em; color: #333; }
     #chatHeader #closeChatBtn { float: right; background: none; border: none; font-size: 1.5em; cursor: pointer; color: #888; line-height: 1; }
-    #chatMessages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column-reverse; }
+    #chatMessages { flex-grow: 1; padding: 20px; overflow-y: auto; display: flex; flex-direction: column; } /* Changed to column */
     #chatMessagesContainer { display: flex; flex-direction: column; gap: 12px; }
     .message-bubble { max-width: 75%; padding: 10px 15px; border-radius: 18px; line-height: 1.4; word-wrap: break-word; }
     .message-bubble.sent { background: #6720bd; color: white; border-bottom-right-radius: 4px; align-self: flex-end; }
@@ -177,7 +177,7 @@
             users: [],
             requests: [],
         };
-        let listeners = []; // To store unsubscribe functions
+        let listeners = {}; // To store unsubscribe functions
 
         // --- DOM Elements ---
         const sidebarUserNameEl = document.getElementById('userName');
@@ -190,6 +190,7 @@
         const blockedListEl = document.getElementById('blockedList');
         const chatContainer = document.getElementById('chatContainer');
         const chatWelcomeEl = document.getElementById('chatWelcome');
+        const chatMessages = document.getElementById('chatMessages');
         const chattingWithEl = document.getElementById('chattingWith');
         const chatMessagesContainer = document.getElementById('chatMessagesContainer');
         const chatInputForm = document.getElementById('chatInputForm');
@@ -221,8 +222,8 @@
         });
 
         function detachAllListeners() {
-            listeners.forEach(unsubscribe => unsubscribe());
-            listeners = [];
+            Object.values(listeners).forEach(unsub => unsub && unsub());
+            listeners = {};
         }
 
         async function attachRealtimeListeners() {
@@ -230,7 +231,7 @@
             detachAllListeners(); // Clean up previous listeners
 
             // 1. Listen to current user's profile changes
-            const profileUnsub = db.collection('users').doc(currentUser.uid)
+            listeners.profile = db.collection('users').doc(currentUser.uid)
                 .onSnapshot(async (doc) => {
                     if (doc.exists) {
                         localState.profile = { id: doc.id, ...doc.data() };
@@ -247,38 +248,33 @@
                         await db.collection('users').doc(currentUser.uid).set(profile);
                     }
                 }, err => console.error("Profile listener error: ", err));
-            listeners.push(profileUnsub);
 
             // 2. Listen to all users collection
-            const usersUnsub = db.collection('users').onSnapshot((snapshot) => {
+            listeners.users = db.collection('users').onSnapshot((snapshot) => {
                 localState.users = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 renderAllTabs();
             }, err => console.error("Users listener error: ", err));
-            listeners.push(usersUnsub);
 
             // 3. Listen to relevant friend requests
-            const incomingUnsub = db.collection('friend_requests').where('receiverId', '==', currentUser.uid)
+            listeners.incomingRequests = db.collection('friend_requests').where('receiverId', '==', currentUser.uid)
                 .onSnapshot(handleRequestSnapshot, err => console.error("Incoming req listener error:", err));
-            const outgoingUnsub = db.collection('friend_requests').where('senderId', '==', currentUser.uid)
+            listeners.outgoingRequests = db.collection('friend_requests').where('senderId', '==', currentUser.uid)
                 .onSnapshot(handleRequestSnapshot, err => console.error("Outgoing req listener error:", err));
-            listeners.push(incomingUnsub, outgoingUnsub);
         }
 
         function handleRequestSnapshot(snapshot) {
             snapshot.docChanges().forEach((change) => {
                 const docData = { id: change.doc.id, ...change.doc.data() };
+                const existingIndex = localState.requests.findIndex(r => r.id === docData.id);
+
                 if (change.type === "added") {
-                    // Avoid duplicates
-                    if (!localState.requests.find(r => r.id === docData.id)) {
-                        localState.requests.push(docData);
-                    }
+                    if (existingIndex === -1) localState.requests.push(docData);
                 }
                 if (change.type === "modified") {
-                    const index = localState.requests.findIndex(r => r.id === docData.id);
-                    if (index > -1) localState.requests[index] = docData;
+                    if (existingIndex > -1) localState.requests[existingIndex] = docData;
                 }
                 if (change.type === "removed") {
-                    localState.requests = localState.requests.filter(r => r.id !== docData.id);
+                    if (existingIndex > -1) localState.requests.splice(existingIndex, 1);
                 }
             });
             renderAllTabs();
@@ -420,7 +416,11 @@
         }
         
         async function unfriendUser(friendId) {
-            if (!confirm("Are you sure you want to unfriend this user?")) return;
+            const friendToUnfriend = localState.users.find(u => u.id === friendId);
+            const friendName = friendToUnfriend ? friendToUnfriend.username : 'this user';
+            if (!confirm(`Are you sure you want to unfriend ${friendName}?`)) {
+                return;
+            }
             const batch = db.batch();
             batch.update(db.collection('users').doc(currentUser.uid), { friends: firebase.firestore.FieldValue.arrayRemove(friendId) });
             batch.update(db.collection('users').doc(friendId), { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
@@ -428,14 +428,17 @@
         }
         
         async function blockUser(userIdToBlock) {
-            if (!confirm("Blocking will also unfriend the user. Continue?")) return;
+            const userToBlock = localState.users.find(u => u.id === userIdToBlock);
+            const userName = userToBlock ? userToBlock.username : 'this user';
+            if (!confirm(`Blocking ${userName} will also unfriend them. Are you sure?`)) {
+                return;
+            }
             const batch = db.batch();
             const currentUserRef = db.collection('users').doc(currentUser.uid);
             batch.update(currentUserRef, {
                 blocked: firebase.firestore.FieldValue.arrayUnion(userIdToBlock),
-                friends: firebase.firestore.FieldValue.arrayRemove(userIdToBlock) // Also remove from friends
+                friends: firebase.firestore.FieldValue.arrayRemove(userIdToBlock)
             });
-            // Also remove current user from the other person's friend list
             batch.update(db.collection('users').doc(userIdToBlock), { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
             await batch.commit().catch(e => showStatus(`Error blocking user: ${e.message}`, 'error'));
         }
@@ -447,25 +450,25 @@
         }
 
         // --- Chat ---
-        // Chat functionality remains largely the same...
         function openChatWith(friendUser) {
             chatContainer.classList.remove('hidden');
             chatWelcomeEl.style.display = 'none';
             chatInputForm.style.display = 'flex';
             chattingWithEl.textContent = friendUser.username;
             const chatId = [currentUser.uid, friendUser.id].sort().join('_');
-            if (listeners.chat) listeners.chat(); // Detach previous chat listener
+            
+            if (listeners.chat) listeners.chat();
             
             chatMessagesContainer.innerHTML = '';
             const messagesRef = db.collection('chats').doc(chatId).collection('messages').orderBy('createdAt', 'desc').limit(50);
             
             listeners.chat = messagesRef.onSnapshot(snapshot => {
-                snapshot.docChanges().reverse().forEach(change => { // reverse to process oldest first
+                snapshot.docChanges().reverse().forEach(change => {
                     if (change.type === 'added') {
                         renderMessage(change.doc.data());
                     }
                 });
-            });
+            }, err => console.error("Chat listener error:", err));
             
             chatInputForm.onsubmit = (e) => { e.preventDefault(); sendMessage(chatId, friendUser.id); };
         }
@@ -492,8 +495,8 @@
             bubble.className = 'message-bubble ' + (msg.authorId === currentUser.uid ? 'sent' : 'received');
             const time = msg.createdAt?.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '';
             bubble.innerHTML = `<div>${escapeHTML(msg.text)}</div><span class="timestamp">${time}</span>`;
-            chatMessagesContainer.appendChild(bubble); // Append at the end
-            chatMessages.scrollTop = chatMessages.scrollHeight; // Scroll to bottom
+            chatMessagesContainer.appendChild(bubble);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
         function closeChat() {
