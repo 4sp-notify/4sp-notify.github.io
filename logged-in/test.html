@@ -406,6 +406,10 @@
         .wallpaper-option.selected { border-color: var(--color-success); }
         .wallpaper-option img { width: 100%; height: auto; display: block; aspect-ratio: 16 / 9; object-fit: cover; }
         
+        /* Styles for Create Group Modal */
+        #createGroupFriendsList label { display: flex; align-items: center; gap: 10px; padding: 8px; border-radius: 6px; cursor: pointer; }
+        #createGroupFriendsList label:hover { background-color: #f0f0f0; }
+        
         /* Animations & Banners */
         .fade-in { animation: fadeIn 0.5s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -543,6 +547,33 @@
         </div>
     </div>
 
+    <div id="createGroupModal" class="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h3><i class="fas fa-users-cog"></i> Create New Group</h3>
+                <button class="modal-close-btn">&times;</button>
+            </div>
+            <form id="createGroupForm">
+                <div class="modal-body">
+                    <div class="form-group">
+                        <label for="groupNameInput">Group Name</label>
+                        <input type="text" id="groupNameInput" required maxlength="50" placeholder="My Awesome Group">
+                    </div>
+                    <div class="form-group">
+                        <label>Select Members</label>
+                        <div id="createGroupFriendsList" style="max-height: 200px; overflow-y: auto; border: 1px solid #ddd; border-radius: 8px; padding: 5px;">
+                            <p>No friends to add.</p>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary modal-close-btn">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create Group</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
 
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
@@ -550,8 +581,6 @@
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
     <script src="../firebase-config.js"></script>
     <script>
-    // The JavaScript from the previous step remains identical.
-    // No changes are needed in the script logic for these style updates.
     // =================================================================================
     // --- DOM ELEMENT REFERENCES ---
     // =================================================================================
@@ -578,22 +607,28 @@
     const messageForm = document.getElementById('messageForm');
     const messageInput = document.getElementById('messageInput');
     const sendMessageBtn = document.getElementById('sendMessageBtn');
-    const charCounter = document.getElementById('charCounter');
-
-    // New Modal Elements
+    
+    // Modal Elements
     const pinnedMessagesModal = document.getElementById('pinnedMessagesModal');
     const pinnedMessagesList = document.getElementById('pinnedMessagesList');
     const chatSettingsModal = document.getElementById('chatSettingsModal');
     const nicknameInputsContainer = document.getElementById('nicknameInputsContainer');
     const wallpaperSelector = document.getElementById('wallpaper-selector');
     const saveChatSettingsBtn = document.getElementById('saveChatSettingsBtn');
-    
-    // --- SCRIPT CONTINUES... 
+    const createGroupModal = document.getElementById('createGroupModal');
+    const createGroupForm = document.getElementById('createGroupForm');
+    const groupNameInput = document.getElementById('groupNameInput');
+    const createGroupFriendsList = document.getElementById('createGroupFriendsList');
+
+    // --- GLOBAL STATE ---
     let currentUser, currentUserProfile;
     let userCache = {};
     let unsubscribes = [];
     let activeChat = { id: null, type: null, name: '', partnerId: null, members: [], settings: {} };
     
+    // =================================================================================
+    // --- UTILITY FUNCTIONS ---
+    // =================================================================================
     function showNotification(message, type = 'info', duration = 3000) {
         const existingNotification = document.querySelector('.notification-banner');
         if(existingNotification) existingNotification.remove();
@@ -616,7 +651,6 @@
         }, duration);
     }
 
-    // Modal Helpers
     function setupModal(modalElement) {
         const closeButtons = modalElement.querySelectorAll('.modal-close-btn');
         closeButtons.forEach(btn => btn.addEventListener('click', () => modalElement.classList.remove('visible')));
@@ -637,11 +671,13 @@
     function decryptMessage(cipherText, key) {
         try {
             const bytes = CryptoJS.AES.decrypt(cipherText, key);
-            const decrypted = bytes.toString(CryptoJS.enc.Utf8);
-            return decrypted || '[Empty message]';
+            return bytes.toString(CryptoJS.enc.Utf8) || '[Empty message]';
         } catch (e) { return '[Error decrypting]'; }
     }
     
+    // =================================================================================
+    // --- FIREBASE & AUTHENTICATION ---
+    // =================================================================================
     firebase.auth().onAuthStateChanged(async user => {
         if (user) {
             currentUser = user;
@@ -661,7 +697,28 @@
             window.location.href = '../login.html';
         }
     });
+
+    async function setupUserProfile(userDocRef) {
+        const userDoc = await userDocRef.get();
+        if (!userDoc.exists) {
+            // Create user profile matching the security rules
+            const newUserProfile = {
+                username: currentUser.displayName || `user_${currentUser.uid.substring(0, 6)}`,
+                email: currentUser.email,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                friends: [],
+                blocked: [],
+                nicknames: {},
+                pinnedChats: [],
+                status: { current: 'online', lastChanged: firebase.firestore.FieldValue.serverTimestamp() }
+            };
+            await userDocRef.set(newUserProfile);
+        }
+    }
     
+    // =================================================================================
+    // --- UI INITIALIZATION & EVENT LISTENERS ---
+    // =================================================================================
     function initializeUI() {
         toggleSidebarBtn.addEventListener('click', () => {
             sidebar.classList.toggle('collapsed');
@@ -672,174 +729,166 @@
         
         setupModal(pinnedMessagesModal);
         setupModal(chatSettingsModal);
+        setupModal(createGroupModal);
 
         pinListBtn.addEventListener('click', showPinnedMessages);
         chatSettingsBtn.addEventListener('click', showChatSettings);
         saveChatSettingsBtn.addEventListener('click', handleSaveChatSettings);
+        createGroupBtn.addEventListener('click', showCreateGroupModal);
+        createGroupForm.addEventListener('submit', handleCreateGroup);
 
         messageInput.addEventListener('input', () => {
             messageInput.style.height = 'auto';
             messageInput.style.height = (messageInput.scrollHeight) + 'px';
         });
 
-        messageForm.addEventListener('submit', async e => {
-            e.preventDefault();
-            const text = messageInput.value.trim();
-            if (!text || !activeChat.id) return;
-            
-            const secretKey = getChatSecret(activeChat.id, activeChat.type, activeChat.partnerId);
-            const collectionPath = activeChat.type === 'group' ? `groups/${activeChat.id}/messages` : `chats/${activeChat.id}/messages`;
-            
-            const messageData = {
-                text: encryptMessage(text, secretKey),
-                authorId: currentUser.uid,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                pinned: false,
-            };
-
-            const tempMessageInput = messageInput.value;
-            messageInput.value = '';
-            messageInput.style.height = 'auto';
-           
-            try {
-                await firebase.firestore().collection(collectionPath).add(messageData);
-            } catch (error) {
-                console.error("Error sending message:", error);
-                showNotification("Failed to send message.", "danger");
-                messageInput.value = tempMessageInput;
-            }
-        });
-
-        userSearchInput.addEventListener('input', async (e) => {
-            const searchTerm = e.target.value.trim();
-            userSearchResultsEl.innerHTML = '';
-            if (searchTerm.length < 2) return;
-            
-            try {
-                const snapshot = await firebase.firestore().collection('users').where('username', '==', searchTerm).limit(5).get();
-                if (snapshot.empty) {
-                    userSearchResultsEl.innerHTML = '<li class="empty-state">No users found.</li>';
-                    return;
-                }
-                snapshot.forEach(doc => {
-                    if (doc.id === currentUser.uid) return;
-                    const userData = doc.data(); const userId = doc.id;
-                    const isFriend = currentUserProfile.friends.includes(userId);
-                    const isBlocked = currentUserProfile.blocked.includes(userId);
-                    
-                    let actionHtml = '';
-                    if (isBlocked) { actionHtml = `<div class="item-actions"><button title="Unblock User" class="unblock-btn" data-action="unblock" data-uid="${userId}"><i class="fas fa-unlock"></i></button></div>`; }
-                    else if (!isFriend) { actionHtml = `<div class="item-actions"><button title="Add Friend" class="accept-btn" data-action="send-request" data-uid="${userId}"><i class="fas fa-user-plus"></i></button></div>`; }
-                    
-                    const li = document.createElement('li');
-                    li.innerHTML = `<div class="item-info"><i class="fas fa-user-circle"></i> <span class="item-name">${userData.username}</span></div>${actionHtml}`;
-                    userSearchResultsEl.appendChild(li);
-                });
-            } catch (error) {
-                console.error("User search error:", error);
-                userSearchResultsEl.innerHTML = '<li class="empty-state">Error searching.</li>';
-            }
-        });
+        messageForm.addEventListener('submit', handleSendMessage);
+        userSearchInput.addEventListener('input', handleUserSearch);
         
-        document.querySelector('.social-sidebar-content').addEventListener('click', e => {
-            const pinBtn = e.target.closest('.pin-chat-btn');
-            if (pinBtn) {
-                const chatId = pinBtn.dataset.chatId;
-                togglePinChat(chatId);
-                return;
-            }
-
-            const li = e.target.closest('li[data-chat-id]');
-            if (li && li.parentElement.id !== 'userSearchResults') {
-                const chatConfig = {
-                    id: li.dataset.chatId,
-                    type: li.dataset.chatType,
-                    name: li.dataset.chatName,
-                    partnerId: li.dataset.partnerId || null,
-                    members: (li.dataset.members || '').split(',').filter(Boolean)
-                };
-                openChat(chatConfig);
-            }
-        });
-         messagesContainer.addEventListener('click', e => {
-            const pinBtn = e.target.closest('.pin-message-btn');
-            if (pinBtn) {
-                const messageId = pinBtn.dataset.messageId;
-                togglePinMessage(messageId, pinBtn);
-            }
-        });
-    }
-
-    async function setupUserProfile(userDocRef) {
-        const userDoc = await userDocRef.get();
-        if (!userDoc.exists || !userDoc.data().status) {
-            await userDocRef.set({
-                username: userDoc.data()?.username || `user_${currentUser.uid.substring(0, 6)}`,
-                email: currentUser.email,
-                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                friends: [], blocked: [], nicknames: {}, pinnedChats: [],
-                status: { current: 'online', lastChanged: firebase.firestore.FieldValue.serverTimestamp() }
-            }, { merge: true });
-        }
+        document.querySelector('.social-sidebar-content').addEventListener('click', handleSidebarClick);
+        messagesContainer.addEventListener('click', handleMessagesContainerClick);
     }
 
     function setupListeners() {
+        // Clear all previous listeners
+        unsubscribes.forEach(unsub => unsub());
+        unsubscribes = [];
+
+        // User profile listener
         const userDocUnsub = firebase.firestore().collection('users').doc(currentUser.uid).onSnapshot(doc => {
             currentUserProfile = { id: doc.id, ...doc.data() };
-            userCache[currentUser.uid] = { username: currentUserProfile.username, email: currentUserProfile.email, ...currentUserProfile };
-            userNameEl.textContent = getDisplayName(currentUser.uid);
+            userCache[currentUser.uid] = { ...currentUserProfile };
+            userNameEl.textContent = getDisplayName(currentUser.uid, true);
             userEmailEl.textContent = currentUserProfile.email;
             updateUserStatusIndicator(currentUserStatusEl, currentUserProfile.status?.current);
             renderFriendsList();
-            // renderGroupChatsList(); // You'll need a similar function for groups
+            renderGroupChatsList();
+            // renderBlockedList();
         });
         unsubscribes.push(userDocUnsub);
+
+        // Group chats listener
+        const groupsUnsub = firebase.firestore().collection('groups').where('members', 'array-contains', currentUser.uid)
+            .onSnapshot(snapshot => {
+                const groups = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                renderGroupChatsList(groups);
+            });
+        unsubscribes.push(groupsUnsub);
+    }
+
+    // =================================================================================
+    // --- EVENT HANDLERS ---
+    // =================================================================================
+    async function handleSendMessage(e) {
+        e.preventDefault();
+        const text = messageInput.value.trim();
+        if (!text || !activeChat.id) return;
+        
+        const secretKey = getChatSecret(activeChat.id, activeChat.type, activeChat.partnerId);
+        const collectionPath = activeChat.type === 'group' ? `groups/${activeChat.id}/messages` : `chats/${activeChat.id}/messages`;
+        
+        const messageData = {
+            text: encryptMessage(text, secretKey),
+            authorId: currentUser.uid,
+            createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+            pinned: false,
+        };
+
+        const tempMessageInput = messageInput.value;
+        messageInput.value = '';
+        messageInput.style.height = 'auto';
+       
+        try {
+            await firebase.firestore().collection(collectionPath).add(messageData);
+        } catch (error) {
+            console.error("Error sending message:", error);
+            showNotification("Failed to send message.", "danger");
+            messageInput.value = tempMessageInput;
+        }
+    }
+
+    function handleSidebarClick(e) {
+        const pinBtn = e.target.closest('.pin-chat-btn');
+        if (pinBtn) {
+            e.stopPropagation();
+            const chatId = pinBtn.dataset.chatId;
+            togglePinChat(chatId);
+            return;
+        }
+
+        const li = e.target.closest('li[data-chat-id]');
+        if (li && li.parentElement.id !== 'userSearchResults') {
+            const chatConfig = {
+                id: li.dataset.chatId,
+                type: li.dataset.chatType,
+                name: li.dataset.chatName,
+                partnerId: li.dataset.partnerId || null,
+                members: (li.dataset.members || '').split(',').filter(Boolean)
+            };
+            openChat(chatConfig);
+        }
+    }
+
+    function handleMessagesContainerClick(e) {
+        const pinBtn = e.target.closest('.pin-message-btn');
+        if (pinBtn) {
+            const messageId = pinBtn.dataset.messageId;
+            togglePinMessage(messageId);
+        }
     }
     
-    async function openChat(chatConfig) {
-        // Clear previous chat listeners
-        unsubscribes = unsubscribes.filter(unsub => unsub.chatId !== activeChat.id);
+    // =================================================================================
+    // --- CHAT & MESSAGE LOGIC ---
+    // =================================================================================
+    
+    function openChat(chatConfig) {
+        // Clear previous message listener if it exists
+        const oldMsgUnsub = unsubscribes.find(u => u.type === 'messages');
+        if (oldMsgUnsub) {
+            oldMsgUnsub();
+            unsubscribes = unsubscribes.filter(u => u.type !== 'messages');
+        }
+        
+        activeChat = chatConfig;
+        
+        chatWrapper.classList.remove('hidden');
+        chatPlaceholder.classList.add('hidden');
+        messageInput.disabled = false;
+        sendMessageBtn.disabled = false;
+        
+        updateChatHeader();
+        document.querySelectorAll('.item-list li').forEach(li => li.classList.remove('active-chat'));
+        const activeLi = document.querySelector(`[data-chat-id="${activeChat.id}"]`);
+        if (activeLi) activeLi.classList.add('active-chat');
 
         const chatDocRef = activeChat.type === 'group' 
-            ? firebase.firestore().collection('groups').doc(chatConfig.id)
-            : firebase.firestore().collection('chats').doc(chatConfig.id);
+            ? firebase.firestore().collection('groups').doc(activeChat.id)
+            : firebase.firestore().collection('chats').doc(activeChat.id);
 
-        const chatUnsubscribe = chatDocRef.onSnapshot(doc => {
-            activeChat = { ...chatConfig, settings: doc.exists ? doc.data().settings || {} : {} };
-            
-            chatWrapper.classList.remove('hidden');
-            chatPlaceholder.classList.add('hidden');
-            messageInput.disabled = false;
-            sendMessageBtn.disabled = false;
-            
-            chatHeaderInfoEl.textContent = activeChat.name; // This could be updated with a nickname
-            document.querySelectorAll('.item-list li').forEach(li => li.classList.remove('active-chat'));
-            const activeLi = document.querySelector(`[data-chat-id="${activeChat.id}"]`);
-            if (activeLi) activeLi.classList.add('active-chat');
-
+        chatDocRef.get().then(doc => {
+            activeChat.settings = doc.exists ? doc.data().settings || {} : {};
             applyChatSettings();
-
-            messagesContainer.innerHTML = ''; // Clear messages for new chat
-
-            const collectionPath = activeChat.type === 'group' ? `groups/${activeChat.id}/messages` : `chats/${activeChat.id}/messages`;
-            const messagesRef = firebase.firestore().collection(collectionPath).orderBy('createdAt').limitToLast(50);
-            
-            const messagesUnsub = messagesRef.onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(change => {
-                    if (change.type === "added") {
-                        renderMessage(change.doc.id, change.doc.data());
-                    } else if (change.type === "modified") {
-                        updateMessage(change.doc.id, change.doc.data());
-                    }
-                });
-                setTimeout(() => messagesContainer.scrollTop = messagesContainer.scrollHeight, 100);
-            }, error => console.error("Error fetching messages:", error));
-            messagesUnsub.chatId = activeChat.id;
-            unsubscribes.push(messagesUnsub);
+            updateChatHeader();
         });
+
+        messagesContainer.innerHTML = ''; 
+
+        const collectionPath = activeChat.type === 'group' ? `groups/${activeChat.id}/messages` : `chats/${activeChat.id}/messages`;
+        const messagesRef = firebase.firestore().collection(collectionPath).orderBy('createdAt').limitToLast(50);
         
-        chatUnsubscribe.chatId = chatConfig.id;
-        unsubscribes.push(chatUnsubscribe);
+        const messagesUnsub = messagesRef.onSnapshot(snapshot => {
+            snapshot.docChanges().forEach(change => {
+                if (change.type === "added") {
+                    renderMessage(change.doc.id, change.doc.data());
+                } else if (change.type === "modified") {
+                    updateMessage(change.doc.id, change.doc.data());
+                }
+            });
+            setTimeout(() => messagesContainer.scrollTop = messagesContainer.scrollHeight, 100);
+        }, error => console.error("Error fetching messages:", error));
+        
+        messagesUnsub.type = 'messages';
+        unsubscribes.push(messagesUnsub);
     }
     
     async function renderMessage(docId, data) {
@@ -878,23 +927,124 @@
         
         if (data.pinned) {
             messageEl.classList.add('pinned');
-            messageEl.querySelector('.pin-message-btn i').classList.add('pinned', 'fas');
-            messageEl.querySelector('.pin-message-btn i').classList.remove('far');
-
+            messageEl.querySelector('.pin-message-btn i').classList.add('pinned');
         } else {
             messageEl.classList.remove('pinned');
-            messageEl.querySelector('.pin-message-btn i').classList.remove('pinned', 'fas');
-            messageEl.querySelector('.pin-message-btn i').classList.add('far');
+            messageEl.querySelector('.pin-message-btn i').classList.remove('pinned');
         }
     }
     
-    function getDisplayName(userId) {
-        const nicknames = activeChat.settings?.nicknames || {};
-        return nicknames[userId] || userCache[userId]?.username || `User...`;
+    function getDisplayName(userId, isSelf = false) {
+        if (!isSelf && activeChat.settings?.nicknames?.[userId]) {
+            return activeChat.settings.nicknames[userId];
+        }
+        return userCache[userId]?.username || `User...`;
     }
 
-    // New Functions for Chat Features
-    async function togglePinMessage(messageId, btn) {
+    function updateChatHeader() {
+        chatHeaderInfoEl.textContent = activeChat.type === 'group' 
+            ? activeChat.name 
+            : getDisplayName(activeChat.partnerId);
+    }
+
+    // =================================================================================
+    // --- LIST RENDERING ---
+    // =================================================================================
+    async function fetchUsers(uids) {
+        const uidsToFetch = [...new Set(uids)].filter(uid => uid && !userCache[uid]);
+        if (uidsToFetch.length > 0) {
+            const snapshot = await firebase.firestore().collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', uidsToFetch).get();
+            snapshot.forEach(doc => userCache[doc.id] = { id: doc.id, ...doc.data() });
+        }
+    }
+    
+    function updateUserStatusIndicator(element, status) {
+        element.className = 'status-indicator';
+        element.classList.add(status || 'offline');
+    }
+
+    function renderFriendsList() {
+        friendsListEl.innerHTML = '';
+        const friends = currentUserProfile?.friends || [];
+        if (friends.length === 0) {
+            friendsListEl.innerHTML = `<li class="empty-state">No friends yet.</li>`;
+            return;
+        }
+
+        fetchUsers(friends).then(() => {
+            const pinnedChats = currentUserProfile.pinnedChats || [];
+            const sortedFriends = [...friends].sort((a, b) => {
+                const aChatId = [currentUser.uid, a].sort().join('_');
+                const bChatId = [currentUser.uid, b].sort().join('_');
+                return (pinnedChats.includes(bChatId) ? 1 : 0) - (pinnedChats.includes(aChatId) ? 1 : 0);
+            });
+            
+            sortedFriends.forEach(uid => {
+                const friendData = userCache[uid];
+                if (!friendData) return;
+                
+                const li = document.createElement('li');
+                const chatId = [currentUser.uid, uid].sort().join('_');
+                const isPinned = pinnedChats.includes(chatId);
+
+                li.dataset.chatId = chatId;
+                li.dataset.chatType = 'dm';
+                li.dataset.partnerId = uid;
+                li.dataset.chatName = friendData.username;
+                if (isPinned) li.classList.add('pinned-chat');
+
+                li.innerHTML = `
+                    <div class="item-info">
+                        <i class="fas fa-user icon"></i> 
+                        <span class="item-name">${friendData.username}</span>
+                    </div>
+                    <div class="item-actions">
+                        <button class="pin-chat-btn" data-chat-id="${chatId}" title="${isPinned ? 'Unpin Chat' : 'Pin Chat'}">
+                            <i class="fas fa-thumbtack ${isPinned ? 'active' : ''}"></i>
+                        </button>
+                    </div>`;
+                friendsListEl.appendChild(li);
+            });
+        });
+    }
+
+    function renderGroupChatsList(groups = []) {
+        groupChatsListEl.innerHTML = '';
+        if (groups.length === 0) {
+            groupChatsListEl.innerHTML = `<li class="empty-state">No groups yet.</li>`;
+            return;
+        }
+
+        const pinnedChats = currentUserProfile.pinnedChats || [];
+        groups.sort((a, b) => (pinnedChats.includes(b.id) ? 1 : 0) - (pinnedChats.includes(a.id) ? 1 : 0));
+
+        groups.forEach(group => {
+            const li = document.createElement('li');
+            const isPinned = pinnedChats.includes(group.id);
+            li.dataset.chatId = group.id;
+            li.dataset.chatType = 'group';
+            li.dataset.chatName = group.name;
+            li.dataset.members = group.members.join(',');
+            if (isPinned) li.classList.add('pinned-chat');
+
+            li.innerHTML = `
+                <div class="item-info">
+                    <i class="fas fa-users icon"></i> 
+                    <span class="item-name">${group.name}</span>
+                </div>
+                <div class="item-actions">
+                    <button class="pin-chat-btn" data-chat-id="${group.id}" title="${isPinned ? 'Unpin Chat' : 'Pin Chat'}">
+                        <i class="fas fa-thumbtack ${isPinned ? 'active' : ''}"></i>
+                    </button>
+                </div>`;
+            groupChatsListEl.appendChild(li);
+        });
+    }
+
+    // =================================================================================
+    // --- FEATURE LOGIC (Pinning, Settings, Groups) ---
+    // =================================================================================
+    async function togglePinMessage(messageId) {
         if (!activeChat.id) return;
         const collectionPath = activeChat.type === 'group' ? `groups/${activeChat.id}/messages` : `chats/${activeChat.id}/messages`;
         const messageRef = firebase.firestore().collection(collectionPath).doc(messageId);
@@ -911,6 +1061,7 @@
             showNotification("Could not update pin status.", 'danger');
         }
     }
+
     async function togglePinChat(chatId) {
         if (!currentUser || !currentUserProfile) return;
         const userRef = firebase.firestore().collection('users').doc(currentUser.uid);
@@ -924,9 +1075,6 @@
         try {
             await userRef.update({ pinnedChats: newPinnedChats });
             showNotification(isPinned ? 'Chat unpinned' : 'Chat pinned!', 'info');
-            // Re-render lists to reflect pinning order
-            renderFriendsList();
-            // renderGroupChatsList();
         } catch (error) {
             console.error('Error pinning chat:', error);
             showNotification('Could not pin chat.', 'danger');
@@ -973,9 +1121,8 @@
     async function showChatSettings() {
         if (!activeChat.id) return;
 
-        // Populate nicknames
         nicknameInputsContainer.innerHTML = '';
-        const membersToFetch = activeChat.type === 'group' ? activeChat.members : [currentUser.uid, activeChat.partnerId];
+        const membersToFetch = activeChat.members;
         await fetchUsers(membersToFetch);
 
         membersToFetch.forEach(uid => {
@@ -993,7 +1140,6 @@
             nicknameInputsContainer.appendChild(formGroup);
         });
         
-        // Populate wallpapers
         const wallpapers = ['default', 'red', 'orange', 'yellow', 'green', 'blue', 'purple', 'galaxy', 'stars', 'abyss'];
         wallpaperSelector.innerHTML = '';
         wallpapers.forEach(wp => {
@@ -1002,7 +1148,7 @@
             option.dataset.wallpaper = `wp-${wp}`;
             option.innerHTML = `<img src="${wp === 'default' ? 'https://i.imgur.com/pD2iB3k.png' : `../vs-wallpapers/${wp}.jpg`}" alt="${wp} wallpaper">`;
             
-            if (activeChat.settings?.wallpaper === `wp-${wp}`) {
+            if ((activeChat.settings?.wallpaper || 'wp-default') === `wp-${wp}`) {
                 option.classList.add('selected');
             }
 
@@ -1010,7 +1156,6 @@
                 wallpaperSelector.querySelector('.selected')?.classList.remove('selected');
                 option.classList.add('selected');
             });
-
             wallpaperSelector.appendChild(option);
         });
         
@@ -1038,86 +1183,73 @@
                 }
             }, { merge: true });
             
+            activeChat.settings = { nicknames: newNicknames, wallpaper: selectedWallpaper };
+            applyChatSettings();
             showNotification('Settings saved!', 'success');
             chatSettingsModal.classList.remove('visible');
         } catch (error) {
             console.error("Error saving settings:", error);
-            showNotification('Failed to save settings.', 'danger');
+            showNotification('Failed to save settings. Check security rules.', 'danger');
         }
     }
 
     function applyChatSettings() {
-        if (!activeChat.settings) return;
-        
-        // Apply Wallpaper
-        messagesContainer.className = 'messages-container'; // Reset
-        messagesContainer.classList.add(activeChat.settings.wallpaper || 'wp-default');
+        messagesContainer.className = 'messages-container';
+        messagesContainer.classList.add(activeChat.settings?.wallpaper || 'wp-default');
     }
 
-
-    async function fetchUsers(uids) {
-        const uidsToFetch = [...new Set(uids)].filter(uid => uid && !userCache[uid]);
-        if (uidsToFetch.length > 0) {
-            const snapshot = await firebase.firestore().collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', uidsToFetch).get();
-            snapshot.forEach(doc => userCache[doc.id] = { id: doc.id, ...doc.data() });
-        }
-    }
-    function updateUserStatusIndicator(element, status) {
-        element.className = 'status-indicator';
-        element.classList.add(status || 'offline');
-    }
-    async function renderList(element, items, renderItem, emptyMessage) {
-        element.innerHTML = '';
-        if (!items || items.length === 0) {
-            element.innerHTML = `<li class="empty-state">${emptyMessage}</li>`;
+    async function showCreateGroupModal() {
+        createGroupFriendsList.innerHTML = '';
+        const friends = currentUserProfile?.friends || [];
+        if(friends.length === 0) {
+            createGroupFriendsList.innerHTML = '<p>You have no friends to add to a group.</p>';
+            createGroupModal.classList.add('visible');
             return;
         }
-        const uidsInItems = items.flatMap(item => item.senderId || item.members || item).filter(Boolean);
-        await fetchUsers(uidsInItems);
 
-        const pinnedChats = currentUserProfile?.pinnedChats || [];
-
-        const sortedItems = [...items].sort((a, b) => {
-            const aId = typeof a === 'string' ? a : a.id;
-            const bId = typeof b === 'string' ? b : b.id;
-            const aIsPinned = pinnedChats.includes(aId);
-            const bIsPinned = pinnedChats.includes(bId);
-            return bIsPinned - aIsPinned;
+        await fetchUsers(friends);
+        friends.forEach(uid => {
+            const friend = userCache[uid];
+            if(!friend) return;
+            const label = document.createElement('label');
+            label.innerHTML = `<input type="checkbox" value="${uid}"> ${friend.username}`;
+            createGroupFriendsList.appendChild(label);
         });
-
-        sortedItems.forEach(item => {
-            const li = renderItem(item);
-            if (li) element.appendChild(li);
-        });
+        createGroupModal.classList.add('visible');
     }
-    function renderFriendsList() {
-        renderList(friendsListEl, currentUserProfile?.friends || [], (uid) => {
-            const friendData = userCache[uid];
-            if (!friendData) return null;
-            const li = document.createElement('li');
-            const chatId = [currentUser.uid, uid].sort().join('_');
-            const isPinned = (currentUserProfile.pinnedChats || []).includes(chatId);
 
-            li.dataset.chatId = chatId;
-            li.dataset.chatType = 'dm';
-            li.dataset.partnerId = uid;
-            li.dataset.chatName = getDisplayName(uid); // Initially use username
-            if (isPinned) li.classList.add('pinned-chat');
+    async function handleCreateGroup(e) {
+        e.preventDefault();
+        const groupName = groupNameInput.value.trim();
+        if(!groupName) {
+            showNotification('Group name is required.', 'warning');
+            return;
+        }
+        const selectedMembers = Array.from(createGroupFriendsList.querySelectorAll('input:checked')).map(input => input.value);
+        
+        const allMembers = [currentUser.uid, ...selectedMembers];
 
-            li.innerHTML = `
-                <div class="item-info">
-                    <i class="fas fa-user icon"></i> 
-                    <span class="item-name">${getDisplayName(uid)}</span>
-                </div>
-                <div class="item-actions">
-                    <button class="pin-chat-btn" data-chat-id="${chatId}" title="${isPinned ? 'Unpin Chat' : 'Pin Chat'}">
-                        <i class="fas fa-thumbtack ${isPinned ? 'active' : ''}"></i>
-                    </button>
-                </div>`;
-            return li;
-        }, 'No friends yet. Add one!');
+        try {
+            await firebase.firestore().collection('groups').add({
+                name: groupName,
+                createdBy: currentUser.uid,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                members: allMembers,
+                settings: {
+                    nicknames: {},
+                    wallpaper: 'wp-default'
+                }
+            });
+            showNotification(`Group "${groupName}" created!`, 'success');
+            createGroupModal.classList.remove('visible');
+            createGroupForm.reset();
+        } catch(error) {
+            console.error("Error creating group: ", error);
+            showNotification('Failed to create group.', 'danger');
+        }
     }
-    function renderBlockedList() { /* Functionality remains */ }
+
+
 </script>
 </body>
 </html>
