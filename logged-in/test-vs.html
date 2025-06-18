@@ -532,7 +532,29 @@
         }
 
         async function acceptFriendRequest(friendshipId) {
-            await db.collection('friendships').doc(friendshipId).update({ status: 'friends' });
+            const friendshipRef = db.collection('friendships').doc(friendshipId);
+            try {
+                const friendshipDoc = await friendshipRef.get();
+                if (!friendshipDoc.exists) {
+                    console.error("Cannot accept: Friendship document not found.", friendshipId);
+                    return;
+                }
+                const users = friendshipDoc.data().users;
+                // Create the chat document for the two users.
+                const chatId = users.sort().join('_');
+                const chatRef = db.collection('chats').doc(chatId);
+                await chatRef.set({
+                    members: users,
+                    type: 'dm',
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    messages: {}
+                }, { merge: true }); // Use merge to avoid overwriting existing chat data.
+
+                // Finally, update the friendship status to 'friends'.
+                await friendshipRef.update({ status: 'friends' });
+            } catch (error) {
+                console.error("Error accepting friend request:", error);
+            }
         }
 
         async function declineFriendRequest(friendshipId) {
@@ -592,7 +614,7 @@
                 const chatDoc = await chatRef.get();
 
                 if (!chatDoc.exists) {
-                    // Create the chat document if it doesn't exist.
+                    // This case should be less frequent now, but is kept as a fallback.
                     await chatRef.set({
                         members: [currentUser.uid, otherUserId],
                         type: 'dm',
@@ -601,8 +623,6 @@
                     });
                 }
                 
-                // Directly open the chat. This is the key change to fix the issue.
-                // It ensures the UI switches to the chat view immediately.
                 openChat(chatId, otherUser.username);
 
             } catch (error) {
