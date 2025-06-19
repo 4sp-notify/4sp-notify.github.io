@@ -399,7 +399,8 @@
         let currentUserData = {};
         let activeChatId = null;
         let activeChatUnsubscribe = null;
-        let usersDataCache = {}; // Cache for user data to reduce reads
+        let usersDataCache = {}; 
+        let userUnsubscribe = null; // To hold the listener for the user's own data
 
         // --- Authentication ---
         auth.onAuthStateChanged(async user => {
@@ -409,7 +410,9 @@
                 userEmailEl.textContent = user.email;
                 userIdDisplayEl.textContent = `ID: ${user.uid}`;
                 
-                // Fetch or create user document in Firestore
+                // Unsubscribe from previous user listener if it exists
+                if(userUnsubscribe) userUnsubscribe();
+
                 const userRef = db.collection('users').doc(user.uid);
                 const userDoc = await userRef.get();
                 if (!userDoc.exists) {
@@ -420,15 +423,22 @@
                         friendRequestsSent: [],
                         friendRequestsReceived: [],
                         blockedUsers: []
-                    });
+                    }, { merge: true }); // Use merge to be safe
                 }
 
                 // Listen for changes to the user's document
-                userRef.onSnapshot(doc => {
+                userUnsubscribe = userRef.onSnapshot(doc => {
                     currentUserData = { id: doc.id, ...doc.data() };
-                    renderFriendRequests();
-                    renderFriendsAndGroups();
-                    cacheUsersData([...currentUserData.friends, ...currentUserData.friendRequestsReceived]);
+                    // Get all user IDs we need to know about
+                    const allUserIds = [
+                        ...(currentUserData.friends || []),
+                        ...(currentUserData.friendRequestsReceived || []),
+                        ...(currentUserData.friendRequestsSent || [])
+                    ];
+                    cacheUsersData(allUserIds).then(() => {
+                         renderFriendRequests();
+                         renderFriendsAndGroups();
+                    });
                 });
                 
             } else {
@@ -438,18 +448,25 @@
         
         // --- Caching ---
         async function cacheUsersData(userIds) {
-            const usersToFetch = userIds.filter(id => !usersDataCache[id]);
+            const uniqueUserIds = [...new Set(userIds)]; // Remove duplicates
+            const usersToFetch = uniqueUserIds.filter(id => id && !usersDataCache[id]);
             if (usersToFetch.length === 0) return;
             
-            const userDocs = await Promise.all(usersToFetch.map(id => db.collection('users').doc(id).get()));
-            userDocs.forEach(doc => {
-                if (doc.exists) {
-                    usersDataCache[doc.id] = {id: doc.id, ...doc.data()};
-                }
+            // Firestore 'in' query can take up to 10 elements
+            const fetchPromises = [];
+            for (let i = 0; i < usersToFetch.length; i += 10) {
+                const chunk = usersToFetch.slice(i, i + 10);
+                fetchPromises.push(db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get());
+            }
+
+            const snapshots = await Promise.all(fetchPromises);
+            snapshots.forEach(snapshot => {
+                snapshot.forEach(doc => {
+                    if (doc.exists) {
+                        usersDataCache[doc.id] = {id: doc.id, ...doc.data()};
+                    }
+                });
             });
-            // Re-render lists that might depend on this new data
-            renderFriendRequests();
-            renderFriendsAndGroups();
         }
 
         // --- User Search ---
@@ -457,11 +474,11 @@
         searchInput.addEventListener('input', () => {
             clearTimeout(searchTimeout);
             const query = searchInput.value.trim();
-            if (query.length < 3) {
+            if (query.length < 2) {
                 searchResultsSection.innerHTML = '';
                 return;
             }
-            searchTimeout = setTimeout(() => performSearch(query), 500);
+            searchTimeout = setTimeout(() => performSearch(query), 300);
         });
 
         async function performSearch(query) {
@@ -469,9 +486,7 @@
             searchResultsSection.innerHTML = `<h3>Search Results</h3><ul class="chat-list"></ul>`;
             const listEl = searchResultsSection.querySelector('ul');
 
-            // Search by username
             const usernameQuery = db.collection('users').where('username', '>=', query).where('username', '<=', query + '\uf8ff').limit(5);
-            // Search by email
             const emailQuery = db.collection('users').where('email', '==', query).limit(5);
 
             const [usernameSnapshot, emailSnapshot] = await Promise.all([usernameQuery.get(), emailQuery.get()]);
@@ -480,29 +495,31 @@
             usernameSnapshot.forEach(doc => results.set(doc.id, {id: doc.id, ...doc.data()}));
             emailSnapshot.forEach(doc => results.set(doc.id, {id: doc.id, ...doc.data()}));
 
+            listEl.innerHTML = '';
             if (results.size === 0) {
-                listEl.innerHTML = '<li>No users found.</li>';
+                listEl.innerHTML = '<li class="chat-list-item">No users found.</li>';
                 return;
             }
             
-            listEl.innerHTML = '';
             results.forEach(user => {
                 if (user.id === currentUser.uid) return;
                 const li = document.createElement('li');
                 li.className = 'chat-list-item';
                 
-                let actionBtn = '';
-                if(currentUserData.friends && currentUserData.friends.includes(user.id)) {
-                    actionBtn = '<span>Friend</span>';
-                } else if (currentUserData.friendRequestsSent && currentUserData.friendRequestsSent.includes(user.id)) {
-                    actionBtn = '<span>Requested</span>';
+                let actionBtnHtml = '';
+                if(currentUserData.friends?.includes(user.id)) {
+                    actionBtnHtml = '<span><i class="fas fa-user-check"></i> Friend</span>';
+                } else if (currentUserData.friendRequestsSent?.includes(user.id)) {
+                    actionBtnHtml = '<span><i class="fas fa-paper-plane"></i> Requested</span>';
+                } else if (currentUserData.friendRequestsReceived?.includes(user.id)) {
+                    actionBtnHtml = '<span>Respondez, s\'il vous plaît</span>';
                 } else {
-                    actionBtn = `<button class="action-btn" data-user-id="${user.id}"><i class="fas fa-user-plus"></i></button>`;
+                    actionBtnHtml = `<button class="action-btn" data-user-id="${user.id}"><i class="fas fa-user-plus"></i></button>`;
                 }
                 
                 li.innerHTML = `
                     <span class="username">${user.username}</span>
-                    <div class="actions">${actionBtn}</div>
+                    <div class="actions">${actionBtnHtml}</div>
                 `;
                 listEl.appendChild(li);
             });
@@ -510,20 +527,18 @@
 
         // --- Friend Management ---
         document.addEventListener('click', async e => {
-            // Send friend request
             const addBtn = e.target.closest('button.action-btn[data-user-id]');
             if(addBtn) {
+                addBtn.disabled = true; // Prevent double clicks
                 const targetUserId = addBtn.dataset.userId;
                 await sendFriendRequest(targetUserId);
-                addBtn.parentElement.innerHTML = '<span>Requested</span>';
+                addBtn.parentElement.innerHTML = '<span><i class="fas fa-paper-plane"></i> Requested</span>';
             }
-            // Accept friend request
             const acceptBtn = e.target.closest('button.action-btn.accept');
             if(acceptBtn) {
                 const requesterId = acceptBtn.dataset.requesterId;
                 await acceptFriendRequest(requesterId);
             }
-            // Decline friend request
             const declineBtn = e.target.closest('button.action-btn.decline');
             if(declineBtn) {
                 const requesterId = declineBtn.dataset.requesterId;
@@ -535,22 +550,25 @@
             const currentUserRef = db.collection('users').doc(currentUser.uid);
             const targetUserRef = db.collection('users').doc(targetUserId);
 
+            // Using a transaction to ensure both documents are updated successfully
             await db.runTransaction(async (transaction) => {
+                const targetDoc = await transaction.get(targetUserRef);
+                if (!targetDoc.exists) { throw "User does not exist."; }
+
                 transaction.update(currentUserRef, { friendRequestsSent: firebase.firestore.FieldValue.arrayUnion(targetUserId) });
                 transaction.update(targetUserRef, { friendRequestsReceived: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
+            }).catch(error => {
+                console.error("Failed to send friend request:", error);
             });
         }
 
         async function acceptFriendRequest(requesterId) {
             const currentUserRef = db.collection('users').doc(currentUser.uid);
             const requesterRef = db.collection('users').doc(requesterId);
-            
-            // Generate a unique chat ID
             const chatId = [currentUser.uid, requesterId].sort().join('_');
             const chatRef = db.collection('chats').doc(chatId);
 
             await db.runTransaction(async (transaction) => {
-                // Update friend lists
                 transaction.update(currentUserRef, {
                     friends: firebase.firestore.FieldValue.arrayUnion(requesterId),
                     friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
@@ -559,10 +577,9 @@
                     friends: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
                     friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
                 });
-                // Create the chat document
                 transaction.set(chatRef, {
                     members: [currentUser.uid, requesterId],
-                    messages: {} // Empty messages map
+                    messages: {}
                 });
             });
         }
@@ -578,7 +595,7 @@
         
         unfriendBtn.addEventListener('click', async () => {
             const friendId = unfriendBtn.dataset.friendId;
-            if (friendId && confirm('Are you sure you want to unfriend this user?')) {
+            if (friendId && confirm(`Are you sure you want to unfriend this user? This will delete your 1-on-1 chat history forever.`)) {
                 const currentUserRef = db.collection('users').doc(currentUser.uid);
                 const friendRef = db.collection('users').doc(friendId);
                 const chatId = [currentUser.uid, friendId].sort().join('_');
@@ -607,14 +624,14 @@
 
             currentUserData.friendRequestsReceived.forEach(id => {
                 const requester = usersDataCache[id];
-                if (!requester) return; // Wait for cache to populate
+                if (!requester) return; 
                 const li = document.createElement('li');
                 li.className = 'chat-list-item';
                 li.innerHTML = `
                     <span class="username">${requester.username}</span>
                     <div class="actions">
-                        <button class="action-btn accept" data-requester-id="${id}"><i class="fas fa-check-circle"></i></button>
-                        <button class="action-btn decline" data-requester-id="${id}"><i class="fas fa-times-circle"></i></button>
+                        <button class="action-btn accept" title="Accept" data-requester-id="${id}"><i class="fas fa-check-circle"></i></button>
+                        <button class="action-btn decline" title="Decline" data-requester-id="${id}"><i class="fas fa-times-circle"></i></button>
                     </div>
                 `;
                 listEl.appendChild(li);
@@ -622,7 +639,6 @@
         }
 
         function renderFriendsAndGroups() {
-            // Render Friends
             friendsList.innerHTML = '';
             if (currentUserData.friends) {
                 currentUserData.friends.forEach(id => {
@@ -631,6 +647,7 @@
                     const chatId = [currentUser.uid, id].sort().join('_');
                     const li = document.createElement('li');
                     li.className = 'chat-list-item';
+                    if(chatId === activeChatId) li.classList.add('active');
                     li.dataset.chatId = chatId;
                     li.dataset.chatType = 'private';
                     li.innerHTML = `<span class="username">${friend.username}</span>`;
@@ -638,14 +655,13 @@
                 });
             }
 
-            // Render Groups
-            groupsList.innerHTML = '';
             db.collection('groupChats').where('members', 'array-contains', currentUser.uid).onSnapshot(snapshot => {
                 groupsList.innerHTML = '';
                  snapshot.forEach(doc => {
                     const group = {id: doc.id, ...doc.data()};
                     const li = document.createElement('li');
                     li.className = 'chat-list-item';
+                    if(group.id === activeChatId) li.classList.add('active');
                     li.dataset.chatId = group.id;
                     li.dataset.chatType = 'group';
                     li.innerHTML = `<span class="username">${group.groupName}</span>`;
@@ -662,7 +678,6 @@
                 const chatType = chatListItem.dataset.chatType;
                 openChat(chatId, chatType);
                 
-                // Highlight active item
                 document.querySelectorAll('.chat-list-item.active').forEach(item => item.classList.remove('active'));
                 chatListItem.classList.add('active');
             }
@@ -684,7 +699,6 @@
                 }
                 const chatData = {id: doc.id, ...doc.data()};
                 
-                // Set chat header
                 if (type === 'group') {
                     chatNameEl.textContent = chatData.groupName;
                     unfriendBtn.style.display = 'none';
@@ -697,7 +711,6 @@
                     unfriendBtn.dataset.friendId = friendId;
                 }
                 
-                // Render messages
                 renderMessages(chatData);
             });
         }
@@ -713,19 +726,14 @@
         async function renderMessages(chatData) {
             messagesContainer.innerHTML = '';
             if (!chatData.messages || Object.keys(chatData.messages).length === 0) {
-                 messagesContainer.innerHTML = '<p style="text-align:center; color:#aaa;">No messages yet. Say hello!</p>';
+                 messagesContainer.innerHTML = '<p style="text-align:center; color:#aaa; flex-grow: 1; display: flex; align-items: center; justify-content: center;">No messages yet. Say hello!</p>';
                  return;
             }
             
-            const messages = Object.entries(chatData.messages).map(([userId, message]) => ({
-                userId,
-                ...message
-            }));
-            
-            // Sort messages by timestamp
+            const messages = Object.entries(chatData.messages).map(([userId, message]) => ({ userId, ...message }));
             messages.sort((a, b) => a.timestamp - b.timestamp);
 
-            const userIdsToCache = messages.map(m => m.userId).filter(id => !usersDataCache[id]);
+            const userIdsToCache = messages.map(m => m.userId);
             await cacheUsersData(userIdsToCache);
             
             messages.forEach(msg => {
@@ -734,14 +742,10 @@
                 
                 const messageEl = document.createElement('div');
                 messageEl.className = 'message';
-                if (msg.userId === currentUser.uid) {
-                    messageEl.classList.add('current-user');
-                }
-                if (chatData.creatorId && msg.userId === chatData.creatorId) {
-                    messageEl.classList.add('group-creator');
-                }
+                if (msg.userId === currentUser.uid) messageEl.classList.add('current-user');
+                if (chatData.creatorId && msg.userId === chatData.creatorId) messageEl.classList.add('group-creator');
                 
-                const sentTime = msg.timestamp ? new Date(msg.timestamp.toMillis()).toLocaleString() : '';
+                const sentTime = msg.timestamp ? new Date(msg.timestamp.toMillis()).toLocaleString() : 'Sending...';
                 
                 messageEl.innerHTML = `
                     <div class="message-content">${msg.text}</div>
@@ -763,7 +767,6 @@
 
             const chatType = activeItem.dataset.chatType;
             const collectionName = chatType === 'group' ? 'groupChats' : 'chats';
-            
             const chatRef = db.collection(collectionName).doc(activeChatId);
             
             const messagePayload = {
@@ -771,11 +774,13 @@
                 timestamp: firebase.firestore.FieldValue.serverTimestamp()
             };
             
+            messageInput.value = '';
             await chatRef.update({
                 [`messages.${currentUser.uid}`]: messagePayload
+            }).catch(error => {
+                console.error("Message send error:", error);
+                messageInput.value = text; // Restore text on failure
             });
-            
-            messageInput.value = '';
         }
         
         sendMessageBtn.addEventListener('click', sendMessage);
@@ -809,22 +814,13 @@
 
         confirmGroupCreationBtn.addEventListener('click', async () => {
             const groupName = groupNameInput.value.trim();
-            if (groupName === '') {
-                alert('Please enter a group name.');
-                return;
-            }
+            if (groupName === '') return alert('Please enter a group name.');
             
             const selectedFriends = Array.from(friendsToAddToGroupDiv.querySelectorAll('input:checked')).map(input => input.value);
             const memberIds = [currentUser.uid, ...selectedFriends];
             
-            if (memberIds.length < 2) {
-                alert('A group needs at least one other member.');
-                return;
-            }
-            if (memberIds.length > 20) {
-                alert('A group can have a maximum of 20 members.');
-                return;
-            }
+            if (memberIds.length < 2) return alert('A group needs at least one other member.');
+            if (memberIds.length > 20) return alert('A group can have a maximum of 20 members.');
 
             await db.collection('groupChats').add({
                 groupName,
