@@ -11,12 +11,11 @@
     body, html {
       height: 100%;
       margin: 0;
-      /* Removed overflow: hidden; to prevent clipping */
     }
     body.dashboard-page {
       display: flex;
       flex-direction: column;
-      min-height: 100vh; /* Ensures the body takes at least the full viewport height */
+      min-height: 100vh;
       font-family: 'PrimaryFont', sans-serif;
       background-color: #f0f2f5;
     }
@@ -25,8 +24,7 @@
     }
     .dashboard-container {
       display: flex;
-      flex: 1; /* Allows this container to grow and fill available space */
-      /* Removed fixed height: calc(100vh - 60px) to be more flexible */
+      flex: 1;
     }
 
     /* --- Sidebar (Updated with styles from notes.html) --- */
@@ -74,7 +72,7 @@
       margin: 60px 0 30px;
       border-bottom: 1px solid #555;
       padding-bottom: 20px;
-      overflow: visible; /* Changed from hidden */
+      overflow: visible;
     }
     .marquee-container {
       overflow: hidden;
@@ -105,7 +103,7 @@
       font-family: 'PrimaryFont', sans-serif;
       font-size: 1.3em;
       margin-bottom: 8px;
-      line-height: 0.2em; /* Added for alignment */
+      line-height: 0.2em;
       font-weight: bold;
     }
     .user-info .email {
@@ -556,7 +554,23 @@
 
                 const userRef = db.collection('users').doc(user.uid);
                 userUnsubscribe = userRef.onSnapshot(doc => {
+                    const wasInPrivateChat = activeChatType === 'private' && activeChatId && activeChatData.members;
+
+                    // Update current user data with the latest snapshot
                     currentUserData = { id: doc.id, ...doc.data() };
+
+                    // *** NEW LOGIC: Check if an open chat is still valid ***
+                    if (wasInPrivateChat) {
+                        const friendId = activeChatData.members.find(id => id !== currentUser.uid);
+                        // Check if the friend ID from the active chat is still in the user's current friends list
+                        if (!currentUserData.friends || !currentUserData.friends.includes(friendId)) {
+                            // If not, the friend has been removed. Close the chat.
+                            closeActiveChat();
+                            // Notify the user why the chat was closed.
+                            alert('You are no longer friends with this user. The chat has been closed.');
+                        }
+                    }
+
                     const allUserIds = [
                         ...(currentUserData.friends || []),
                         ...(currentUserData.friendRequestsReceived || []),
@@ -602,6 +616,7 @@
             const collectionName = type === 'group' ? 'groupChats' : 'chats';
             
             activeChatUnsubscribe = db.collection(collectionName).doc(chatId).onSnapshot(async doc => {
+                // This existing check handles when the chat document itself is deleted.
                 if(!doc.exists) {
                     closeActiveChat();
                     return;
@@ -835,15 +850,19 @@
                 
                 const addBtn = e.target.closest('button.action-btn[data-user-id]');
                 if(addBtn) {
-                    // Disable the button to prevent multiple clicks
-                    addBtn.disabled = true;
-
-                    // *** MODIFICATION HERE: Change the button's content to text ***
-                    addBtn.innerHTML = 'Friend request sent!';
-                    addBtn.style.cursor = 'default';
+                    const userId = addBtn.dataset.userId;
+                    const actionsContainer = addBtn.parentElement;
                     
-                    // Call the function to send the request
-                    sendFriendRequest(addBtn.dataset.userId);
+                    if (actionsContainer) {
+                        const sentText = document.createElement('span');
+                        sentText.className = 'username'; 
+                        sentText.textContent = 'Friend request sent!';
+                        
+                        actionsContainer.innerHTML = '';
+                        actionsContainer.appendChild(sentText);
+                    }
+                    
+                    sendFriendRequest(userId);
                 }
 
                 const acceptBtn = e.target.closest('button.action-btn.accept');
