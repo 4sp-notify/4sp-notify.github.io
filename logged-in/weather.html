@@ -900,7 +900,6 @@
         const speedSuffix = weatherSettings.units === 'imperial' ? 'mph' : 'km/h';
         const precipSuffix = weatherSettings.units === 'imperial' ? 'in' : 'mm';
 
-        // --- Header ---
         const headerHTML = `
             <div class="weather-widget-header">
                 <h2 class="location-title">${weatherSettings.location.name}</h2>
@@ -914,7 +913,6 @@
                 </div>
             </div>`;
         
-        // --- Current Conditions ---
         const { temperature_2m, apparent_temperature, relative_humidity_2m, weather_code, wind_speed_10m, wind_gusts_10m } = data.current;
         const currentCodeInfo = WMO_CODES[weather_code] || { desc: 'Unknown', icon: '❓' };
         const currentConditionsHTML = `
@@ -932,7 +930,6 @@
                </div>
            </div>`;
 
-        // --- Hourly Forecast ---
          let hourlyHTML = '';
          const currentHour = new Date(data.current.time).getHours();
          for (let i = currentHour; i < currentHour + 24 && i < data.hourly.time.length; i++) {
@@ -943,7 +940,6 @@
          }
          const hourlyForecastHTML = `<div class="forecast-container"><h3 class="forecast-title">Hourly Forecast</h3><div class="scroll-frame">${hourlyHTML}</div></div>`;
 
-        // --- Daily Forecast ---
          let dailyHTML = '';
          data.daily.time.forEach((time, i) => {
            const date = new Date(time + 'T00:00:00');
@@ -953,10 +949,8 @@
          });
          const dailyForecastHTML = `<div class="forecast-container"><h3 class="forecast-title">16-Day Forecast</h3><div class="scroll-frame">${dailyHTML}</div></div>`;
 
-        // --- Details Grid ---
          const detailsHTML = `<div><h3 class="forecast-title">Additional Details For Today</h3><div class="details-grid"><div class="detail-box"><div class="detail-box-title">Sunrise</div><div class="detail-box-value">${new Date(data.daily.sunrise[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div><div class="detail-box"><div class="detail-box-title">Sunset</div><div class="detail-box-value">${new Date(data.daily.sunset[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div><div class="detail-box"><div class="detail-box-title">Max UV Index</div><div class="detail-box-value">${data.daily.uv_index_max[0].toFixed(1)}</div></div><div class="detail-box"><div class="detail-box-title">Precipitation</div><div class="detail-box-value">${data.daily.precipitation_sum[0].toFixed(2)} <span class="unit">${precipSuffix}</span></div></div></div></div>`;
 
-        // --- Assemble and Attach Listeners ---
         widgetContainer.innerHTML = headerHTML + currentConditionsHTML + hourlyForecastHTML + dailyForecastHTML + detailsHTML;
         
         document.getElementById('refreshBtn').addEventListener('click', fetchAndDisplayWeather);
@@ -970,7 +964,6 @@
         });
       };
       
-      // --- Modal Logic ---
       function setupModal(modal) {
           const closeBtn = modal.querySelector('.modal-close-btn');
           if(closeBtn) closeBtn.onclick = () => modal.classList.remove('modal-open');
@@ -1009,7 +1002,6 @@
         forecastModal.classList.add('modal-open');
       };
 
-      // --- Settings Modal Logic ---
       const openWeatherSettingsModal = () => {
         weatherLocationInput.value = weatherSettings.location.name;
         unitToggle.checked = weatherSettings.units === 'metric';
@@ -1113,46 +1105,51 @@
           });
       });
 
-      // --- Initializer ---
+      // --- ** REVISED and ROBUST Initializer ** ---
       const initializePage = () => {
-        if (!loadWeatherSettings()) {
-          // No saved settings, try to geolocate
-          if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(async (position) => {
-              try {
-                userCoords = { latitude: position.coords.latitude, longitude: position.coords.longitude };
-                // *** THIS IS THE CORRECTED LINE ***
-                const { name, country_code } = await fetchCityName(userCoords.latitude, userCoords.longitude);
-                weatherSettings.location = { name, latitude: userCoords.latitude, longitude: userCoords.longitude };
-                weatherSettings.units = (country_code === 'us' || country_code === 'lr' || country_code === 'mm') ? 'imperial' : 'metric';
+        const settingsLoaded = loadWeatherSettings();
+
+        // Always fetch weather immediately, using loaded settings or the hardcoded default.
+        // This prevents the page from ever getting "stuck".
+        fetchAndDisplayWeather();
+
+        if (!settingsLoaded) {
+            // This is the first visit or cache is cleared. Now, try to upgrade the location with geolocation in the background.
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(async (position) => {
+                    try {
+                        console.log("Geolocation successful, attempting to update location.");
+                        userCoords = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+                        const { name, country_code } = await fetchCityName(userCoords.latitude, userCoords.longitude);
+                        
+                        weatherSettings.location = { name, latitude: userCoords.latitude, longitude: userCoords.longitude };
+                        weatherSettings.units = (country_code === 'us' || country_code === 'lr' || country_code === 'mm') ? 'imperial' : 'metric';
+                        
+                        saveWeatherSettings();
+                        // Fetch AGAIN with the new, more accurate location.
+                        fetchAndDisplayWeather();
+                    } catch (e) {
+                        console.error("Error processing geolocation data:", e);
+                        // Silently fail. The default weather is already showing, which is fine.
+                    }
+                }, (error) => {
+                    console.warn(`Geolocation failed (${error.code}): ${error.message}. Using default location.`);
+                    // The user denied permission or an error occurred.
+                    // We save the default settings so we don't ask for permission on every visit.
+                    saveWeatherSettings();
+                });
+            } else {
+                console.warn("Geolocation not supported. Using default location.");
+                // Save the default settings so this block doesn't run again.
                 saveWeatherSettings();
-                fetchAndDisplayWeather();
-              } catch (e) {
-                console.error("Error during initial geolocation setup:", e);
-                // Fallback to default if API call fails
-                saveWeatherSettings();
-                fetchAndDisplayWeather();
-              }
-            }, (error) => {
-              // Geolocation failed, use default and fetch
-              console.warn("Geolocation failed. Using default location.");
-              saveWeatherSettings(); // Save default settings
-              fetchAndDisplayWeather();
-            });
-          } else {
-            // No geolocation support, use default
-            saveWeatherSettings();
-            fetchAndDisplayWeather();
-          }
+            }
         } else {
-          // Settings loaded, just fetch weather
-          fetchAndDisplayWeather();
-          // Also try to get user coords in background for better suggestions
-          if (navigator.geolocation) {
-            navigator.geolocation.getCurrentPosition(pos => {
-              userCoords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-            });
-          }
+            // Settings were loaded successfully. Just get user coords in the background for better search suggestions.
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(pos => {
+                    userCoords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
+                }, () => {}); // Ignore errors here, it's not critical.
+            }
         }
       };
 
