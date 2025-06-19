@@ -412,9 +412,13 @@
     .friend-selection-list { max-height: 150px; overflow-y: auto; border: 1px solid #eee; padding: 10px; border-radius: 8px; }
     .friend-selection-list .friend-item { display: flex; align-items: center; margin: 8px 0; }
     .friend-selection-list .friend-item label { margin-left: 10px; }
+    .modal-buttons {
+        display: flex;
+        gap: 10px;
+        margin-top: 20px;
+    }
     .modal-confirm-btn {
         width: 100%;
-        margin-top: 20px;
         padding: 12px;
         background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
         color: white;
@@ -425,6 +429,22 @@
         font-family: 'PrimaryFont', sans-serif;
         font-size: 1.1em;
         font-weight: bold;
+    }
+    .modal-cancel-btn {
+        width: 100%;
+        padding: 12px;
+        background-color: #ccc;
+        color: #333;
+        border: none;
+        border-radius: 8px;
+        cursor: pointer;
+        text-align: center;
+        font-family: 'PrimaryFont', sans-serif;
+        font-size: 1.1em;
+        font-weight: bold;
+    }
+    .modal-cancel-btn:hover {
+        background-color: #bbb;
     }
 
     /* --- Responsive Styles for Mobile --- */
@@ -637,6 +657,19 @@
     </div>
   </div>
 
+  <!-- Custom Confirmation Modal -->
+  <div id="confirmationModal" class="modal">
+    <div class="modal-content">
+      <span class="close-btn" id="closeConfirmationModal">&times;</span>
+      <h2 id="confirmationModalTitle"></h2>
+      <p id="confirmationModalMessage"></p>
+      <div class="modal-buttons">
+          <button id="confirmActionBtn" class="modal-confirm-btn">Confirm</button>
+          <button id="cancelActionBtn" class="modal-cancel-btn">Cancel</button>
+      </div>
+    </div>
+  </div>
+
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
@@ -681,6 +714,15 @@
         const friendsToInviteListDiv = document.getElementById('friendsToInviteList');
         const confirmInviteBtn = document.getElementById('confirmInviteBtn');
 
+        // Custom Confirmation Modal elements
+        const confirmationModal = document.getElementById('confirmationModal');
+        const closeConfirmationModalBtn = document.getElementById('closeConfirmationModal');
+        const confirmationModalTitle = document.getElementById('confirmationModalTitle');
+        const confirmationModalMessage = document.getElementById('confirmationModalMessage');
+        const confirmActionBtn = document.getElementById('confirmActionBtn');
+        const cancelActionBtn = document.getElementById('cancelActionBtn');
+
+
         // --- App State ---
         let currentUser = null;
         let currentUserData = {};
@@ -699,6 +741,36 @@
             el.classList.add('marquee-active');
           });
         }
+
+        // Generic Confirmation Modal Function
+        function showConfirmation(title, message) {
+            return new Promise(resolve => {
+                confirmationModalTitle.textContent = title;
+                confirmationModalMessage.textContent = message;
+                confirmationModal.style.display = 'flex';
+
+                const onConfirm = () => {
+                    confirmationModal.style.display = 'none';
+                    confirmActionBtn.removeEventListener('click', onConfirm);
+                    cancelActionBtn.removeEventListener('click', onCancel);
+                    closeConfirmationModalBtn.removeEventListener('click', onCancel);
+                    resolve(true);
+                };
+
+                const onCancel = () => {
+                    confirmationModal.style.display = 'none';
+                    confirmActionBtn.removeEventListener('click', onConfirm);
+                    cancelActionBtn.removeEventListener('click', onCancel);
+                    closeConfirmationModalBtn.removeEventListener('click', onCancel);
+                    resolve(false);
+                };
+
+                confirmActionBtn.addEventListener('click', onConfirm);
+                cancelActionBtn.addEventListener('click', onCancel);
+                closeConfirmationModalBtn.addEventListener('click', onCancel);
+            });
+        }
+
 
         // --- Authentication ---
         auth.onAuthStateChanged(async user => {
@@ -724,8 +796,9 @@
                     if (wasInPrivateChat) {
                         const friendId = activeChatData.members.find(id => id !== currentUser.uid);
                         if (!currentUserData.friends || !currentUserData.friends.includes(friendId)) {
+                            // Using alert here as it's a notification, not a confirmation
+                            alert('You are no longer friends with this user. The chat has been closed.'); 
                             closeActiveChat();
-                            alert('You are no longer friends with this user. The chat has been closed.');
                         }
                     }
 
@@ -782,14 +855,21 @@
                 activeChatData = {id: doc.id, ...doc.data()};
                 
                 unfriendBtn.style.display = 'none';
-                leaveGroupBtn.style.display = 'none';
+                leaveGroupBtn.style.display = 'none'; 
                 inviteToGroupBtn.style.display = 'none';
                 
                 if (type === 'group') {
                     chatNameEl.textContent = activeChatData.groupName;
                     leaveGroupBtn.style.display = 'inline-block';
+
+                    // Dynamic text and action for leave/delete group button
                     if (activeChatData.creatorId === currentUser.uid) {
+                       leaveGroupBtn.textContent = 'Delete Group';
+                       leaveGroupBtn.dataset.action = 'delete-group';
                        inviteToGroupBtn.style.display = 'inline-block';
+                    } else {
+                       leaveGroupBtn.textContent = 'Leave Group';
+                       leaveGroupBtn.dataset.action = 'leave-group';
                     }
                 } else {
                     const friendId = activeChatData.members.find(id => id !== currentUser.uid);
@@ -868,6 +948,8 @@
                 });
             } catch (error) {
                 console.error("Message send error:", error);
+                // Using alert for error, could be replaced with custom modal for consistency
+                alert("Failed to send message. Please try again."); 
                 messageInput.value = text;
             }
         }
@@ -920,10 +1002,15 @@
         async function sendFriendRequest(targetUserId) {
             const currentUserRef = db.collection('users').doc(currentUser.uid);
             const targetUserRef = db.collection('users').doc(targetUserId);
-            await db.runTransaction(async (t) => {
-                t.update(currentUserRef, { friendRequestsSent: firebase.firestore.FieldValue.arrayUnion(targetUserId) });
-                t.update(targetUserRef, { friendRequestsReceived: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
-            });
+            try {
+                await db.runTransaction(async (t) => {
+                    t.update(currentUserRef, { friendRequestsSent: firebase.firestore.FieldValue.arrayUnion(targetUserId) });
+                    t.update(targetUserRef, { friendRequestsReceived: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
+                });
+            } catch (error) {
+                console.error("Error sending friend request:", error);
+                alert("Failed to send friend request. Please try again.");
+            }
         }
 
         async function acceptFriendRequest(requesterId) {
@@ -931,26 +1018,36 @@
             const requesterRef = db.collection('users').doc(requesterId);
             const chatId = [currentUser.uid, requesterId].sort().join('_');
             const chatRef = db.collection('chats').doc(chatId);
-            await db.runTransaction(async (t) => {
-                t.update(currentUserRef, {
-                    friends: firebase.firestore.FieldValue.arrayUnion(requesterId),
-                    friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
+            try {
+                await db.runTransaction(async (t) => {
+                    t.update(currentUserRef, {
+                        friends: firebase.firestore.FieldValue.arrayUnion(requesterId),
+                        friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
+                    });
+                    t.update(requesterRef, {
+                        friends: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+                        friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
+                    });
+                    t.set(chatRef, { members: [currentUser.uid, requesterId], messages: {} });
                 });
-                t.update(requesterRef, {
-                    friends: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
-                    friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
-                });
-                t.set(chatRef, { members: [currentUser.uid, requesterId], messages: {} });
-            });
+            } catch (error) {
+                console.error("Error accepting friend request:", error);
+                alert("Failed to accept friend request. Please try again.");
+            }
         }
 
         async function declineFriendRequest(requesterId) {
              const currentUserRef = db.collection('users').doc(currentUser.uid);
              const requesterRef = db.collection('users').doc(requesterId);
-             await db.runTransaction(async (t) => {
-                t.update(currentUserRef, { friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId) });
-                t.update(requesterRef, { friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
-            });
+             try {
+                 await db.runTransaction(async (t) => {
+                    t.update(currentUserRef, { friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId) });
+                    t.update(requesterRef, { friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
+                });
+             } catch (error) {
+                 console.error("Error declining friend request:", error);
+                 alert("Failed to decline friend request. Please try again.");
+             }
         }
         
         async function performSearch(query) {
@@ -1119,9 +1216,14 @@
                 if (selectedFriends.length < 2) return alert('You must select at least 2 friends to create a group.');
                 const memberIds = [currentUser.uid, ...selectedFriends.map(input => input.value)];
                 if (memberIds.length > 20) return alert('A group can have a maximum of 20 members.');
-                await db.collection('groupChats').add({ groupName, creatorId: currentUser.uid, members: memberIds, messages: {} });
-                createGroupModal.style.display = 'none';
-                groupNameInput.value = '';
+                try {
+                    await db.collection('groupChats').add({ groupName, creatorId: currentUser.uid, members: memberIds, messages: {} });
+                    createGroupModal.style.display = 'none';
+                    groupNameInput.value = '';
+                } catch (error) {
+                    console.error("Error creating group:", error);
+                    alert("Failed to create group. Please try again.");
+                }
             });
 
             inviteToGroupBtn.addEventListener('click', () => {
@@ -1141,37 +1243,72 @@
                 const selectedToInvite = Array.from(friendsToInviteListDiv.querySelectorAll('input:checked')).map(input => input.value);
                 if (selectedToInvite.length === 0) return;
                 const groupRef = db.collection('groupChats').doc(activeChatId);
-                await groupRef.update({ members: firebase.firestore.FieldValue.arrayUnion(...selectedToInvite) });
-                inviteToGroupModal.style.display = 'none';
+                try {
+                    await groupRef.update({ members: firebase.firestore.FieldValue.arrayUnion(...selectedToInvite) });
+                    inviteToGroupModal.style.display = 'none';
+                } catch (error) {
+                    console.error("Error inviting to group:", error);
+                    alert("Failed to send invites. Please try again.");
+                }
             });
 
-            leaveGroupBtn.addEventListener('click', async () => {
+            leaveGroupBtn.addEventListener('click', async (e) => {
                 if (activeChatType !== 'group' || !activeChatData.members) return;
                 const groupRef = db.collection('groupChats').doc(activeChatId);
-                const currentMembersCount = activeChatData.members.length;
-                if (currentMembersCount <= 3) {
-                     if (confirm("Leaving this group will delete it permanently for everyone. Are you sure?")) {
-                        await groupRef.delete();
-                        closeActiveChat();
-                     }
-                } else {
-                     if (confirm("Are you sure you want to leave this group?")) {
-                        await groupRef.update({ members: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
-                        closeActiveChat();
-                     }
+                const action = e.target.dataset.action;
+                
+                if (action === 'delete-group') { // User is the creator and wants to delete
+                    const confirmed = await showConfirmation(
+                        "Delete Group?", 
+                        "Are you sure you want to permanently delete this group for everyone? This action cannot be undone."
+                    );
+                    if (confirmed) {
+                        try {
+                            await groupRef.delete();
+                            closeActiveChat();
+                        } catch (error) {
+                            console.error("Error deleting group:", error);
+                            alert("Failed to delete group. Please try again.");
+                        }
+                    }
+                } else if (action === 'leave-group') { // User is a member, not the creator, and wants to leave
+                    const confirmed = await showConfirmation(
+                        "Leave Group?", 
+                        "Are you sure you want to leave this group? You can be re-invited later."
+                    );
+                    if (confirmed) {
+                        try {
+                            await groupRef.update({ members: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
+                            closeActiveChat();
+                        } catch (error) {
+                            console.error("Error leaving group:", error);
+                            alert("Failed to leave group. Please try again.");
+                        }
+                    }
                 }
             });
 
              unfriendBtn.addEventListener('click', async () => {
                 const friendId = unfriendBtn.dataset.friendId;
-                if (friendId && confirm(`Are you sure you want to unfriend this user? This will delete the chat history forever.`)) {
-                    const chatId = [currentUser.uid, friendId].sort().join('_');
-                    const batch = db.batch();
-                    batch.update(db.collection('users').doc(currentUser.uid), { friends: firebase.firestore.FieldValue.arrayRemove(friendId) });
-                    batch.update(db.collection('users').doc(friendId), { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
-                    batch.delete(db.collection('chats').doc(chatId));
-                    await batch.commit();
-                    closeActiveChat();
+                if (friendId) {
+                    const confirmed = await showConfirmation(
+                        "Unfriend User?",
+                        `Are you sure you want to unfriend this user? This will delete the chat history forever.`
+                    );
+                    if (confirmed) {
+                        try {
+                            const chatId = [currentUser.uid, friendId].sort().join('_');
+                            const batch = db.batch();
+                            batch.update(db.collection('users').doc(currentUser.uid), { friends: firebase.firestore.FieldValue.arrayRemove(friendId) });
+                            batch.update(db.collection('users').doc(friendId), { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
+                            batch.delete(db.collection('chats').doc(chatId));
+                            await batch.commit();
+                            closeActiveChat();
+                        } catch (error) {
+                            console.error("Error unfriending:", error);
+                            alert("Failed to unfriend. Please try again.");
+                        }
+                    }
                 }
             });
         };
