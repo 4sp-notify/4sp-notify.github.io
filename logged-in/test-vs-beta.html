@@ -216,6 +216,11 @@
         margin: auto;
         text-align: center;
         color: #aaa;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        height: 100%;
     }
     .message-placeholder .icon {
         font-size: 3em;
@@ -696,6 +701,50 @@
                 t.update(requesterRef, { friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
             });
         }
+        
+        async function performSearch(query) {
+            if (!currentUser) return;
+            searchResultsSection.innerHTML = `<h3>Search Results</h3><ul class="chat-list"></ul>`;
+            const listEl = searchResultsSection.querySelector('ul');
+
+            const usernameQuery = db.collection('users').where('username', '>=', query).where('username', '<=', query + '\uf8ff').limit(5);
+            const emailQuery = db.collection('users').where('email', '==', query).limit(5);
+
+            const [usernameSnapshot, emailSnapshot] = await Promise.all([usernameQuery.get(), emailQuery.get()]);
+            
+            const results = new Map();
+            usernameSnapshot.forEach(doc => results.set(doc.id, {id: doc.id, ...doc.data()}));
+            emailSnapshot.forEach(doc => results.set(doc.id, {id: doc.id, ...doc.data()}));
+
+            listEl.innerHTML = '';
+            if (results.size === 0) {
+                listEl.innerHTML = '<li class="chat-list-item">No users found.</li>';
+                return;
+            }
+            
+            results.forEach(user => {
+                if (user.id === currentUser.uid) return;
+                const li = document.createElement('li');
+                li.className = 'chat-list-item';
+                
+                let actionBtnHtml = '';
+                if(currentUserData.friends?.includes(user.id)) {
+                    actionBtnHtml = '<span><i class="fas fa-user-check"></i> Friend</span>';
+                } else if (currentUserData.friendRequestsSent?.includes(user.id)) {
+                    actionBtnHtml = '<span><i class="fas fa-paper-plane"></i> Requested</span>';
+                } else if (currentUserData.friendRequestsReceived?.includes(user.id)) {
+                    actionBtnHtml = '<span>Respondez, s\'il vous plaît</span>';
+                } else {
+                    actionBtnHtml = `<button class="action-btn" data-user-id="${user.id}"><i class="fas fa-user-plus"></i></button>`;
+                }
+                
+                li.innerHTML = `
+                    <span class="username">${user.username}</span>
+                    <div class="actions">${actionBtnHtml}</div>
+                `;
+                listEl.appendChild(li);
+            });
+        }
 
         // --- Event Listeners Setup ---
         const setupEventListeners = () => {
@@ -717,6 +766,17 @@
                 const declineBtn = e.target.closest('button.action-btn.decline');
                 if(declineBtn) declineFriendRequest(declineBtn.dataset.requesterId);
              });
+
+            let searchTimeout;
+            searchInput.addEventListener('input', () => {
+                clearTimeout(searchTimeout);
+                const query = searchInput.value.trim();
+                if (query.length < 2) {
+                    searchResultsSection.innerHTML = '';
+                    return;
+                }
+                searchTimeout = setTimeout(() => performSearch(query), 300);
+            });
 
             sendMessageBtn.addEventListener('click', sendMessage);
             messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
