@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-    <title>Vern-AI Chatbot</title>
+    <title>4SP - VAI</title>
     <!-- External stylesheet from notes.html -->
     <link rel="stylesheet" href="../css/style.css" /> 
     <!-- Google Fonts as a fallback -->
@@ -318,6 +318,53 @@
             background-color: #f8d7da; border-radius: 8px; border: 1px solid #f5c6cb;
             margin: 0 20px; max-width: 500px;
         }
+        
+        /* --- Chat Save Menu Styles --- */
+        .chat-saves-menu {
+            margin-top: 15px;
+            background: white;
+            padding: 15px 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+        }
+        .chat-saves-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+        .chat-saves-header h3 { margin: 0; font-size: 1.2em; color: #333; }
+        #saveChatBtn {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            border: none; color: #fff; padding: 8px 12px; border-radius: 8px;
+            cursor: pointer; transition: all 0.3s ease;
+        }
+         #saveChatBtn:hover {
+            transform: translateY(-2px); box-shadow: 0 6px 15px rgba(40, 167, 69, 0.25);
+        }
+        #savedChatsList {
+            list-style: none; padding: 0; max-height: 150px; overflow-y: auto;
+        }
+        #savedChatsList li {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px;
+            border-bottom: 1px solid #f0f0f0;
+        }
+         #savedChatsList li:last-child { border-bottom: none; }
+        .save-name { font-weight: 600; color: #6720bd; }
+        .save-actions button {
+            background: none; border: 1px solid transparent; padding: 5px 8px; border-radius: 8px;
+            cursor: pointer; margin-left: 8px; font-size: 0.85em; transition: all 0.2s;
+        }
+        .save-actions .open-save-btn { color: #28a745; border-color: #28a745; }
+        .save-actions .open-save-btn:hover { background: #28a745; color: white;}
+        .save-actions .edit-save-btn { color: #1f95a3; border-color: #1f95a3; }
+        .save-actions .edit-save-btn:hover { background: #1f95a3; color: white;}
+        .save-actions .delete-save-btn { color: #dc3545; border-color: #dc3545;}
+        .save-actions .delete-save-btn:hover { background: #dc3545; color: white;}
+        
     </style>
 </head>
 <body class="dashboard-page">
@@ -333,7 +380,6 @@
         <div class="container">
             <div class="logo">
                 <a href="../index.html">
-                    <!-- Make sure this path is correct -->
                     <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer" />
                 </a>
             </div>
@@ -371,7 +417,6 @@
         <main class="main-content fade-in">
             <div class="dashboard-header">
                 <h2 class="dashboard-title">Vern-AI</h2>
-                 <!-- Removed the logout button from here -->
             </div>
 
             <div class="chat-container">
@@ -384,6 +429,16 @@
                         <svg viewBox="0 0 24 24"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"></path></svg>
                     </button>
                 </form>
+            </div>
+
+            <div class="chat-saves-menu">
+                <div class="chat-saves-header">
+                    <h3>Saved Chats (<span id="savedChatsCount">0</span>/10)</h3>
+                    <button id="saveChatBtn">Save Current Chat</button>
+                </div>
+                <ul id="savedChatsList">
+                    <!-- Saved chats will be listed here -->
+                </ul>
             </div>
         </main>
     </div>
@@ -410,12 +465,101 @@
         const marqueeEls = document.querySelectorAll('.marquee-content');
         const topLogoutBtn = document.getElementById('topLogoutBtn');
         const signOutLink = document.getElementById('signOutLink');
+        const saveChatBtn = document.getElementById('saveChatBtn');
+        const savedChatsList = document.getElementById('savedChatsList');
+        const savedChatsCount = document.getElementById('savedChatsCount');
 
         let GEMINI_API_KEY = null;
         let currentUser = null;
-        let chatHistory = []; // Local history, cleared on reload
+        let chatHistory = []; // In-memory history for the current session
 
-        // --- Sidebar, Marquee, and Auth UI Functions from notes.html ---
+        // --- Local Chat Save/Load Logic ---
+        const MAX_SAVES = 10;
+        const STORAGE_KEY = 'vernAiSavedChats';
+
+        function getSavedChats() {
+            const chatsJSON = localStorage.getItem(STORAGE_KEY);
+            return chatsJSON ? JSON.parse(chatsJSON) : [];
+        }
+
+        function saveChats(chats) {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(chats));
+            renderSavedChats();
+        }
+
+        function renderSavedChats() {
+            const savedChats = getSavedChats();
+            savedChatsList.innerHTML = '';
+            savedChatsCount.textContent = savedChats.length;
+
+            if (savedChats.length === 0) {
+                savedChatsList.innerHTML = '<li>No chats saved yet.</li>';
+                return;
+            }
+            
+            savedChats.forEach((chat, index) => {
+                const li = document.createElement('li');
+                li.innerHTML = `
+                    <span class="save-name">${chat.name}</span>
+                    <div class="save-actions">
+                        <button class="open-save-btn" data-index="${index}">Open</button>
+                        <button class="edit-save-btn" data-index="${index}">Rename</button>
+                        <button class="delete-save-btn" data-index="${index}">Delete</button>
+                    </div>
+                `;
+                savedChatsList.appendChild(li);
+            });
+        }
+        
+        saveChatBtn.addEventListener('click', () => {
+            const savedChats = getSavedChats();
+            if (savedChats.length >= MAX_SAVES) {
+                alert(`You have reached the maximum of ${MAX_SAVES} saved chats.`);
+                return;
+            }
+            if (chatHistory.length === 0) {
+                alert("Nothing to save. Start a conversation first.");
+                return;
+            }
+            
+            const chatName = prompt("Enter a name for this chat:", `Chat - ${new Date().toLocaleString()}`);
+            if (chatName) {
+                const newSave = {
+                    name: chatName,
+                    history: [...chatHistory]
+                };
+                savedChats.push(newSave);
+                saveChats(savedChats);
+            }
+        });
+
+        savedChatsList.addEventListener('click', (e) => {
+            if (!e.target.matches('button')) return;
+            const button = e.target;
+            const index = parseInt(button.dataset.index, 10);
+            let savedChats = getSavedChats();
+
+            if (button.classList.contains('open-save-btn')) {
+                 if (confirm("Opening a saved chat will replace the current conversation. Are you sure?")) {
+                    chatHistory = [...savedChats[index].history];
+                    chatWindow.innerHTML = '';
+                    chatHistory.forEach(msg => displayMessage(msg.parts[0].text, msg.role));
+                 }
+            } else if (button.classList.contains('edit-save-btn')) {
+                const newName = prompt("Enter new name:", savedChats[index].name);
+                if (newName) {
+                    savedChats[index].name = newName;
+                    saveChats(savedChats);
+                }
+            } else if (button.classList.contains('delete-save-btn')) {
+                if (confirm(`Are you sure you want to delete "${savedChats[index].name}"?`)) {
+                    savedChats.splice(index, 1);
+                    saveChats(savedChats);
+                }
+            }
+        });
+
+        // --- Sidebar, Marquee, and Auth UI Functions ---
         function updateMarquees() {
             marqueeEls.forEach(el => {
                 el.classList.remove('marquee-active');
@@ -425,9 +569,7 @@
         }
         
         const handleLogout = () => {
-            firebase.auth().signOut().then(() => {
-                // Redirect is handled by onAuthStateChanged
-            }).catch(error => console.error('Logout error:', error));
+            firebase.auth().signOut().catch(error => console.error('Logout error:', error));
         };
         
         if (toggleSidebarBtn && sidebar) {
@@ -451,7 +593,7 @@
                     console.log("API Key loaded.");
                     enableChat();
                 } else {
-                    throw new Error("The 'geminikey' document was not found. Check Firestore permissions and path.");
+                    throw new Error("The 'geminikey' document was not found.");
                 }
             } catch (error) {
                 console.error("Fatal Error fetching API Key:", error);
@@ -492,8 +634,9 @@
             chatInput.disabled = true;
             sendBtn.disabled = true;
 
+            const userMessage = { role: "user", parts: [{ text: userMessageText }] };
             displayMessage(userMessageText, 'user');
-            chatHistory.push({ role: "user", parts: [{ text: userMessageText }] });
+            chatHistory.push(userMessage);
             
             displayMessage('', 'bot', true);
 
@@ -516,8 +659,9 @@
 
                 if (data.candidates && data.candidates[0].content) {
                     const botMessage = data.candidates[0].content.parts[0].text;
-                    displayMessage(botMessage, 'bot');
-                    chatHistory.push(data.candidates[0].content);
+                    const botResponse = { role: "model", parts: [{ text: botMessage }] };
+                    displayMessage(botMessage, 'model'); // 'model' is the role from API
+                    chatHistory.push(botResponse);
                 } else {
                     displayMessage("Sorry, I couldn't get a response. Please try again.", 'bot');
                 }
@@ -537,15 +681,14 @@
         firebase.auth().onAuthStateChanged(async user => {
             currentUser = user;
             if (user) {
-                // User is logged in, stay on the page and initialize
-                document.body.style.visibility = 'visible'; // Show body content
-                loadingOverlay.style.display = 'flex'; // Keep loading overlay until init is done
+                document.body.style.visibility = 'visible';
+                loadingOverlay.style.display = 'flex';
                 sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0];
                 sidebarUserEmailEl.textContent = user.email;
                 await fetchApiKeyAndInit();
                 updateMarquees();
+                renderSavedChats(); // Render saved chats on load
             } else {
-                // User is logged out, redirect immediately
                 window.location.href = '../login.html';
             }
         });
