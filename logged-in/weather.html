@@ -900,54 +900,24 @@
         const speedSuffix = weatherSettings.units === 'imperial' ? 'mph' : 'km/h';
         const precipSuffix = weatherSettings.units === 'imperial' ? 'in' : 'mm';
 
+        // --- Header ---
+        const headerHTML = `
+            <div class="weather-widget-header">
+                <h2 class="location-title">${weatherSettings.location.name}</h2>
+                <div class="header-buttons">
+                    <button class="action-btn" id="settingsBtn" title="Settings">
+                        <img src="../images/gear-dark.png" alt="Settings">
+                    </button>
+                    <button class="action-btn" id="refreshBtn" title="Refresh">
+                        <img src="../images/refresh-dark.png" alt="Refresh">
+                    </button>
+                </div>
+            </div>`;
+        
+        // --- Current Conditions ---
         const { temperature_2m, apparent_temperature, relative_humidity_2m, weather_code, wind_speed_10m, wind_gusts_10m } = data.current;
         const currentCodeInfo = WMO_CODES[weather_code] || { desc: 'Unknown', icon: '❓' };
-        
-        const currentConditionsHTML = `...`; // (logic is the same as before)
-
-        widgetContainer.innerHTML = `
-          <div class="weather-widget-header">
-              <h2 class="location-title">${weatherSettings.location.name}</h2>
-              <div class="header-buttons">
-                  <button class="action-btn" id="settingsBtn" title="Settings">
-                      <img src="../images/gear-dark.png" alt="Settings">
-                  </button>
-                  <button class="action-btn" id="refreshBtn" title="Refresh">
-                      <img src="../images/refresh-dark.png" alt="Refresh">
-                  </button>
-              </div>
-          </div>
-          `;
-        
-        // This is a simplified placeholder for the full widget render logic which is quite long
-        // The full rendering logic from your previous file would go here, generating the HTML for current, hourly, daily, and details sections.
-        // For brevity, I'm showing just the header part and how event listeners are re-attached.
-        // Assume the rest of the widget's HTML is generated and appended here.
-        const fullWidgetHTML = generateFullWidgetHTML(data, weatherSettings.units); // A fictional function representing the full render
-        widgetContainer.insertAdjacentHTML('beforeend', fullWidgetHTML);
-
-
-        // Add event listeners after rendering
-        document.getElementById('refreshBtn').addEventListener('click', fetchAndDisplayWeather);
-        document.getElementById('settingsBtn').addEventListener('click', openWeatherSettingsModal);
-        
-        widgetContainer.querySelectorAll('.daily-item-card').forEach(card => {
-          card.addEventListener('click', () => {
-            const dayIndex = card.dataset.dayIndex;
-            openDailyDetailModal(data, dayIndex, weatherSettings.units);
-          });
-        });
-      };
-      
-      // This helper function stands in for the large HTML generation block from the previous step
-      function generateFullWidgetHTML(data, units) {
-         const tempSuffix = units === 'imperial' ? '°F' : '°C';
-         const speedSuffix = units === 'imperial' ? 'mph' : 'km/h';
-         const precipSuffix = units === 'imperial' ? 'in' : 'mm';
-         const { temperature_2m, apparent_temperature, relative_humidity_2m, weather_code, wind_speed_10m, wind_gusts_10m } = data.current;
-         const currentCodeInfo = WMO_CODES[weather_code] || { desc: 'Unknown', icon: '❓' };
-         
-         const currentConditionsHTML = `
+        const currentConditionsHTML = `
            <div class="current-weather-layout">
                <span class="weather-icon-large">${currentCodeInfo.icon}</span>
                <div class="current-weather-main-info">
@@ -962,6 +932,7 @@
                </div>
            </div>`;
 
+        // --- Hourly Forecast ---
          let hourlyHTML = '';
          const currentHour = new Date(data.current.time).getHours();
          for (let i = currentHour; i < currentHour + 24 && i < data.hourly.time.length; i++) {
@@ -972,6 +943,7 @@
          }
          const hourlyForecastHTML = `<div class="forecast-container"><h3 class="forecast-title">Hourly Forecast</h3><div class="scroll-frame">${hourlyHTML}</div></div>`;
 
+        // --- Daily Forecast ---
          let dailyHTML = '';
          data.daily.time.forEach((time, i) => {
            const date = new Date(time + 'T00:00:00');
@@ -981,10 +953,22 @@
          });
          const dailyForecastHTML = `<div class="forecast-container"><h3 class="forecast-title">16-Day Forecast</h3><div class="scroll-frame">${dailyHTML}</div></div>`;
 
+        // --- Details Grid ---
          const detailsHTML = `<div><h3 class="forecast-title">Additional Details For Today</h3><div class="details-grid"><div class="detail-box"><div class="detail-box-title">Sunrise</div><div class="detail-box-value">${new Date(data.daily.sunrise[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div><div class="detail-box"><div class="detail-box-title">Sunset</div><div class="detail-box-value">${new Date(data.daily.sunset[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div><div class="detail-box"><div class="detail-box-title">Max UV Index</div><div class="detail-box-value">${data.daily.uv_index_max[0].toFixed(1)}</div></div><div class="detail-box"><div class="detail-box-title">Precipitation</div><div class="detail-box-value">${data.daily.precipitation_sum[0].toFixed(2)} <span class="unit">${precipSuffix}</span></div></div></div></div>`;
 
-         return currentConditionsHTML + hourlyForecastHTML + dailyForecastHTML + detailsHTML;
-      }
+        // --- Assemble and Attach Listeners ---
+        widgetContainer.innerHTML = headerHTML + currentConditionsHTML + hourlyForecastHTML + dailyForecastHTML + detailsHTML;
+        
+        document.getElementById('refreshBtn').addEventListener('click', fetchAndDisplayWeather);
+        document.getElementById('settingsBtn').addEventListener('click', openWeatherSettingsModal);
+        
+        widgetContainer.querySelectorAll('.daily-item-card').forEach(card => {
+          card.addEventListener('click', () => {
+            const dayIndex = card.dataset.dayIndex;
+            openDailyDetailModal(data, dayIndex);
+          });
+        });
+      };
       
       // --- Modal Logic ---
       function setupModal(modal) {
@@ -997,7 +981,33 @@
       setupModal(forecastModal);
       setupModal(settingsModal);
 
-      const openDailyDetailModal = (data, index, units) => { /* ... same as before ... */ };
+      const openDailyDetailModal = (data, index) => {
+        const day = data.daily;
+        const date = new Date(day.time[index] + 'T00:00:00');
+        const codeInfo = WMO_CODES[day.weather_code[index]] || { desc: 'Unknown', icon: '❓' };
+        const tempSuffix = weatherSettings.units === 'imperial' ? '°F' : '°C';
+        const speedSuffix = weatherSettings.units === 'imperial' ? 'mph' : 'km/h';
+        const precipSuffix = weatherSettings.units === 'imperial' ? 'in' : 'mm';
+
+        document.getElementById('modalDay').textContent = date.toLocaleDateString(undefined, { weekday: 'long' });
+        document.getElementById('modalDate').textContent = date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
+        document.getElementById('modal-icon').textContent = codeInfo.icon;
+        document.getElementById('modal-temp-display').innerHTML = `${Math.round(day.temperature_2m_max[index])}° / ${Math.round(day.temperature_2m_min[index])}°`;
+        document.getElementById('modal-desc').textContent = codeInfo.desc;
+        
+        document.getElementById('modal-feels-like').textContent = `${Math.round(day.apparent_temperature_max[index])}° / ${Math.round(day.apparent_temperature_min[index])}°`;
+        document.getElementById('modal-precip-prob').textContent = `${day.precipitation_probability_max[index]}%`;
+        document.getElementById('modal-precip-sum').textContent = `${day.precipitation_sum[index].toFixed(2)} ${precipSuffix}`;
+        document.getElementById('modal-wind-speed').textContent = `${Math.round(day.wind_speed_10m_max[index])} ${speedSuffix}`;
+        document.getElementById('modal-wind-gusts').textContent = `${Math.round(day.wind_gusts_10m_max[index])} ${speedSuffix}`;
+        document.getElementById('modal-wind-dir').textContent = `${day.wind_direction_10m_dominant[index]}°`;
+        document.getElementById('modal-sunrise').textContent = new Date(day.sunrise[index]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        document.getElementById('modal-sunset').textContent = new Date(day.sunset[index]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        document.getElementById('modal-daylight').textContent = `${(day.daylight_duration[index] / 3600).toFixed(1)} hours`;
+        document.getElementById('modal-uv').textContent = `${day.uv_index_max[index].toFixed(1)}`;
+        
+        forecastModal.classList.add('modal-open');
+      };
 
       // --- Settings Modal Logic ---
       const openWeatherSettingsModal = () => {
@@ -1109,12 +1119,20 @@
           // No saved settings, try to geolocate
           if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(async (position) => {
-              userCoords = { latitude: position.coords.latitude, longitude: position.coords.longitude };
-              const { name, country_code } = await fetchCityName(userCoords.latitude, userCoods.longitude);
-              weatherSettings.location = { name, latitude: userCoords.latitude, longitude: userCoords.longitude };
-              weatherSettings.units = (country_code === 'us' || country_code === 'lr' || country_code === 'mm') ? 'imperial' : 'metric';
-              saveWeatherSettings();
-              fetchAndDisplayWeather();
+              try {
+                userCoords = { latitude: position.coords.latitude, longitude: position.coords.longitude };
+                // *** THIS IS THE CORRECTED LINE ***
+                const { name, country_code } = await fetchCityName(userCoords.latitude, userCoords.longitude);
+                weatherSettings.location = { name, latitude: userCoords.latitude, longitude: userCoords.longitude };
+                weatherSettings.units = (country_code === 'us' || country_code === 'lr' || country_code === 'mm') ? 'imperial' : 'metric';
+                saveWeatherSettings();
+                fetchAndDisplayWeather();
+              } catch (e) {
+                console.error("Error during initial geolocation setup:", e);
+                // Fallback to default if API call fails
+                saveWeatherSettings();
+                fetchAndDisplayWeather();
+              }
             }, (error) => {
               // Geolocation failed, use default and fetch
               console.warn("Geolocation failed. Using default location.");
