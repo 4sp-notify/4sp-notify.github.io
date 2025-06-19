@@ -136,7 +136,7 @@
       -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
     }
     
-    /* --- NEW: Vern AI Chat Styles --- */
+    /* --- Vern AI Chat Styles --- */
     .chat-container {
         flex-grow: 1;
         display: flex;
@@ -167,7 +167,7 @@
         color: white;
         border-bottom-right-radius: 4px;
         align-self: flex-end;
-        margin-left: auto; /* Push to the right */
+        margin-left: auto;
     }
     .message.model-message {
         background-color: #e9e9eb;
@@ -295,7 +295,6 @@
     </main>
   </div>
 
-  <!-- Using modern Firebase Modular SDK -->
   <script type="module">
     // Firebase Imports
     import { initializeApp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
@@ -303,7 +302,6 @@
     import { getFirestore, doc, getDoc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
     
     // This file should define a `firebaseConfig` object.
-    // It's crucial for this to load before the main script logic.
     import { firebaseConfig } from "../firebase-config.js";
 
     // --- Initialize Firebase ---
@@ -323,9 +321,9 @@
     let currentUser = null;
     let geminiApiKey = null;
     let chatHistory = [];
-    let chatDocUnsubscribe = null; // To detach the Firestore listener on logout
+    let chatDocUnsubscribe = null;
 
-    // --- Helper & UI Functions ---
+    // --- UI Functions ---
     const showStatus = (message, type = 'info', duration = 4000) => {
         statusMessagesEl.textContent = message;
         statusMessagesEl.className = `status-${type}`;
@@ -347,11 +345,9 @@
              messageDiv.id = 'thinking-bubble';
         } else {
             messageDiv.classList.add(role === 'user' ? 'user-message' : 'model-message');
-            // Use marked.js to parse Markdown content for model responses
             messageDiv.innerHTML = role === 'model' ? marked.parse(text) : text;
         }
 
-        // Remove old thinking bubble if it exists
         const oldThinkingBubble = document.getElementById('thinking-bubble');
         if (oldThinkingBubble && !isThinking) {
             oldThinkingBubble.remove();
@@ -369,10 +365,8 @@
         }
     };
     
-    // --- Core Logic (API & Firestore) ---
+    // --- Core Logic ---
 
-    // Fetches the Gemini API key from a secure location in Firestore.
-    // IMPORTANT: Set Firestore rules to only allow authenticated users to read this.
     const fetchApiKey = async () => {
         try {
             const configRef = doc(db, 'config', 'gemini-api');
@@ -382,29 +376,24 @@
                 sendButton.disabled = false;
                 showStatus('Vern AI is ready!', 'success');
             } else {
-                showStatus('Error: Could not find API Key in Firestore. Please check config/gemini-api document.', 'error', null);
-                console.error("API Key document not found or is missing the 'APIkey' field.");
+                showStatus('Error: API Key not found in Firestore.', 'error', null);
             }
         } catch (error) {
-            showStatus('Error: Failed to fetch API key. Check Firestore permissions and console.', 'error', null);
+            showStatus('Error: Failed to fetch API key.', 'error', null);
             console.error("Error fetching API key:", error);
         }
     };
 
-    // Sets up a real-time listener for the user's chat document
+    // UPDATED: Now points to the 'vernAiChats' collection
     const listenToChatHistory = (userId) => {
-        if (chatDocUnsubscribe) chatDocUnsubscribe(); // Detach any old listener
+        if (chatDocUnsubscribe) chatDocUnsubscribe();
         
-        const chatDocRef = doc(db, 'chats', userId);
+        const chatDocRef = doc(db, 'vernAiChats', userId);
         chatDocUnsubscribe = onSnapshot(chatDocRef, (docSnap) => {
             if (docSnap.exists() && docSnap.data().history) {
                 chatHistory = docSnap.data().history;
             } else {
-                // If no history, initialize it
-                chatHistory = [{
-                    role: 'model',
-                    parts: [{ text: "Hello! I am Vern AI. How can I assist you today?" }]
-                }];
+                chatHistory = []; // Start fresh if no history exists
             }
             renderChatHistory(chatHistory);
         }, (error) => {
@@ -413,15 +402,14 @@
         });
     };
 
-    // Calls the Gemini API
     const callGeminiApi = async (prompt) => {
         if (!geminiApiKey) {
-            showStatus('API Key not available. Cannot send message.', 'error');
+            showStatus('API Key not available.', 'error');
             return;
         }
 
         displayMessage('user', prompt);
-        displayMessage('model', '', true); // Show thinking bubble
+        displayMessage('model', '', true);
         sendButton.disabled = true;
         userInput.disabled = true;
 
@@ -444,19 +432,17 @@
             const result = await response.json();
             const modelResponse = result.candidates[0].content.parts[0].text;
 
-            // Update local and Firestore history
-            chatHistory.push({ role: 'user', parts: [{ text: prompt }] });
-            chatHistory.push({ role: 'model', parts: [{ text: modelResponse }] });
-
-            const chatDocRef = doc(db, 'chats', currentUser.uid);
-            await setDoc(chatDocRef, { history: chatHistory }, { merge: true });
-            
-            // The onSnapshot listener will handle displaying the new messages.
+            // UPDATED: Saves the new history to 'vernAiChats'
+            const newHistory = [...fullChatHistory, { role: 'model', parts: [{ text: modelResponse }] }];
+            const chatDocRef = doc(db, 'vernAiChats', currentUser.uid);
+            await setDoc(chatDocRef, { history: newHistory });
 
         } catch (error) {
             console.error('Gemini API Error:', error);
             showStatus(`Error from Vern AI: ${error.message}`, 'error', 6000);
-            displayMessage('model', `Sorry, I encountered an error. Please try again. (${error.message})`);
+            const thinkingBubble = document.getElementById('thinking-bubble');
+            if (thinkingBubble) thinkingBubble.remove();
+            displayMessage('model', `Sorry, I encountered an error. Please try again.`);
         } finally {
             sendButton.disabled = false;
             userInput.disabled = false;
@@ -473,21 +459,18 @@
         }
     };
 
-    // --- Authentication ---
+    // --- Auth & Event Listeners ---
     onAuthStateChanged(auth, async (user) => {
         if (user) {
             currentUser = user;
             userNameEl.textContent = user.displayName || user.email.split('@')[0];
             userEmailEl.textContent = user.email;
-            
-            await fetchApiKey(); // Fetch key once user is logged in
-            listenToChatHistory(user.uid); // Start listening for chats
-
+            await fetchApiKey();
+            listenToChatHistory(user.uid);
         } else {
             currentUser = null;
-            if (chatDocUnsubscribe) chatDocUnsubscribe(); // Stop listening
+            if (chatDocUnsubscribe) chatDocUnsubscribe();
             geminiApiKey = null;
-            
             userNameEl.textContent = 'Not Logged In';
             userEmailEl.textContent = 'Please log in';
             chatMessages.innerHTML = '';
@@ -496,7 +479,6 @@
         }
     });
 
-    // --- Event Listeners ---
     sendButton.addEventListener('click', handleSendMessage);
     userInput.addEventListener('keydown', (e) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -504,7 +486,6 @@
             handleSendMessage();
         }
     });
-    // Auto-resize textarea
     userInput.addEventListener('input', () => {
         userInput.style.height = 'auto';
         userInput.style.height = (userInput.scrollHeight) + 'px';
@@ -514,7 +495,6 @@
     document.getElementById('logoutBtn').onclick = handleLogout;
     document.getElementById('signOutLink').onclick = handleLogout;
 
-    // Sidebar toggle (from notes.html)
     document.getElementById('toggleSidebar').addEventListener('click', () => {
         document.getElementById('sidebar').classList.toggle('collapsed');
     });
