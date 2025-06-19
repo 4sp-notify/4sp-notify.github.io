@@ -229,6 +229,7 @@
             padding: 8px;
             background-color: rgba(0,0,0,0.2);
             border-radius: 5px;
+            min-height: 20px;
         }
 
         /* --- Main Content Area --- */
@@ -800,7 +801,6 @@
                 const targetUserDoc = querySnapshot.docs[0];
                 const targetUid = targetUserDoc.id;
                 
-                // Check if already friends or request pending
                 const friendshipId = [currentUser.uid, targetUid].sort().join('_');
                 const friendshipDoc = await db.collection('friendships').doc(friendshipId).get();
                 if (friendshipDoc.exists) {
@@ -844,7 +844,10 @@
         // --- Chat & Messaging Logic ---
         function listenForChats(uid) {
             const chatsQuery = db.collection('chats').where('members', 'array-contains', uid);
-            const unsubscribe = chatsQuery.orderBy('lastUpdated', 'desc').onSnapshot(async snapshot => {
+            // NOTE: The 'lastUpdated' field is not part of the initial chat creation rule.
+            // A robust solution would involve a Cloud Function to set this, or ordering by a different field.
+            // For now, we'll proceed without ordering on the query side.
+            const unsubscribe = chatsQuery.onSnapshot(async snapshot => {
                 const chatPromises = snapshot.docs.map(async doc => {
                     const chatData = doc.data();
                     const otherMembers = chatData.members.filter(m => m !== uid);
@@ -855,9 +858,11 @@
                     } else if (chatData.type === 'dm') {
                         chatName = "Deleted User";
                     }
-                    return { id: doc.id, name: chatName, data: chatData };
+                    return { id: doc.id, name: chatName, data: chatData, lastUpdated: chatData.lastUpdated };
                 });
-                const chats = await Promise.all(chatPromises);
+                let chats = await Promise.all(chatPromises);
+                // Sort chats client-side since we can't query on a field that may not exist.
+                chats.sort((a,b) => (b.lastUpdated?.seconds || 0) - (a.lastUpdated?.seconds || 0));
                 renderChatsList(chats);
             });
             unsubscribeAllListeners.push(unsubscribe);
@@ -885,9 +890,7 @@
                     await chatRef.set({
                         members: [currentUser.uid, otherUserId],
                         type: 'dm',
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                        lastUpdated: firebase.firestore.FieldValue.serverTimestamp(),
-                        messages: {} 
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
                     });
                 }
                 openChat(chatId);
@@ -898,12 +901,15 @@
         
         function openChat(chatId) {
             if (currentChatId === chatId) return;
+            // Clean up old listener before attaching a new one
+            let oldListenerIndex = unsubscribeAllListeners.findIndex(l => l.chatId === currentChatId);
+            if (oldListenerIndex > -1) {
+                unsubscribeAllListeners[oldListenerIndex]();
+                unsubscribeAllListeners.splice(oldListenerIndex, 1);
+            }
+
             currentChatId = chatId;
             
-            // Unsubscribe from previous chat listener if it exists
-            const prevUnsub = unsubscribeAllListeners.find(u => u.chatId === currentChatId);
-            if(prevUnsub) prevUnsub();
-
             document.querySelectorAll('#chats-list li').forEach(li => {
                 li.classList.toggle('active-chat', li.dataset.chatId === chatId);
             });
@@ -921,13 +927,21 @@
                     renderMessages(chatData.messages || {});
                  }
             });
-            chatUnsubscribe.chatId = chatId; // Tag unsubscribe function
+            // Tag the listener so we can find and remove it later
+            chatUnsubscribe.chatId = chatId; 
             unsubscribeAllListeners.push(chatUnsubscribe);
         }
         
         async function renderMessages(messagesMap) {
             messagesContainer.innerHTML = '';
-            const messages = Object.values(messagesMap);
+            const messages = [];
+            // New structure is a map where key is the sender's UID
+            for (const senderId in messagesMap) {
+                messages.push({
+                    senderId: senderId,
+                    ...messagesMap[senderId]
+                });
+            }
             messages.sort((a,b) => (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0));
 
             for (const msg of messages) {
@@ -956,23 +970,25 @@
         async function sendMessage() {
             const text = messageInput.value.trim();
             if (!text || !currentChatId) return;
-            const messageId = Date.now().toString(); // Use timestamp for unique message ID
+
+            // Payload matches the new rules. senderId is not needed in the object itself.
             const messagePayload = {
-                senderId: currentUser.uid,
                 text: text,
                 timestamp: firebase.firestore.FieldValue.serverTimestamp()
             };
 
             try {
+                // The key in the map is now the user's UID.
+                // This will create or overwrite the message for this user in the chat.
                 await db.collection('chats').doc(currentChatId).update({
-                    [`messages.${messageId}`]: messagePayload,
+                    [`messages.${currentUser.uid}`]: messagePayload,
                     lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
                 });
                 messageInput.value = '';
                 updateCharCounter();
             } catch (error) {
                 console.error("Error sending message:", error);
-                alert("Failed to send message.");
+                alert("Failed to send message. The chat may not exist or you may not have permission.");
             }
         }
         
@@ -988,6 +1004,7 @@
 
         // --- UI Helpers ---
         function getUserColor(username) {
+            if (!username) return '#cccccc';
             let hash = 0;
             for (let i = 0; i < username.length; i++) {
                 hash = username.charCodeAt(i) + ((hash << 5) - hash);
