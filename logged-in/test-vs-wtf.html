@@ -176,12 +176,11 @@
         .friend-actions button:hover, .request-actions button:hover {
             transform: translateY(-1px);
         }
-        .friend-actions .message-friend-btn, .request-actions .accept-friend-btn {
-            background-color: #28a745;
-        }
-        .friend-actions .unfriend-btn, .request-actions .decline-friend-btn {
-            background-color: #dc3545;
-        }
+        .friend-actions .message-friend-btn { background-color: #28a745; }
+        .request-actions .accept-friend-btn { background-color: #28a745; }
+        .friend-actions .unfriend-btn, .request-actions .decline-friend-btn { background-color: #6c757d; }
+        /* NEW style for the block button */
+        .friend-actions .block-btn { background-color: #dc3545; }
         
         .sidebar-section {
             padding: 12px 0;
@@ -632,10 +631,14 @@
                 if (!usernameCheck.empty) { throw new Error('Username is already taken.'); }
                 
                 const userCredential = await auth.createUserWithEmailAndPassword(email, password);
+                
+                // CRITICAL FIX: Add photoURL and bio fields to satisfy security rules on user creation.
                 await db.collection('users').doc(userCredential.user.uid).set({
                     username: username,
                     email: email,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                    photoURL: '', // Default empty value
+                    bio: ''       // Default empty value
                 });
             } catch (error) { authError.textContent = error.message; }
         });
@@ -715,21 +718,28 @@
             const unsubscribe = friendshipsQuery.onSnapshot(async snapshot => {
                 const friends = [];
                 const requests = [];
+                const blocked = []; // Not displayed, but good to track
+                
                 for (const doc of snapshot.docs) {
-                    const data = doc.data();
+                    const data = { id: doc.id, ...doc.data()};
                     const otherUserId = data.users.find(id => id !== uid);
                     const otherUser = await getUserData(otherUserId);
                     if (!otherUser) continue;
 
-                    const friendship = { id: doc.id, ...data, otherUser };
+                    const friendship = { ...data, otherUser };
+
                     if (friendship.status === 'friends') {
                         friends.push(friendship);
                     } else if (friendship.status === 'pending' && friendship.requester !== uid) {
                         requests.push(friendship);
+                    } else if (friendship.status === 'blocked') {
+                        blocked.push(friendship);
                     }
                 }
                 renderFriendsList(friends);
                 renderFriendRequestsList(requests);
+            }, error => {
+                console.error("Snapshot listener for friendships failed:", error);
             });
             unsubscribeAllListeners.push(unsubscribe);
         }
@@ -740,15 +750,19 @@
             friends.forEach(friend => {
                 const li = document.createElement('li');
                 li.className = 'friend-list-item';
+                // UPDATED: Added a "Block" button
                 li.innerHTML = `<span>${friend.otherUser.username}</span>
                                 <div class="friend-actions">
                                     <button class="message-friend-btn" data-uid="${friend.otherUser.id}">Message</button>
                                     <button class="unfriend-btn" data-fid="${friend.id}">Unfriend</button>
+                                    <button class="block-btn" data-fid="${friend.id}">Block</button>
                                 </div>`;
                 friendsListEl.appendChild(li);
             });
             friendsListEl.querySelectorAll('.message-friend-btn').forEach(b => b.addEventListener('click', (e) => startDmChat(e.target.dataset.uid)));
             friendsListEl.querySelectorAll('.unfriend-btn').forEach(b => b.addEventListener('click', (e) => unfriend(e.target.dataset.fid)));
+            // NEW: Event listener for the block button
+            friendsListEl.querySelectorAll('.block-btn').forEach(b => b.addEventListener('click', (e) => blockUser(e.target.dataset.fid)));
         }
 
         function renderFriendRequestsList(requests) {
@@ -789,8 +803,7 @@
                     searchResultsEl.textContent = `You are already connected with this user (${friendshipDoc.data().status}).`;
                     return;
                 }
-
-                // UPDATED: Added createdAt to match security rules
+                
                 await db.collection('friendships').doc(friendshipId).set({
                     users: [currentUser.uid, targetUid],
                     status: 'pending',
@@ -820,16 +833,40 @@
         async function unfriend(friendshipId) {
             if (confirm("Are you sure you want to unfriend this user? This will also delete the chat history.")) {
                 try {
-                    // In a DM, the friendshipId is also the chatId. Delete both.
+                    const batch = db.batch();
                     const friendshipRef = db.collection('friendships').doc(friendshipId);
                     const chatRef = db.collection('chats').doc(friendshipId);
                     
-                    const batch = db.batch();
                     batch.delete(friendshipRef);
-                    batch.delete(chatRef);
+                    batch.delete(chatRef); // Also delete the associated chat
+                    
                     await batch.commit();
-
                 } catch (error) { console.error("Error unfriending:", error); }
+            }
+        }
+        
+        // NEW: Function to block a user
+        async function blockUser(friendshipId) {
+            if (confirm("Are you sure you want to block this user? You will no longer see their messages, and your chat history will be deleted.")) {
+                try {
+                    const batch = db.batch();
+                    const friendshipRef = db.collection('friendships').doc(friendshipId);
+                    const chatRef = db.collection('chats').doc(friendshipId);
+
+                    // Update the friendship status to 'blocked'
+                    batch.update(friendshipRef, {
+                        status: 'blocked',
+                        blocker: currentUser.uid
+                    });
+                    
+                    // Also delete the associated chat
+                    batch.delete(chatRef);
+
+                    await batch.commit();
+                } catch (error) {
+                    console.error("Error blocking user:", error);
+                    alert("Could not block user. They may have already been unfriended.");
+                }
             }
         }
         
@@ -875,27 +912,24 @@
             try {
                 const chatDoc = await chatRef.get();
                 if (!chatDoc.exists) {
-                    // UPDATED: Added empty `messages` array to match security rules
                     await chatRef.set({
                         members: [currentUser.uid, otherUserId],
                         type: 'dm',
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                        messages: [] // Required by `isValidNewChat` rule
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
                     });
                 }
                 openChat(chatId);
-                // Switch to the chats tab
                 document.querySelector('.sidebar-tab[data-tab="chats"]').click();
 
             } catch (error) {
                 console.error("Error starting DM chat:", error);
+                alert("Could not start chat. The user may have blocked you.");
             }
         }
         
         function openChat(chatId) {
             if (currentChatId === chatId) return;
             
-            // Clean up old message listener before attaching a new one
             let oldListenerIndex = unsubscribeAllListeners.findIndex(l => l.isMessageListener);
             if (oldListenerIndex > -1) {
                 unsubscribeAllListeners[oldListenerIndex]();
@@ -912,7 +946,6 @@
             chatView.classList.remove('hidden');
             messagesContainer.innerHTML = `<div class="text-center text-gray-500">Loading messages...</div>`;
 
-            // Get chat metadata (like name)
              const chatMetaUnsubscribe = db.collection('chats').doc(chatId).onSnapshot(async doc => {
                 if (doc.exists) {
                     const chatData = doc.data();
@@ -920,7 +953,6 @@
                     const otherUser = await getUserData(otherUserId);
                     chatNameEl.textContent = otherUser ? otherUser.username : "Chat";
                 } else {
-                    // Chat was deleted (e.g., unfriended)
                     chatNameEl.textContent = "Chat deleted";
                     chatView.classList.add('hidden');
                     welcomeScreen.classList.remove('hidden');
@@ -929,22 +961,19 @@
             });
             unsubscribeAllListeners.push(chatMetaUnsubscribe);
 
-            // REWRITTEN: Listen to the messages subcollection
             const messagesQuery = db.collection('chats').doc(chatId).collection('messages').orderBy('timestamp', 'asc');
             const messagesUnsubscribe = messagesQuery.onSnapshot(async snapshot => {
                 const messages = snapshot.docs.map(doc => doc.data());
                 renderMessages(messages);
             }, error => {
                 console.error("Error listening to messages:", error);
-                messagesContainer.innerHTML = `<div class="text-center text-red-500">Could not load messages.</div>`;
+                messagesContainer.innerHTML = `<div class="text-center text-red-500">Could not load messages. You may be blocked by this user.</div>`;
             });
 
-            // Tag the listener so we can find and remove it later
             messagesUnsubscribe.isMessageListener = true; 
             unsubscribeAllListeners.push(messagesUnsubscribe);
         }
         
-        // REWRITTEN: Renders messages from an array, not a map
         async function renderMessages(messages) {
             messagesContainer.innerHTML = '';
             
@@ -971,7 +1000,6 @@
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
 
-        // REWRITTEN: Sends message to subcollection and updates parent doc
         async function sendMessage() {
             const text = messageInput.value.trim();
             if (!text || !currentChatId) return;
@@ -983,28 +1011,21 @@
             };
 
             const chatRef = db.collection('chats').doc(currentChatId);
-            // Create a reference to a new document in the 'messages' subcollection
             const newMessageRef = chatRef.collection('messages').doc();
 
             try {
-                // Use a batch to perform an atomic operation
                 const batch = db.batch();
-                
-                // Operation 1: Create the new message in the subcollection
                 batch.set(newMessageRef, messagePayload);
-
-                // Operation 2: Update the 'lastUpdated' field on the parent chat document
                 batch.update(chatRef, { 
                     lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
                 });
-
                 await batch.commit();
 
                 messageInput.value = '';
                 updateCharCounter();
             } catch (error) {
                 console.error("Error sending message:", error);
-                alert("Failed to send message. The chat may not exist or you may not have permission.");
+                alert("Failed to send message. You may have been blocked by this user.");
             }
         }
         
