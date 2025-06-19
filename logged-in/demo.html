@@ -427,7 +427,11 @@
     .close-btn { color: #aaa; position: absolute; top: 10px; right: 15px; font-size: 28px; font-weight: bold; cursor: pointer; }
     .modal-content h2 { margin-top: 0; color: #6720bd; }
     .modal-content h3 { margin-top: 20px; font-size: 1.1em; color: #555; border-bottom: 1px solid #eee; padding-bottom: 5px; }
-    .modal-content p { color: #666; line-height: 1.5; }
+    .modal-content p { 
+        color: #666; 
+        line-height: 1.5;
+        font-family: 'SecondaryFont', sans-serif;
+    }
     .modal-content input[type="text"] { width: 100%; padding: 12px; margin: 10px 0; box-sizing: border-box; border: 1px solid #ccc; border-radius: 8px; }
     .friend-selection-list { max-height: 150px; overflow-y: auto; border: 1px solid #eee; padding: 10px; border-radius: 8px; }
     .friend-selection-list .friend-item { display: flex; align-items: center; margin: 8px 0; }
@@ -656,7 +660,7 @@
       <span class="close-btn" id="closeGroupModal">&times;</span>
       <h2>Create New Group</h2>
       <input type="text" id="groupNameInput" placeholder="Enter group name">
-      <h3>Add Friends (select at least 2):</h3>
+      <h3>Invite Friends (select at least 1):</h3>
       <div id="friendsToAddToGroup" class="friend-selection-list"></div>
       <button id="confirmGroupCreationBtn" class="modal-confirm-btn">Create Group</button>
     </div>
@@ -1211,8 +1215,8 @@
                     showAlert(createGroupBtn.title);
                     return;
                 }
-                if (!currentUserData.friends || currentUserData.friends.length < 2) {
-                    showAlert("You need at least two friends to create a group chat.");
+                if (!currentUserData.friends || currentUserData.friends.length < 1) {
+                    showAlert("You need at least one friend to create a group chat.");
                     return;
                 }
                 friendsToAddToGroupDiv.innerHTML = '';
@@ -1227,19 +1231,51 @@
                 const groupName = groupNameInput.value.trim();
                 if (groupName === '') return showAlert('Please enter a group name.');
                 const selectedFriends = Array.from(friendsToAddToGroupDiv.querySelectorAll('input:checked'));
-                if (selectedFriends.length < 2) return showAlert('You must select at least 2 friends to create a group.');
-                const memberIds = [currentUser.uid, ...selectedFriends.map(input => input.value)];
-                if (memberIds.length > 20) return showAlert('A group can have a maximum of 20 members.');
+                if (selectedFriends.length < 1) return showAlert('You must invite at least 1 friend to create a group.');
                 
-                // NEW: Add group and set cooldown
-                const newGroupRef = await db.collection('groupChats').add({ groupName, creatorId: currentUser.uid, members: memberIds, messages: {} });
-                await db.collection('users').doc(currentUser.uid).update({
-                    lastGroupCreationTime: firebase.firestore.FieldValue.serverTimestamp()
-                });
-                
-                createGroupModal.style.display = 'none';
-                groupNameInput.value = '';
-                showAlert(`Group "${groupName}" created successfully!`);
+                const friendIdsToInvite = selectedFriends.map(input => input.value);
+                if ((1 + friendIdsToInvite.length) > 20) return showAlert('A group can have a maximum of 20 members.');
+
+                try {
+                    const batch = db.batch();
+
+                    // 1. Create the group with only the creator as a member
+                    const groupRef = db.collection('groupChats').doc();
+                    batch.set(groupRef, {
+                        groupName,
+                        creatorId: currentUser.uid,
+                        members: [currentUser.uid],
+                        messages: {}
+                    });
+
+                    // 2. Send invites to selected friends
+                    const groupInvitePayload = {
+                        groupId: groupRef.id,
+                        groupName: groupName
+                    };
+                    friendIdsToInvite.forEach(friendId => {
+                        const userRef = db.collection('users').doc(friendId);
+                        batch.update(userRef, {
+                            groupInvites: firebase.firestore.FieldValue.arrayUnion(groupInvitePayload)
+                        });
+                    });
+
+                    // 3. Set group creation cooldown for the current user
+                    const creatorRef = db.collection('users').doc(currentUser.uid);
+                    batch.update(creatorRef, {
+                        lastGroupCreationTime: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+
+                    // 4. Commit all batched writes
+                    await batch.commit();
+
+                    createGroupModal.style.display = 'none';
+                    groupNameInput.value = '';
+                    showAlert(`Group "${groupName}" created and invites sent!`);
+                } catch (error) {
+                    console.error("Error creating group:", error);
+                    showAlert("An error occurred while creating the group. Please try again.");
+                }
             });
 
             // UPDATED: Invite logic now sends invites, not forces adds
