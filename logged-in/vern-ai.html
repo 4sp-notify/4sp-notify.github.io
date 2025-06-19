@@ -328,9 +328,20 @@
         <div id="error-message"></div>
     </div>
     
-    <!-- This header is from notes.html but is not part of the main dashboard container -->
-    <header class="main-header light-bg" style="background: #fff; border-bottom: 1px solid #ddd; display:none;">
-        <!-- Content of the top header can go here if needed -->
+    <!-- Top bar from notes.html -->
+    <header class="main-header light-bg">
+        <div class="container">
+            <div class="logo">
+                <a href="../index.html">
+                    <!-- Make sure this path is correct -->
+                    <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer" />
+                </a>
+            </div>
+            <div class="auth-buttons">
+                <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="topLogoutBtn" class="btn btn-login">LOG OUT</button>
+            </div>
+        </div>
     </header>
 
     <div class="dashboard-container">
@@ -360,9 +371,7 @@
         <main class="main-content fade-in">
             <div class="dashboard-header">
                 <h2 class="dashboard-title">Vern-AI</h2>
-                 <div class="auth-buttons">
-                    <button id="logoutBtn" style="display: none; background: linear-gradient(135deg, #dc3545 0%, #c82333 100%); color: white; border: none; padding: 10px 20px; border-radius: 8px; cursor: pointer; font-weight: bold; transition: all 0.2s ease;">LOG OUT</button>
-                </div>
+                 <!-- Removed the logout button from here -->
             </div>
 
             <div class="chat-container">
@@ -399,11 +408,12 @@
         const sidebarUserNameEl = document.getElementById('userName');
         const sidebarUserEmailEl = document.getElementById('userEmail');
         const marqueeEls = document.querySelectorAll('.marquee-content');
-        const logoutBtn = document.getElementById('logoutBtn');
+        const topLogoutBtn = document.getElementById('topLogoutBtn');
         const signOutLink = document.getElementById('signOutLink');
 
         let GEMINI_API_KEY = null;
         let currentUser = null;
+        let chatHistory = []; // Local history, cleared on reload
 
         // --- Sidebar, Marquee, and Auth UI Functions from notes.html ---
         function updateMarquees() {
@@ -416,7 +426,7 @@
         
         const handleLogout = () => {
             firebase.auth().signOut().then(() => {
-                window.location.reload();
+                // Redirect is handled by onAuthStateChanged
             }).catch(error => console.error('Logout error:', error));
         };
         
@@ -435,7 +445,6 @@
                 const docRef = db.collection('config').doc('geminikey');
                 const docSnap = await docRef.get();
 
-                // CORRECTED: .exists is a property in the compat library, not a function
                 if (docSnap.exists) { 
                     GEMINI_API_KEY = docSnap.data().APIkey;
                     if (!GEMINI_API_KEY) throw new Error("APIkey field not found in 'config/geminikey'.");
@@ -460,21 +469,6 @@
             setTimeout(() => loadingOverlay.classList.add('is-hiding'), 300);
         };
         
-        const getSessionChatHistory = () => {
-            const storedHistory = sessionStorage.getItem('vernAiChatHistory');
-            return storedHistory ? JSON.parse(storedHistory) : [];
-        };
-
-        const saveSessionChatHistory = (history) => {
-            sessionStorage.setItem('vernAiChatHistory', JSON.stringify(history));
-        };
-
-        const loadChatHistory = () => {
-            const history = getSessionChatHistory();
-            chatWindow.innerHTML = '';
-            history.forEach(message => displayMessage(message.parts[0].text, message.role));
-        };
-
         const displayMessage = (text, sender, isTyping = false) => {
             const messageDiv = document.createElement('div');
             if (isTyping) {
@@ -499,14 +493,11 @@
             sendBtn.disabled = true;
 
             displayMessage(userMessageText, 'user');
-            let chatHistory = getSessionChatHistory();
             chatHistory.push({ role: "user", parts: [{ text: userMessageText }] });
-            saveSessionChatHistory(chatHistory);
             
             displayMessage('', 'bot', true);
 
             try {
-                // UPDATED API URL to use gemini-2.0-flash
                 const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${GEMINI_API_KEY}`;
                 const payload = { contents: chatHistory };
                 const response = await fetch(apiUrl, {
@@ -527,7 +518,6 @@
                     const botMessage = data.candidates[0].content.parts[0].text;
                     displayMessage(botMessage, 'bot');
                     chatHistory.push(data.candidates[0].content);
-                    saveSessionChatHistory(chatHistory);
                 } else {
                     displayMessage("Sorry, I couldn't get a response. Please try again.", 'bot');
                 }
@@ -547,31 +537,27 @@
         firebase.auth().onAuthStateChanged(async user => {
             currentUser = user;
             if (user) {
+                // User is logged in, stay on the page and initialize
+                document.body.style.visibility = 'visible'; // Show body content
+                loadingOverlay.style.display = 'flex'; // Keep loading overlay until init is done
                 sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0];
                 sidebarUserEmailEl.textContent = user.email;
-                logoutBtn.style.display = 'inline-block';
                 await fetchApiKeyAndInit();
+                updateMarquees();
             } else {
-                sidebarUserNameEl.textContent = 'Not Logged In';
-                sidebarUserEmailEl.textContent = 'Please log in';
-                logoutBtn.style.display = 'none';
-                loadingText.textContent = "Please log in to continue.";
-                loadingOverlay.querySelector('#loading-spinner').style.display = 'none';
-                chatInput.placeholder = "Please log in to chat.";
+                // User is logged out, redirect immediately
+                window.location.href = '../login.html';
             }
-            updateMarquees();
         });
         
         // --- Event Listeners ---
         chatForm.addEventListener('submit', handleFormSubmit);
-        logoutBtn.addEventListener('click', handleLogout);
+        topLogoutBtn.addEventListener('click', handleLogout);
         signOutLink.addEventListener('click', (e) => {
             e.preventDefault();
             handleLogout();
         });
 
-        // --- Start Application ---
-        loadChatHistory();
     });
     </script>
 </body>
