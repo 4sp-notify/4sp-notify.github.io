@@ -6,7 +6,6 @@
   <title>4SP - Shared Note</title>
   <link rel="stylesheet" href="../css/style.css" />
   <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
-  <!-- The panic-key.js script has been removed from this page as it requires user authentication and is not needed for viewing a public note. -->
   <style>
     /* Copied all styles from notes.html for exact layout */
     /* --- Dashboard Layout --- */
@@ -234,7 +233,6 @@
         <h2 class="dashboard-title">VIEW SHARED NOTE</h2>
       </div>
       
-      <!-- This is where the note content will be displayed -->
       <div id="note-view" class="shared-note-wrapper">
         <div class="note-header">
           <h1 id="note-title">Loading Note...</h1>
@@ -243,15 +241,16 @@
         <div id="note-content"></div>
       </div>
       
-      <!-- This is shown for errors or if the note is not found -->
       <div id="message-view" class="message-box" style="display: none;"></div>
 
     </main>
   </div>
-
+  
+  <!-- **FIXED**: Load the minimal required Firebase libraries -->
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
-  <!-- IMPORTANT: Make sure the path to your firebase-config.js is correct from this new location -->
+  
+  <!-- **FIXED**: The config script is loaded BUT the script below will handle initialization -->
   <script src="../firebase-config.js"></script> 
   <script>
     // --- DOM Elements ---
@@ -260,7 +259,6 @@
     const noteTitleEl = document.getElementById('note-title');
     const noteSharerEl = document.getElementById('note-sharer');
     const noteContentEl = document.getElementById('note-content');
-    const mainContentEl = document.querySelector('.main-content');
 
     // --- Sidebar Toggle Logic ---
     document.addEventListener('DOMContentLoaded', () => {
@@ -271,7 +269,6 @@
                 sidebar.classList.toggle('collapsed');
             });
         }
-        // Prevent disabled nav links from being followed
         document.querySelectorAll('.sidebar nav a.disabled').forEach(link => {
             link.addEventListener('click', e => e.preventDefault());
         });
@@ -279,7 +276,6 @@
 
     // --- Core Note Fetching Logic ---
     function showMessage(text) {
-        // Hide the main note container and show the message box instead
         noteView.style.display = 'none';
         messageView.textContent = text;
         messageView.style.display = 'block';
@@ -287,14 +283,20 @@
 
     async function loadSharedNote() {
       try {
-        // This check prevents firebase from being initialized twice if other scripts do it.
+        // **FIXED**: This block ensures Firebase initializes correctly on this page
+        // without relying on the auth-dependent code in other scripts.
+        if (typeof firebaseConfig === 'undefined') {
+            showMessage("Firebase configuration is missing.");
+            return;
+        }
+        // Check if Firebase has already been initialized.
         if (!firebase.apps.length) {
             firebase.initializeApp(firebaseConfig);
         }
+        // Get a Firestore instance.
         const db = firebase.firestore();
 
         const shareId = window.location.hash.substring(1);
-
         if (!shareId) {
             showMessage("Invalid Link: No share ID provided.");
             return;
@@ -303,27 +305,22 @@
         const docRef = db.collection('sharedLinks').doc(shareId);
         const docSnap = await docRef.get();
 
-        // **FIXED**: Use the exists() method instead of the exists property.
+        // **FIXED**: Use the exists() method.
         if (!docSnap.exists()) {
             showMessage("This note could not be found. The link may have expired or is incorrect.");
             return;
         }
         
         const note = docSnap.data();
-        // Firestore Timestamps need to be converted to JS Dates
         const expiresAt = note.expiresAt.toDate();
 
         if (expiresAt < new Date()) {
             showMessage("This share link has expired.");
-            // Optional: You could add logic here to delete the document if you don't use TTL
-            // await docRef.delete(); 
             return;
         }
 
-        // Populate the page with the note data
         noteTitleEl.textContent = note.noteName || 'Untitled Note';
         noteSharerEl.textContent = `Shared by: ${note.ownerUsername || 'Anonymous'}`;
-        // Using textContent is safer than innerHTML to prevent XSS from note content
         noteContentEl.textContent = note.noteContent || '';
 
       } catch (error) {
@@ -332,8 +329,8 @@
       }
     }
 
-    // Load the note as soon as the window opens
-    window.onload = loadSharedNote;
+    // Load the note after the DOM is ready.
+    document.addEventListener('DOMContentLoaded', loadSharedNote);
   </script>
 </body>
 </html>
