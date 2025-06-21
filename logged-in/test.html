@@ -313,22 +313,6 @@
         opacity: 0.8;
     }
 
-    #editingStatus {
-        font-size: 0.9em;
-        padding: 8px 12px;
-        background-color: #e9d8ff;
-        border: 1px solid #c8a2c8;
-        border-radius: 8px;
-        margin-bottom: 15px;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-    #editingStatus button {
-        background: #9a66c8; color: white; border: none;
-        padding: 4px 8px; border-radius: 5px; cursor: pointer;
-    }
-
 
     .cloud-stats {
         font-size: 0.85em;
@@ -388,8 +372,10 @@
     }
     .save-actions .open-save-btn { color: #28a745; border-color: #28a745; }
     .save-actions .open-save-btn:hover { background: #28a745; color: white;}
-    .save-actions .share-btn { color: #1f95a3; border-color: #1f95a3; }
-    .save-actions .share-btn:hover { background: #1f95a3; color: white;}
+    .save-actions .edit-save-btn { color: #007bff; border-color: #007bff; }
+    .save-actions .edit-save-btn:hover { background: #007bff; color: white;}
+    .save-actions .share-save-btn { color: #17a2b8; border-color: #17a2b8; }
+    .save-actions .share-save-btn:hover { background: #17a2b8; color: white;}
     .save-actions .delete-save-btn { color: #dc3545; border-color: #dc3545;}
     .save-actions .delete-save-btn:hover { background: #dc3545; color: white;}
 
@@ -491,6 +477,7 @@
             <button id="importFileBtn" onclick="document.getElementById('importFile').click();">Import File</button>
             <button id="exportNotesBtn">Export Notes</button>
             <button id="saveLocalBtn">Save Locally</button>
+            <button id="saveEditBtn" style="display:none; background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);">Save Edit</button>
         </div>
 
         <textarea id="notesTextArea" placeholder="Start typing your notes here..."></textarea>
@@ -503,7 +490,6 @@
                     <img src="../images/refresh-dark.png" alt="Refresh Saves">
                 </button>
             </div>
-             <div id="editingStatus" style="display: none;"></div>
             <div class="cloud-stats">
                 Slots: <span id="cloudSaveSlotsUsed">0</span>/<span id="cloudSlotsTotal">10</span> |
                 Characters: <span id="cloudCharCountUsed">0</span>/<span id="cloudCharLimitDisplay">1,000,000</span>
@@ -541,6 +527,7 @@
     const exportNotesBtn = document.getElementById('exportNotesBtn');
     const saveLocalBtn = document.getElementById('saveLocalBtn');
     const saveCloudBtn = document.getElementById('saveCloudBtn');
+    const saveEditBtn = document.getElementById('saveEditBtn');
     const cloudSaveNameEl = document.getElementById('cloudSaveName');
     const cloudSavesListEl = document.getElementById('cloudSavesList');
     const cloudSaveSlotsUsedEl = document.getElementById('cloudSaveSlotsUsed');
@@ -552,18 +539,15 @@
     const marqueeEls = document.querySelectorAll('.marquee-content');
     const sidebarUserNameEl = document.getElementById('userName');
     const sidebarUserEmailEl = document.getElementById('userEmail');
-    const editingStatusEl = document.getElementById('editingStatus');
 
 
     // --- Firebase Refs ---
     let currentUser = null;
-    let db = null;
-    const userNotesDocRef = () => currentUser ? db.collection('notesApp').doc(currentUser.uid) : null;
-    const userProfileDocRef = () => currentUser ? db.collection('users').doc(currentUser.uid) : null;
-    
-    // --- App State ---
-    let currentlyEditing = { index: null, originalName: '' };
-    let isRefreshingCloudSaves = false;
+    const userNotesDocRef = () => currentUser ? firebase.firestore().collection('notesApp').doc(currentUser.uid) : null;
+    const userProfileDocRef = () => currentUser ? firebase.firestore().collection('users').doc(currentUser.uid) : null;
+    const sharedNotesCollectionRef = () => firebase.firestore().collection('sharedNotes');
+
+    let currentlyEditingIndex = null;
 
 
     // --- Utility Functions ---
@@ -571,12 +555,14 @@
         if (IS_OWNER_ACCOUNT) {
             MAX_CLOUD_SAVES = BASE_MAX_CLOUD_SAVES * 2; 
             MAX_CLOUD_CHARS = BASE_MAX_CLOUD_CHARS * 2;
+            cloudSlotsTotalEl.textContent = MAX_CLOUD_SAVES;
+            cloudCharLimitDisplayEl.textContent = MAX_CLOUD_CHARS.toLocaleString();
         } else {
             MAX_CLOUD_SAVES = BASE_MAX_CLOUD_SAVES; 
             MAX_CLOUD_CHARS = BASE_MAX_CLOUD_CHARS; 
+            cloudSlotsTotalEl.textContent = MAX_CLOUD_SAVES;
+            cloudCharLimitDisplayEl.textContent = MAX_CLOUD_CHARS.toLocaleString();
         }
-        cloudSlotsTotalEl.textContent = MAX_CLOUD_SAVES.toLocaleString();
-        cloudCharLimitDisplayEl.textContent = MAX_CLOUD_CHARS.toLocaleString();
     }
 
     function showStatusMessage(message, type = 'info', duration = 4000) {
@@ -618,6 +604,17 @@
                 setTimeout(updateMarquees, 550); 
             });
         }
+        const navLinks = document.querySelectorAll('.sidebar nav a');
+        navLinks.forEach(link => {
+            link.classList.remove('active');
+            const currentPageName = window.location.pathname.split('/').pop();
+            if (currentPageName === 'notes.html' || (link.getAttribute('href') === 'others.html' && currentPageName === 'others.html') ) {
+                 const othersLink = Array.from(navLinks).find(l => l.getAttribute('href') === 'others.html');
+                 if (othersLink) othersLink.classList.add('active');
+            } else if (link.getAttribute('href') === currentPageName) {
+                 link.classList.add('active');
+            }
+        });
     });
      const handleLogout = () => {
       firebase.auth().signOut().then(() => {
@@ -670,7 +667,7 @@
     function handleLocalSave() {
         try {
             localStorage.setItem('notes_localCopy', notesTextArea.value);
-            showStatusMessage('Notes saved locally in your browser. This can be cleared with browser data.', 'warning', 6000);
+            showStatusMessage('Notes saved locally in your browser. Be cautious, this can be cleared with browser data.', 'warning', 6000);
         } catch (e) {
             showStatusMessage('Failed to save locally. Storage might be full or disabled.', 'error');
             console.error("Local save error:", e);
@@ -685,13 +682,17 @@
         }
     }
 
+    let isRefreshingCloudSaves = false;
+
+    // Helper function to sort saves consistently
     function sortSaves(savesArray) {
         return savesArray.sort((a, b) => {
-            const timeA = a.timestamp?.seconds ? a.timestamp.seconds * 1000 : 0;
-            const timeB = b.timestamp?.seconds ? b.timestamp.seconds * 1000 : 0;
+            const timeA = a.timestamp && typeof a.timestamp.toDate === 'function' ? a.timestamp.toDate().getTime() : (a.timestamp && a.timestamp.seconds ? a.timestamp.seconds * 1000 : 0);
+            const timeB = b.timestamp && typeof b.timestamp.toDate === 'function' ? b.timestamp.toDate().getTime() : (b.timestamp && b.timestamp.seconds ? b.timestamp.seconds * 1000 : 0);
             return timeB - timeA; // Newest first
         });
     }
+
 
     async function refreshCloudSavesDisplay(showLoadingMessageInList = true) {
         if (isRefreshingCloudSaves) return;
@@ -703,8 +704,24 @@
         refreshCloudSavesBtn.classList.add('refreshing');
         refreshCloudSavesBtn.disabled = true;
 
+
         if (!currentUser) {
-            cloudSavesListEl.innerHTML = '<li>Login to see cloud saves.</li>';
+             if (showLoadingMessageInList || cloudSavesListEl.innerHTML.includes('Loading...')) {
+                 cloudSavesListEl.innerHTML = '<li>Login to see cloud saves.</li>';
+            }
+            cloudSaveSlotsUsedEl.textContent = '0';
+            cloudCharCountUsedEl.textContent = '0';
+            isRefreshingCloudSaves = false;
+            refreshCloudSavesBtn.classList.remove('refreshing');
+            refreshCloudSavesBtn.disabled = false;
+            return;
+        }
+        const docRef = userNotesDocRef();
+        if (!docRef) {
+            console.error("refreshCloudSavesDisplay: docRef is null.");
+            if (showLoadingMessageInList || cloudSavesListEl.innerHTML.includes('Loading...')) {
+                 cloudSavesListEl.innerHTML = '<li>Error: User reference not found for cloud saves.</li>';
+            }
             isRefreshingCloudSaves = false;
             refreshCloudSavesBtn.classList.remove('refreshing');
             refreshCloudSavesBtn.disabled = false;
@@ -712,13 +729,14 @@
         }
 
         try {
-            const docSnap = await userNotesDocRef().get();
+            const docSnap = await docRef.get();
             cloudSavesListEl.innerHTML = ''; 
 
-            if (docSnap.exists) {
+            if (docSnap && typeof docSnap.exists === 'boolean' && docSnap.exists) {
                 const data = docSnap.data();
-                let saves = data?.cloudSaves ? data.cloudSaves : [];
-                saves = sortSaves(saves);
+                let saves = data && data.cloudSaves ? data.cloudSaves : [];
+                saves = sortSaves(saves); 
+
                 let totalChars = 0;
 
                 if (saves.length === 0) {
@@ -728,8 +746,18 @@
                 saves.forEach((save, index) => {
                     totalChars += save.charCount || 0;
                     const li = document.createElement('li');
-                    const saveDate = save.timestamp?.toDate ? save.timestamp.toDate().toLocaleString() : 'N/A';
                     
+                    let saveDate = 'N/A';
+                    if (save.timestamp) {
+                        if (typeof save.timestamp.toDate === 'function') { 
+                            saveDate = save.timestamp.toDate().toLocaleString();
+                        } else if (save.timestamp.seconds) { 
+                            saveDate = new Date(save.timestamp.seconds * 1000).toLocaleString();
+                        } else if (save.timestamp instanceof Date) { 
+                            saveDate = save.timestamp.toLocaleString();
+                        }
+                    }
+
                     li.innerHTML = `
                         <div class="save-info">
                             <span class="save-name">${save.name || `Save ${index + 1}`}</span>
@@ -739,7 +767,8 @@
                         </div>
                         <div class="save-actions">
                             <button class="open-save-btn" data-index="${index}">Open</button>
-                            <button class="share-btn" data-index="${index}" ${save.shareId ? '' : 'disabled title="Save has no share link yet." '}>Share</button>
+                            <button class="edit-save-btn" data-index="${index}">Edit</button>
+                            <button class="share-save-btn" data-index="${index}">Share</button>
                             <button class="delete-save-btn" data-index="${index}">Delete</button>
                         </div>
                     `;
@@ -749,16 +778,25 @@
                 cloudSaveSlotsUsedEl.textContent = saves.length;
                 cloudCharCountUsedEl.textContent = totalChars.toLocaleString();
 
-                cloudSavesListEl.querySelectorAll('.open-save-btn').forEach(btn => btn.addEventListener('click', (e) => openCloudSave(parseInt(e.target.dataset.index))));
-                cloudSavesListEl.querySelectorAll('.share-btn').forEach(btn => btn.addEventListener('click', (e) => handleShareClick(parseInt(e.target.dataset.index))));
-                cloudSavesListEl.querySelectorAll('.delete-save-btn').forEach(btn => btn.addEventListener('click', (e) => deleteCloudSave(parseInt(e.target.dataset.index))));
+                cloudSavesListEl.querySelectorAll('.open-save-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => openCloudSave(parseInt(e.target.dataset.index)));
+                });
+                cloudSavesListEl.querySelectorAll('.edit-save-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => handleEdit(parseInt(e.target.dataset.index)));
+                });
+                 cloudSavesListEl.querySelectorAll('.share-save-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => shareCloudSave(parseInt(e.target.dataset.index)));
+                });
+                cloudSavesListEl.querySelectorAll('.delete-save-btn').forEach(btn => {
+                    btn.addEventListener('click', (e) => deleteCloudSave(parseInt(e.target.dataset.index)));
+                });
             } else { 
                 cloudSavesListEl.innerHTML = '<li>No cloud save data found. Start saving!</li>';
                 cloudSaveSlotsUsedEl.textContent = '0';
                 cloudCharCountUsedEl.textContent = '0';
             }
         } catch (error) {
-            console.error("Error refreshing cloud saves:", error);
+            console.error("Error in refreshCloudSavesDisplay:", error);
             showStatusMessage('Error fetching cloud saves: ' + error.message, 'error');
             cloudSavesListEl.innerHTML = `<li>Error loading saves. Check console.</li>`;
         } finally {
@@ -766,18 +804,6 @@
             refreshCloudSavesBtn.classList.remove('refreshing');
             refreshCloudSavesBtn.disabled = false;
         }
-    }
-    
-    function cancelEdit() {
-        currentlyEditing = { index: null, originalName: '' };
-        cloudSaveNameEl.value = '';
-        notesTextArea.value = localStorage.getItem('notes_localCopy') || '';
-        updateCharacterCount();
-
-        editingStatusEl.style.display = 'none';
-        editingStatusEl.innerHTML = '';
-        saveCloudBtn.textContent = 'Save to Cloud';
-        showStatusMessage('Edit cancelled.', 'info');
     }
 
     async function handleCloudSave() {
@@ -788,136 +814,111 @@
         const saveName = cloudSaveNameEl.value.trim() || `Note-${new Date().toISOString().slice(0,10)}`;
         const contentToSave = notesTextArea.value;
         const charCountToSave = contentToSave.length;
-        const isUpdating = currentlyEditing.index !== null;
-        
+
         const docRef = userNotesDocRef();
+        if (!docRef) {
+            showStatusMessage('Error: Cannot get user reference for cloud save.', 'error');
+            return;
+        }
 
         try {
             saveCloudBtn.textContent = 'Saving...';
             saveCloudBtn.disabled = true;
-            
-            const batch = db.batch();
-            const docSnap = await docRef.get();
-            let cloudSaves = [];
-            let currentTotalChars = 0;
 
-            if (docSnap.exists) {
-                const data = docSnap.data();
-                cloudSaves = data.cloudSaves || [];
-                currentTotalChars = cloudSaves.reduce((sum, s) => sum + (s.charCount || 0), 0);
-            }
-            
-            cloudSaves = sortSaves(cloudSaves);
+            await firebase.firestore().runTransaction(async (transaction) => {
+                const docSnap = await transaction.get(docRef);
+                let cloudSaves = [];
+                let currentTotalChars = 0;
 
-            if (isUpdating) {
-                // --- UPDATE LOGIC ---
-                const originalSave = cloudSaves[currentlyEditing.index];
-                const charDiff = charCountToSave - originalSave.charCount;
-
-                if (currentTotalChars + charDiff > MAX_CLOUD_CHARS) {
-                    throw new Error(`Updating this note would exceed total character limit of ${MAX_CLOUD_CHARS.toLocaleString()}.`);
+                if (docSnap.exists) {
+                    const data = docSnap.data();
+                    if (data) {
+                        cloudSaves = data.cloudSaves || [];
+                        currentTotalChars = cloudSaves.reduce((sum, s) => sum + (s.charCount || 0), 0);
+                    }
                 }
-
-                const updatedSave = {
-                    ...originalSave,
+                if (cloudSaves.length >= MAX_CLOUD_SAVES) {
+                    throw new Error(`Cloud save limit of ${MAX_CLOUD_SAVES} slots reached. Please delete an existing save.`);
+                }
+                if (currentTotalChars + charCountToSave > MAX_CLOUD_CHARS) {
+                    throw new Error(`Saving this note would exceed the total character limit of ${MAX_CLOUD_CHARS.toLocaleString()}. Current: ${currentTotalChars.toLocaleString()}, Adding: ${charCountToSave.toLocaleString()}`);
+                }
+                
+                const newSave = {
                     name: saveName,
                     content: contentToSave,
                     charCount: charCountToSave,
                     timestamp: new Date()
                 };
-                cloudSaves[currentlyEditing.index] = updatedSave;
-
-                batch.update(docRef, { cloudSaves });
-                
-                // Also update the shared note document
-                if (originalSave.shareId) {
-                    const shareRef = db.collection('sharedNotes').doc(originalSave.shareId);
-                    batch.update(shareRef, {
-                        noteName: saveName,
-                        noteContent: contentToSave,
-                        ownerUsername: sidebarUserNameEl.textContent || 'Anonymous',
-                    });
-                }
-                
-            } else {
-                // --- CREATE NEW LOGIC ---
-                if (cloudSaves.length >= MAX_CLOUD_SAVES) {
-                    throw new Error(`Cloud save limit of ${MAX_CLOUD_SAVES} slots reached.`);
-                }
-                if (currentTotalChars + charCountToSave > MAX_CLOUD_CHARS) {
-                    throw new Error(`Saving this note would exceed the total character limit of ${MAX_CLOUD_CHARS.toLocaleString()}.`);
-                }
-
-                const shareRef = db.collection('sharedNotes').doc();
-                const newShareId = shareRef.id;
-
-                const newSave = {
-                    name: saveName,
-                    content: contentToSave,
-                    charCount: charCountToSave,
-                    timestamp: new Date(),
-                    shareId: newShareId
-                };
                 cloudSaves.push(newSave);
-
-                batch.set(shareRef, {
-                    ownerUid: currentUser.uid,
-                    ownerUsername: sidebarUserNameEl.textContent || 'Anonymous',
-                    noteName: saveName,
-                    noteContent: contentToSave
-                });
                 
                 if (docSnap.exists) {
-                    batch.update(docRef, { cloudSaves });
+                    transaction.update(docRef, { cloudSaves });
                 } else {
-                    batch.set(docRef, { cloudSaves });
+                    transaction.set(docRef, { cloudSaves });
                 }
-            }
+            });
 
-            await batch.commit();
-
-            showStatusMessage(`Note "${saveName}" saved to cloud successfully.`, 'success');
-            if (isUpdating) {
-                cancelEdit(); // Reset UI after update
-            } else {
-                cloudSaveNameEl.value = ''; // Clear name for next save
-            }
-            await refreshCloudSavesDisplay(false);
+            showStatusMessage(`"${saveName}" sent to cloud for saving!`, 'success');
+            cloudSaveNameEl.value = '';
+            await refreshCloudSavesDisplay(false); 
 
         } catch (error) {
             console.error("Error saving to cloud:", error);
             showStatusMessage(`Cloud save error: ${error.message}`, 'error', 6000);
         } finally {
-            saveCloudBtn.textContent = isUpdating ? 'Update Cloud Save' : 'Save to Cloud';
-            if (!isUpdating) saveCloudBtn.textContent = 'Save to Cloud';
+            saveCloudBtn.textContent = 'Save to Cloud';
             saveCloudBtn.disabled = false;
         }
     }
 
     async function openCloudSave(index) {
-        if (!currentUser) return;
+        if (currentlyEditingIndex !== null) {
+            if (!confirm("You are currently editing a note. Do you want to discard your changes and open another note?")) {
+                return;
+            }
+            exitEditMode();
+        }
+
+        if (!currentUser) {
+            showStatusMessage('Please log in to open cloud saves.', 'info');
+            return;
+        }
+        const currentLocalNotes = localStorage.getItem('notes_localCopy');
+        const currentEditorContent = notesTextArea.value;
+        let unsavedChanges = false;
+
+        if (currentEditorContent !== (localStorage.getItem(`cloud_save_opened_content_${currentUser.uid}`) || currentLocalNotes || "")) {
+             unsavedChanges = true;
+        }
         
+        if (unsavedChanges) {
+             if (!confirm("You have unsaved changes in the editor. Are you sure you want to open a cloud save and overwrite them? Consider saving locally or to the cloud first.")) {
+                return;
+            }
+        }
+
+        const docRef = userNotesDocRef();
+        if (!docRef) return;
         try {
-            const docSnap = await userNotesDocRef().get();
+            const docSnap = await docRef.get();
             if (docSnap.exists) {
-                let saves = docSnap.data().cloudSaves || [];
-                saves = sortSaves(saves);
+                const data = docSnap.data();
+                let saves = data.cloudSaves || [];
+                saves = sortSaves(saves); 
 
                 if (saves[index]) {
-                    const save = saves[index];
-                    notesTextArea.value = save.content;
-                    cloudSaveNameEl.value = save.name;
+                    notesTextArea.value = saves[index].content;
+                    cloudSaveNameEl.value = saves[index].name; 
                     updateCharacterCount();
-
-                    // Set editing state
-                    currentlyEditing = { index: index, originalName: save.name };
-                    saveCloudBtn.textContent = 'Update Cloud Save';
-                    editingStatusEl.innerHTML = `<span>Editing "<strong>${save.name}</strong>"</span><button id="cancelEditBtn">Cancel</button>`;
-                    editingStatusEl.style.display = 'flex';
-                    document.getElementById('cancelEditBtn').onclick = cancelEdit;
-
-                    showStatusMessage(`Now editing "${save.name}".`, 'info');
+                    localStorage.setItem('notes_localCopy', saves[index].content); 
+                    localStorage.setItem(`cloud_save_opened_content_${currentUser.uid}`, saves[index].content); 
+                    showStatusMessage(`Opened "${saves[index].name}" from cloud. Also updated local browser copy.`, 'success');
+                } else {
+                    showStatusMessage('Selected save not found. It might have been deleted.', 'warning');
                 }
+            } else {
+                showStatusMessage('No cloud data found to open from.', 'warning');
             }
         } catch (error) {
             console.error("Error opening cloud save:", error);
@@ -925,60 +926,157 @@
         }
     }
 
-    async function handleShareClick(index) {
-        if (!currentUser) return;
-        try {
-            const docSnap = await userNotesDocRef().get();
-            if (docSnap.exists) {
-                let saves = sortSaves(docSnap.data().cloudSaves || []);
-                const save = saves[index];
+    function exitEditMode() {
+        saveEditBtn.style.display = 'none';
+        saveCloudBtn.style.display = 'inline-block';
+        cloudSaveNameEl.disabled = false;
+        currentlyEditingIndex = null;
+        notesTextArea.style.borderColor = '#ddd';
+    }
+    
+    async function handleEdit(index) {
+        if (!currentUser) {
+            showStatusMessage('Please log in to edit notes.', 'info');
+            return;
+        }
+        
+        await openCloudSave(index);
 
-                if (save && save.shareId) {
-                    const url = new URL('shares/note-shares.html', window.location.origin);
-                    url.hash = save.shareId;
-                    await navigator.clipboard.writeText(url.href);
-                    showStatusMessage('Share link copied to clipboard!', 'success');
-                } else {
-                    showStatusMessage('This save does not have a share link.', 'warning');
+        currentlyEditingIndex = index;
+        saveEditBtn.style.display = 'inline-block';
+        saveCloudBtn.style.display = 'none';
+        cloudSaveNameEl.disabled = true;
+        notesTextArea.style.borderColor = '#007bff';
+        showStatusMessage(`Now editing "${cloudSaveNameEl.value}". Use the 'Save Edit' button to save changes.`, 'info', 5000);
+    }
+    
+    async function handleSaveEdit() {
+        if (currentlyEditingIndex === null || !currentUser) {
+            return;
+        }
+
+        const newName = cloudSaveNameEl.value.trim();
+        const newContent = notesTextArea.value;
+        const newCharCount = newContent.length;
+
+        const docRef = userNotesDocRef();
+        if (!docRef) return;
+        
+        saveEditBtn.textContent = 'Saving...';
+        saveEditBtn.disabled = true;
+
+        try {
+             await firebase.firestore().runTransaction(async (transaction) => {
+                const docSnap = await transaction.get(docRef);
+                if (!docSnap.exists) throw new Error("User data not found.");
+
+                let cloudSaves = docSnap.data().cloudSaves || [];
+                cloudSaves = sortSaves(cloudSaves); 
+
+                if (currentlyEditingIndex < 0 || currentlyEditingIndex >= cloudSaves.length) {
+                    throw new Error("Invalid save index during transaction.");
                 }
-            }
-        } catch (error) {
-            console.error("Share error:", error);
-            showStatusMessage('Could not get share link.', 'error');
+                
+                cloudSaves[currentlyEditingIndex].name = newName;
+                cloudSaves[currentlyEditingIndex].content = newContent;
+                cloudSaves[currentlyEditingIndex].charCount = newCharCount;
+                cloudSaves[currentlyEditingIndex].timestamp = new Date();
+
+                transaction.update(docRef, { cloudSaves });
+            });
+            showStatusMessage('Note updated successfully!', 'success');
+            exitEditMode();
+            await refreshCloudSavesDisplay(false);
+
+        } catch(error) {
+             console.error("Error saving edit:", error);
+            showStatusMessage(`Error saving edit: ${error.message}`, 'error');
+        } finally {
+            saveEditBtn.textContent = 'Save Edit';
+            saveEditBtn.disabled = false;
         }
     }
 
-    async function deleteCloudSave(index) {
-        if (!currentUser) return;
-        
+    async function shareCloudSave(index) {
+        if (!currentUser) {
+            showStatusMessage('Please log in to share notes.', 'info');
+            return;
+        }
+
         const docRef = userNotesDocRef();
+        if (!docRef) return;
 
         try {
             const docSnap = await docRef.get();
-            if (!docSnap.exists) return;
-            
-            let cloudSaves = sortSaves(docSnap.data().cloudSaves || []);
-            const saveToDelete = cloudSaves[index];
-            if (!saveToDelete) throw new Error("Save not found at the given index.");
+            if (docSnap.exists) {
+                let saves = docSnap.data().cloudSaves || [];
+                saves = sortSaves(saves);
+                const saveToShare = saves[index];
 
-            const saveNameToDelete = `"${saveToDelete.name}"`;
-            if (!confirm(`Are you sure you want to delete the cloud save ${saveNameToDelete}? Its share link will also be permanently deleted.`)) {
+                if (saveToShare) {
+                    const shareCollection = sharedNotesCollectionRef();
+                    const newShareRef = await shareCollection.add({
+                        originalOwnerUid: currentUser.uid,
+                        originalOwnerEmail: currentUser.email,
+                        name: saveToShare.name,
+                        content: saveToShare.content,
+                        charCount: saveToShare.charCount,
+                        sharedAt: new Date()
+                    });
+
+                    const shareLink = `${window.location.origin}/shares/note-shares.html#${newShareRef.id}`;
+                    prompt("Share this link with others:", shareLink);
+                    showStatusMessage('Share link created and copied to clipboard!', 'success');
+                } else {
+                    showStatusMessage('Save not found.', 'error');
+                }
+            }
+        } catch (error) {
+            console.error("Error sharing note:", error);
+            showStatusMessage(`Error sharing note: ${error.message}`, 'error');
+        }
+    }
+
+
+    async function deleteCloudSave(index) {
+        if (!currentUser) {
+            showStatusMessage('Please log in to delete cloud saves.', 'info');
+            return;
+        }
+        
+        const docRef = userNotesDocRef();
+        if (!docRef) return;
+
+        let saveNameToDelete = `Save at index ${index}`;
+        try {
+            const initialDocSnap = await docRef.get();
+            if (initialDocSnap.exists) {
+                let initialSaves = initialDocSnap.data().cloudSaves || [];
+                initialSaves = sortSaves(initialSaves);
+                if (initialSaves[index] && initialSaves[index].name) {
+                    saveNameToDelete = `"${initialSaves[index].name}"`;
+                }
+            }
+
+            if (!confirm(`Are you sure you want to delete the cloud save ${saveNameToDelete}? This action cannot be undone.`)) {
                 return;
             }
-
-            const batch = db.batch();
-
-            // Delete the shared note document
-            if (saveToDelete.shareId) {
-                const shareRef = db.collection('sharedNotes').doc(saveToDelete.shareId);
-                batch.delete(shareRef);
+            if (currentlyEditingIndex === index) {
+                exitEditMode();
             }
 
-            // Remove the save from the user's array
-            cloudSaves.splice(index, 1);
-            batch.update(docRef, { cloudSaves });
+            await firebase.firestore().runTransaction(async (transaction) => {
+                const docSnap = await transaction.get(docRef);
+                if (!docSnap.exists) throw new Error("User data not found for deletion.");
 
-            await batch.commit();
+                let cloudSaves = docSnap.data().cloudSaves || [];
+                cloudSaves = sortSaves(cloudSaves);
+
+                if (index < 0 || index >= cloudSaves.length) throw new Error("Invalid save index for deletion after sort.");
+                
+                cloudSaves.splice(index, 1);
+                transaction.update(docRef, { cloudSaves });
+            });
             
             showStatusMessage(`Cloud save ${saveNameToDelete} deleted successfully.`, 'success');
             await refreshCloudSavesDisplay(false); 
@@ -993,33 +1091,44 @@
     // --- Authentication & Initial Load ---
     firebase.auth().onAuthStateChanged(async user => {
         currentUser = user;
-        db = firebase.firestore();
 
         if (user) {
             IS_OWNER_ACCOUNT = OWNER_EMAILS.includes(user.email);
+            updateCloudLimitUI(); 
+
             if (sidebarUserEmailEl) sidebarUserEmailEl.textContent = user.email;
 
-            try {
-                const userProfileSnap = await userProfileDocRef().get();
-                if (userProfileSnap.exists) {
-                    const userData = userProfileSnap.data();
-                    if(sidebarUserNameEl) sidebarUserNameEl.textContent = userData.username || user.displayName;
-                } else {
-                     if(sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0];
+            const userProfRef = userProfileDocRef();
+            if (userProfRef) {
+                try {
+                    const userProfileSnap = await userProfRef.get();
+                    if (userProfileSnap.exists) {
+                        const userProfileData = userProfileSnap.data();
+                        if (sidebarUserNameEl) sidebarUserNameEl.textContent = userProfileData.username || user.displayName || user.email.split('@')[0];
+                    } else {
+                        if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0];
+                    }
+                } catch (error) {
+                    console.error("Error fetching user profile for username:", error);
+                    if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0]; 
                 }
-            } catch(e) {
-                 if(sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0];
+            } else {
+                if (sidebarUserNameEl) sidebarUserNameEl.textContent = user.displayName || user.email.split('@')[0]; 
             }
             
             loadLocalSave(); 
             await refreshCloudSavesDisplay(true); 
         } else { 
             IS_OWNER_ACCOUNT = false;
+            updateCloudLimitUI(); 
+
             if (sidebarUserNameEl) sidebarUserNameEl.textContent = 'Not Logged In';
             if (sidebarUserEmailEl) sidebarUserEmailEl.textContent = 'Please log in';
             cloudSavesListEl.innerHTML = '<li>Please log in to manage cloud saves.</li>';
+            cloudSaveSlotsUsedEl.textContent = '0';
+            cloudCharCountUsedEl.textContent = '0';
+            showStatusMessage('Please log in to use cloud features and sync notes.', 'info', null); 
         }
-        updateCloudLimitUI();
         updateMarquees(); 
     });
 
@@ -1030,6 +1139,7 @@
     exportNotesBtn.addEventListener('click', handleExportNotes);
     saveLocalBtn.addEventListener('click', handleLocalSave);
     saveCloudBtn.addEventListener('click', handleCloudSave);
+    saveEditBtn.addEventListener('click', handleSaveEdit);
     refreshCloudSavesBtn.addEventListener('click', () => refreshCloudSavesDisplay(true));
 
     updateCharacterCount(); 
