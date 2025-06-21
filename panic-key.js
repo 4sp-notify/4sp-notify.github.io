@@ -99,7 +99,7 @@ function addPanicKeyListener(settings) {
             
             // Step 1: Replace the current page in the browser history with your site's homepage.
             // This resolves the SecurityError by using a URL from the same origin.
-            history.replaceState(null, "", "/index.html");
+            history.replaceState(null, "", "../index.html");
 
             // Step 2: Navigate to the user's personally chosen panic URL.
             window.location.href = settings.url;
