@@ -539,7 +539,6 @@
         const friendsToInviteListDiv = document.getElementById('friendsToInviteList');
         const confirmInviteBtn = document.getElementById('confirmInviteBtn');
 
-        // Custom Confirmation Modal elements
         const confirmationModal = document.getElementById('confirmationModal');
         const closeConfirmationModalBtn = document.getElementById('closeConfirmationModal');
         const confirmationModalTitle = document.getElementById('confirmationModalTitle');
@@ -547,16 +546,18 @@
         const confirmActionBtn = document.getElementById('confirmActionBtn');
         const cancelActionBtn = document.getElementById('cancelActionBtn');
 
-
         // --- App State ---
         let currentUser = null;
         let currentUserData = {};
         let activeChatId = null;
         let activeChatType = null;
         let activeChatData = {};
-        let activeChatUnsubscribe = null;
         let usersDataCache = {}; 
+        
+        // --- COST-CUTTING OPTIMIZATION: Listener Management ---
+        // We store unsubscribe functions here to manage them effectively.
         let userUnsubscribe = null;
+        let activeChatUnsubscribe = null;
 
         // Generic Confirmation Modal Function
         function showConfirmation(title, message) {
@@ -586,44 +587,69 @@
                 closeConfirmationModalBtn.addEventListener('click', onCancel);
             });
         }
+        
+        // --- COST-CUTTING OPTIMIZATION: Centralized Listener Setup ---
+        // This function sets up all necessary real-time listeners.
+        function setupAllListeners() {
+            if (!currentUser) return;
+            console.log("Setting up listeners because page is visible.");
+            
+            // Re-attach user data listener
+            const userRef = db.collection('users').doc(currentUser.uid);
+            userUnsubscribe = userRef.onSnapshot(doc => {
+                const wasInPrivateChat = activeChatType === 'private' && activeChatId && activeChatData.members;
+                currentUserData = { id: doc.id, ...doc.data() };
 
+                if (wasInPrivateChat) {
+                    const friendId = activeChatData.members.find(id => id !== currentUser.uid);
+                    if (!currentUserData.friends || !currentUserData.friends.includes(friendId)) {
+                        alert('You are no longer friends with this user. The chat has been closed.'); 
+                        closeActiveChat();
+                    }
+                }
 
+                const allUserIds = [
+                    ...(currentUserData.friends || []),
+                    ...(currentUserData.friendRequestsReceived || []),
+                    ...(currentUserData.friendRequestsSent || [])
+                ];
+                cacheUsersData(allUserIds).then(() => {
+                    renderFriendRequests();
+                    renderFriendsAndGroups(); // This function now also renders groups efficiently
+                });
+            });
+
+            // Re-attach active chat listener if a chat was open
+            if (activeChatId && activeChatType) {
+                openChat(activeChatId, activeChatType, true); // `true` to indicate it's a re-attachment
+            }
+        }
+        
+        // --- COST-CUTTING OPTIMIZATION: Centralized Listener Detachment ---
+        // This function tears down all active listeners to stop data usage.
+        function detachAllListeners() {
+            console.log("Detaching listeners because page is hidden.");
+            if (userUnsubscribe) {
+                userUnsubscribe();
+                userUnsubscribe = null;
+            }
+            if (activeChatUnsubscribe) {
+                activeChatUnsubscribe();
+                activeChatUnsubscribe = null;
+            }
+        }
+        
         // --- Authentication ---
-        auth.onAuthStateChanged(async user => {
+        auth.onAuthStateChanged(user => {
             if (user) {
                 currentUser = user;
-                
-                if(userUnsubscribe) userUnsubscribe();
-
-                const userRef = db.collection('users').doc(user.uid);
-                userUnsubscribe = userRef.onSnapshot(doc => {
-                    const wasInPrivateChat = activeChatType === 'private' && activeChatId && activeChatData.members;
-                    currentUserData = { id: doc.id, ...doc.data() };
-
-                    if (wasInPrivateChat) {
-                        const friendId = activeChatData.members.find(id => id !== currentUser.uid);
-                        if (!currentUserData.friends || !currentUserData.friends.includes(friendId)) {
-                            // Using alert here as it's a notification, not a confirmation
-                            alert('You are no longer friends with this user. The chat has been closed.'); 
-                            closeActiveChat();
-                        }
-                    }
-
-                    const allUserIds = [
-                        ...(currentUserData.friends || []),
-                        ...(currentUserData.friendRequestsReceived || []),
-                        ...(currentUserData.friendRequestsSent || [])
-                    ];
-                    cacheUsersData(allUserIds).then(() => {
-                         renderFriendRequests();
-                         renderFriendsAndGroups();
-                    });
-                });
+                // Initial setup of listeners when user logs in.
+                setupAllListeners();
             } else {
                 window.location.href = '../login.html';
             }
         });
-        
+
         async function cacheUsersData(userIds) {
             const uniqueUserIds = [...new Set(userIds)].filter(Boolean);
             const usersToFetch = uniqueUserIds.filter(id => !usersDataCache[id]);
@@ -643,14 +669,16 @@
             });
         }
         
-        function openChat(chatId, type) {
+        function openChat(chatId, type, isReattaching = false) {
             if (activeChatUnsubscribe) activeChatUnsubscribe();
             
             activeChatId = chatId;
             activeChatType = type;
             chatWelcomeScreen.style.display = 'none';
             chatActiveScreen.style.display = 'flex';
-            socialContainer.classList.add('mobile-chat-view-active'); // For mobile view
+            if (!isReattaching) {
+                 socialContainer.classList.add('mobile-chat-view-active');
+            }
             
             const collectionName = type === 'group' ? 'groupChats' : 'chats';
             
@@ -669,7 +697,6 @@
                     chatNameEl.textContent = activeChatData.groupName;
                     leaveGroupBtn.style.display = 'inline-block';
 
-                    // Dynamic text and action for leave/delete group button
                     if (activeChatData.creatorId === currentUser.uid) {
                        leaveGroupBtn.textContent = 'Delete Group';
                        leaveGroupBtn.dataset.action = 'delete-group';
@@ -688,17 +715,24 @@
                 }
                 
                 renderMessages(activeChatData);
+                // Highlight the active chat in the sidebar
+                document.querySelectorAll('.chat-list-item.active').forEach(item => item.classList.remove('active'));
+                const activeListItem = document.querySelector(`.chat-list-item[data-chat-id="${chatId}"]`);
+                if (activeListItem) activeListItem.classList.add('active');
             });
         }
         
         function closeActiveChat() {
-            if (activeChatUnsubscribe) activeChatUnsubscribe();
+            if (activeChatUnsubscribe) {
+                activeChatUnsubscribe();
+                activeChatUnsubscribe = null;
+            }
             activeChatId = null;
             activeChatType = null;
             activeChatData = {};
             chatActiveScreen.style.display = 'none';
             chatWelcomeScreen.style.display = 'flex';
-            socialContainer.classList.remove('mobile-chat-view-active'); // For mobile view
+            socialContainer.classList.remove('mobile-chat-view-active');
         }
 
         async function renderMessages(chatData) {
@@ -755,7 +789,6 @@
                 });
             } catch (error) {
                 console.error("Message send error:", error);
-                // Using alert for error, could be replaced with custom modal for consistency
                 alert("Failed to send message. Please try again."); 
                 messageInput.value = text;
             }
@@ -778,7 +811,8 @@
             });
         }
 
-        function renderFriendsAndGroups() {
+        async function renderFriendsAndGroups() {
+            // Render friends list from cached data
             friendsList.innerHTML = '';
             if (currentUserData.friends) {
                 currentUserData.friends.forEach(id => {
@@ -792,17 +826,19 @@
                     friendsList.appendChild(li);
                 });
             }
-            db.collection('groupChats').where('members', 'array-contains', currentUser.uid).onSnapshot(snapshot => {
-                groupsList.innerHTML = '';
-                 snapshot.forEach(doc => {
-                    const group = {id: doc.id, ...doc.data()};
-                    const li = document.createElement('li');
-                    li.className = 'chat-list-item';
-                    if(group.id === activeChatId) li.classList.add('active');
-                    li.dataset.chatId = group.id; li.dataset.chatType = 'group';
-                    li.innerHTML = `<span class="username">${group.groupName}</span>`;
-                    groupsList.appendChild(li);
-                 });
+            
+            // --- COST-CUTTING OPTIMIZATION: Efficient Group Fetch ---
+            // Replaced onSnapshot with a single .get() call. This is much cheaper.
+            const snapshot = await db.collection('groupChats').where('members', 'array-contains', currentUser.uid).get();
+            groupsList.innerHTML = '';
+            snapshot.forEach(doc => {
+                const group = {id: doc.id, ...doc.data()};
+                const li = document.createElement('li');
+                li.className = 'chat-list-item';
+                if(group.id === activeChatId) li.classList.add('active');
+                li.dataset.chatId = group.id; li.dataset.chatType = 'group';
+                li.innerHTML = `<span class="username">${group.groupName}</span>`;
+                groupsList.appendChild(li);
             });
         }
         
@@ -907,25 +943,13 @@
                  const chatListItem = e.target.closest('.chat-list-item[data-chat-id]');
                  if (chatListItem) {
                      openChat(chatListItem.dataset.chatId, chatListItem.dataset.chatType);
-                     document.querySelectorAll('.chat-list-item.active').forEach(item => item.classList.remove('active'));
-                     chatListItem.classList.add('active');
                  }
                  
                  const addBtn = e.target.closest('button.action-btn[data-user-id]');
                  if(addBtn) {
-                     const userId = addBtn.dataset.userId;
-                     const actionsContainer = addBtn.parentElement;
-                     
-                     if (actionsContainer) {
-                         const sentText = document.createElement('span');
-                         sentText.className = 'username'; 
-                         sentText.textContent = 'Friend request sent!';
-                         
-                         actionsContainer.innerHTML = '';
-                         actionsContainer.appendChild(sentText);
-                     }
-                     
-                     sendFriendRequest(userId);
+                     addBtn.disabled = true; // Prevent multiple clicks
+                     sendFriendRequest(addBtn.dataset.userId);
+                     addBtn.parentElement.innerHTML = '<span><i class="fas fa-paper-plane"></i> Requested</span>';
                  }
 
                  const acceptBtn = e.target.closest('button.action-btn.accept');
@@ -939,7 +963,6 @@
                 socialContainer.classList.remove('mobile-chat-view-active');
             });
 
-
             let searchTimeout;
             searchInput.addEventListener('input', () => {
                 clearTimeout(searchTimeout);
@@ -948,30 +971,29 @@
                     searchResultsSection.innerHTML = '';
                     return;
                 }
-                searchTimeout = setTimeout(() => performSearch(query), 300);
+                // --- COST-CUTTING OPTIMIZATION: Slower Search Debounce ---
+                // Increased from 300ms to 500ms to reduce queries while typing.
+                searchTimeout = setTimeout(() => performSearch(query), 500);
             });
 
             messageInput.addEventListener('paste', (e) => {
                 e.preventDefault(); 
-                
                 const pastedText = (e.clipboardData || window.clipboardData).getData('text');
-                
                 const currentText = messageInput.value;
                 const start = messageInput.selectionStart;
                 const end = messageInput.selectionEnd;
-                
                 const textAfterPaste = currentText.substring(0, start) + pastedText + currentText.substring(end);
-                
                 messageInput.value = textAfterPaste.substring(0, 500);
             });
 
             sendMessageBtn.addEventListener('click', sendMessage);
             messageInput.addEventListener('keypress', (e) => { if (e.key === 'Enter') sendMessage(); });
             
-            const handleLogout = () => auth.signOut().then(() => window.location.href = '../login.html');
-            document.getElementById('logoutBtn').onclick = handleLogout;
+            document.getElementById('logoutBtn').onclick = () => auth.signOut();
+            auth.onAuthStateChanged(user => {
+                if (!user) window.location.href = '../login.html';
+            });
             
-            // --- Group Management and other listeners ---
             createGroupBtn.addEventListener('click', () => {
                 if (!currentUserData.friends || currentUserData.friends.length < 2) {
                     alert("You need at least two friends to create a group chat.");
@@ -1033,32 +1055,24 @@
                 const groupRef = db.collection('groupChats').doc(activeChatId);
                 const action = e.target.dataset.action;
                 
-                if (action === 'delete-group') { // User is the creator and wants to delete
-                    const confirmed = await showConfirmation(
-                        "Delete Group?", 
-                        "Are you sure you want to permanently delete this group for everyone? This action cannot be undone."
-                    );
+                if (action === 'delete-group') {
+                    const confirmed = await showConfirmation("Delete Group?", "Are you sure you want to permanently delete this group for everyone? This action cannot be undone.");
                     if (confirmed) {
                         try {
                             await groupRef.delete();
                             closeActiveChat();
                         } catch (error) {
-                            console.error("Error deleting group:", error);
-                            alert("Failed to delete group. Please try again.");
+                            console.error("Error deleting group:", error); alert("Failed to delete group.");
                         }
                     }
-                } else if (action === 'leave-group') { // User is a member, not the creator, and wants to leave
-                    const confirmed = await showConfirmation(
-                        "Leave Group?", 
-                        "Are you sure you want to leave this group? You can be re-invited later."
-                    );
+                } else if (action === 'leave-group') {
+                    const confirmed = await showConfirmation("Leave Group?", "Are you sure you want to leave this group? You can be re-invited later.");
                     if (confirmed) {
                         try {
                             await groupRef.update({ members: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
                             closeActiveChat();
                         } catch (error) {
-                            console.error("Error leaving group:", error);
-                            alert("Failed to leave group. Please try again.");
+                            console.error("Error leaving group:", error); alert("Failed to leave group.");
                         }
                     }
                 }
@@ -1067,10 +1081,7 @@
              unfriendBtn.addEventListener('click', async () => {
                  const friendId = unfriendBtn.dataset.friendId;
                  if (friendId) {
-                     const confirmed = await showConfirmation(
-                         "Unfriend User?",
-                         `Are you sure you want to unfriend this user? This will delete the chat history forever.`
-                     );
+                     const confirmed = await showConfirmation("Unfriend User?", `Are you sure you want to unfriend this user? This will delete the chat history forever.`);
                      if (confirmed) {
                          try {
                              const chatId = [currentUser.uid, friendId].sort().join('_');
@@ -1081,11 +1092,21 @@
                              await batch.commit();
                              closeActiveChat();
                          } catch (error) {
-                             console.error("Error unfriending:", error);
-                             alert("Failed to unfriend. Please try again.");
+                             console.error("Error unfriending:", error); alert("Failed to unfriend.");
                          }
                      }
                  }
+             });
+            
+             // --- COST-CUTTING OPTIMIZATION: Page Visibility Listener ---
+             // This automatically detaches/reattaches listeners when the tab is hidden/shown.
+             document.addEventListener('visibilitychange', () => {
+                if (!auth.currentUser) return; // Don't do anything if not logged in
+                if (document.visibilityState === 'visible') {
+                    setupAllListeners();
+                } else {
+                    detachAllListeners();
+                }
              });
         };
 
