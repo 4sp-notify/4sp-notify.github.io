@@ -1,43 +1,81 @@
-// This script activates the panic key listener on any page it's included on.
+/**
+ * panic-key.js
+ * * This script provides a user-configurable panic key functionality for a website using Firebase.
+ * When activated, it redirects the user to a pre-configured URL while safely manipulating
+ * the browser history to prevent easily navigating back to the sensitive page.
+ *
+ * Final version as of: June 20, 2025
+ */
 
+// This message helps confirm that the script file itself is being loaded by the browser.
+console.log("Debug: panic-key.js script has started.");
+
+// We wrap the main logic in a 'DOMContentLoaded' listener to ensure the HTML page
+// is fully loaded before the script tries to interact with it.
 document.addEventListener('DOMContentLoaded', () => {
-    // Wait for Firebase to confirm the user's authentication state.
+    console.log("Debug: DOMContentLoaded event fired. The page is ready.");
+    
+    // First, we check if the Firebase library has been loaded. This is a critical dependency.
+    // If it's missing, we log a fatal error and stop execution.
+    if (typeof firebase === 'undefined') {
+        console.error("FATAL ERROR: Firebase is not loaded. Check the script order in your HTML file. 'firebase-app-compat.js' and other SDKs must come before 'panic-key.js'.");
+        return;
+    }
+
+    // firebase.auth().onAuthStateChanged() is the entry point. It automatically
+    // determines if a user is logged in or not.
     firebase.auth().onAuthStateChanged(user => {
         if (user) {
-            // User is logged in, so let's get their settings.
+            // If a user object exists, they are logged in.
+            console.log("Debug: User is logged in. UID:", user.uid);
+            
             const db = firebase.firestore();
             const userRef = db.collection('users').doc(user.uid);
 
+            // We attempt to get the user's specific document from the 'users' collection.
             userRef.get().then(doc => {
+                console.log("Debug: Attempting to get user settings from Firestore.");
                 if (doc.exists) {
                     const userData = doc.data();
-                    // Check if the user has panic key settings saved.
+                    console.log("Debug: Firestore document found.", userData);
+                    
+                    // We check if the 'panicKeySettings' object exists within the user's document.
                     if (userData.panicKeySettings) {
                         const panicSettings = userData.panicKeySettings;
-                        // Attach the actual key press listener to the page.
+                        console.log("Debug: Panic key settings FOUND.", panicSettings);
+                        // If settings exist, we call the function to activate the key listener.
                         addPanicKeyListener(panicSettings);
+                    } else {
+                        console.warn("Debug: User has a document, but no 'panicKeySettings' object was found inside it. The user needs to save their settings first.");
                     }
+                } else {
+                    console.warn("Debug: User is logged in, but no document was found for them in Firestore.");
                 }
             }).catch(error => {
-                console.error("Error fetching user settings for panic key:", error);
+                console.error("Debug: An error occurred while fetching the user document from Firestore:", error);
             });
+        } else {
+            // If the user object is null, no one is logged in.
+            console.log("Debug: No user is logged in. The panic key will not be active on this page.");
         }
-        // If no user is logged in, the script does nothing.
     });
 });
 
 /**
- * Attaches a 'keydown' event listener to the document.
- * @param {object} settings - The user's panic key settings { modifier, key, url }.
+ * Attaches the 'keydown' event listener to the document with the user's specific settings.
+ * @param {object} settings - The user's panic key settings object { modifier, key, url }.
  */
 function addPanicKeyListener(settings) {
+    // A safeguard to ensure we don't attach a listener with incomplete settings.
     if (!settings || !settings.key || !settings.url) {
-        return; // Do nothing if settings are incomplete.
+        console.error("Debug: addPanicKeyListener was called, but settings are incomplete.", settings);
+        return;
     }
 
+    console.log("Debug: Attaching keydown listener to the document with these settings:", settings);
+
     document.addEventListener('keydown', (event) => {
-        // To prevent the panic key from activating while the user is typing
-        // in a form, we check if the active element is an input, select, or textarea.
+        // This check prevents the panic key from firing while a user is typing in a form.
         const activeElement = document.activeElement.tagName.toLowerCase();
         if (['input', 'select', 'textarea'].includes(activeElement)) {
             return;
@@ -46,34 +84,25 @@ function addPanicKeyListener(settings) {
         const modifier = settings.modifier; // e.g., 'shiftKey', 'ctrlKey', or ''
         const requiredModifierState = modifier ? event[modifier] : true;
         const keyIsCorrect = event.key.toLowerCase() === settings.key;
-
-        // This ensures no OTHER modifier keys are pressed. For example, if the panic
-        // key is "Shift + A", this prevents it from firing if "Ctrl + Shift + A" is pressed.
+        
+        // This ensures no OTHER modifier keys are accidentally pressed.
         const noOtherModifiers = !['shiftKey', 'ctrlKey', 'altKey'].some(mod => {
             return mod !== modifier && event[mod];
         });
 
+        // If all conditions are met, we execute the panic action.
         if (requiredModifierState && keyIsCorrect && noOtherModifiers) {
-            // Stop the browser's default action for this key press.
+            console.log("SUCCESS: Panic key combination detected! Redirecting...");
+            
+            // This prevents the browser from performing the default action for the key press.
             event.preventDefault();
             
-            // =================================================================
-            // UPDATED REDIRECTION LOGIC
-            // =================================================================
-            
-            // OLD LINE (to be removed):
-            // window.location.replace(settings.url);
+            // Step 1: Replace the current page in the browser history with your site's homepage.
+            // This resolves the SecurityError by using a URL from the same origin.
+            history.replaceState(null, "", "/index.html");
 
-            // NEW LINES:
-            // Step 1: Replace the current page in history with google.com.
-            // This happens silently in the background.
-            history.replaceState(null, "", "https://google.com");
-
-            // Step 2: Navigate to the user's chosen panic URL. This adds a new
-            // entry to the history, making Google the "previous" page.
+            // Step 2: Navigate to the user's personally chosen panic URL.
             window.location.href = settings.url;
-            
-            // =================================================================
         }
     });
 }
