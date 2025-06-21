@@ -57,9 +57,23 @@ function addPanicKeyListener(settings) {
             // Stop the browser's default action for this key press.
             event.preventDefault();
             
-            // Redirect the user, replacing the current page in the session history.
-            // This prevents using the "back" button to return to the sensitive page.
-            window.location.replace(settings.url);
+            // =================================================================
+            // UPDATED REDIRECTION LOGIC
+            // =================================================================
+            
+            // OLD LINE (to be removed):
+            // window.location.replace(settings.url);
+
+            // NEW LINES:
+            // Step 1: Replace the current page in history with google.com.
+            // This happens silently in the background.
+            history.replaceState(null, "", "https://google.com");
+
+            // Step 2: Navigate to the user's chosen panic URL. This adds a new
+            // entry to the history, making Google the "previous" page.
+            window.location.href = settings.url;
+            
+            // =================================================================
         }
     });
 }
