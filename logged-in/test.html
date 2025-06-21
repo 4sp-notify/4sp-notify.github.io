@@ -980,6 +980,24 @@
             let ownerUsername = sidebarUserNameEl.textContent || 'Anonymous';
 
             // --- Transaction to update our primary note document
+           async function handleGenerateShareLink() {
+        if (!currentUser) {
+            showStatusMessage('You must be logged in to share.', 'error');
+            return;
+        }
+        
+        const index = parseInt(requestNewLinkBtn.dataset.index);
+        const docRef = userNotesDocRef();
+        if (!docRef) return;
+
+        requestNewLinkBtn.disabled = true;
+        requestNewLinkBtn.textContent = 'Generating...';
+
+        try {
+            let noteToShare;
+            let ownerUsername = sidebarUserNameEl.textContent || 'Anonymous';
+
+            // --- Transaction to update our primary note document
             await firebase.firestore().runTransaction(async (transaction) => {
                 const docSnap = await transaction.get(docRef);
                 if (!docSnap.exists) throw new Error("User data not found.");
@@ -1000,6 +1018,49 @@
                     }
                 }
 
+                // Generate new sharing info
+                const shareId = firebase.firestore().collection("temp").doc().id; // Simple way to get a unique ID
+                const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+                
+                // --- THIS IS THE CORRECTED PART ---
+                // We create the timestamp on the client using 'new Date()' instead of serverTimestamp().
+                // The Firebase Compat SDK will correctly convert this to a Firestore Timestamp.
+                const sharingInfo = {
+                    shareId: shareId,
+                    expiresAt: expiresAt,
+                    lastGenerated: new Date() // Use client-side timestamp
+                };
+                // --- END OF CORRECTION ---
+
+                // Update the sharing info on the specific note object
+                cloudSaves[index].sharing = sharingInfo;
+                noteToShare.sharing = sharingInfo; // Update our local copy too for the next step
+
+                transaction.update(docRef, { cloudSaves });
+            });
+
+            // --- Create the public-facing share document in the `sharedLinks` collection
+            const shareDocRef = sharedLinksCollectionRef.doc(noteToShare.sharing.shareId);
+            await shareDocRef.set({
+                noteName: noteToShare.name,
+                noteContent: noteToShare.content,
+                ownerUsername: ownerUsername,
+                ownerId: currentUser.uid,
+                expiresAt: noteToShare.sharing.expiresAt
+            });
+
+            const shareUrl = `${window.location.origin}/shares/note-shares.html#${noteToShare.sharing.shareId}`;
+            shareLinkInput.value = shareUrl;
+            showStatusMessage('New share link generated successfully!', 'success');
+
+        } catch (error) {
+            console.error("Error generating share link:", error);
+            showStatusMessage(`Error: ${error.message}`, 'error', 6000);
+        } finally {
+            requestNewLinkBtn.disabled = false;
+            requestNewLinkBtn.textContent = 'Request New Link';
+        }
+    }
                 // Generate new sharing info
                 const shareId = firebase.firestore().collection("whatever").doc().id; // Simple way to get a unique ID
                 const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
