@@ -5,7 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>4SP - VERN SOCIAL</title>
   
-  <!-- External files are now properly linked and loaded. -->
   <link rel="stylesheet" href="../css/style.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   
@@ -604,7 +603,6 @@
     </div>
   </div>
 
-  <!-- Emoji Reaction Menu - This is a single element that gets moved and displayed where needed -->
   <div class="emoji-menu" id="emojiMenu">
     <div class="emoji-search-bar">
         <i class="fas fa-search"></i>
@@ -612,25 +610,22 @@
         <button class="remove-reaction-btn" title="Remove Reaction">&times;</button>
     </div>
     <div class="emoji-grid" id="emojiGrid">
-        <!-- Emojis will be populated by JavaScript -->
-    </div>
+        </div>
   </div>
 
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
-  
-  <script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-app.js";
+    import { getAuth, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-auth.js";
+    import { getFirestore, doc, onSnapshot, getDoc, updateDoc, setDoc, deleteDoc, writeBatch, query, where, getDocs, collection, serverTimestamp, arrayUnion, arrayRemove, FieldPath } from "https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore.js";
+    
     document.addEventListener('DOMContentLoaded', () => {
-        // This check ensures firebase config is loaded from the external file before we initialize
         if (typeof firebaseConfig === 'undefined') {
             console.error("Firebase config is not loaded. Make sure firebase-config.js is included and correct.");
             return;
         }
-        firebase.initializeApp(firebaseConfig);
-
-        const db = firebase.firestore();
-        const auth = firebase.auth();
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
 
         // --- DOM Elements ---
         const searchInput = document.getElementById('userSearchInput');
@@ -668,7 +663,7 @@
         let currentlyReactingToMessageId = null;
 
         // --- Emoji Data ---
-        const emojiList = ['😀', '😂', '😍', '🤔', '😢', '😡', '�', '👎', '❤️', '🔥', '🎉', '💯', '🙏', '🤯', '😱', '🤩', '😴', '👋', '🥳', '🥺', '😎', '😜', '😇', '😈', '👻', '💀', '👽', '🚀', '⭐', '✨', 'OK', '✅', '❌', '❓', '❗'];
+        const emojiList = ['😀', '😂', '😍', '🤔', '😢', '😡', '👍', '👎', '❤️', '🔥', '🎉', '💯', '🙏', '🤯', '😱', '🤩', '😴', '👋', '🥳', '🥺', '😎', '😜', '😇', '😈', '👻', '💀', '👽', '🚀', '⭐', '✨', 'OK', '✅', '❌', '❓', '❗'];
         
         // Populate Emoji Menu Grid
         function populateEmojiGrid(filter = '') {
@@ -683,22 +678,21 @@
         }
         
         // --- Authentication ---
-        auth.onAuthStateChanged(user => {
+        onAuthStateChanged(auth, user => {
             if (user) {
                 currentUser = user;
                 setupAllListeners();
             } else {
-                // Redirect to login if not authenticated
                 window.location.href = '../login.html';
             }
         });
 
         // --- Listener Management ---
         function setupAllListeners() {
-            if (!currentUser || userUnsubscribe) return; // Prevent setting up listeners multiple times
+            if (!currentUser || userUnsubscribe) return;
             
-            const userRef = db.collection('users').doc(currentUser.uid);
-            userUnsubscribe = userRef.onSnapshot(doc => {
+            const userRef = doc(db, 'users', currentUser.uid);
+            userUnsubscribe = onSnapshot(userRef, doc => {
                 const wasInPrivateChat = activeChatId && currentUserData.friends;
                 currentUserData = { id: doc.id, ...doc.data() };
 
@@ -738,13 +732,13 @@
             if (usersToFetch.length === 0) return;
             
             console.log("Fetching user data for IDs:", usersToFetch);
-            // Fetch users in chunks of 10 to comply with 'in' query limit
             for (let i = 0; i < usersToFetch.length; i += 10) {
                 const chunk = usersToFetch.slice(i, i + 10);
                 try {
-                    const snapshot = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get();
+                    const q = query(collection(db, 'users'), where(FieldPath.documentId(), 'in', chunk));
+                    const snapshot = await getDocs(q);
                     snapshot.forEach(doc => {
-                        if (doc.exists) usersDataCache[doc.id] = {id: doc.id, ...doc.data()};
+                        if (doc.exists()) usersDataCache[doc.id] = {id: doc.id, ...doc.data()};
                     });
                 } catch (error) {
                     console.error("Error fetching user data chunk: ", error);
@@ -762,8 +756,9 @@
                  socialContainer.classList.add('mobile-chat-view-active');
             }
             
-            activeChatUnsubscribe = db.collection('chats').doc(chatId).onSnapshot(async doc => {
-                if(!doc.exists) {
+            const chatRef = doc(db, 'chats', chatId);
+            activeChatUnsubscribe = onSnapshot(chatRef, async doc => {
+                if(!doc.exists()) {
                     closeActiveChat();
                     return;
                 }
@@ -847,32 +842,32 @@
             const text = messageInput.value.trim();
             if (text === '' || !activeChatId) return;
             
-            sendMessageBtn.disabled = true; // Disable button
+            sendMessageBtn.disabled = true;
             const originalText = text;
-            messageInput.value = ''; // Clear input immediately
+            messageInput.value = '';
             
             setTimeout(async () => {
-                const chatRef = db.collection('chats').doc(activeChatId);
-                const messageId = db.collection('chats').doc().id; // Generate a unique ID for the message
+                const chatRef = doc(db, 'chats', activeChatId);
+                const messageId = doc(collection(db, 'chats')).id;
                 
                 const messagePayload = {
                     senderId: currentUser.uid,
                     text: originalText,
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                    timestamp: serverTimestamp(),
                     reaction: null
                 };
                 
                 try {
-                    await chatRef.update({
+                    await updateDoc(chatRef, {
                         [`messages.${messageId}`]: messagePayload
                     });
                 } catch (error) {
                     console.error("Message send error:", error);
-                    messageInput.value = originalText; // Restore text on failure
+                    messageInput.value = originalText;
                 } finally {
-                    sendMessageBtn.disabled = false; // Re-enable button
+                    sendMessageBtn.disabled = false;
                 }
-            }, 250); // .25 second delay
+            }, 250);
         }
 
         function renderFriendRequests() {
@@ -917,33 +912,32 @@
             });
         }
         
-        // --- Friend Management Functions (send, accept, decline, unfriend) ---
         async function sendFriendRequest(targetUserId) {
-            const batch = db.batch();
-            batch.update(db.collection('users').doc(currentUser.uid), { friendRequestsSent: firebase.firestore.FieldValue.arrayUnion(targetUserId) });
-            batch.update(db.collection('users').doc(targetUserId), { friendRequestsReceived: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
+            const batch = writeBatch(db);
+            batch.update(doc(db, 'users', currentUser.uid), { friendRequestsSent: arrayUnion(targetUserId) });
+            batch.update(doc(db, 'users', targetUserId), { friendRequestsReceived: arrayUnion(currentUser.uid) });
             await batch.commit();
         }
 
         async function acceptFriendRequest(requesterId) {
             const chatId = [currentUser.uid, requesterId].sort().join('_');
-            const batch = db.batch();
-            batch.update(db.collection('users').doc(currentUser.uid), {
-                friends: firebase.firestore.FieldValue.arrayUnion(requesterId),
-                friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
+            const batch = writeBatch(db);
+            batch.update(doc(db, 'users', currentUser.uid), {
+                friends: arrayUnion(requesterId),
+                friendRequestsReceived: arrayRemove(requesterId)
             });
-            batch.update(db.collection('users').doc(requesterId), {
-                friends: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
-                friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
+            batch.update(doc(db, 'users', requesterId), {
+                friends: arrayUnion(currentUser.uid),
+                friendRequestsSent: arrayRemove(currentUser.uid)
             });
-            batch.set(db.collection('chats').doc(chatId), { members: [currentUser.uid, requesterId], messages: {} });
+            batch.set(doc(db, 'chats', chatId), { members: [currentUser.uid, requesterId], messages: {} });
             await batch.commit();
         }
 
         async function declineFriendRequest(requesterId) {
-            const batch = db.batch();
-            batch.update(db.collection('users').doc(currentUser.uid), { friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId) });
-            batch.update(db.collection('users').doc(requesterId), { friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
+            const batch = writeBatch(db);
+            batch.update(doc(db, 'users', currentUser.uid), { friendRequestsReceived: arrayRemove(requesterId) });
+            batch.update(doc(db, 'users', requesterId), { friendRequestsSent: arrayRemove(currentUser.uid) });
             await batch.commit();
         }
 
@@ -952,10 +946,10 @@
             if (confirmed) {
                 try {
                     const chatId = [currentUser.uid, friendId].sort().join('_');
-                    const batch = db.batch();
-                    batch.update(db.collection('users').doc(currentUser.uid), { friends: firebase.firestore.FieldValue.arrayRemove(friendId) });
-                    batch.update(db.collection('users').doc(friendId), { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
-                    batch.delete(db.collection('chats').doc(chatId));
+                    const batch = writeBatch(db);
+                    batch.update(doc(db, 'users', currentUser.uid), { friends: arrayRemove(friendId) });
+                    batch.update(doc(db, 'users', friendId), { friends: arrayRemove(currentUser.uid) });
+                    batch.delete(doc(db, 'chats', chatId));
                     await batch.commit();
                     closeActiveChat();
                 } catch (error) {
@@ -969,9 +963,12 @@
             searchResultsSection.innerHTML = `<h3>Search Results</h3><ul class="chat-list"></ul>`;
             const listEl = searchResultsSection.querySelector('ul');
 
+            const usernameQuery = query(collection(db, 'users'), where('username', '==', query), limit(5));
+            const emailQuery = query(collection(db, 'users'), where('email', '==', query), limit(5));
+
             const [usernameSnapshot, emailSnapshot] = await Promise.all([
-                db.collection('users').where('username', '==', query).limit(5).get(),
-                db.collection('users').where('email', '==', query).limit(5).get()
+                getDocs(usernameQuery),
+                getDocs(emailQuery)
             ]);
             
             const results = new Map();
@@ -999,7 +996,7 @@
             currentlyReactingToMessageId = messageId;
             
             messageElement.classList.add('reacting');
-            populateEmojiGrid(); // Initial population
+            populateEmojiGrid();
             
             messageElement.appendChild(emojiMenu);
             
@@ -1021,7 +1018,7 @@
                 }
             }
             emojiMenu.classList.remove('visible');
-            document.body.appendChild(emojiMenu); // Move it back to the body
+            document.body.appendChild(emojiMenu);
             currentlyReactingToMessageId = null;
             emojiSearchInput.value = '';
             document.removeEventListener('click', handleClickOutsideMenu);
@@ -1040,9 +1037,9 @@
         async function setReaction(emoji) {
             if (!activeChatId || !currentlyReactingToMessageId) return;
 
-            const chatRef = db.collection('chats').doc(activeChatId);
+            const chatRef = doc(db, 'chats', activeChatId);
             try {
-                await chatRef.update({
+                await updateDoc(chatRef, {
                     [`messages.${currentlyReactingToMessageId}.reaction`]: emoji
                 });
             } catch (error) {
@@ -1131,7 +1128,7 @@
             
             unfriendBtn.addEventListener('click', () => unfriendUser(unfriendBtn.dataset.friendId));
             
-            document.getElementById('logoutBtn').onclick = () => auth.signOut();
+            document.getElementById('logoutBtn').onclick = () => signOut(auth);
 
             document.addEventListener('visibilitychange', () => {
                 if (!auth.currentUser) return;
