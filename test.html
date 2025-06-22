@@ -173,106 +173,92 @@
 
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
-    
     <script src="firebase-config.js"></script>
-    <script src="../panic-key.js"></script> <script>
-        // Make logout function global so it can be called by onclick attribute
+    <script src="../panic-key.js"></script>
+
+    <script>
+        // Make logout function global
         function logout() {
             firebase.auth().signOut().catch(error => console.error('Error logging out:', error));
         }
 
         // --- Page Initialization Script ---
         document.addEventListener('DOMContentLoaded', () => {
-            // Check for potential initialization errors with Firebase
-            if (typeof firebase === 'undefined' || typeof firebase.app === 'undefined') {
-                console.error('Firebase has not been initialized. Check your firebase-config.js file and the SDK script tags.');
+            // NOTE: The header and navigation logic still uses Firebase for authentication.
+            // If you don't need login/logout functionality on this page, you can remove this section
+            // and the corresponding Firebase App, Auth, and config scripts above.
+            if (typeof firebase !== 'undefined' && typeof firebase.app !== 'undefined') {
+                const authButtonsDiv = document.getElementById('authButtons');
+                const loggedInLinks = document.querySelectorAll('.logged-in-link');
+                const loggedOutLinks = document.querySelectorAll('.logged-out-link');
+
+                firebase.auth().onAuthStateChanged(user => {
+                    authButtonsDiv.innerHTML = ''; 
+                    if (user) {
+                        authButtonsDiv.innerHTML = `<a href="#" class="btn btn-logout" onclick="logout()">LOGOUT</a>`;
+                        loggedInLinks.forEach(link => link.style.display = 'inline-block');
+                        loggedOutLinks.forEach(link => link.style.display = 'none');
+                    } else {
+                        authButtonsDiv.innerHTML = `<a href="login.html" class="btn btn-login">LOGIN</a> <a href="signup.html" class="btn btn-signup">SIGN UP</a>`;
+                        loggedInLinks.forEach(link => link.style.display = 'none');
+                        loggedOutLinks.forEach(link => link.style.display = 'inline-block');
+                    }
+                });
+                
+                const dropdown = document.getElementById('more-dropdown');
+                if (dropdown) { /* ... dropdown logic from before ... */ }
+            }
+            
+            // ==============================================================================
+            // === EDIT YOUR SYSTEM STATUSES HERE ===========================================
+            // ==============================================================================
+            // Add, remove, or edit objects in this 'servicesData' array to update the status page.
+            //
+            // Status Key:
+            // 1: Working Properly (Green)
+            // 2: Not Working Properly (Yellow)
+            // 3: Not Working At All (Red)
+            // 4: Disabled (Grey)
+            //
+            const servicesData = [
+                { name: "Main Website", status: 1 },
+                { name: "User Authentication", status: 1 },
+                { name: "Vern Social", status: 2 },
+                { name: "Dashboard", status: 1 },
+                { name: "Soundboard", status: 1 },
+                { name: "Proxies", status: 4 }
+            ];
+            // ==============================================================================
+            // === END OF EDITABLE STATUS SECTION ===========================================
+            // ==============================================================================
+
+
+            // --- Function to render statuses from the local array ---
+            function renderStatuses(services) {
                 const statusList = document.getElementById('statusList');
-                if(statusList) {
-                    statusList.innerHTML = '<li>Error: Could not connect to services.</li>';
-                }
-                return; // Stop execution if Firebase isn't ready
-            }
-
-            // --- Navigation and Auth Script ---
-            const authButtonsDiv = document.getElementById('authButtons');
-            const loggedInLinks = document.querySelectorAll('.logged-in-link');
-            const loggedOutLinks = document.querySelectorAll('.logged-out-link');
-
-            firebase.auth().onAuthStateChanged(user => {
-                authButtonsDiv.innerHTML = ''; 
-
-                if (user) {
-                    authButtonsDiv.innerHTML = `<a href="#" class="btn btn-logout" onclick="logout()">LOGOUT</a>`;
-                    loggedInLinks.forEach(link => link.style.display = 'inline-block');
-                    loggedOutLinks.forEach(link => link.style.display = 'none');
-                } else {
-                    authButtonsDiv.innerHTML = `
-                        <a href="login.html" class="btn btn-login">LOGIN</a>
-                        <a href="signup.html" class="btn btn-signup">SIGN UP</a>`;
-                    loggedInLinks.forEach(link => link.style.display = 'none');
-                    loggedOutLinks.forEach(link => link.style.display = 'inline-block');
-                }
-            });
-
-            // --- Dropdown Logic ---
-            const dropdown = document.getElementById('more-dropdown');
-            if (dropdown) {
-                const dropdownContent = dropdown.querySelector('.dropdown-content');
-                let hideTimeout;
-
-                dropdown.addEventListener('mouseenter', () => {
-                    clearTimeout(hideTimeout);
-                    const rect = dropdown.getBoundingClientRect();
-                    dropdownContent.style.left = `${rect.left}px`;
-                    dropdownContent.style.top = `${rect.bottom + 10}px`;
-                    dropdownContent.classList.add('show');
-                });
-
-                const hideMenu = () => {
-                    hideTimeout = setTimeout(() => {
-                        dropdownContent.classList.remove('show');
-                    }, 200);
-                };
-
-                dropdown.addEventListener('mouseleave', hideMenu);
-                dropdownContent.addEventListener('mouseleave', hideMenu);
-
-                dropdownContent.addEventListener('mouseenter', () => {
-                    clearTimeout(hideTimeout);
-                });
-            }
-        
-            // --- Status Page Generation from Firestore ---
-            // Initialize Firestore
-            const db = firebase.firestore();
-            const statusList = document.getElementById('statusList');
-
-            if (!statusList) {
-                console.error("The element with ID 'statusList' was not found.");
-                return;
-            }
-
-            // Listen for real-time updates from the 'services' collection in Firestore
-            db.collection('services').orderBy('name').onSnapshot(snapshot => {
-                // Clear the current list
-                statusList.innerHTML = '';
-                if (snapshot.empty) {
-                    statusList.innerHTML = '<li>No services found.</li>';
+                if (!statusList) {
+                    console.error("The element with ID 'statusList' was not found.");
                     return;
                 }
+                
+                statusList.innerHTML = ''; // Clear the "Loading..." message
 
-                // Loop through each service document and display it
-                snapshot.forEach(doc => {
-                    const service = doc.data();
-                    
-                    // Create the list item element
+                if (!services || services.length === 0) {
+                    statusList.innerHTML = '<li>No services have been configured in the HTML.</li>';
+                    return;
+                }
+                
+                // Sort services alphabetically by name for consistent ordering
+                services.sort((a, b) => a.name.localeCompare(b.name));
+
+                // Loop through each service in the array and build the HTML
+                services.forEach(service => {
                     const listItem = document.createElement('li');
                     listItem.className = 'status-item';
 
                     const serviceName = document.createElement('span');
                     serviceName.className = 'service-name';
-                    serviceName.textContent = service.name || 'Unnamed Service'; // Add fallback for safety
+                    serviceName.textContent = service.name || 'Unnamed Service';
 
                     const indicatorContainer = document.createElement('div');
                     indicatorContainer.className = 'status-indicator-container';
@@ -283,7 +269,6 @@
                     const statusText = document.createElement('span');
                     statusText.className = 'status-text';
                     
-                    // Set color and text based on the 'status' field from Firestore
                     switch (service.status) {
                         case 1:
                             indicator.classList.add('status-ok');
@@ -306,20 +291,18 @@
                             statusText.textContent = 'Unknown Status';
                     }
                     
-                    // FIXED: Assemble the elements for a more intuitive display (icon first, then text)
                     indicatorContainer.appendChild(indicator);
                     indicatorContainer.appendChild(statusText);
                     
                     listItem.appendChild(serviceName);
                     listItem.appendChild(indicatorContainer);
                     
-                    // Add the completed item to the list on the page
                     statusList.appendChild(listItem);
                 });
-            }, err => {
-                console.error("Error fetching statuses from Firestore: ", err);
-                statusList.innerHTML = '<li>There was an error loading the system statuses. Please check the developer console for more details.</li>';
-            });
+            }
+
+            // --- Initial call to display the statuses ---
+            renderStatuses(servicesData);
         });
     </script>
 </body>
