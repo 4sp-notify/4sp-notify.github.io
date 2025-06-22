@@ -5,15 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>4SP - VERN SOCIAL</title>
   
+  <!-- External files are now properly linked and loaded. -->
   <link rel="stylesheet" href="../css/style.css" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
   <script src="../panic-key.js" defer></script>
   <script src="../firebase-config.js" defer></script>
 
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap" rel="stylesheet">
-
   <style>
-    /* --- Core Styles --- */
+    /* --- Core Styles (Fonts updated to PrimaryFont/SecondaryFont) --- */
     body, html {
       height: 100%;
       margin: 0;
@@ -621,13 +621,14 @@
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
   
   <script>
-    // In a production environment, this would come from ../firebase-config.js
-    const firebaseConfig = {
-      // Your Firebase config object here
-    };
-    firebase.initializeApp(firebaseConfig);
-
     document.addEventListener('DOMContentLoaded', () => {
+        // This check ensures firebase config is loaded from the external file before we initialize
+        if (typeof firebaseConfig === 'undefined') {
+            console.error("Firebase config is not loaded. Make sure firebase-config.js is included and correct.");
+            return;
+        }
+        firebase.initializeApp(firebaseConfig);
+
         const db = firebase.firestore();
         const auth = firebase.auth();
 
@@ -667,12 +668,12 @@
         let currentlyReactingToMessageId = null;
 
         // --- Emoji Data ---
-        const emojiList = ['😀', '😂', '�', '🤔', '😢', '😡', '👍', '👎', '❤️', '🔥', '🎉', '💯', '🙏', '🤯', '😱', '🤩', '😴', '👋', '🥳', '🥺', '😎', '😜', '😇', '😈', '👻', '💀', '👽', '🚀', '⭐', '✨', 'OK', '✅', '❌', '❓', '❗'];
+        const emojiList = ['😀', '😂', '😍', '🤔', '😢', '😡', '�', '👎', '❤️', '🔥', '🎉', '💯', '🙏', '🤯', '😱', '🤩', '😴', '👋', '🥳', '🥺', '😎', '😜', '😇', '😈', '👻', '💀', '👽', '🚀', '⭐', '✨', 'OK', '✅', '❌', '❓', '❗'];
         
         // Populate Emoji Menu Grid
         function populateEmojiGrid(filter = '') {
             emojiGrid.innerHTML = '';
-            const filteredEmojis = emojiList.filter(emoji => emoji.includes(filter));
+            const filteredEmojis = emojiList.filter(emoji => emoji.toLowerCase().includes(filter.toLowerCase()));
             filteredEmojis.forEach(emoji => {
                 const span = document.createElement('span');
                 span.textContent = emoji;
@@ -687,13 +688,15 @@
                 currentUser = user;
                 setupAllListeners();
             } else {
+                // Redirect to login if not authenticated
                 window.location.href = '../login.html';
             }
         });
 
         // --- Listener Management ---
         function setupAllListeners() {
-            if (!currentUser) return;
+            if (!currentUser || userUnsubscribe) return; // Prevent setting up listeners multiple times
+            
             const userRef = db.collection('users').doc(currentUser.uid);
             userUnsubscribe = userRef.onSnapshot(doc => {
                 const wasInPrivateChat = activeChatId && currentUserData.friends;
@@ -734,13 +737,18 @@
             const usersToFetch = uniqueUserIds.filter(id => !usersDataCache[id]);
             if (usersToFetch.length === 0) return;
             
+            console.log("Fetching user data for IDs:", usersToFetch);
             // Fetch users in chunks of 10 to comply with 'in' query limit
             for (let i = 0; i < usersToFetch.length; i += 10) {
                 const chunk = usersToFetch.slice(i, i + 10);
-                const snapshot = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get();
-                snapshot.forEach(doc => {
-                    if (doc.exists) usersDataCache[doc.id] = {id: doc.id, ...doc.data()};
-                });
+                try {
+                    const snapshot = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get();
+                    snapshot.forEach(doc => {
+                        if (doc.exists) usersDataCache[doc.id] = {id: doc.id, ...doc.data()};
+                    });
+                } catch (error) {
+                    console.error("Error fetching user data chunk: ", error);
+                }
             }
         }
         
@@ -840,6 +848,7 @@
             if (text === '' || !activeChatId) return;
             
             sendMessageBtn.disabled = true; // Disable button
+            const originalText = text;
             messageInput.value = ''; // Clear input immediately
             
             setTimeout(async () => {
@@ -848,7 +857,7 @@
                 
                 const messagePayload = {
                     senderId: currentUser.uid,
-                    text: text,
+                    text: originalText,
                     timestamp: firebase.firestore.FieldValue.serverTimestamp(),
                     reaction: null
                 };
@@ -859,7 +868,7 @@
                     });
                 } catch (error) {
                     console.error("Message send error:", error);
-                    messageInput.value = text; // Restore text on failure
+                    messageInput.value = originalText; // Restore text on failure
                 } finally {
                     sendMessageBtn.disabled = false; // Re-enable button
                 }
@@ -876,7 +885,10 @@
             listEl.innerHTML = '';
             requests.forEach(id => {
                 const requester = usersDataCache[id];
-                if (!requester) return; 
+                if (!requester) {
+                    console.warn("Friend request from unknown user ID:", id);
+                    return; 
+                }
                 const li = document.createElement('li');
                 li.className = 'chat-list-item';
                 li.innerHTML = `<span class="username">${requester.username}</span><div class="actions"><button class="action-btn accept" title="Accept" data-requester-id="${id}"><i class="fas fa-check-circle"></i></button><button class="action-btn decline" title="Decline" data-requester-id="${id}"><i class="fas fa-times-circle"></i></button></div>`;
@@ -886,22 +898,26 @@
 
         function renderFriendsList() {
             friendsList.innerHTML = '';
-            if (currentUserData.friends) {
-                currentUserData.friends.forEach(id => {
-                    const friend = usersDataCache[id]; if (!friend) return;
-                    const chatId = [currentUser.uid, id].sort().join('_');
-                    const li = document.createElement('li');
-                    li.className = 'chat-list-item';
-                    if(chatId === activeChatId) li.classList.add('active');
-                    li.dataset.chatId = chatId;
-                    li.innerHTML = `<span class="username">${friend.username}</span>`;
-                    friendsList.appendChild(li);
-                });
-            }
+            const friends = currentUserData.friends || [];
+            if (friends.length === 0) return;
+
+            friends.forEach(id => {
+                const friend = usersDataCache[id]; 
+                if (!friend) {
+                    console.warn(`Friend data for ID ${id} not found in cache. It might still be loading or does not exist.`);
+                    return;
+                }
+                const chatId = [currentUser.uid, id].sort().join('_');
+                const li = document.createElement('li');
+                li.className = 'chat-list-item';
+                if(chatId === activeChatId) li.classList.add('active');
+                li.dataset.chatId = chatId;
+                li.innerHTML = `<span class="username">${friend.username}</span>`;
+                friendsList.appendChild(li);
+            });
         }
         
         // --- Friend Management Functions (send, accept, decline, unfriend) ---
-        // These remain largely the same, but simplified as they don't interact with group logic.
         async function sendFriendRequest(targetUserId) {
             const batch = db.batch();
             batch.update(db.collection('users').doc(currentUser.uid), { friendRequestsSent: firebase.firestore.FieldValue.arrayUnion(targetUserId) });
@@ -985,15 +1001,13 @@
             messageElement.classList.add('reacting');
             populateEmojiGrid(); // Initial population
             
-            // Append menu to the message element itself for correct positioning
             messageElement.appendChild(emojiMenu);
             
             setTimeout(() => {
                 emojiMenu.classList.add('visible');
                 emojiSearchInput.focus();
-            }, 50); // Delay to allow CSS transition
+            }, 50);
 
-            // Hide menu if clicked outside
             setTimeout(() => {
               document.addEventListener('click', handleClickOutsideMenu, { once: true });
             }, 0);
@@ -1007,6 +1021,7 @@
                 }
             }
             emojiMenu.classList.remove('visible');
+            document.body.appendChild(emojiMenu); // Move it back to the body
             currentlyReactingToMessageId = null;
             emojiSearchInput.value = '';
             document.removeEventListener('click', handleClickOutsideMenu);
@@ -1016,7 +1031,6 @@
           if (!emojiMenu.contains(event.target)) {
             hideEmojiMenu();
           } else {
-             // Re-add listener if click was inside, as it was a `once` listener
             setTimeout(() => {
               document.addEventListener('click', handleClickOutsideMenu, { once: true });
             }, 0);
@@ -1038,18 +1052,37 @@
             }
         }
 
-        // --- Modal & Event Listeners Setup ---
-        function showConfirmation(title, message) { /* ... same as before ... */ return Promise.resolve(true); } // Simplified for brevity
+        function showConfirmation(title, message) {
+            return new Promise(resolve => {
+                confirmationModalTitle.textContent = title;
+                confirmationModalMessage.textContent = message;
+                confirmationModal.style.display = 'flex';
+
+                const onConfirm = () => {
+                    confirmationModal.style.display = 'none';
+                    confirmActionBtn.removeEventListener('click', onConfirm);
+                    cancelActionBtn.removeEventListener('click', onCancel);
+                    resolve(true);
+                };
+
+                const onCancel = () => {
+                    confirmationModal.style.display = 'none';
+                    confirmActionBtn.removeEventListener('click', onConfirm);
+                    cancelActionBtn.removeEventListener('click', onCancel);
+                    resolve(false);
+                };
+
+                confirmActionBtn.addEventListener('click', onConfirm);
+                cancelActionBtn.addEventListener('click', onCancel);
+                closeConfirmationModalBtn.addEventListener('click', onCancel);
+            });
+        } 
 
         const setupEventListeners = () => {
              document.addEventListener('click', e => {
-                 // --- Chat Selection ---
                  const chatListItem = e.target.closest('.chat-list-item[data-chat-id]');
-                 if (chatListItem) {
-                     openChat(chatListItem.dataset.chatId);
-                 }
+                 if (chatListItem) { openChat(chatListItem.dataset.chatId); }
                  
-                 // --- Friend Request Buttons ---
                  const addBtn = e.target.closest('button.action-btn[data-user-id]');
                  if(addBtn) {
                      addBtn.disabled = true;
@@ -1061,15 +1094,11 @@
                  const declineBtn = e.target.closest('button.action-btn.decline');
                  if(declineBtn) declineFriendRequest(declineBtn.dataset.requesterId);
                  
-                 // --- Message Reaction Click ---
                  const messageContent = e.target.closest('.message-content, .message-reaction');
                  if (messageContent) {
-                     // Prevent click-outside-hide from firing immediately
                      e.stopPropagation(); 
                      const messageElement = messageContent.closest('.message');
-                     if (messageElement) {
-                        showEmojiMenu(messageElement);
-                     }
+                     if (messageElement) { showEmojiMenu(messageElement); }
                  }
               });
 
@@ -1080,7 +1109,7 @@
             });
 
             emojiMenu.querySelector('.remove-reaction-btn').addEventListener('click', () => {
-                setReaction(null); // Set to null to remove
+                setReaction(null);
             });
 
             emojiSearchInput.addEventListener('input', () => {
@@ -1111,9 +1140,8 @@
         };
 
         setupEventListeners();
-        populateEmojiGrid(); // Initial population on load
+        populateEmojiGrid();
     });
   </script>
 </body>
 </html>
-�
