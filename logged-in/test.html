@@ -355,6 +355,7 @@
     }
     .save-info { flex-grow: 1; margin-right: 10px; }
     .save-name { font-weight: 600; color: #6720bd; }
+    .save-name .share-icon { font-size: 0.8em; margin-right: 5px; color: #17a2b8; cursor: help; }
     .save-details { font-size: 0.8em; color: #777; }
     .save-actions { display: flex; flex-shrink: 0; }
     .save-actions button {
@@ -732,7 +733,7 @@
             const docSnap = await docRef.get();
             cloudSavesListEl.innerHTML = ''; 
 
-            if (docSnap && typeof docSnap.exists === 'boolean' && docSnap.exists) {
+            if (docSnap && docSnap.exists) {
                 const data = docSnap.data();
                 let saves = data && data.cloudSaves ? data.cloudSaves : [];
                 saves = sortSaves(saves); 
@@ -758,9 +759,11 @@
                         }
                     }
 
+                    const shareIcon = save.shareId ? `<span class="share-icon" title="This note is shared. Link expires in 7 days.">🔗</span>` : '';
+
                     li.innerHTML = `
                         <div class="save-info">
-                            <span class="save-name">${save.name || `Save ${index + 1}`}</span>
+                            <span class="save-name">${shareIcon}${save.name || `Save ${index + 1}`}</span>
                             <div class="save-details">
                                 Chars: ${(save.charCount || 0).toLocaleString()} | Size: ${bytesToSize(new Blob([save.content || '']).size)} | Saved: ${saveDate}
                             </div>
@@ -849,6 +852,7 @@
                     content: contentToSave,
                     charCount: charCountToSave,
                     timestamp: new Date()
+                    // shareId is intentionally omitted; it's added on first share.
                 };
                 cloudSaves.push(newSave);
                 
@@ -884,20 +888,7 @@
             showStatusMessage('Please log in to open cloud saves.', 'info');
             return;
         }
-        const currentLocalNotes = localStorage.getItem('notes_localCopy');
-        const currentEditorContent = notesTextArea.value;
-        let unsavedChanges = false;
-
-        if (currentEditorContent !== (localStorage.getItem(`cloud_save_opened_content_${currentUser.uid}`) || currentLocalNotes || "")) {
-             unsavedChanges = true;
-        }
         
-        if (unsavedChanges) {
-             if (!confirm("You have unsaved changes in the editor. Are you sure you want to open a cloud save and overwrite them? Consider saving locally or to the cloud first.")) {
-                return;
-            }
-        }
-
         const docRef = userNotesDocRef();
         if (!docRef) return;
         try {
@@ -911,9 +902,7 @@
                     notesTextArea.value = saves[index].content;
                     cloudSaveNameEl.value = saves[index].name; 
                     updateCharacterCount();
-                    localStorage.setItem('notes_localCopy', saves[index].content); 
-                    localStorage.setItem(`cloud_save_opened_content_${currentUser.uid}`, saves[index].content); 
-                    showStatusMessage(`Opened "${saves[index].name}" from cloud. Also updated local browser copy.`, 'success');
+                    showStatusMessage(`Opened "${saves[index].name}" from cloud.`, 'success');
                 } else {
                     showStatusMessage('Selected save not found. It might have been deleted.', 'warning');
                 }
@@ -945,7 +934,7 @@
         currentlyEditingIndex = index;
         saveEditBtn.style.display = 'inline-block';
         saveCloudBtn.style.display = 'none';
-        cloudSaveNameEl.disabled = true;
+        cloudSaveNameEl.disabled = false; // Allow editing the name
         notesTextArea.style.borderColor = '#007bff';
         showStatusMessage(`Now editing "${cloudSaveNameEl.value}". Use the 'Save Edit' button to save changes.`, 'info', 5000);
     }
@@ -966,7 +955,7 @@
         saveEditBtn.disabled = true;
 
         try {
-             await firebase.firestore().runTransaction(async (transaction) => {
+             const updatedNote = await firebase.firestore().runTransaction(async (transaction) => {
                 const docSnap = await transaction.get(docRef);
                 if (!docSnap.exists) throw new Error("User data not found.");
 
@@ -983,8 +972,23 @@
                 cloudSaves[currentlyEditingIndex].timestamp = new Date();
 
                 transaction.update(docRef, { cloudSaves });
+                return cloudSaves[currentlyEditingIndex];
             });
-            showStatusMessage('Note updated successfully!', 'success');
+            
+            // After transaction, update public shared doc if it exists
+            if (updatedNote && updatedNote.shareId) {
+                const shareDocRef = sharedNotesCollectionRef().doc(updatedNote.shareId);
+                await shareDocRef.update({
+                    name: updatedNote.name,
+                    content: updatedNote.content,
+                    charCount: updatedNote.charCount,
+                    sharedAt: new Date()
+                });
+                showStatusMessage('Note updated successfully! Public share link was also updated.', 'success');
+            } else {
+                showStatusMessage('Note updated successfully!', 'success');
+            }
+
             exitEditMode();
             await refreshCloudSavesDisplay(false);
 
@@ -1008,29 +1012,46 @@
 
         try {
             const docSnap = await docRef.get();
-            if (docSnap.exists) {
-                let saves = docSnap.data().cloudSaves || [];
-                saves = sortSaves(saves);
-                const saveToShare = saves[index];
+            if (!docSnap.exists) throw new Error("User data not found.");
 
-                if (saveToShare) {
-                    const shareCollection = sharedNotesCollectionRef();
-                    const newShareRef = await shareCollection.add({
-                        originalOwnerUid: currentUser.uid,
-                        originalOwnerEmail: currentUser.email,
-                        name: saveToShare.name,
-                        content: saveToShare.content,
-                        charCount: saveToShare.charCount,
-                        sharedAt: new Date()
-                    });
+            let saves = docSnap.data().cloudSaves || [];
+            saves = sortSaves(saves);
+            const saveToShare = saves[index];
 
-                    const shareLink = `${window.location.origin}/shares/note-shares.html#${newShareRef.id}`;
-                    prompt("Share this link with others:", shareLink);
-                    showStatusMessage('Share link created and copied to clipboard!', 'success');
-                } else {
-                    showStatusMessage('Save not found.', 'error');
-                }
+            if (!saveToShare) {
+                showStatusMessage('Save not found.', 'error');
+                return;
             }
+
+            let shareId = saveToShare.shareId;
+
+            // If the note has NOT been shared before, create the share document
+            if (!shareId) {
+                const shareCollection = sharedNotesCollectionRef();
+                const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days from now
+
+                const newShareRef = await shareCollection.add({
+                    originalOwnerUid: currentUser.uid,
+                    originalOwnerEmail: currentUser.email,
+                    name: saveToShare.name,
+                    content: saveToShare.content,
+                    charCount: saveToShare.charCount,
+                    sharedAt: new Date(),
+                    expiresAt: expiresAt // Field for TTL policy
+                });
+                shareId = newShareRef.id;
+
+                // Update the user's private note object with the new shareId
+                saves[index].shareId = shareId;
+                await docRef.update({ cloudSaves: saves });
+                
+                showStatusMessage('Share link created! It will expire in 7 days.', 'success');
+                await refreshCloudSavesDisplay(false); // Refresh list to show share icon
+            }
+
+            const shareLink = `${window.location.origin}/shares/note-shares.html#${shareId}`;
+            prompt("Share this link with others (expires in 7 days):", shareLink);
+
         } catch (error) {
             console.error("Error sharing note:", error);
             showStatusMessage(`Error sharing note: ${error.message}`, 'error');
@@ -1050,11 +1071,13 @@
         let saveNameToDelete = `Save at index ${index}`;
         try {
             const initialDocSnap = await docRef.get();
+            let saveToDelete;
             if (initialDocSnap.exists) {
                 let initialSaves = initialDocSnap.data().cloudSaves || [];
                 initialSaves = sortSaves(initialSaves);
-                if (initialSaves[index] && initialSaves[index].name) {
-                    saveNameToDelete = `"${initialSaves[index].name}"`;
+                saveToDelete = initialSaves[index];
+                if (saveToDelete && saveToDelete.name) {
+                    saveNameToDelete = `"${saveToDelete.name}"`;
                 }
             }
 
@@ -1064,6 +1087,14 @@
             if (currentlyEditingIndex === index) {
                 exitEditMode();
             }
+            
+            // Note: The public shared document will be deleted automatically by the TTL policy.
+            // You could optionally delete it here explicitly if immediate removal is desired.
+            /*
+            if(saveToDelete && saveToDelete.shareId) {
+                await sharedNotesCollectionRef().doc(saveToDelete.shareId).delete();
+            }
+            */
 
             await firebase.firestore().runTransaction(async (transaction) => {
                 const docSnap = await transaction.get(docRef);
