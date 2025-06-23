@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>4SP - VERN SOCIAL</title>
+  <title>4SP - VS</title>
   <link rel="stylesheet" href="../css/style.css" />
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
   <script src="../panic-key.js"></script>
@@ -386,14 +386,15 @@
   <!-- Firebase SDKs -->
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-database-compat.js"></script>
   <!-- Link to your firebase-config.js -->
   <script src="../firebase-config.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
         // --- Firebase Initialization ---
-        // Ensure your firebase-config.js initializes the database service
-        const db = firebase.database();
+        const firestoreDB = firebase.firestore();
+        const realtimeDB = firebase.database();
         const auth = firebase.auth();
 
         // --- DOM Elements ---
@@ -425,11 +426,8 @@
         let usersDataCache = {}; 
         
         // --- Listener Management ---
-        // Store references to active listeners to detach them efficiently.
-        let userListener = null;
-        let friendsListener = null;
-        let requestsListener = null;
-        let activeChatListener = null;
+        let userUnsubscribe = null; // Firestore listener
+        let activeChatListener = null; // RealtimeDB listener
         
         // --- Generic Confirmation Modal ---
         function showConfirmation(title, message) {
@@ -472,64 +470,56 @@
         // --- Listener Setup & Teardown ---
         function setupAllListeners() {
             if (!currentUser) return;
-            detachAllListeners(); // Ensure no duplicate listeners are attached
+            detachAllListeners(); 
 
-            console.log("Setting up Realtime Database listeners.");
+            console.log("Setting up Firestore and Realtime Database listeners.");
 
-            // Listen to current user's root data (username, etc.)
-            userListener = db.ref(`users/${currentUser.uid}`);
-            userListener.on('value', snapshot => {
-                currentUserData = snapshot.val() || {};
-            });
-            
-            // Listen to friend list changes
-            friendsListener = db.ref(`users/${currentUser.uid}/friends`);
-            friendsListener.on('value', snapshot => {
-                const friendIds = snapshot.val() ? Object.keys(snapshot.val()) : [];
-                cacheUsersData(friendIds).then(() => renderFriends(friendIds));
-            });
-            
-            // Listen to friend request changes
-            requestsListener = db.ref(`users/${currentUser.uid}/friendRequests/received`);
-            requestsListener.on('value', snapshot => {
-                const requestIds = snapshot.val() ? Object.keys(snapshot.val()) : [];
-                cacheUsersData(requestIds).then(() => renderFriendRequests(requestIds));
+            // Firestore listener for user data, friends, and requests
+            const userRef = firestoreDB.collection('users').doc(currentUser.uid);
+            userUnsubscribe = userRef.onSnapshot(async doc => {
+                if (!doc.exists) return;
+                currentUserData = { id: doc.id, ...doc.data() };
+
+                const allRelatedUserIds = [
+                    ...(currentUserData.friends || []),
+                    ...(currentUserData.friendRequestsReceived || []),
+                ];
+                await cacheUsersData(allRelatedUserIds);
+
+                renderFriendRequests();
+                renderFriends();
             });
 
-            // Re-attach active chat listener if a chat was open
+            // Re-attach active chat listener (RealtimeDB) if a chat was open
             if (activeChatId) {
-                openChat(activeChatId, true); // `true` to indicate it's a re-attachment
+                openChat(activeChatId, true);
             }
         }
         
         function detachAllListeners() {
-            console.log("Detaching Realtime Database listeners.");
-            if (userListener) userListener.off();
-            if (friendsListener) friendsListener.off();
-            if (requestsListener) requestsListener.off();
+            console.log("Detaching listeners.");
+            if (userUnsubscribe) userUnsubscribe();
             if (activeChatListener) activeChatListener.off();
-            userListener = friendsListener = requestsListener = activeChatListener = null;
+            userUnsubscribe = activeChatListener = null;
         }
 
-        // --- Data Caching & Fetching ---
+        // --- Data Caching (Firestore) ---
         async function cacheUsersData(userIds) {
             const uniqueUserIds = [...new Set(userIds)].filter(Boolean);
             const usersToFetch = uniqueUserIds.filter(id => !usersDataCache[id]);
             if (usersToFetch.length === 0) return;
 
-            const fetchPromises = usersToFetch.map(id => 
-                db.ref(`users/${id}`).once('value').then(snap => ({id, data: snap.val()}))
-            );
-
-            const results = await Promise.all(fetchPromises);
-            results.forEach(result => {
-                if (result.data) {
-                    usersDataCache[result.id] = {id: result.id, ...result.data};
-                }
-            });
+            // Firestore allows up to 10 items in an 'in' query.
+            for (let i = 0; i < usersToFetch.length; i += 10) {
+                const chunk = usersToFetch.slice(i, i + 10);
+                const snapshot = await firestoreDB.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get();
+                snapshot.forEach(doc => {
+                    if (doc.exists) usersDataCache[doc.id] = {id: doc.id, ...doc.data()};
+                });
+            }
         }
 
-        // --- Chat Management ---
+        // --- Chat Management (RealtimeDB) ---
         function openChat(chatId, isReattaching = false) {
             if (activeChatListener) activeChatListener.off();
             
@@ -540,9 +530,10 @@
                  socialContainer.classList.add('mobile-chat-view-active');
             }
             
-            activeChatListener = db.ref(`chats/${chatId}`);
+            activeChatListener = realtimeDB.ref(`chats/${chatId}`);
             activeChatListener.on('value', async (snapshot) => {
                 if(!snapshot.exists()) {
+                    // This can happen if the other user unfriends you.
                     alert('This chat no longer exists.');
                     closeActiveChat();
                     return;
@@ -550,6 +541,7 @@
                 activeChatData = snapshot.val();
                 
                 const friendId = Object.keys(activeChatData.members).find(id => id !== currentUser.uid);
+                // We use the existing cache, which is populated from Firestore data.
                 await cacheUsersData([friendId]);
                 const friendData = usersDataCache[friendId];
                 
@@ -576,6 +568,7 @@
             socialContainer.classList.remove('mobile-chat-view-active');
         }
 
+        // --- Message Rendering (from RealtimeDB data) ---
         async function renderMessages(messagesData) {
             messagesContainer.innerHTML = '';
             if (!messagesData) {
@@ -585,13 +578,11 @@
             
             const messages = Object.entries(messagesData).map(([userId, message]) => ({ userId, ...message }));
             messages.sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
-
-            const userIdsToCache = messages.map(m => m.userId);
-            await cacheUsersData(userIdsToCache);
             
+            // User data for sender's name is already in cache from Firestore.
             messages.forEach(msg => {
                 const user = usersDataCache[msg.userId];
-                if (!user) return;
+                if (!user) return; // Should not happen if cache is working
                 
                 const messageEl = document.createElement('div');
                 messageEl.className = `message ${msg.userId === currentUser.uid ? 'current-user' : ''}`;
@@ -608,6 +599,7 @@
             messagesContainer.scrollTop = messagesContainer.scrollHeight;
         }
         
+        // --- Send Message (to RealtimeDB) ---
         function sendMessage() {
             const text = messageInput.value.trim();
             if (text === '' || !activeChatId) return;
@@ -618,20 +610,20 @@
             };
             
             messageInput.value = '';
-            // Using a multi-path update to only update the current user's last message.
             const updates = {};
             updates[`/chats/${activeChatId}/lastMessages/${currentUser.uid}`] = messagePayload;
             
-            db.ref().update(updates).catch(error => {
+            realtimeDB.ref().update(updates).catch(error => {
                 console.error("Message send error:", error);
                 alert("Failed to send message. Please try again."); 
                 messageInput.value = text;
             });
         }
         
-        // --- UI Rendering ---
-        function renderFriendRequests(requestIds) {
-            if (!requestIds || requestIds.length === 0) {
+        // --- UI Rendering (from Firestore data) ---
+        function renderFriendRequests() {
+            const requestIds = currentUserData.friendRequestsReceived || [];
+            if (requestIds.length === 0) {
                 friendRequestsSection.innerHTML = ''; return;
             }
             friendRequestsSection.innerHTML = `<h3>Friend Requests</h3><ul class="chat-list"></ul>`;
@@ -647,9 +639,10 @@
             });
         }
 
-        function renderFriends(friendIds) {
+        function renderFriends() {
+            const friendIds = currentUserData.friends || [];
             friendsList.innerHTML = '';
-            if (friendIds) {
+            if (friendIds.length > 0) {
                 friendIds.forEach(id => {
                     const friend = usersDataCache[id]; if (!friend) return;
                     const chatId = [currentUser.uid, id].sort().join('_');
@@ -663,78 +656,100 @@
             }
         }
         
-        // --- User Actions (Friend Requests, Unfriending) ---
-        function sendFriendRequest(targetUserId) {
-            const updates = {};
-            updates[`/users/${currentUser.uid}/friendRequests/sent/${targetUserId}`] = true;
-            updates[`/users/${targetUserId}/friendRequests/received/${currentUser.uid}`] = true;
-            db.ref().update(updates).catch(err => {
-                console.error("Error sending friend request:", err);
+        // --- User Actions (Firestore & RealtimeDB) ---
+        async function sendFriendRequest(targetUserId) {
+            const currentUserRef = firestoreDB.collection('users').doc(currentUser.uid);
+            const targetUserRef = firestoreDB.collection('users').doc(targetUserId);
+            try {
+                const batch = firestoreDB.batch();
+                batch.update(currentUserRef, { friendRequestsSent: firebase.firestore.FieldValue.arrayUnion(targetUserId) });
+                batch.update(targetUserRef, { friendRequestsReceived: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
+                await batch.commit();
+            } catch (error) {
+                console.error("Error sending friend request:", error);
                 alert("Failed to send friend request.");
-            });
+            }
         }
 
-        function acceptFriendRequest(requesterId) {
+        async function acceptFriendRequest(requesterId) {
             const chatId = [currentUser.uid, requesterId].sort().join('_');
-            const updates = {};
-            // Add to friends lists
-            updates[`/users/${currentUser.uid}/friends/${requesterId}`] = true;
-            updates[`/users/${requesterId}/friends/${currentUser.uid}`] = true;
-            // Remove requests
-            updates[`/users/${currentUser.uid}/friendRequests/received/${requesterId}`] = null;
-            updates[`/users/${requesterId}/friendRequests/sent/${currentUser.uid}`] = null;
-            // Create chat
-            updates[`/chats/${chatId}/members/${currentUser.uid}`] = true;
-            updates[`/chats/${chatId}/members/${requesterId}`] = true;
+            const currentUserRef = firestoreDB.collection('users').doc(currentUser.uid);
+            const requesterRef = firestoreDB.collection('users').doc(requesterId);
 
-            db.ref().update(updates).catch(err => {
+            try {
+                // Firestore transaction to update friend lists
+                const batch = firestoreDB.batch();
+                batch.update(currentUserRef, {
+                    friends: firebase.firestore.FieldValue.arrayUnion(requesterId),
+                    friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
+                });
+                batch.update(requesterRef, {
+                    friends: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+                    friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
+                });
+                await batch.commit();
+
+                // After successful friend add, create the chat in RealtimeDB
+                const chatRef = realtimeDB.ref(`chats/${chatId}/members`);
+                const updates = {};
+                updates[currentUser.uid] = true;
+                updates[requesterId] = true;
+                await chatRef.update(updates);
+
+            } catch (err) {
                  console.error("Error accepting friend request:", err);
                  alert("Failed to accept friend request.");
-            });
+            }
         }
 
-        function declineFriendRequest(requesterId) {
-            const updates = {};
-            updates[`/users/${currentUser.uid}/friendRequests/received/${requesterId}`] = null;
-            updates[`/users/${requesterId}/friendRequests/sent/${currentUser.uid}`] = null;
-            db.ref().update(updates).catch(err => {
-                 console.error("Error declining friend request:", err);
+        async function declineFriendRequest(requesterId) {
+            const currentUserRef = firestoreDB.collection('users').doc(currentUser.uid);
+            const requesterRef = firestoreDB.collection('users').doc(requesterId);
+            try {
+                 const batch = firestoreDB.batch();
+                 batch.update(currentUserRef, { friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId) });
+                 batch.update(requesterRef, { friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
+                 await batch.commit();
+            } catch (error) {
+                 console.error("Error declining friend request:", error);
                  alert("Failed to decline friend request.");
-            });
+            }
         }
         
         async function unfriend(friendId) {
             const confirmed = await showConfirmation("Unfriend User?", `Are you sure you want to unfriend this user? This will delete the chat history forever.`);
             if (confirmed) {
                 const chatId = [currentUser.uid, friendId].sort().join('_');
-                const updates = {};
-                // Remove from friends lists
-                updates[`/users/${currentUser.uid}/friends/${friendId}`] = null;
-                updates[`/users/${friendId}/friends/${currentUser.uid}`] = null;
-                // Delete chat
-                updates[`/chats/${chatId}`] = null;
+                try {
+                    // Remove from friends lists in Firestore
+                    const batch = firestoreDB.batch();
+                    batch.update(firestoreDB.collection('users').doc(currentUser.uid), { friends: firebase.firestore.FieldValue.arrayRemove(friendId) });
+                    batch.update(firestoreDB.collection('users').doc(friendId), { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
+                    await batch.commit();
+                    
+                    // Delete chat from RealtimeDB
+                    await realtimeDB.ref(`chats/${chatId}`).remove();
 
-                db.ref().update(updates).then(() => {
                     closeActiveChat();
-                }).catch(err => {
+                } catch (err) {
                     console.error("Error unfriending:", err);
                     alert("Failed to unfriend.");
-                });
+                }
             }
         }
 
-        // --- User Search ---
+        // --- User Search (Firestore) ---
         async function performSearch(query) {
             if (!currentUser || query.length < 2) return;
             
-            const usernamePromise = db.ref('users').orderByChild('username').equalTo(query).once('value');
-            const emailPromise = db.ref('users').orderByChild('email').equalTo(query).once('value');
+            const usernameQuery = firestoreDB.collection('users').where('username', '==', query).limit(5).get();
+            const emailQuery = firestoreDB.collection('users').where('email', '==', query).limit(5).get();
 
-            const [usernameSnapshot, emailSnapshot] = await Promise.all([usernamePromise, emailPromise]);
+            const [usernameSnapshot, emailSnapshot] = await Promise.all([usernameQuery, emailQuery]);
             
             const results = new Map();
-            usernameSnapshot.forEach(doc => results.set(doc.key, {id: doc.key, ...doc.val()}));
-            emailSnapshot.forEach(doc => results.set(doc.key, {id: doc.key, ...doc.val()}));
+            usernameSnapshot.forEach(doc => results.set(doc.id, {id: doc.id, ...doc.data()}));
+            emailSnapshot.forEach(doc => results.set(doc.id, {id: doc.id, ...doc.data()}));
 
             searchResultsSection.innerHTML = `<h3>Search Results</h3><ul class="chat-list"></ul>`;
             const listEl = searchResultsSection.querySelector('ul');
@@ -745,21 +760,19 @@
                 return;
             }
             
-            // Get current user's relationships for button logic
-            const sentReqsSnap = await db.ref(`users/${currentUser.uid}/friendRequests/sent`).once('value');
-            const sentReqs = sentReqsSnap.val() || {};
-            const friendsSnap = await db.ref(`users/${currentUser.uid}/friends`).once('value');
-            const friends = friendsSnap.val() || {};
-
+            // currentUserData is from the Firestore listener, so it's up to date
+            const sentReqs = currentUserData.friendRequestsSent || [];
+            const friends = currentUserData.friends || [];
+            
             results.forEach(user => {
                 if (user.id === currentUser.uid) return;
                 const li = document.createElement('li');
                 li.className = 'chat-list-item';
                 
                 let actionBtnHtml = '';
-                if(friends[user.id]) {
+                if(friends.includes(user.id)) {
                     actionBtnHtml = '<span><i class="fas fa-user-check"></i> Friend</span>';
-                } else if (sentReqs[user.id]) {
+                } else if (sentReqs.includes(user.id)) {
                     actionBtnHtml = '<span><i class="fas fa-paper-plane"></i> Requested</span>';
                 } else {
                     actionBtnHtml = `<button class="action-btn add-friend" data-user-id="${user.id}"><i class="fas fa-user-plus"></i></button>`;
