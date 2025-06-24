@@ -467,11 +467,8 @@
 
         function saveMessageLocally(chatId, message) {
             let messages = getLocalMessages(chatId);
-            // Avoid adding duplicates
             if (messages.find(m => m.id === message.id)) return;
-            
             messages.push(message);
-            // Sort to be sure, then prune
             messages.sort((a, b) => a.timestamp - b.timestamp);
             if (messages.length > MAX_LOCAL_MESSAGES) {
                 messages = messages.slice(messages.length - MAX_LOCAL_MESSAGES);
@@ -490,7 +487,7 @@
         });
 
         function setupUserListener() {
-            if (userUnsubscribe) userUnsubscribe(); // Detach old listener
+            if (userUnsubscribe) userUnsubscribe();
             const userRef = db.collection('users').doc(currentUser.uid);
             userUnsubscribe = userRef.onSnapshot(async (doc) => {
                 currentUserData = { id: doc.id, ...doc.data() };
@@ -508,13 +505,11 @@
         async function cacheUsersData(userIds) {
             const uniqueUserIds = [...new Set(userIds)].filter(id => id && !usersDataCache[id]);
             if (uniqueUserIds.length === 0) return;
-            
             const promises = [];
             for (let i = 0; i < uniqueUserIds.length; i += 10) {
                 const chunk = uniqueUserIds.slice(i, i + 10);
                 promises.push(db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', chunk).get());
             }
-
             const snapshots = await Promise.all(promises);
             snapshots.forEach(snapshot => {
                 snapshot.forEach(doc => {
@@ -526,22 +521,18 @@
         // --- CHAT LOGIC REWRITE ---
 
         function openChat(chatId, type) {
-            // 1. Detach any previous chat listeners
             if (activeChatUnsubscribe) activeChatUnsubscribe();
             if (chatMetadataUnsubscribe) chatMetadataUnsubscribe();
 
-            // 2. Set active chat state
             activeChatId = chatId;
             activeChatType = type;
             chatWelcomeScreen.style.display = 'none';
             chatActiveScreen.style.display = 'flex';
             socialContainer.classList.add('mobile-chat-view-active');
 
-            // 3. Immediately render messages from local storage
             const localMessages = getLocalMessages(chatId);
             renderMessages(localMessages);
 
-            // 4. Listen for chat metadata (name, members)
             const collectionName = type === 'group' ? 'groupChats' : 'chats';
             chatMetadataUnsubscribe = db.collection(collectionName).doc(chatId).onSnapshot(async doc => {
                 if(!doc.exists) {
@@ -552,30 +543,28 @@
                 updateChatHeader(type, activeChatData);
             });
 
-            // 5. Listen for NEW messages from Firestore (our transport layer)
-            activeChatUnsubscribe = db.collection('chatMessages').where('chatId', '==', chatId).onSnapshot(snapshot => {
-                snapshot.docChanges().forEach(async change => {
-                    if (change.type === 'added') {
-                        const message = { id: change.doc.id, ...change.doc.data() };
-                        
-                        // Save to local storage
-                        saveMessageLocally(chatId, message);
-                        
-                        // Re-render with the new message
-                        renderMessages(getLocalMessages(chatId));
-
-                        // If I am a recipient, I need to "acknowledge" the message
-                        if (message.recipients && message.recipients.includes(currentUser.uid)) {
-                            const msgRef = db.collection('chatMessages').doc(message.id);
-                            await msgRef.update({
-                                recipients: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
-                            });
+            // --- BUGFIX: ADDED 'array-contains' ---
+            // The query now includes 'array-contains' which is required by our security rules for listing messages.
+            // This ensures a user can only listen to chats they are a member of, fixing the permissions error.
+            activeChatUnsubscribe = db.collection('chatMessages')
+                .where('chatId', '==', chatId)
+                .where('allMembers', 'array-contains', currentUser.uid)
+                .onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(async change => {
+                        if (change.type === 'added') {
+                            const message = { id: change.doc.id, ...change.doc.data() };
+                            saveMessageLocally(chatId, message);
+                            renderMessages(getLocalMessages(chatId));
+                            if (message.recipients && message.recipients.includes(currentUser.uid)) {
+                                const msgRef = db.collection('chatMessages').doc(message.id);
+                                await msgRef.update({
+                                    recipients: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
+                                });
+                            }
                         }
-                    }
+                    });
                 });
-            });
 
-            // Highlight active chat in sidebar
             document.querySelectorAll('.chat-list-item.active').forEach(item => item.classList.remove('active'));
             const activeListItem = document.querySelector(`.chat-list-item[data-chat-id="${chatId}"]`);
             if (activeListItem) activeListItem.classList.add('active');
@@ -585,7 +574,6 @@
             unfriendBtn.style.display = 'none';
             leaveGroupBtn.style.display = 'none'; 
             inviteToGroupBtn.style.display = 'none';
-            
             if (type === 'group') {
                 chatNameEl.textContent = data.groupName;
                 leaveGroupBtn.style.display = 'inline-block';
@@ -626,21 +614,15 @@
                  messagesContainer.innerHTML = '<p style="text-align:center; color:#aaa; flex-grow: 1; display: flex; align-items: center; justify-content: center;">No messages yet. Start the conversation!</p>';
                  return;
             }
-            
             const userIdsToCache = messages.map(m => m.senderId);
             await cacheUsersData(userIdsToCache);
-            
             messages.forEach(msg => {
                 const sender = usersDataCache[msg.senderId];
                 if (!sender) return;
-                
                 const messageEl = document.createElement('div');
                 messageEl.className = 'message';
                 if (msg.senderId === currentUser.uid) messageEl.classList.add('current-user');
-                
-                // Convert stored timestamp (number) to a readable date
                 const sentTime = msg.timestamp ? new Date(msg.timestamp).toLocaleString() : 'Sending...';
-                
                 messageEl.innerHTML = `
                     <div class="message-content">${msg.text}</div>
                     <div class="message-info">
@@ -655,33 +637,25 @@
         async function sendMessage() {
             const text = messageInput.value.trim();
             if (text === '' || !activeChatId || !activeChatData.members) return;
-            
             const recipients = activeChatData.members.filter(id => id !== currentUser.uid);
-
             const messagePayload = {
                 chatId: activeChatId,
                 senderId: currentUser.uid,
                 text: text,
-                timestamp: Date.now(), // Use client-side timestamp for local storage consistency
+                timestamp: Date.now(),
                 recipients: recipients,
-                allMembers: activeChatData.members // For security rules
+                allMembers: activeChatData.members
             };
-
             messageInput.value = '';
-
             try {
-                // Add the message to the transport collection
                 const msgRef = await db.collection('chatMessages').add(messagePayload);
-
-                // Sender listens for acks to know when to delete the message
                 const unsubscribeSender = msgRef.onSnapshot(doc => {
                     const data = doc.data();
                     if (data && data.recipients.length === 0) {
-                        unsubscribeSender(); // Stop listening
-                        doc.ref.delete(); // Delete from Firestore
+                        unsubscribeSender();
+                        doc.ref.delete();
                     }
                 });
-
             } catch (error) {
                 console.error("Message send error:", error);
                 alert("Failed to send message. Please try again."); 
@@ -689,7 +663,7 @@
             }
         }
         
-        // --- UI Rendering & Actions (Largely Unchanged, but with minor adjustments) ---
+        // --- UI Rendering & Actions (Largely Unchanged) ---
 
         function renderFriendRequests() {
             friendRequestsSection.innerHTML = `<h3>Friend Requests</h3><ul class="chat-list"></ul>`;
@@ -714,7 +688,6 @@
                     friendsList.innerHTML += `<li class="chat-list-item ${chatId === activeChatId ? 'active' : ''}" data-chat-id="${chatId}" data-chat-type="private"><span class="username">${friend.username}</span></li>`;
                 });
             }
-            
             const snapshot = await db.collection('groupChats').where('members', 'array-contains', currentUser.uid).get();
             groupsList.innerHTML = '';
             snapshot.forEach(doc => {
@@ -730,39 +703,23 @@
             const chatRef = db.collection('chats').doc(chatId);
             try {
                 await db.runTransaction(async (t) => {
-                    t.update(currentUserRef, {
-                        friends: firebase.firestore.FieldValue.arrayUnion(requesterId),
-                        friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId)
-                    });
-                    t.update(requesterRef, {
-                        friends: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
-                        friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid)
-                    });
-                    // NEW: No longer creating a messages map
+                    t.update(currentUserRef, { friends: firebase.firestore.FieldValue.arrayUnion(requesterId), friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId) });
+                    t.update(requesterRef, { friends: firebase.firestore.FieldValue.arrayUnion(currentUser.uid), friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) });
                     t.set(chatRef, { members: [currentUser.uid, requesterId] });
                 });
-            } catch (error) {
-                console.error("Error accepting friend request:", error);
-            }
+            } catch (error) { console.error("Error accepting friend request:", error); }
         }
         
         async function createNewGroup(groupName, memberIds) {
              if (groupName === '' || memberIds.length < 3) return;
              try {
-                // NEW: No longer creating a messages map
                 await db.collection('groupChats').add({ groupName, creatorId: currentUser.uid, members: memberIds });
                 createGroupModal.style.display = 'none';
                 groupNameInput.value = '';
-            } catch (error) {
-                console.error("Error creating group:", error);
-            }
+            } catch (error) { console.error("Error creating group:", error); }
         }
         
-        // --- Event Listeners (Setup & other functions remain largely the same) ---
-        // The core logic changes are above. The rest of the file (modals, search, etc.)
-        // can remain as it was, as it primarily deals with user/group management, not messaging.
-        
-        // Generic Confirmation Modal Function
+        // --- Event Listeners ---
         function showConfirmation(title, message) {
             return new Promise(resolve => {
                 confirmationModalTitle.textContent = title;
@@ -770,10 +727,7 @@
                 confirmationModal.style.display = 'flex';
                 const onConfirm = () => { confirmationModal.style.display = 'none'; cleanup(); resolve(true); };
                 const onCancel = () => { confirmationModal.style.display = 'none'; cleanup(); resolve(false); };
-                const cleanup = () => {
-                    confirmActionBtn.removeEventListener('click', onConfirm);
-                    cancelActionBtn.removeEventListener('click', onCancel);
-                };
+                const cleanup = () => { confirmActionBtn.removeEventListener('click', onConfirm); cancelActionBtn.removeEventListener('click', onCancel); };
                 confirmActionBtn.addEventListener('click', onConfirm);
                 cancelActionBtn.addEventListener('click', onCancel);
             });
@@ -800,10 +754,6 @@
                 listEl.innerHTML += `<li class="chat-list-item"><span class="username">${user.username}</span><div class="actions">${actionBtnHtml}</div></li>`;
             });
         }
-
-        // --- All other event listeners from the original file ---
-        // These are mostly unchanged and are included for completeness.
-        // The important changes are in the chat logic above.
         const setupEventListeners = () => {
             document.addEventListener('click', e => {
                  const chatListItem = e.target.closest('.chat-list-item[data-chat-id]');
@@ -829,7 +779,6 @@
             confirmInviteBtn.addEventListener('click', async () => { const selectedToInvite = Array.from(friendsToInviteListDiv.querySelectorAll('input:checked')).map(input => input.value); if (selectedToInvite.length === 0) return; await db.collection('groupChats').doc(activeChatId).update({ members: firebase.firestore.FieldValue.arrayUnion(...selectedToInvite) }); inviteToGroupModal.style.display = 'none'; });
             leaveGroupBtn.addEventListener('click', async (e) => { if (activeChatType !== 'group' || !activeChatData.members) return; const groupRef = db.collection('groupChats').doc(activeChatId); const action = e.target.dataset.action; if (action === 'delete-group') { const confirmed = await showConfirmation("Delete Group?", "Are you sure you want to permanently delete this group?"); if (confirmed) { await groupRef.delete(); closeActiveChat(); } } else if (action === 'leave-group') { const confirmed = await showConfirmation("Leave Group?", "Are you sure you want to leave this group?"); if (confirmed) { await groupRef.update({ members: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) }); closeActiveChat(); } } });
             unfriendBtn.addEventListener('click', async () => { const friendId = unfriendBtn.dataset.friendId; if (friendId) { const confirmed = await showConfirmation("Unfriend User?", `This will delete the chat history forever.`); if (confirmed) { const chatId = [currentUser.uid, friendId].sort().join('_'); const batch = db.batch(); batch.update(db.collection('users').doc(currentUser.uid), { friends: firebase.firestore.FieldValue.arrayRemove(friendId) }); batch.update(db.collection('users').doc(friendId), { friends: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) }); batch.delete(db.collection('chats').doc(chatId)); await batch.commit(); localStorage.removeItem(`chatMessages_${chatId}`); closeActiveChat(); } } });
-            // Simplified decline/send request functions from original file
             async function declineFriendRequest(requesterId) { const currentUserRef = db.collection('users').doc(currentUser.uid); const requesterRef = db.collection('users').doc(requesterId); await db.runTransaction(async (t) => { t.update(currentUserRef, { friendRequestsReceived: firebase.firestore.FieldValue.arrayRemove(requesterId) }); t.update(requesterRef, { friendRequestsSent: firebase.firestore.FieldValue.arrayRemove(currentUser.uid) }); }); }
             async function sendFriendRequest(targetUserId) { const currentUserRef = db.collection('users').doc(currentUser.uid); const targetUserRef = db.collection('users').doc(targetUserId); await db.runTransaction(async (t) => { t.update(currentUserRef, { friendRequestsSent: firebase.firestore.FieldValue.arrayUnion(targetUserId) }); t.update(targetUserRef, { friendRequestsReceived: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) }); }); }
         };
