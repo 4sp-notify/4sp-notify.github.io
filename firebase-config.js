@@ -18,6 +18,3 @@ const auth = firebase.auth();
 
 // Get a reference to the Firestore service
 const db = firebase.firestore();
-
-//Get a reference to the Realtime Database service
-const rtdb = firebase.database();
