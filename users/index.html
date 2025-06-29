@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>4SP - User Profile</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="../panic-key.js"></script>
+    <style>
+        /* This CSS is specific to the profile page, adapted from your login.html styles */
+        .profile-container {
+            background-color: #fff;
+            border-radius: 16px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.1);
+            border: 1px solid #e0e0e0;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 40px;
+            text-align: center;
+        }
+
+        .profile-container h2 {
+            font-family: 'PrimaryFont', sans-serif;
+            font-size: 2.5em;
+            color: #333;
+            margin-bottom: 15px;
+        }
+
+        .profile-container p {
+            font-family: 'SecondaryFont', sans-serif;
+            color: #666;
+            font-size: 1.1em;
+            line-height: 1.6;
+            margin-bottom: 25px;
+        }
+        
+        .profile-details {
+            border-top: 1px solid #eee;
+            padding-top: 25px;
+            margin-top: 20px;
+            text-align: left;
+            display: inline-block;
+        }
+
+        .profile-details .detail-item {
+            font-family: 'SecondaryFont', sans-serif;
+            font-size: 1em;
+            color: #555;
+            margin-bottom: 12px;
+        }
+        
+        .profile-details .detail-item strong {
+            color: #333;
+            margin-right: 10px;
+        }
+
+        /* Loading and Not Found States */
+        #loadingState {
+            padding: 50px;
+        }
+
+        #notFoundState, #errorState {
+            padding: 50px;
+            display: none; /* Hidden by default */
+        }
+        #notFoundState h3, #errorState h3 {
+             font-family: 'PrimaryFont', sans-serif;
+             font-size: 1.8em;
+             color: #d9534f;
+             margin-bottom: 10px;
+        }
+        
+        #userProfileContent {
+            display: none; /* Hide until data is loaded */
+        }
+    </style>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="../firebase-config.js"></script>
+</head>
+<body>
+    <section class="hero-section dark-bg">
+        <div class="container">
+            <h1 id="heroTitle">USER PROFILE</h1>
+        </div>
+    </section>
+    
+    <header class="main-header light-bg">
+        <div class="container">
+            <div class="logo">
+                <a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo"></a>
+            </div>
+            <nav class="main-nav">
+                <ul>
+                    <li><a href="../index.html">HOME</a></li>
+                    <li><a href="../signup.html">SIGN UP</a></li>
+                </ul>
+            </nav>
+            <div class="auth-buttons">
+                <a href="../login.html" class="btn btn-login">LOGIN</a>
+                <a href="../signup.html" class="btn btn-signup">SIGN UP</a>
+            </div>
+        </div>
+    </header>
+
+    <div class="profile-container">
+        <div id="loadingState">
+            <p>Loading Profile...</p>
+        </div>
+
+        <div id="userProfileContent">
+            <h2 id="profileUsername"></h2>
+            <p>Welcome to this user's corner of 4SP!</p>
+            <div class="profile-details">
+                <div class="detail-item">
+                    <strong>Joined:</strong> <span id="profileJoinDate"></span>
+                </div>
+                </div>
+        </div>
+        
+        <div id="notFoundState">
+            <h3>User Not Found</h3>
+            <p>Sorry, we couldn't find a user with that name. Please check the URL and try again.</p>
+            <a href="../index.html" class="btn btn-primary">Go to Homepage</a>
+        </div>
+
+        <div id="errorState">
+            <h3>An Error Occurred</h3>
+            <p>We ran into a problem trying to load this profile. Please try again later.</p>
+        </div>
+    </div>
+
+    <footer>
+        <div class="container">
+            <p>&copy; 2025 4SP. All rights reserved.</p>
+        </div>
+    </footer>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const db = firebase.firestore();
+
+            // Get references to all the elements we need to update
+            const loadingDiv = document.getElementById('loadingState');
+            const profileContentDiv = document.getElementById('userProfileContent');
+            const notFoundDiv = document.getElementById('notFoundState');
+            const errorDiv = document.getElementById('errorState');
+            
+            const usernameH2 = document.getElementById('profileUsername');
+            const joinDateSpan = document.getElementById('profileJoinDate');
+            const heroTitleH1 = document.getElementById('heroTitle');
+
+            /**
+             * Extracts the username from the URL path.
+             * e.g., for "4sp.com/users/john_doe", it returns "john_doe".
+             * It also handles trailing slashes.
+             */
+            const getUsernameFromURL = () => {
+                const path = window.location.pathname;
+                const parts = path.split('/').filter(part => part); // Split and remove empty parts
+                return parts.pop() || null; // Get the very last part
+            };
+
+            /**
+             * Loads and displays the user profile data from Firestore.
+             * @param {string} username - The username to look up.
+             */
+            const loadUserProfile = async (username) => {
+                if (!username) {
+                    showState('error', "No username provided in the URL.");
+                    return;
+                }
+
+                try {
+                    // Firestore queries are case-sensitive. Usernames should be stored in a consistent case.
+                    // To ensure you can query efficiently, you should create an index on the 'username' field in your Firestore console.
+                    const usersRef = db.collection('users');
+                    const query = usersRef.where('username', '==', username).limit(1);
+                    
+                    const querySnapshot = await query.get();
+
+                    if (querySnapshot.empty) {
+                        // No user found with that username
+                        showState('notFound');
+                        return;
+                    }
+
+                    // User found, get their data
+                    const userData = querySnapshot.docs[0].data();
+                    
+                    // --- Populate the page with user data ---
+                    
+                    // Set the page title and headings
+                    document.title = `4SP - ${userData.username}'s Profile`;
+                    usernameH2.textContent = userData.username;
+                    heroTitleH1.textContent = `${userData.username}'s Profile`;
+
+                    // Format the join date (createdAt is a Firestore Timestamp)
+                    if (userData.createdAt && userData.createdAt.toDate) {
+                        const joinDate = userData.createdAt.toDate();
+                        joinDateSpan.textContent = joinDate.toLocaleDateString('en-US', {
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric'
+                        });
+                    } else {
+                        joinDateSpan.textContent = 'N/A';
+                    }
+
+                    // IMPORTANT: We do NOT display the email for privacy reasons.
+                    // The 'authMethod' field is also sensitive and not shown.
+
+                    // Show the populated profile content
+                    showState('profile');
+
+                } catch (error) {
+                    console.error("Error fetching user profile:", error);
+                    showState('error');
+                }
+            };
+            
+            /**
+             * Manages which content block is visible.
+             * @param {'loading' | 'profile' | 'notFound' | 'error'} state 
+             */
+            const showState = (state) => {
+                loadingDiv.style.display = 'none';
+                profileContentDiv.style.display = 'none';
+                notFoundDiv.style.display = 'none';
+                errorDiv.style.display = 'none';
+
+                if (state === 'loading') loadingDiv.style.display = 'block';
+                else if (state === 'profile') profileContentDiv.style.display = 'block';
+                else if (state === 'notFound') notFoundDiv.style.display = 'block';
+                else if (state === 'error') errorDiv.style.display = 'block';
+            };
+
+            // --- Initial Execution ---
+            const username = getUsernameFromURL();
+            loadUserProfile(username);
+        });
+    </script>
+</body>
+</html>
