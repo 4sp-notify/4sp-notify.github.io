@@ -418,32 +418,25 @@
         document.addEventListener('DOMContentLoaded', () => {
             flatpickrInstance = flatpickr("#dateTimePicker", { enableTime: true, dateFormat: "Y-m-d H:i", altInput: true, altFormat: "F j, Y at h:i K" });
             
-            firebase.auth().onAuthStateChanged(user => {
+            firebase.auth().onAuthStateChanged(async (user) => {
                 if (user) {
-                    // --- USER IS LOGGED IN ---
-                    // **FIX:** Wrap all initialization steps in a try...catch block
-                    // to prevent silent failures from halting script execution.
+                    // **FIX:** Use async/await and a single try/catch block to ensure
+                    // all initialization steps run in the correct order.
                     try {
-                        // Step 1: Fetch user profile (from Firestore)
-                        firebase.firestore().collection('users').doc(user.uid).get().then(doc => {
-                            const username = doc.exists && doc.data().username ? doc.data().username : (user.displayName || user.email);
-                            sidebarUserNameEl.textContent = username;
-                            sidebarUserEmailEl.textContent = "Saves are stored on this device";
-                            updateMarquees();
-                        }).catch(err => {
-                            // If Firestore fails, still show default info and continue
-                            console.error("Could not fetch username:", err);
-                            sidebarUserNameEl.textContent = user.displayName || "User";
-                            sidebarUserEmailEl.textContent = "Saves are stored on this device";
-                            updateMarquees();
-                        });
+                        // Step 1: Fetch user profile from Firestore.
+                        const userDoc = await firebase.firestore().collection('users').doc(user.uid).get();
+                        const username = userDoc.exists && userDoc.data().username ? userDoc.data().username : (user.displayName || user.email);
+                        sidebarUserNameEl.textContent = username;
+                        sidebarUserEmailEl.textContent = "Saves are stored on this device";
+                        updateMarquees();
 
-                        // Step 2: Initialize local DB and load data
-                        initDB().then(() => {
-                            loadCountdowns();
-                        });
+                        // Step 2: Initialize local DB. This MUST finish before loading data.
+                        await initDB();
                         
-                        // Step 3: Attach all event listeners
+                        // Step 3: Load data from the now-initialized DB.
+                        await loadCountdowns();
+                        
+                        // Step 4: ONLY NOW, attach all event listeners.
                         addBtn.addEventListener('click', () => openModal(false));
                         cancelBtn.addEventListener('click', closeModal);
                         modalOverlay.addEventListener('click', (e) => { if(e.target === modalOverlay) closeModal(); });
