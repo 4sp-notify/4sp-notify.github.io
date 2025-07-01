@@ -220,7 +220,6 @@
 
         function initDB(userId) {
             return new Promise((resolve, reject) => {
-                // Create a user-specific database name
                 const DB_NAME = `CountdownAppDB_${userId}`;
                 const request = indexedDB.open(DB_NAME, 1);
 
@@ -236,7 +235,7 @@
                 };
                 request.onerror = (event) => {
                     console.error('IndexedDB error:', event.target.errorCode);
-                    reject('Error opening database.');
+                    reject(new Error('Error opening database.'));
                 };
             });
         }
@@ -272,44 +271,41 @@
         }
 
         // --- Data Handling (IndexedDB) ---
-        async function loadCountdowns() {
-            if (!db) return;
-            const transaction = db.transaction(STORE_NAME, 'readonly');
-            const store = transaction.objectStore(STORE_NAME);
-            const request = store.getAll();
-
-            request.onsuccess = () => {
-                userCountdowns = request.result.map(cd => ({
-                    ...cd,
-                    targetTimestamp: new Date(cd.targetTimestamp)
-                })).sort((a, b) => a.name.localeCompare(b.name));
-                renderList();
-                if (!userCountdowns.length) clearActiveCountdown();
-            };
-            request.onerror = (event) => {
-                console.error("Error loading countdowns from DB:", event.target.error);
-                userCountdowns = [];
-                renderList();
-            };
-        }
-
-        function addCountdownToDB(countdown) {
+        function loadCountdowns() {
+            // FIXED: This function now returns a promise for proper chaining.
             return new Promise((resolve, reject) => {
-                const transaction = db.transaction(STORE_NAME, 'readwrite');
+                if (!db) return reject(new Error("Database not initialized."));
+                
+                const transaction = db.transaction(STORE_NAME, 'readonly');
                 const store = transaction.objectStore(STORE_NAME);
-                const request = store.add(countdown);
-                request.onsuccess = resolve;
-                request.onerror = (e) => reject(`Error adding countdown: ${e.target.error}`);
+                const request = store.getAll();
+
+                request.onsuccess = () => {
+                    userCountdowns = request.result.map(cd => ({
+                        ...cd,
+                        targetTimestamp: new Date(cd.targetTimestamp)
+                    })).sort((a, b) => a.name.localeCompare(b.name));
+                    renderList();
+                    if (!userCountdowns.length) clearActiveCountdown();
+                    resolve(); // Resolve on success
+                };
+                request.onerror = (event) => {
+                    console.error("Error loading countdowns from DB:", event.target.error);
+                    userCountdowns = [];
+                    renderList();
+                    reject(event.target.error); // Reject on error
+                };
             });
         }
 
-        function updateCountdownInDB(countdown) {
+        async function addOrUpdateCountdownInDB(countdown) {
+            const transaction = db.transaction(STORE_NAME, 'readwrite');
+            const store = transaction.objectStore(STORE_NAME);
+            // `put` works for both adding and updating
+            const request = store.put(countdown);
             return new Promise((resolve, reject) => {
-                const transaction = db.transaction(STORE_NAME, 'readwrite');
-                const store = transaction.objectStore(STORE_NAME);
-                const request = store.put(countdown);
                 request.onsuccess = resolve;
-                request.onerror = (e) => reject(`Error updating countdown: ${e.target.error}`);
+                request.onerror = e => reject(`Error saving countdown: ${e.target.error}`);
             });
         }
 
@@ -319,7 +315,7 @@
                 const store = transaction.objectStore(STORE_NAME);
                 const request = store.delete(id);
                 request.onsuccess = resolve;
-                request.onerror = (e) => reject(`Error deleting countdown: ${e.target.error}`);
+                request.onerror = e => reject(`Error deleting countdown: ${e.target.error}`);
             });
         }
 
@@ -435,16 +431,11 @@
             if(selectedDate.getTime() < new Date().getTime()){ alert("Please select a future date."); return; }
             
             const targetTimestampValue = selectedDate.toISOString();
+            const id = isEditing ? editingId : generateId();
+            const countdownData = { id, name, targetTimestamp: targetTimestampValue };
 
             try {
-                if (isEditing) {
-                    const countdownToUpdate = { id: editingId, name, targetTimestamp: targetTimestampValue };
-                    await updateCountdownInDB(countdownToUpdate);
-                } else {
-                    if (userCountdowns.length >= MAX_COUNTDOWNS) { alert("Max countdowns reached."); return; }
-                    const newCountdown = { id: generateId(), name, targetTimestamp: targetTimestampValue };
-                    await addCountdownToDB(newCountdown);
-                }
+                await addOrUpdateCountdownInDB(countdownData);
                 await loadCountdowns();
                 closeModal();
             } catch (error) {
@@ -479,7 +470,6 @@
 
         function handleLogout() {
             firebase.auth().signOut().then(() => {
-                // Sign-out successful, redirect to index as requested
                 window.location.href = '../index.html';
             }).catch((error) => {
                 console.error('Logout Error:', error);
@@ -488,12 +478,12 @@
         }
         
         // --- Initialization ---
-        // FIXED: Use window.onload to ensure all scripts, including firebase-config.js, are loaded.
-        window.onload = function() {
-            // Check if Firebase is available and initialized
+        // FIXED: Using DOMContentLoaded to ensure HTML is parsed before script runs.
+        document.addEventListener('DOMContentLoaded', () => {
+            // Check if Firebase is available. This is the most common point of failure.
             if (typeof firebase === 'undefined' || !firebase.apps.length) {
                 console.error("Firebase has not been initialized. Please check your firebase-config.js file and its path.");
-                document.body.innerHTML = `<div style="text-align: center; padding: 50px; font-family: sans-serif; color: red;"><h1>Configuration Error</h1><p>Could not load application services. Please ensure <code>firebase-config.js</code> is correct.</p></div>`;
+                document.body.innerHTML = `<div style="text-align: center; padding: 50px; font-family: sans-serif; color: red;"><h1>Configuration Error</h1><p>Could not load application services. Please ensure <code>firebase-config.js</code> is correct and the path is valid.</p></div>`;
                 return;
             }
 
@@ -510,46 +500,46 @@
             countdownListEl.addEventListener('click', handleListClick);
             toggleSidebarBtn.addEventListener('click', () => {
                 sidebar.classList.toggle('collapsed');
-                setTimeout(updateMarquees, 500); // Update marquee after animation
+                setTimeout(updateMarquees, 500);
             });
             window.addEventListener('resize', updateMarquees);
             logoutBtn.addEventListener('click', handleLogout);
             signOutLink.addEventListener('click', handleLogout);
 
             // Auth listener is the main entry point
-            firebase.auth().onAuthStateChanged(async user => {
+            firebase.auth().onAuthStateChanged(user => {
                 if (user) {
                     currentUser = user;
                     
-                    // Fetch user profile from Firestore for display
-                    try {
-                        const userDoc = await firebase.firestore().collection('users').doc(user.uid).get();
-                        const username = userDoc.exists && userDoc.data().username ? userDoc.data().username : (user.displayName || user.email);
-                        sidebarUserNameEl.textContent = username;
-                        sidebarUserEmailEl.textContent = user.email;
-                        updateMarquees(); // Call after content is set
-                    } catch (error) {
-                        console.error("Error fetching user profile:", error);
-                        sidebarUserNameEl.textContent = user.email; // Fallback
-                        updateMarquees();
-                    }
-
-                    // Initialize user-specific DB and load data
-                    try {
-                        await initDB(currentUser.uid);
-                        await loadCountdowns();
-                    } catch (error) {
-                        console.error("Initialization failed:", error);
-                        activeCountdownNameEl.textContent = 'Error';
-                        timerDisplayEl.textContent = 'Could not load the application database.';
-                    }
+                    // FIXED: Using promise chain for robust initialization order.
+                    initDB(currentUser.uid)
+                        .then(() => {
+                            // After DB is ready, load the data.
+                            return loadCountdowns();
+                        })
+                        .then(() => {
+                            // After data is loaded, fetch user profile from Firestore.
+                            return firebase.firestore().collection('users').doc(user.uid).get();
+                        })
+                        .then(doc => {
+                            // Finally, update the UI with profile info.
+                            const username = doc.exists && doc.data().username ? doc.data().username : (user.displayName || user.email);
+                            sidebarUserNameEl.textContent = username;
+                            sidebarUserEmailEl.textContent = user.email;
+                            updateMarquees();
+                        })
+                        .catch(error => {
+                            // This will catch any error from the chain (DB init, data load, or firestore fetch)
+                            console.error("An error occurred during app initialization:", error);
+                            document.body.innerHTML = `<div style="text-align: center; padding: 50px; font-family: sans-serif; color: red;"><h1>Application Error</h1><p>Could not initialize your session. Please try again.</p><p><small>${error.message}</small></p></div>`;
+                        });
 
                 } else {
-                    // No user is signed in, redirect to login page.
+                    // No user is signed in, redirect.
                     window.location.href = '../login.html';
                 }
             });
-        };
+        });
     </script>
 </body>
 </html>
