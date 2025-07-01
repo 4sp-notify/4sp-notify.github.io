@@ -279,13 +279,8 @@
 
         // --- Data Handling ---
         async function loadCountdowns() {
-            try {
-                userCountdowns = await crud.getAll();
-                renderList();
-            } catch (error) {
-                console.error("Error loading from IndexedDB:", error);
-                alert("Could not load countdowns from this device.");
-            }
+            userCountdowns = await crud.getAll();
+            renderList();
             if (!userCountdowns.length) clearActiveCountdown();
         }
 
@@ -423,40 +418,49 @@
         document.addEventListener('DOMContentLoaded', () => {
             flatpickrInstance = flatpickr("#dateTimePicker", { enableTime: true, dateFormat: "Y-m-d H:i", altInput: true, altFormat: "F j, Y at h:i K" });
             
-            firebase.auth().onAuthStateChanged(async user => {
+            firebase.auth().onAuthStateChanged(user => {
                 if (user) {
                     // --- USER IS LOGGED IN ---
-                    // Fetch user profile from Firestore to get custom username
-                    firebase.firestore().collection('users').doc(user.uid).get().then(doc => {
-                        const username = doc.exists && doc.data().username ? doc.data().username : (user.displayName || user.email);
-                        sidebarUserNameEl.textContent = username;
-                        sidebarUserEmailEl.textContent = "Saves are stored on this device";
-                        updateMarquees();
-                    });
-
-                    // Initialize local DB and load data
+                    // **FIX:** Wrap all initialization steps in a try...catch block
+                    // to prevent silent failures from halting script execution.
                     try {
-                        await initDB();
-                        await loadCountdowns();
-                    } catch (error) {
-                        console.error("Initialization failed:", error);
-                        alert("Could not initialize the application. Please check browser permissions for IndexedDB.");
-                        return;
-                    }
+                        // Step 1: Fetch user profile (from Firestore)
+                        firebase.firestore().collection('users').doc(user.uid).get().then(doc => {
+                            const username = doc.exists && doc.data().username ? doc.data().username : (user.displayName || user.email);
+                            sidebarUserNameEl.textContent = username;
+                            sidebarUserEmailEl.textContent = "Saves are stored on this device";
+                            updateMarquees();
+                        }).catch(err => {
+                            // If Firestore fails, still show default info and continue
+                            console.error("Could not fetch username:", err);
+                            sidebarUserNameEl.textContent = user.displayName || "User";
+                            sidebarUserEmailEl.textContent = "Saves are stored on this device";
+                            updateMarquees();
+                        });
 
-                    // Attach all event listeners
-                    addBtn.addEventListener('click', () => openModal(false));
-                    cancelBtn.addEventListener('click', closeModal);
-                    modalOverlay.addEventListener('click', (e) => { if(e.target === modalOverlay) closeModal(); });
-                    countdownForm.addEventListener('submit', handleFormSubmit);
-                    countdownListEl.addEventListener('click', handleListClick);
-                    toggleSidebarBtn.addEventListener('click', () => {
-                        sidebar.classList.toggle('collapsed');
-                        setTimeout(updateMarquees, 500);
-                    });
-                    window.addEventListener('resize', updateMarquees);
-                    logoutBtn.addEventListener('click', handleLogout);
-                    signOutLink.addEventListener('click', handleLogout);
+                        // Step 2: Initialize local DB and load data
+                        initDB().then(() => {
+                            loadCountdowns();
+                        });
+                        
+                        // Step 3: Attach all event listeners
+                        addBtn.addEventListener('click', () => openModal(false));
+                        cancelBtn.addEventListener('click', closeModal);
+                        modalOverlay.addEventListener('click', (e) => { if(e.target === modalOverlay) closeModal(); });
+                        countdownForm.addEventListener('submit', handleFormSubmit);
+                        countdownListEl.addEventListener('click', handleListClick);
+                        toggleSidebarBtn.addEventListener('click', () => {
+                            sidebar.classList.toggle('collapsed');
+                            setTimeout(updateMarquees, 500);
+                        });
+                        window.addEventListener('resize', updateMarquees);
+                        logoutBtn.addEventListener('click', handleLogout);
+                        signOutLink.addEventListener('click', handleLogout);
+
+                    } catch (error) {
+                        console.error("A critical error occurred during initialization:", error);
+                        alert("Could not initialize the application correctly. Please refresh the page.");
+                    }
 
                 } else {
                     // --- NO USER, REDIRECT ---
