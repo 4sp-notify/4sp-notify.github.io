@@ -30,7 +30,7 @@
         .sidebar.collapsed nav a { justify-content: center; padding: 10px 0; }
         .sidebar.collapsed nav a .label { display: none; }
         
-        /* FIXED: Restored user-info block styling to match original */
+        /* --- User Info with Marquee --- */
         .user-info { text-align: center; margin: 60px 0 30px; border-bottom: 1px solid #555; padding-bottom: 20px; }
         .marquee-container { overflow: hidden; white-space: nowrap; position: relative; width: 100%; height: 1.8em; line-height: 1.8em; }
         .marquee-content { display: inline-block; padding-left: 100%; transform: translateX(0); animation: none; line-height: 1.8em; }
@@ -110,6 +110,7 @@
             <div class="logo"><a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo" /></a></div>
             <div class="auth-buttons">
                 <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
             </div>
         </div>
     </header>
@@ -119,10 +120,10 @@
             <button id="toggleSidebar">☰</button>
             <div class="user-info">
                 <div class="marquee-container">
-                    <span class="username">Local Session</span>
+                    <span id="userName" class="marquee-content username">Loading...</span>
                 </div>
                 <div class="marquee-container">
-                    <span class="email">(No Login Required)</span>
+                    <span id="userEmail" class="marquee-content email">...</span>
                 </div>
             </div>
             <nav>
@@ -133,6 +134,7 @@
                     <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
                     <li><a href="others.html" class="active"><span class="icon">✨</span><span class="label">Others</span></a></li>
                     <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                    <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
                 </ul>
             </nav>
         </aside>
@@ -150,7 +152,7 @@
                     <div class="timer-display" id="timerDisplay">Select or create a countdown.</div>
                 </div>
                 <div class="cloud-saves-section">
-                    <div class="cloud-saves-header"><h3>Your Countdowns</h3></div>
+                    <div class="cloud-saves-header"><h3>Your Local Countdowns</h3></div>
                     <div class="cloud-stats">Count: <span id="countdownCounterDisplay">0</span>/50</div>
                     <ul id="cloudSavesList"></ul>
                 </div>
@@ -176,11 +178,18 @@
         </div>
     </div>
 
+    <!-- Firebase Scripts -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="../firebase-config.js"></script>
+    
+    <!-- Flatpickr Script -->
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 
     <script>
         // --- Globals ---
-        let userCountdowns = [], activeCountdownId, countdownInterval, flatpickrInstance;
+        let currentUser, userCountdowns = [], activeCountdownId, countdownInterval, flatpickrInstance;
         let isEditing = false, editingId = null;
         const MAX_COUNTDOWNS = 50;
         let db;
@@ -200,13 +209,18 @@
         const cancelBtn = document.getElementById('cancelFormBtn');
         const sidebar = document.getElementById('sidebar');
         const toggleSidebarBtn = document.getElementById('toggleSidebar');
+        const sidebarUserNameEl = document.getElementById('userName');
+        const sidebarUserEmailEl = document.getElementById('userEmail');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const signOutLink = document.getElementById('signOutLink');
 
         // --- IndexedDB ---
-        const DB_NAME = 'CountdownAppDB';
         const STORE_NAME = 'countdowns';
 
-        function initDB() {
+        function initDB(userId) {
             return new Promise((resolve, reject) => {
+                // Create a user-specific database name
+                const DB_NAME = `CountdownAppDB_${userId}`;
                 const request = indexedDB.open(DB_NAME, 1);
 
                 request.onupgradeneeded = (event) => {
@@ -230,6 +244,15 @@
         const generateId = () => `cd_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
         const formatDate = (date) => date ? new Date(date).toLocaleString('en-US', { month: 'long', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' }) : 'N/A';
         
+        function updateMarquees() {
+            document.querySelectorAll('.marquee-content').forEach(el => {
+                const parent = el.parentElement;
+                if (!parent) return;
+                const isOverflowing = el.scrollWidth > parent.clientWidth;
+                el.classList.toggle('marquee-active', isOverflowing);
+            });
+        }
+
         // --- Modal Logic ---
         function openModal(isEditMode = false, countdown = null) {
             isEditing = isEditMode;
@@ -452,13 +475,25 @@
                 }
             }
         }
+
+        function handleLogout() {
+            firebase.auth().signOut().then(() => {
+                // Sign-out successful, redirect to index as requested
+                window.location.href = '../index.html';
+            }).catch((error) => {
+                console.error('Logout Error:', error);
+                alert('Failed to log out. Please try again.');
+            });
+        }
         
         // --- Initialization ---
-        document.addEventListener('DOMContentLoaded', async () => {
+        document.addEventListener('DOMContentLoaded', () => {
+            // Initialize Flatpickr
             flatpickrInstance = flatpickr("#dateTimePicker", {
                 enableTime: true, dateFormat: "Y-m-d H:i", altInput: true, altFormat: "F j, Y at h:i K"
             });
             
+            // Set up static event listeners
             addBtn.addEventListener('click', () => openModal(false));
             cancelBtn.addEventListener('click', closeModal);
             modalOverlay.addEventListener('click', (e) => { if(e.target === modalOverlay) closeModal(); });
@@ -466,16 +501,45 @@
             countdownListEl.addEventListener('click', handleListClick);
             toggleSidebarBtn.addEventListener('click', () => {
                 sidebar.classList.toggle('collapsed');
+                setTimeout(updateMarquees, 500); // Update marquee after animation
             });
+            window.addEventListener('resize', updateMarquees);
+            logoutBtn.addEventListener('click', handleLogout);
+            signOutLink.addEventListener('click', handleLogout);
 
-            try {
-                await initDB();
-                await loadCountdowns();
-            } catch (error) {
-                console.error("Initialization failed:", error);
-                activeCountdownNameEl.textContent = 'Error';
-                timerDisplayEl.textContent = 'Could not load the application database.';
-            }
+            // Auth listener is the main entry point
+            firebase.auth().onAuthStateChanged(async user => {
+                if (user) {
+                    currentUser = user;
+                    
+                    // Fetch user profile from Firestore for display
+                    try {
+                        const userDoc = await firebase.firestore().collection('users').doc(user.uid).get();
+                        const username = userDoc.exists && userDoc.data().username ? userDoc.data().username : (user.displayName || user.email);
+                        sidebarUserNameEl.textContent = username;
+                        sidebarUserEmailEl.textContent = user.email;
+                        updateMarquees(); // Call after content is set
+                    } catch (error) {
+                        console.error("Error fetching user profile:", error);
+                        sidebarUserNameEl.textContent = user.email; // Fallback
+                        updateMarquees();
+                    }
+
+                    // Initialize user-specific DB and load data
+                    try {
+                        await initDB(currentUser.uid);
+                        await loadCountdowns();
+                    } catch (error) {
+                        console.error("Initialization failed:", error);
+                        activeCountdownNameEl.textContent = 'Error';
+                        timerDisplayEl.textContent = 'Could not load the application database.';
+                    }
+
+                } else {
+                    // No user is signed in, redirect to login page.
+                    window.location.href = '../login.html';
+                }
+            });
         });
     </script>
 </body>
