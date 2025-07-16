@@ -2,1166 +2,677 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>4SP - Detailed Weather</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>4SP - VERN MAX</title>
   <link rel="stylesheet" href="../css/style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
+  <link id="dynamic-favicon" rel="shortcut icon" type="image/x-icon" href="">
   <script src="../panic-key.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
+
   <style>
-    /* --- Base & Dashboard Layout --- */
-    body.weather-page {
-      display: flex;
-      flex-direction: column;
-      min-height: 100vh;
-      margin: 0;
-      font-family: 'PrimaryFont', sans-serif;
-      background: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
-    }
-    .dashboard-container {
-      display: flex;
-      flex: 1;
+    /* --- Dark Mode Color Palette --- */
+    :root {
+        --dark-bg-primary: #121212;
+        --dark-bg-secondary: #1e1e1e;
+        --dark-bg-tertiary: #2a2a2a;
+        --dark-text-primary: #e0e0e0;
+        --dark-text-secondary: #b0b0b0;
+        --dark-border-color: #3a3a3a;
+        --dark-accent-purple: #6720bd;
     }
 
-    /* --- Sidebar --- */
-    .sidebar {
-      width: 200px;
-      background: linear-gradient(180deg, #333 0%, #2a2a2a 100%);
-      color: #fff;
-      padding: 20px 10px;
+    /* --- Base Layout --- */
+    html, body.dashboard-page {
+      height: 100%;
+      margin: 0;
+      font-family: 'Roboto', sans-serif;
+      background-color: var(--dark-bg-primary);
+      color: var(--dark-text-primary);
+      overflow: hidden; /* Prevent scrollbars during load */
+    }
+    body.dashboard-page {
       display: flex;
       flex-direction: column;
-      border-right: 1px solid #444;
-      transition: width 0.5s ease-in-out;
-      position: relative;
-      box-shadow: 2px 0 10px rgba(0,0,0,0.1);
-      z-index: 100;
     }
-    .sidebar.collapsed {
-      width: 85px;
+
+    /* --- Loading Screen Styles --- */
+    #loading-overlay {
+        position: fixed;
+        inset: 0;
+        background-color: var(--dark-bg-primary);
+        z-index: 9999;
+        display: flex;
+        justify-content: flex-end;
+        align-items: flex-end;
+        padding: 20px;
+        box-sizing: border-box;
+        color: var(--dark-text-primary);
+        font-family: 'PrimaryFont', sans-serif;
+        opacity: 1;
+        transition: opacity 0.6s ease-out, transform 0.6s ease-out;
     }
-    #toggleSidebar {
-      position: absolute;
-      top: 10px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: none;
-      border: none;
-      color: #fff;
-      font-size: 1.2em;
-      cursor: pointer;
-      padding: 4px;
-      transition: transform 0.5s ease-in-out;
+    #loading-overlay.is-hiding {
+        opacity: 0;
+        transform: scale(1.1);
+        pointer-events: none;
     }
-    .sidebar.collapsed #toggleSidebar {
-      transform: translateX(-50%) rotate(180deg);
+    #loading-spinner {
+        border: 4px solid var(--dark-bg-tertiary);
+        border-top: 4px solid var(--dark-accent-purple);
+        border-radius: 50%;
+        width: 24px;
+        height: 24px;
+        animation: spin 1s linear infinite;
+        margin-left: 15px;
     }
-    .sidebar nav ul {
-      list-style: none;
-      padding: 0;
-      margin: 60px 0 0;
+    @keyframes spin {
+        0% { transform: rotate(0deg); }
+        100% { transform: rotate(360deg); }
     }
-    .sidebar nav li {
-      margin-bottom: 10px;
+    .loading-container {
+        display: flex;
+        align-items: center;
     }
-    .sidebar nav a {
-      display: flex;
-      align-items: center;
-      padding: 12px 15px;
-      color: #fff;
-      text-decoration: none;
-      border-radius: 8px;
-      transition: all 0.3s ease;
-      font-family: 'PrimaryFont', sans-serif;
-      text-transform: uppercase;
-      position: relative;
-      overflow: hidden;
+    .loading-container p {
+        margin: 0;
     }
-    .sidebar nav a::before {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: -100%;
-      width: 100%;
+
+    /* --- App Container Visibility --- */
+    #app-container {
+      visibility: hidden;
+      opacity: 0;
       height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255,255,255,0.1), transparent);
-      transition: left 0.5s;
+      display: flex;
+      flex-direction: column;
+      transition: opacity 0.5s ease-in;
     }
-    .sidebar nav a:hover::before {
-      left: 100%;
+    #app-container.is-visible {
+        visibility: visible;
+        opacity: 1;
     }
-    .sidebar nav a.active,
-    .sidebar nav a:hover {
-      background: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
-      transform: translateX(5px);
+
+    /* --- Header adapted for Dark Mode --- */
+    .main-header {
+        background: var(--dark-bg-secondary);
+        padding: 10px 20px;
+        box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        border-bottom: 1px solid var(--dark-border-color);
     }
-    .sidebar nav a .icon {
-      font-size: 1.2em;
-      width: 24px;
-      text-align: center;
+    .main-header .container {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        width: 100%;
+        margin: 0 auto;
+        max-width: 1400px;
     }
-    .sidebar nav a .label {
-      margin-left: 10px;
-      white-space: nowrap;
+    .main-header .logo img {
+        height: 40px;
+        filter: invert(1) brightness(1.5) contrast(1.2);
+        display: block;
     }
-    .sidebar.collapsed nav a {
-      justify-content: center;
-      padding: 10px 0;
+    .main-header .auth-buttons {
+        display: flex;
+        gap: 15px;
+        align-items: center;
     }
-    .sidebar.collapsed nav a .label {
-      display: none;
+    .main-header .auth-buttons .btn {
+        background-color: var(--dark-bg-tertiary);
+        color: var(--dark-text-primary);
+        border: 1px solid var(--dark-border-color);
+        padding: 8px 16px;
+        border-radius: 12px;
+        cursor: pointer;
+        font-family: 'PrimaryFont', sans-serif;
+        font-weight: bold;
+        transition: background-color 0.2s ease;
+        text-transform: uppercase;
     }
-    .user-info {
-      text-align: center;
-      margin: 60px 0 30px;
-      border-bottom: 1px solid #555;
-      padding-bottom: 20px;
-      overflow: visible;
+    .main-header .auth-buttons .btn:hover {
+        background-color: #333;
     }
-    .marquee-container {
-      overflow: hidden;
-      white-space: nowrap;
-      position: relative;
-      width: 100%;
-      height: 1.8em;
-      line-height: 1.8em;
+    .header-icon-btn {
+        background-color: var(--dark-bg-tertiary);
+        color: var(--dark-text-primary);
+        border: 1px solid var(--dark-border-color);
+        padding: 8px 12px;
+        border-radius: 12px;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        transition: all 0.2s ease;
+        font-family: 'PrimaryFont', sans-serif;
+        font-size: 14px;
+        text-transform: uppercase;
     }
-    .marquee-content {
-      display: inline-block;
-      padding-left: 100%;
-      transform: translateX(0);
-      animation: none;
-      line-height: 1.8em;
+    .header-icon-btn:hover {
+        background-color: #333;
     }
-    .marquee-active {
-      animation: scroll-left 12s linear infinite;
-    }
-    .sidebar.collapsed .marquee-active {
-      animation-duration: 20s;
-    }
-    @keyframes scroll-left {
-      0% { transform: translateX(0); }
-      100% { transform: translateX(-100%); }
-    }
-    .user-info .username {
-      font-family: 'PrimaryFont', sans-serif;
-      font-size: 1.3em;
-      margin-bottom: 8px;
-      line-height: 0.2em;
-      font-weight: bold;
-    }
-    .user-info .email {
-      font-family: 'SecondaryFont', sans-serif;
-      font-size: 0.9em;
-      color: #bbb;
+    .header-icon-btn img {
+      width: 20px;
+      height: 20px;
     }
 
     /* --- Main Content --- */
     .main-content {
       flex: 1;
-      padding: 40px;
-      overflow-y: auto;
-    }
-    @media (max-width: 767px) {
-      .main-content {
-        padding: 20px;
-      }
-    }
-
-    /* --- Main Weather Card Styles --- */
-    .weather-widget-full {
-      background: white;
-      border-radius: 20px;
-      padding: 20px;
-      box-shadow: 0 6px 30px rgba(0, 0, 0, 0.08);
-      border: 1px solid rgba(103, 32, 189, 0.1);
-    }
-    .weather-widget-header {
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      padding-bottom: 15px;
-      border-bottom: 1px solid rgba(103, 32, 189, 0.1);
-      margin-bottom: 20px;
-    }
-    .location-title {
-      font-size: 1.8em;
-      font-weight: bold;
-      color: #333;
-      margin: 0;
-    }
-    .header-buttons {
-      display: flex;
-      gap: 10px;
-    }
-    .action-btn {
-      background: rgba(103, 32, 189, 0.08);
-      border: none;
-      cursor: pointer;
-      padding: 8px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 12px;
-      transition: all 0.2s ease;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }
-    .action-btn:hover {
-      background-color: rgba(103, 32, 189, 0.15);
-      transform: translateY(-2px);
-    }
-    .action-btn img {
-      width: 22px;
-      height: 22px;
-      filter: invert(0.3) brightness(100%);
-    }
-
-    /* Current Conditions Section */
-    .current-weather-layout {
-      display: flex;
-      align-items: center;
-      gap: 25px;
-      margin-bottom: 25px;
-      flex-wrap: wrap;
-    }
-    .weather-icon-large {
-      font-size: 5em;
-      color: #6720bd;
-      flex-shrink: 0;
-    }
-    .current-weather-main-info {
-      flex-grow: 1;
-    }
-    .temp-large {
-      font-size: 3.5em;
-      font-weight: bold;
-      color: #333;
-      line-height: 1.1;
-      margin: 0;
-    }
-    .condition-large {
-      font-size: 1.2em;
-      color: #555;
-      margin: 0;
-    }
-    .current-weather-details-aside {
-      display: grid;
-      grid-template-columns: repeat(2, auto);
-      gap: 8px 25px;
-      font-size: 0.9em;
-      color: #777;
-      padding-left: 25px;
-      border-left: 1px solid rgba(103, 32, 189, 0.1);
-    }
-    .current-weather-details-aside p {
-      margin: 0;
-    }
-
-    /* Forecast Scroll Containers */
-    .forecast-container {
-      margin-bottom: 25px;
-    }
-    .forecast-title {
-      font-size: 1.3em;
-      font-weight: 600;
-      color: #333;
-      margin-bottom: 15px;
-    }
-    .scroll-frame {
-      display: flex;
-      overflow-x: auto;
-      padding: 10px 5px; /* Added padding to prevent hover clipping */
-      margin: -10px -5px; /* Negative margin to compensate for padding */
-      scrollbar-width: thin;
-      scrollbar-color: #8a2be2 #e0e0e0;
-    }
-
-    /* Hourly Item Styling */
-    .hourly-item {
-      flex: 0 0 80px;
-      text-align: center;
-      padding: 10px 5px;
-      border-right: 1px solid #f0f0f0;
-    }
-    .hourly-item:last-child {
-      border-right: none;
-    }
-    .hourly-item p {
-      margin: 4px 0;
-      font-size: 0.9em;
-    }
-    .hourly-time {
-      font-weight: bold;
-    }
-    .hourly-icon {
-      font-size: 1.8em;
-      color: #6720bd;
-    }
-
-    /* Daily Card Styling */
-    .daily-item-card {
-      flex: 0 0 110px;
+      background: linear-gradient(135deg, #1a1a1a 0%, #121212 100%);
       display: flex;
       flex-direction: column;
-      align-items: center;
-      padding: 15px 10px;
-      margin-right: 10px;
-      border-radius: 15px;
-      background-color: #f8f9fa;
-      border: 1px solid #e9ecef;
-      cursor: pointer;
-      transition: all 0.3s ease;
-    }
-    .daily-item-card:hover {
-      transform: translateY(-5px);
-      box-shadow: 0 8px 20px rgba(103, 32, 189, 0.1);
-      border-color: rgba(103, 32, 189, 0.3);
-    }
-    .daily-item-card p {
-      margin: 4px 0;
-    }
-    .daily-day {
-      font-weight: bold;
-      font-size: 1.1em;
-    }
-    .daily-icon {
-      font-size: 2.5em;
-      margin: 8px 0;
-      color: #6720bd;
-    }
-    .daily-temps .high {
-      font-weight: 600;
-    }
-    .daily-temps .low {
-      color: #777;
+      overflow-y: hidden;
+      position: relative;
     }
 
-    /* Additional Details Grid */
-    .details-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-      gap: 15px;
+    /* --- VernMax Proxy Styles --- */
+    .proxy-container {
+      flex-grow: 1;
+      position: relative;
+      display: flex;
+      flex-direction: column;
     }
-    .detail-box {
-      background: #f8f9fa;
-      padding: 15px;
-      border-radius: 12px;
-      text-align: center;
-    }
-    .detail-box-title {
-      font-weight: 600;
-      color: #555;
-      margin-bottom: 8px;
-      font-size: 0.9em;
-    }
-    .detail-box-value {
-      font-size: 1.4em;
-      font-weight: bold;
-      color: #333;
-    }
-    .detail-box-value .unit {
-      font-size: 0.6em;
-      font-weight: normal;
-      color: #666;
+    .proxy-iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: var(--dark-bg-primary);
     }
 
-    /* --- Modals (General) --- */
-    .modal {
+    /* --- Tab Cloak Modal --- */
+    .cloak-modal-overlay {
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.7);
+        z-index: 1000;
         display: flex;
         align-items: center;
         justify-content: center;
-        position: fixed;
-        z-index: 10000;
-        left: 0;
-        top: 0;
-        width: 100%;
-        height: 100%;
-        overflow: auto;
-        background-color: rgba(0,0,0,0.6);
-        font-family: 'PrimaryFont', sans-serif;
+        backdrop-filter: blur(5px);
         visibility: hidden;
         opacity: 0;
-        transition: opacity 0.25s ease-out, visibility 0s linear 0.25s;
+        transition: opacity 0.3s ease, visibility 0s linear 0.3s;
     }
-    .modal.modal-open {
+    .cloak-modal-overlay.visible {
         visibility: visible;
         opacity: 1;
-        transition: opacity 0.25s ease-out, visibility 0s linear 0s;
+        transition: opacity 0.3s ease, visibility 0s linear 0s;
     }
-    .modal-content {
-        background-color: #fefefe;
-        padding: 30px;
-        border: 1px solid #bbb;
+    .cloak-modal {
+        background: var(--dark-bg-secondary);
+        color: var(--dark-text-primary);
+        border: 1px solid var(--dark-border-color);
+        border-radius: 16px;
+        padding: 25px;
         width: 90%;
-        max-width: 550px;
-        border-radius: 18px;
-        box-shadow: 0 8px 30px rgba(0,0,0,0.25);
+        max-width: 500px;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 10px 30px rgba(0,0,0,0.4);
         position: relative;
-        color: #333;
+        font-family: 'PrimaryFont', sans-serif;
         transform: scale(0.95);
-        transition: transform 0.3s ease-out;
-        display: flex;
-        flex-direction: column;
-        gap: 15px;
+        transition: transform 0.3s ease;
     }
-    .modal.modal-open .modal-content {
+    .cloak-modal-overlay.visible .cloak-modal {
         transform: scale(1);
     }
-    .modal-close-btn {
-        color: #aaa;
+    .cloak-modal-close {
         position: absolute;
         top: 15px;
-        right: 18px;
-        font-size: 30px;
-        font-weight: 300;
-        background: none;
+        right: 15px;
+        background: var(--dark-bg-tertiary);
+        color: var(--dark-text-primary);
         border: none;
-        cursor: pointer;
-        line-height: 1;
-        transition: color 0.2s ease;
-    }
-    .modal-close-btn:hover,
-    .modal-close-btn:focus {
-        color: #6720bd;
-        text-decoration: none;
-    }
-    
-    /* --- Forecast Detail Modal --- */
-    #forecastDetailModal .modal-content { max-width: 550px; }
-    #modal-header h3 {
-      margin: 0 0 5px 0;
-      font-size: 1.8em;
-      color: #6720bd;
-    }
-    #modal-header p {
-      margin: 0;
-      font-size: 1.1em;
-      color: #555;
-    }
-    #modal-summary {
-      display: flex;
-      align-items: center;
-      gap: 20px;
-      margin: 15px 0;
-      padding-bottom: 15px;
-      border-bottom: 1px solid #eee;
-    }
-    #modal-icon {
-      font-size: 4em;
-    }
-    #modal-temp-display {
-      font-size: 2.8em;
-      font-weight: bold;
-    }
-    #modal-desc {
-      font-size: 1.2em;
-      color: #666;
-    }
-    #modal-details-grid {
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 12px 20px;
-    }
-    #modal-details-grid p {
-      margin: 0;
-      font-size: 0.95em;
-    }
-    #modal-details-grid strong {
-      color: #333;
-    }
-    
-    /* --- Weather Settings Modal --- */
-    .weather-settings-modal .modal-content {
-      max-width: 500px;
-      gap: 20px;
-    }
-    .weather-settings-modal h3 {
-        margin: 0;
-        text-align: center;
-        font-size: 1.6em;
-        color: #6720bd;
+        border-radius: 50%;
+        width: 30px;
+        height: 30px;
+        font-size: 16px;
         font-weight: bold;
+        cursor: pointer;
+        transition: background-color 0.2s ease;
+        font-family: sans-serif;
+    }
+    .cloak-modal-close:hover {
+        background-color: #333;
+    }
+    .cloak-modal h2 {
+        margin-top: 0;
+        color: var(--dark-accent-purple);
+        border-bottom: 2px solid var(--dark-border-color);
+        padding-bottom: 10px;
+        margin-bottom: 20px;
         font-family: 'PrimaryFont', sans-serif;
     }
-    .settings-section {
-        display: flex;
-        flex-direction: column;
-        gap: 12px;
-    }
-    .settings-section label {
-        font-weight: 600;
-        color: #555;
+    .cloak-section h3 {
         font-size: 1.1em;
+        margin-bottom: 10px;
+        color: var(--dark-text-secondary);
         font-family: 'PrimaryFont', sans-serif;
     }
-    .location-input-wrapper {
-        position: relative;
-    }
-    #weatherLocationInput {
-        width: 100%;
-        padding: 12px 15px;
-        font-size: 1em;
-        border: 1px solid #ccc;
-        border-radius: 8px;
-        box-sizing: border-box;
-        transition: border-color 0.2s, box-shadow 0.2s;
-    }
-    #weatherLocationInput:focus {
-        outline: none;
-        border-color: #8a2be2;
-        box-shadow: 0 0 0 3px rgba(103, 32, 189, 0.2);
-    }
-    #locationSuggestions {
+    .preset-list, .saved-cloak-list {
         list-style: none;
         padding: 0;
-        margin: 5px 0 0 0;
-        position: absolute;
-        background: white;
-        width: 100%;
-        border: 1px solid #ddd;
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+        gap: 10px;
+        margin-bottom: 20px;
+    }
+    .preset-list a, .saved-cloak-list button {
+        display: block;
+        padding: 10px;
+        background: var(--dark-bg-tertiary);
+        text-decoration: none;
+        color: var(--dark-text-secondary);
         border-radius: 8px;
-        max-height: 150px;
-        overflow-y: auto;
-        z-index: 10001;
-        box-shadow: 0 4px 10px rgba(0,0,0,0.1);
-    }
-    #locationSuggestions li {
-        padding: 10px 15px;
+        transition: background 0.2s ease, color 0.2s ease;
+        border: 1px solid var(--dark-border-color);
         cursor: pointer;
-        transition: background-color 0.2s;
-        border-bottom: 1px solid #eee;
+        font-size: 0.9em;
+        text-align: center;
+        width: 100%;
+        font-family: 'PrimaryFont', sans-serif;
+        text-transform: uppercase;
     }
-    #locationSuggestions li:last-child {
-        border-bottom: none;
+    .preset-list a:hover, .saved-cloak-list button:hover {
+        background: var(--dark-accent-purple);
+        color: white;
     }
-    #locationSuggestions li:hover {
-        background-color: #f0f2f5;
+    .custom-cloak-form {
+        margin-top: 10px;
+        display: flex;
+        gap: 10px;
     }
-    #useCurrentLocationBtn {
-        padding: 10px 15px;
-        font-size: 0.95em;
-        font-weight: 600;
-        background: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+    .custom-cloak-form input {
+        flex-grow: 1;
+        background: var(--dark-bg-tertiary);
+        border: 1px solid var(--dark-border-color);
+        color: var(--dark-text-primary);
+        padding: 10px;
+        border-radius: 8px;
+        font-family: 'Roboto', sans-serif;
+    }
+    .custom-cloak-form button {
+        background: var(--dark-accent-purple);
         color: white;
         border: none;
+        padding: 0 15px;
         border-radius: 8px;
+        font-weight: bold;
         cursor: pointer;
-        transition: all 0.2s ease;
+        transition: background-color 0.2s ease;
+        font-family: 'PrimaryFont', sans-serif;
+        text-transform: uppercase;
     }
-    #useCurrentLocationBtn:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 10px rgba(103, 32, 189, 0.3);
+    .custom-cloak-form button:hover {
+        background: #5619a2;
     }
-    #useCurrentLocationBtn:disabled {
-        background: #aaa;
+    .custom-cloak-form button:disabled {
+        background: #555;
         cursor: not-allowed;
-        transform: none;
-        box-shadow: none;
     }
-    .unit-toggle-wrapper {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        padding: 10px;
-        background-color: #f8f9fa;
-        border-radius: 10px;
-    }
-    /* Custom Toggle Switch */
-    .switch {
-      position: relative;
-      display: inline-block;
-      width: 60px;
-      height: 34px;
-    }
-    .switch input { display:none; }
-    .slider {
-      position: absolute;
-      cursor: pointer;
-      top: 0; left: 0; right: 0; bottom: 0;
-      background-color: #ccc;
-      transition: .4s;
-      border-radius: 34px;
-    }
-    .slider:before {
-      position: absolute;
-      content: "";
-      height: 26px; width: 26px;
-      left: 4px; bottom: 4px;
-      background-color: white;
-      transition: .4s;
-      border-radius: 50%;
-    }
-    input:checked + .slider {
-      background-color: #6720bd;
-    }
-    input:checked + .slider:before {
-      transform: translateX(26px);
-    }
-    .slider:after{
-      content:'°F';
-      color: white;
-      display: block;
-      position: absolute;
-      transform: translate(-50%,-50%);
-      top: 50%;
-      left: 75%;
-      font-size: 12px;
-      font-family: sans-serif;
-    }
-    input:checked + .slider:after {  
-      content:'°C';
-      left: 25%;
-    }
-    
-    /* --- Animation & Utility --- */
-    .fade-in { animation: fadeIn 0.6s ease-out; }
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(20px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
-    .slide-in { animation: slideIn 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
-    @keyframes slideIn {
-      from { transform: translateX(-100%); opacity: 0; }
-      to { transform: translateX(0); opacity: 1; }
-    }
-    .loading-text, .error-text {
-      text-align: center; font-size: 1.2em; color: #888; padding: 40px;
-    }
-    .error-text { color: #d9534f; }
   </style>
 </head>
-
-<body class="weather-page">
-
-  <header class="main-header light-bg">
-    <div class="container">
-      <div class="logo">
-        <a href="../index.html">
-          <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer" />
-        </a>
-      </div>
-      <div class="auth-buttons">
-        <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
-        <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
-      </div>
+<body class="dashboard-page">
+  <div id="loading-overlay">
+    <div class="loading-container">
+        <p>AUTHENTICATING...</p>
+        <div id="loading-spinner"></div>
     </div>
-  </header>
+  </div>
 
-  <div class="dashboard-container">
-    <aside class="sidebar slide-in" id="sidebar">
-      <button id="toggleSidebar">☰</button>
-      <div class="user-info">
-        <div class="marquee-container">
-          <span id="userName" class="marquee-content username">Loading…</span>
+  <div id="app-container">
+    <header class="main-header">
+      <div class="container">
+        <div class="logo">
+          <a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer" /></a>
         </div>
-        <div class="marquee-container">
-          <span id="userEmail" class="marquee-content email">Loading…</span>
+        <div class="auth-buttons">
+          <button id="cloakBtn" class="header-icon-btn" title="Cloak Tab">
+              <img src="../images/mask-white.png" alt="Cloak Tab Icon">
+              <span>Cloak</span>
+          </button>
+          <button id="openNewTabBtn" class="header-icon-btn" title="Open in New Tab">
+              <img src="../images/arrow-topleft-white.png" alt="Open in New Tab Icon">
+              <span>About:Blank</span>
+          </button>
+          <button id="fullscreenBtn" class="header-icon-btn" title="Fullscreen">
+              <img src="../images/zoom-in-white.png" alt="Fullscreen Icon">
+              <span>Fullscreen</span>
+          </button>
+          <button class="btn" onclick="window.location.href='../logged-in/dashboard.html'">DASHBOARD</button>
+          <button id="logoutBtn" class="btn">LOG OUT</button>
         </div>
       </div>
-      <nav>
-        <ul>
-          <li><a href="dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
-          <li><a href="proxies.html"><span class="icon">🛡️</span><span class="label">Proxies</span></a></li>
-          <li><a href="soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
-          <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
-          <li><a href="others.html" class="active"><span class="icon">✨</span><span class="label">Others</span></a></li>
-          <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
-          <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
-        </ul>
-      </nav>
-    </aside>
-
-    <main class="main-content fade-in" id="main-content">
-      <div class="weather-widget-full" id="weather-widget">
-        <p class="loading-text">Initializing Weather...</p>
+    </header>
+    <main class="main-content">
+      <div class="proxy-container">
+        <iframe
+          id="proxyFrame"
+          class="proxy-iframe"
+          src="about:blank"
+          sandbox="allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-same-origin allow-scripts"
+          allow="accelerometer; ambient-light-sensor; autoplay; battery; camera; cross-origin-isolated; display-capture; document-domain; encrypted-media; execution-while-not-rendered; execution-while-out-of-viewport; fullscreen; geolocation; gyroscope; keyboard-map; magnetometer; microphone; midi; navigation-override; payment; picture-in-picture; publickey-credentials-get; screen-wake-lock; sync-xhr; usb; web-share; xr-spatial-tracking"
+          title="VernMax Proxy">
+        </iframe>
       </div>
     </main>
   </div>
 
-  <div id="forecastDetailModal" class="modal">
-    <div class="modal-content">
-      <button class="modal-close-btn">&times;</button>
-      <div id="modal-header">
-        <h3 id="modalDay"></h3>
-        <p id="modalDate"></p>
-      </div>
-      <div id="modal-summary">
-        <span id="modal-icon"></span>
-        <div>
-          <div id="modal-temp-display"></div>
-          <div id="modal-desc"></div>
-        </div>
-      </div>
-      <div id="modal-details-grid">
-        <p><strong>Feels Like:</strong> <span id="modal-feels-like"></span></p>
-        <p><strong>Precip. Chance:</strong> <span id="modal-precip-prob"></span></p>
-        <p><strong>Precip. Amount:</strong> <span id="modal-precip-sum"></span></p>
-        <p><strong>Max Wind:</strong> <span id="modal-wind-speed"></span></p>
-        <p><strong>Max Gust:</strong> <span id="modal-wind-gusts"></span></p>
-        <p><strong>Wind Direction:</strong> <span id="modal-wind-dir"></span></p>
-        <p><strong>Sunrise:</strong> <span id="modal-sunrise"></span></p>
-        <p><strong>Sunset:</strong> <span id="modal-sunset"></span></p>
-        <p><strong>Daylight:</strong> <span id="modal-daylight"></span></p>
-        <p><strong>Max UV Index:</strong> <span id="modal-uv"></span></p>
-      </div>
-    </div>
-  </div>
-  
-  <div id="weatherSettingsModal" class="modal weather-settings-modal">
-      <div class="modal-content">
-          <button class="modal-close-btn">&times;</button>
-          <h3>Weather Settings</h3>
-          <div class="settings-section">
-              <label for="weatherLocationInput">Location</label>
-              <div class="location-input-wrapper">
-                  <input type="text" id="weatherLocationInput" placeholder="Enter a city or address...">
-                  <ul id="locationSuggestions"></ul>
-              </div>
-              <button id="useCurrentLocationBtn">📍 Use My Current Location</button>
+  <div id="cloak-modal-overlay" class="cloak-modal-overlay">
+      <div id="cloak-modal" class="cloak-modal">
+          <button id="cloak-modal-close" class="cloak-modal-close">×</button>
+          <h2>Tab Cloaker</h2>
+          <div class="cloak-section">
+              <h3>Presets</h3>
+              <ul id="preset-list" class="preset-list"></ul>
           </div>
-          <div class="settings-section">
-              <label>Units</label>
-              <div class="unit-toggle-wrapper">
-                  <span>Imperial (°F) / Metric (°C)</span>
-                  <label class="switch">
-                      <input type="checkbox" id="unitToggle">
-                      <span class="slider"></span>
-                  </label>
+          <div class="cloak-section">
+              <h3>Saved Custom Cloaks</h3>
+              <ul id="saved-cloak-list" class="saved-cloak-list"></ul>
+          </div>
+          <div class="cloak-section">
+              <h3>Custom</h3>
+              <div id="custom-cloak-form" class="custom-cloak-form">
+                  <input type="text" id="custom-url-input" placeholder="Enter website URL">
+                  <button id="custom-cloak-btn">Apply & Save</button>
               </div>
           </div>
       </div>
   </div>
-
 
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
   <script src="../firebase-config.js"></script>
+
   <script>
-    // --- Globals & Firebase Refs ---
-    const dbRef = () =>
-      firebase.auth().currentUser
-        ? firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid)
-        : null;
-
-    // --- DOM Elements ---
-    const marqueeEls = document.querySelectorAll('.marquee-content');
-    const userNameEl = document.getElementById('userName');
-    const userEmailEl = document.getElementById('userEmail');
-
-
-    // --- Authentication & UI Functions ---
-    firebase.auth().onAuthStateChanged(async user => {
-      if (!user) {
-        return location.href = '../login.html';
-      }
-      userEmailEl.textContent = user.email;
-      try {
-        const userDocRef = dbRef();
-        if (!userDocRef) return;
-        const doc = await userDocRef.get();
-        const userData = doc.exists ? doc.data() : {};
-        userNameEl.textContent = userData.username || user.displayName || 'Welcome User';
-        updateMarquees();
-      } catch (error) {
-        console.error('Error loading user data:', error);
-        userNameEl.textContent = 'User';
-      }
-    });
-
-    function updateMarquees() {
-      marqueeEls.forEach(el => {
-        el.classList.remove('marquee-active');
-        void el.offsetWidth;
-        el.classList.add('marquee-active');
-      });
-    }
-    
-    const handleLogout = () => {
-      firebase.auth().signOut().then(() => (location.href = '../login.html')).catch(error => console.error('Logout error:', error));
-    };
-    document.getElementById('logoutBtn').onclick = handleLogout;
-    document.getElementById('signOutLink').onclick = handleLogout;
-
-    const toggleSidebarBtn = document.getElementById('toggleSidebar');
-    const sidebar = document.getElementById('sidebar');
-    toggleSidebarBtn.addEventListener('click', () => {
-      sidebar.classList.toggle('collapsed');
-      setTimeout(updateMarquees, 550); // Wait for transition to finish
-    });
-    
-    window.addEventListener('resize', () => { setTimeout(updateMarquees, 300); });
-    
-    function showNotification(message, type = 'info', duration = 3000) {
-      const notification = document.createElement('div');
-      notification.textContent = message;
-      Object.assign(notification.style, {
-        position: 'fixed', bottom: '20px', right: '20px', padding: '12px 20px',
-        borderRadius: '8px', color: 'white', fontWeight: '600', zIndex: '10000',
-        transform: 'translateY(150%)', transition: 'transform 0.4s ease-in-out, background 0.3s',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
-        fontFamily: 'PrimaryFont, sans-serif',
-        background: type === 'success' ? 'linear-gradient(135deg, #28a745, #20c997)' : 
-                    type === 'error' ? 'linear-gradient(135deg, #dc3545, #e83e8c)' : 
-                    'linear-gradient(135deg, #6720bd, #8a2be2)'
-      });
-      document.body.appendChild(notification);
-      setTimeout(() => { notification.style.transform = 'translateY(0)'; }, 100);
-      setTimeout(() => {
-        notification.style.transform = 'translateY(150%)';
-        setTimeout(() => { if (document.body.contains(notification)) document.body.removeChild(notification); }, 400);
-      }, duration);
-    }
-
-    // --- Weather Page Specific Logic ---
     document.addEventListener('DOMContentLoaded', () => {
+        // --- Element References ---
+        const loadingOverlay = document.getElementById('loading-overlay');
+        const appContainer = document.getElementById('app-container');
+        const proxyFrame = document.getElementById('proxyFrame');
+        const favicon = document.getElementById('dynamic-favicon');
+        const openNewTabBtn = document.getElementById('openNewTabBtn');
+        const fullscreenBtn = document.getElementById('fullscreenBtn');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const cloakBtn = document.getElementById('cloakBtn');
+        const cloakModalOverlay = document.getElementById('cloak-modal-overlay');
+        const cloakModalClose = document.getElementById('cloak-modal-close');
+        const presetList = document.getElementById('preset-list');
+        const savedCloakList = document.getElementById('saved-cloak-list');
+        const customUrlInput = document.getElementById('custom-url-input');
+        const customCloakBtn = document.getElementById('custom-cloak-btn');
 
-      // --- Weather Settings & Data ---
-      let weatherSettings = {
-          location: {
-              name: 'Massillon, OH',
-              latitude: 40.7909,
-              longitude: -81.5218,
-          },
-          units: 'imperial'
-      };
-      let userCoords = null;
-      let debounceTimer;
-      
-      const WMO_CODES = {
-          0: { desc: "Clear sky", icon: "☀️" }, 1: { desc: "Mainly clear", icon: "🌤️" },
-          2: { desc: "Partly cloudy", icon: "🌥️" }, 3: { desc: "Overcast", icon: "☁️" },
-          45: { desc: "Fog", icon: "🌫️" }, 48: { desc: "Depositing rime fog", icon: "🌫️" },
-          51: { desc: "Light drizzle", icon: "🌦️" }, 53: { desc: "Moderate drizzle", icon: "🌦️" },
-          55: { desc: "Dense drizzle", icon: "🌧️" }, 56: { desc: "Light freezing drizzle", icon: "🌨️" },
-          57: { desc: "Dense freezing drizzle", icon: "🌨️" }, 61: { desc: "Slight rain", icon: "🌧️" },
-          63: { desc: "Moderate rain", icon: "🌧️" }, 65: { desc: "Heavy rain", icon: "Torrential rain" },
-          66: { desc: "Light freezing rain", icon: "🌨️" }, 67: { desc: "Heavy freezing rain", icon: "🌨️" },
-          71: { desc: "Slight snow fall", icon: "❄️" }, 73: { desc: "Moderate snow fall", icon: "❄️" },
-          75: { desc: "Heavy snow fall", icon: "❄️" }, 77: { desc: "Snow grains", icon: "❄️" },
-          80: { desc: "Slight rain showers", icon: "🌦️" }, 81: { desc: "Moderate rain showers", icon: "🌦️" },
-          82: { desc: "Violent rain showers", icon: "⛈️" }, 85: { desc: "Slight snow showers", icon: "🌨️" },
-          86: { desc: "Heavy snow showers", icon: "🌨️" }, 95: { desc: "Thunderstorm", icon: "⛈️" },
-          96: { desc: "Thunderstorm with slight hail", icon: "⛈️" }, 99: { desc: "Thunderstorm with heavy hail", icon: "⛈️" },
-      };
-      
-      // --- DOM Elements ---
-      const widgetContainer = document.getElementById('weather-widget');
-      const forecastModal = document.getElementById('forecastDetailModal');
-      const settingsModal = document.getElementById('weatherSettingsModal');
-      
-      const weatherLocationInput = document.getElementById('weatherLocationInput');
-      const locationSuggestions = document.getElementById('locationSuggestions');
-      const unitToggle = document.getElementById('unitToggle');
-      const useCurrentLocationBtn = document.getElementById('useCurrentLocationBtn');
-      
-      // --- Settings Persistence ---
-      const saveWeatherSettings = () => localStorage.setItem('weatherPageSettings', JSON.stringify(weatherSettings));
-      const loadWeatherSettings = () => {
-          const saved = localStorage.getItem('weatherPageSettings');
-          if (saved) {
-              weatherSettings = JSON.parse(saved);
-              return true;
-          }
-          return false;
-      };
+        // --- [MODIFIED] Core Application Logic (Auth & Iframe Loading) ---
 
-      // --- Main Weather Fetch & Render ---
-      const fetchAndDisplayWeather = async () => {
-        widgetContainer.innerHTML = `<p class="loading-text">Fetching weather for ${weatherSettings.location.name}...</p>`;
-
-        const tempUnit = weatherSettings.units === 'metric' ? 'celsius' : 'fahrenheit';
-        const speedUnit = weatherSettings.units === 'metric' ? 'kmh' : 'mph';
-        const precipUnit = weatherSettings.units === 'metric' ? 'mm' : 'inch';
-
-        const params = {
-          current: "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_gusts_10m",
-          hourly: "temperature_2m,weather_code",
-          daily: "weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,sunrise,sunset,daylight_duration,uv_index_max,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant",
-          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-          forecast_days: 16
-        };
-        const { latitude, longitude } = weatherSettings.location;
-        const url = `https://api.open-meteo.com/v1/forecast?latitude=${latitude}&longitude=${longitude}&current=${params.current}&hourly=${params.hourly}&daily=${params.daily}&temperature_unit=${tempUnit}&wind_speed_unit=${speedUnit}&precipitation_unit=${precipUnit}&timezone=${params.timezone}&forecast_days=${params.forecast_days}`;
-
-        try {
-          const response = await fetch(url);
-          if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
-          const data = await response.json();
-          renderWidget(data);
-        } catch (error) {
-          console.error("Fetch Error:", error);
-          widgetContainer.innerHTML = `<p class="error-text">⚠️ Could not retrieve weather data. Please try again later.</p>`;
-        }
-      };
-      
-      const renderWidget = (data) => {
-        const tempSuffix = weatherSettings.units === 'imperial' ? '°F' : '°C';
-        const speedSuffix = weatherSettings.units === 'imperial' ? 'mph' : 'km/h';
-        const precipSuffix = weatherSettings.units === 'imperial' ? 'in' : 'mm';
-
-        const headerHTML = `
-            <div class="weather-widget-header">
-                <h2 class="location-title">${weatherSettings.location.name}</h2>
-                <div class="header-buttons">
-                    <button class="action-btn" id="settingsBtn" title="Settings">
-                        <img src="../images/gear-dark.png" alt="Settings">
-                    </button>
-                    <button class="action-btn" id="refreshBtn" title="Refresh">
-                        <img src="../images/refresh-dark.png" alt="Refresh">
-                    </button>
-                </div>
-            </div>`;
+        // IMPORTANT: Change this key to a unique, random, and secret string.
+        // This key MUST match the key you use to encrypt your URL.
+        const secretKey = 'your-super-secret-key-goes-here';
         
-        const { temperature_2m, apparent_temperature, relative_humidity_2m, weather_code, wind_speed_10m, wind_gusts_10m } = data.current;
-        const currentCodeInfo = WMO_CODES[weather_code] || { desc: 'Unknown', icon: '❓' };
-        const currentConditionsHTML = `
-           <div class="current-weather-layout">
-               <span class="weather-icon-large">${currentCodeInfo.icon}</span>
-               <div class="current-weather-main-info">
-                   <p class="temp-large">${Math.round(temperature_2m)}${tempSuffix}</p>
-                   <p class="condition-large">${currentCodeInfo.desc}</p>
-               </div>
-               <div class="current-weather-details-aside">
-                   <p>Feels like: <strong>${Math.round(apparent_temperature)}${tempSuffix}</strong></p>
-                   <p>Humidity: <strong>${relative_humidity_2m}%</strong></p>
-                   <p>Wind: <strong>${Math.round(wind_speed_10m)} ${speedSuffix}</strong></p>
-                   <p>Gusts: <strong>${Math.round(wind_gusts_10m)} ${speedSuffix}</strong></p>
-               </div>
-           </div>`;
+        // This variable will hold the encrypted URL fetched from Firestore
+        // so it can be passed to the about:blank page.
+        let fetchedEncryptedUrl = null;
 
-         let hourlyHTML = '';
-         const currentHour = new Date(data.current.time).getHours();
-         for (let i = currentHour; i < currentHour + 24 && i < data.hourly.time.length; i++) {
-           const date = new Date(data.hourly.time[i]);
-           const hour = date.getHours();
-           const hourlyCodeInfo = WMO_CODES[data.hourly.weather_code[i]] || { icon: '❓' };
-           hourlyHTML += `<div class="hourly-item"><p class="hourly-time">${hour === 0 ? '12am' : hour === 12 ? '12pm' : hour > 12 ? (hour - 12) + 'pm' : hour + 'am'}</p><p class="hourly-icon">${hourlyCodeInfo.icon}</p><p class="hourly-temp">${Math.round(data.hourly.temperature_2m[i])}°</p></div>`;
-         }
-         const hourlyForecastHTML = `<div class="forecast-container"><h3 class="forecast-title">Hourly Forecast</h3><div class="scroll-frame">${hourlyHTML}</div></div>`;
+        const initializeProxy = async () => {
+            try {
+                const db = firebase.firestore();
+                const docRef = db.collection('config').doc('proxy');
+                const docSnap = await docRef.get();
 
-         let dailyHTML = '';
-         data.daily.time.forEach((time, i) => {
-           const date = new Date(time + 'T00:00:00');
-           const dayName = i === 0 ? 'Today' : date.toLocaleDateString(undefined, { weekday: 'short' });
-           const dailyCodeInfo = WMO_CODES[data.daily.weather_code[i]] || { icon: '❓' };
-           dailyHTML += `<div class="daily-item-card" data-day-index="${i}"><p class="daily-day">${dayName}</p><p class="daily-icon">${dailyCodeInfo.icon}</p><p class="daily-temps"><span class="high">${Math.round(data.daily.temperature_2m_max[i])}°</span> / <span class="low">${Math.round(data.daily.temperature_2m_min[i])}°</span></p></div>`;
-         });
-         const dailyForecastHTML = `<div class="forecast-container"><h3 class="forecast-title">16-Day Forecast</h3><div class="scroll-frame">${dailyHTML}</div></div>`;
+                if (docSnap.exists) {
+                    const data = docSnap.data();
+                    // Let's use the same field name 'obfuscatedUrl' from your Firestore
+                    // but now it will contain the AES encrypted string.
+                    const encryptedUrl = data.obfuscatedUrl;
+                    fetchedEncryptedUrl = encryptedUrl; // Store for about:blank usage
 
-         const detailsHTML = `<div><h3 class="forecast-title">Additional Details For Today</h3><div class="details-grid"><div class="detail-box"><div class="detail-box-title">Sunrise</div><div class="detail-box-value">${new Date(data.daily.sunrise[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div><div class="detail-box"><div class="detail-box-title">Sunset</div><div class="detail-box-value">${new Date(data.daily.sunset[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div><div class="detail-box"><div class="detail-box-title">Max UV Index</div><div class="detail-box-value">${data.daily.uv_index_max[0].toFixed(1)}</div></div><div class="detail-box"><div class="detail-box-title">Precipitation</div><div class="detail-box-value">${data.daily.precipitation_sum[0].toFixed(2)} <span class="unit">${precipSuffix}</span></div></div></div></div>`;
+                    if (encryptedUrl) {
+                        try {
+                            const decryptedBytes = CryptoJS.AES.decrypt(encryptedUrl, secretKey);
+                            const decryptedUrl = decryptedBytes.toString(CryptoJS.enc.Utf8);
 
-        widgetContainer.innerHTML = headerHTML + currentConditionsHTML + hourlyForecastHTML + dailyForecastHTML + detailsHTML;
-        
-        document.getElementById('refreshBtn').addEventListener('click', fetchAndDisplayWeather);
-        document.getElementById('settingsBtn').addEventListener('click', openWeatherSettingsModal);
-        
-        widgetContainer.querySelectorAll('.daily-item-card').forEach(card => {
-          card.addEventListener('click', () => {
-            const dayIndex = card.dataset.dayIndex;
-            openDailyDetailModal(data, dayIndex);
-          });
-        });
-      };
-      
-      function setupModal(modal) {
-          const closeBtn = modal.querySelector('.modal-close-btn');
-          if(closeBtn) closeBtn.onclick = () => modal.classList.remove('modal-open');
-          modal.onclick = (event) => {
-              if (event.target === modal) modal.classList.remove('modal-open');
-          };
-      }
-      setupModal(forecastModal);
-      setupModal(settingsModal);
-
-      const openDailyDetailModal = (data, index) => {
-        const day = data.daily;
-        const date = new Date(day.time[index] + 'T00:00:00');
-        const codeInfo = WMO_CODES[day.weather_code[index]] || { desc: 'Unknown', icon: '❓' };
-        const tempSuffix = weatherSettings.units === 'imperial' ? '°F' : '°C';
-        const speedSuffix = weatherSettings.units === 'imperial' ? 'mph' : 'km/h';
-        const precipSuffix = weatherSettings.units === 'imperial' ? 'in' : 'mm';
-
-        document.getElementById('modalDay').textContent = date.toLocaleDateString(undefined, { weekday: 'long' });
-        document.getElementById('modalDate').textContent = date.toLocaleDateString(undefined, { month: 'long', day: 'numeric', year: 'numeric' });
-        document.getElementById('modal-icon').textContent = codeInfo.icon;
-        document.getElementById('modal-temp-display').innerHTML = `${Math.round(day.temperature_2m_max[index])}° / ${Math.round(day.temperature_2m_min[index])}°`;
-        document.getElementById('modal-desc').textContent = codeInfo.desc;
-        
-        document.getElementById('modal-feels-like').textContent = `${Math.round(day.apparent_temperature_max[index])}° / ${Math.round(day.apparent_temperature_min[index])}°`;
-        document.getElementById('modal-precip-prob').textContent = `${day.precipitation_probability_max[index]}%`;
-        document.getElementById('modal-precip-sum').textContent = `${day.precipitation_sum[index].toFixed(2)} ${precipSuffix}`;
-        document.getElementById('modal-wind-speed').textContent = `${Math.round(day.wind_speed_10m_max[index])} ${speedSuffix}`;
-        document.getElementById('modal-wind-gusts').textContent = `${Math.round(day.wind_gusts_10m_max[index])} ${speedSuffix}`;
-        document.getElementById('modal-wind-dir').textContent = `${day.wind_direction_10m_dominant[index]}°`;
-        document.getElementById('modal-sunrise').textContent = new Date(day.sunrise[index]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        document.getElementById('modal-sunset').textContent = new Date(day.sunset[index]).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        document.getElementById('modal-daylight').textContent = `${(day.daylight_duration[index] / 3600).toFixed(1)} hours`;
-        document.getElementById('modal-uv').textContent = `${day.uv_index_max[index].toFixed(1)}`;
-        
-        forecastModal.classList.add('modal-open');
-      };
-
-      const openWeatherSettingsModal = () => {
-        weatherLocationInput.value = weatherSettings.location.name;
-        unitToggle.checked = weatherSettings.units === 'metric';
-        locationSuggestions.innerHTML = '';
-        locationSuggestions.style.display = 'none';
-        settingsModal.classList.add('modal-open');
-      };
-      
-      // *** UPDATED AND MORE DETAILED FUNCTION ***
-      const getShortLocationLabel = (address, fullDisplayName) => {
-        if (!address) return fullDisplayName;
-
-        const city = address.city || address.town || address.village || address.hamlet;
-
-        // If it's a specific address with a street number
-        if (address.house_number && address.road && city) {
-            return `${address.house_number} ${address.road}, ${city}`;
-        }
-        // If it's just a street in a city
-        if (address.road && city) {
-            return `${address.road}, ${city}`;
-        }
-        // Fallback for city and state/country
-        if (city && address.state) {
-            return `${city}, ${address.state}`;
-        }
-        if (city && address.country) {
-            return `${city}, ${address.country}`;
-        }
-        if (city) {
-            return city;
-        }
-        // If all else fails, use the full name
-        return fullDisplayName;
-      };
-
-      async function fetchLocationSuggestions(query) {
-        let url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&addressdetails=1&limit=5`;
-        if (userCoords) {
-            url += `&viewbox=${userCoords.longitude-1},${userCoords.latitude+1},${userCoords.longitude+1},${userCoords.latitude-1}&bounded=1`;
-        }
-        try {
-            const response = await fetch(url);
-            const data = await response.json();
-            locationSuggestions.innerHTML = '';
-            if (data.length > 0) {
-                locationSuggestions.style.display = 'block';
-                data.forEach(place => {
-                    const shortLabel = getShortLocationLabel(place.address, place.display_name);
-                    const li = document.createElement('li');
-                    li.textContent = shortLabel;
-                    li.addEventListener('click', () => {
-                        weatherSettings.location = {
-                            name: shortLabel,
-                            latitude: parseFloat(place.lat),
-                            longitude: parseFloat(place.lon)
-                        };
-                        weatherLocationInput.value = shortLabel;
-                        locationSuggestions.innerHTML = '';
-                        locationSuggestions.style.display = 'none';
-                        saveWeatherSettings();
-                        fetchAndDisplayWeather();
-                        settingsModal.classList.remove('modal-open');
-                    });
-                    locationSuggestions.appendChild(li);
-                });
-            } else {
-                locationSuggestions.style.display = 'none';
-            }
-        } catch (error) {
-            console.error("Failed to fetch location suggestions:", error);
-        }
-      }
-      
-      async function fetchCityName(lat, lon) {
-          const url = `https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}`;
-          try {
-              const response = await fetch(url);
-              const data = await response.json();
-              const label = getShortLocationLabel(data.address, data.display_name);
-              return { name: label, country_code: data.address.country_code || 'us' };
-          } catch (error) {
-              return { name: `Lat: ${lat.toFixed(2)}, Lon: ${lon.toFixed(2)}`, country_code: 'us' };
-          }
-      }
-
-      weatherLocationInput.addEventListener('keyup', (e) => {
-          clearTimeout(debounceTimer);
-          if (e.target.value.length < 3) {
-              locationSuggestions.style.display = 'none';
-              return;
-          }
-          debounceTimer = setTimeout(() => fetchLocationSuggestions(e.target.value), 500);
-      });
-
-      unitToggle.addEventListener('change', () => {
-          weatherSettings.units = unitToggle.checked ? 'metric' : 'imperial';
-          saveWeatherSettings();
-          fetchAndDisplayWeather();
-      });
-      
-      useCurrentLocationBtn.addEventListener('click', () => {
-          if (!navigator.geolocation) return showNotification("Geolocation is not supported.", "error");
-          useCurrentLocationBtn.disabled = true;
-          useCurrentLocationBtn.textContent = 'Locating...';
-          navigator.geolocation.getCurrentPosition(async (position) => {
-              const { latitude, longitude } = position.coords;
-              const { name } = await fetchCityName(latitude, longitude);
-              weatherSettings.location = { name, latitude, longitude };
-              weatherLocationInput.value = name;
-              saveWeatherSettings();
-              showNotification(`Location updated to ${name}`, 'success');
-              fetchAndDisplayWeather();
-              settingsModal.classList.remove('modal-open');
-              useCurrentLocationBtn.disabled = false;
-              useCurrentLocationBtn.textContent = '📍 Use My Current Location';
-          }, (error) => {
-              showNotification("Could not get location. Please enable it.", "error");
-              useCurrentLocationBtn.disabled = false;
-              useCurrentLocationBtn.textContent = '📍 Use My Current Location';
-          }, { enableHighAccuracy: true, timeout: 10000 });
-      });
-
-      const initializePage = () => {
-        const settingsLoaded = loadWeatherSettings();
-
-        fetchAndDisplayWeather();
-
-        if (!settingsLoaded) {
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(async (position) => {
-                    try {
-                        console.log("Geolocation successful, attempting to update location.");
-                        userCoords = { latitude: position.coords.latitude, longitude: position.coords.longitude };
-                        const { name, country_code } = await fetchCityName(userCoords.latitude, userCoords.longitude);
-                        
-                        weatherSettings.location = { name, latitude: userCoords.latitude, longitude: userCoords.longitude };
-                        weatherSettings.units = (country_code === 'us' || country_code === 'lr' || country_code === 'mm') ? 'imperial' : 'metric';
-                        
-                        saveWeatherSettings();
-                        fetchAndDisplayWeather();
-                    } catch (e) {
-                        console.error("Error processing geolocation data:", e);
+                            if (decryptedUrl && proxyFrame) {
+                                proxyFrame.src = 'https://' + decryptedUrl;
+                            } else {
+                                // This error means decryption failed, likely due to a wrong key or corrupted data.
+                                throw new Error("Decryption resulted in an empty URL. Check your secret key and the encrypted value in Firestore.");
+                            }
+                        } catch (e) {
+                            console.error("Decryption failed:", e);
+                            throw new Error("Could not decrypt the proxy URL. Please verify your secret key.");
+                        }
+                    } else {
+                        throw new Error("Field 'obfuscatedUrl' was not found or is empty in your 'config/proxy' document.");
                     }
-                }, (error) => {
-                    console.warn(`Geolocation failed (${error.code}): ${error.message}. Using default location.`);
-                    saveWeatherSettings();
-                }, { enableHighAccuracy: true, timeout: 10000 });
-            } else {
-                console.warn("Geolocation not supported. Using default location.");
-                saveWeatherSettings();
+                } else {
+                    throw new Error("The 'proxy' document was not found in your 'config' collection.");
+                }
+            } catch (error) {
+                console.error("Fatal Error in initializeProxy:", error);
+                alert("Could not load the application content: " + error.message);
             }
-        } else {
-            if (navigator.geolocation) {
-                navigator.geolocation.getCurrentPosition(pos => {
-                    userCoords = { latitude: pos.coords.latitude, longitude: pos.coords.longitude };
-                }, () => {}, { enableHighAccuracy: true, timeout: 5000 });
+        };
+
+        const authTimeout = setTimeout(() => {
+            console.error("Authentication timed out. Redirecting to login.");
+            window.location.href = '/login.html';
+        }, 8000);
+
+        firebase.auth().onAuthStateChanged(async (user) => {
+            clearTimeout(authTimeout);
+            try {
+                if (user) {
+                    appContainer.classList.add('is-visible');
+                    loadingOverlay.classList.add('is-hiding');
+                    await initializeProxy();
+                    loadingOverlay.addEventListener('transitionend', () => {
+                        loadingOverlay.style.display = 'none';
+                    }, { once: true });
+                    document.body.style.overflow = 'auto';  
+                } else {
+                    console.log("No authenticated user found. Redirecting to login.");
+                    window.location.href = '/login.html';
+                }
+            } catch (error) {
+                console.error("A critical error occurred during the authentication check:", error);
+                alert("A critical error occurred. Please try logging in again.");
+                window.location.href = '/login.html';
+            }
+        });
+
+        // --- Header Button Features ---
+
+        if(logoutBtn) {
+            logoutBtn.addEventListener('click', () => {
+                firebase.auth().signOut().catch(error => console.error('Logout Error:', error));
+            });
+        }
+
+        if(fullscreenBtn) {
+            fullscreenBtn.addEventListener('click', () => {
+                if (!document.fullscreenElement) {
+                    proxyFrame.requestFullscreen().catch(err => {
+                        alert(`Error attempting to enable full-screen mode: ${err.message} (${err.name})`);
+                    });
+                } else {
+                    document.exitFullscreen();
+                }
+            });
+        }
+        
+        // --- [MODIFIED] About:Blank Cloaking Function ---
+        function openInNewTab() {
+            if (!fetchedEncryptedUrl) {
+                alert('The content is still loading or failed to load. Please try again in a moment.');
+                return;
+            }
+            const newTab = window.open('about:blank', '_blank');
+            if (newTab) {
+                // We will write a new, self-contained document into the new tab.
+                // This new document will perform the decryption itself, hiding the raw URL.
+                const newTabContent = `
+                    <!DOCTYPE html>
+                    <html>
+                    <head>
+                        <title>${document.title}</title>
+                        <link rel="icon" href="${favicon.href}">
+                        <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"><\/script>
+                    </head>
+                    <body style="margin:0; overflow:hidden;">
+                        <iframe id="newProxyFrame" style="width:100vw; height:100vh; border:none;"></iframe>
+                        <script>
+                            const encryptedUrl = '${fetchedEncryptedUrl}';
+                            const key = '${secretKey}';
+                            
+                            try {
+                                const decryptedBytes = CryptoJS.AES.decrypt(encryptedUrl, key);
+                                const decryptedUrl = decryptedBytes.toString(CryptoJS.enc.Utf8);
+                                
+                                if (decryptedUrl) {
+                                    document.getElementById('newProxyFrame').src = 'https://' + decryptedUrl;
+                                } else {
+                                    document.body.innerHTML = 'Error: Decryption failed in new tab.';
+                                }
+                            } catch (e) {
+                                document.body.innerHTML = 'Error: Could not decrypt URL in new tab.';
+                            }
+                        <\/script>
+                    </body>
+                    </html>
+                `;
+                newTab.document.write(newTabContent);
+                newTab.document.close(); // Important: Finalizes the document writing
+            } else {
+                alert('Popup blocked! Please allow popups for this site.');
             }
         }
-      };
 
-      initializePage();
+        // --- Tab Cloaking Logic ---
+        const studentPresets = [
+            { name: 'Google Docs', title: 'Google Docs', favicon: 'https://ssl.gstatic.com/docs/documents/images/kix-favicon-2023q4.ico' },
+            { name: 'Google Slides', title: 'Google Slides', favicon: 'https://ssl.gstatic.com/docs/presentations/images/favicon-2023q4.ico' },
+            { name: 'Google Classroom', title: 'Classes', favicon: 'https://ssl.gstatic.com/classroom/favicon.png' },
+            { name: 'Google Drive', title: 'My Drive - Google Drive', favicon: 'https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png' },
+            { name: 'Khan Academy', title: 'Dashboard | Khan Academy', favicon: 'https://www.khanacademy.org/favicon.ico' },
+            { name: 'Wikipedia', title: 'Wikipedia', favicon: 'https://en.wikipedia.org/static/favicon/wikipedia.ico' },
+            { name: 'Gmail', title: 'Inbox - Gmail', favicon: 'https://ssl.gstatic.com/ui/v1/icons/mail/rfr/gmail.ico' },
+        ];
+
+        function applyCloak(title, faviconUrl) {
+            if (title) document.title = title;
+            if (faviconUrl) favicon.href = faviconUrl;
+            cloakModalOverlay.classList.remove('visible');
+        }
+
+        function populatePresets() {
+            presetList.innerHTML = '';
+            studentPresets.forEach(preset => {
+                const li = document.createElement('li');
+                const a = document.createElement('a');
+                a.href = '#';
+                a.textContent = preset.name;
+                a.onclick = (e) => {
+                    e.preventDefault();
+                    applyCloak(preset.title, preset.favicon);
+                };
+                li.appendChild(a);
+                presetList.appendChild(li);
+            });
+        }
+
+        function getSavedCloaks() {
+            return JSON.parse(localStorage.getItem('customCloaks') || '[]');
+        }
+
+        function saveCustomCloak(title, faviconUrl, name) {
+            const savedCloaks = getSavedCloaks();
+            if (!savedCloaks.some(c => c.favicon === faviconUrl)) {
+                savedCloaks.push({ name: name || title, title: title, favicon: faviconUrl });
+                localStorage.setItem('customCloaks', JSON.stringify(savedCloaks));
+            }
+        }
+
+        function populateSavedCloaks() {
+            savedCloakList.innerHTML = '';
+            const savedCloaks = getSavedCloaks();
+            if (savedCloaks.length === 0) {
+                savedCloakList.innerHTML = '<p style="grid-column: 1 / -1; text-align: center; color: var(--dark-text-secondary);">No saved cloaks yet.</p>';
+                return;
+            }
+            savedCloaks.forEach(cloak => {
+                const li = document.createElement('li');
+                const button = document.createElement('button');
+                button.textContent = cloak.name;
+                button.onclick = () => {
+                    applyCloak(cloak.title, cloak.favicon);
+                };
+                li.appendChild(button);
+                savedCloakList.appendChild(li);
+            });
+        }
+
+        async function applyCustomCloak() {
+            let url = customUrlInput.value.trim();
+            if (!url) return;
+            if (!url.startsWith('http')) {
+                url = 'https://' + url;
+            }
+            const originalBtnText = customCloakBtn.textContent;
+            customCloakBtn.textContent = '...';
+            customCloakBtn.disabled = true;
+            try {
+                const fetchUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`;
+                const response = await fetch(fetchUrl);
+                if (!response.ok) throw new Error('Failed to fetch site metadata.');
+                const data = await response.json();
+                const htmlContent = data.contents;
+                if (!htmlContent) throw new Error('Could not retrieve HTML content.');
+                const titleMatch = htmlContent.match(/<title>(.*?)<\/title>/i);
+                const title = titleMatch ? titleMatch[1] : 'Untitled';
+                const faviconMatch = htmlContent.match(/<link rel="icon".*?href=["'](.*?)["']/i) || htmlContent.match(/<link rel="shortcut icon".*?href=["'](.*?)["']/i);
+                let faviconUrl = '';
+                if (faviconMatch) {
+                    faviconUrl = new URL(faviconMatch[1], url).href;
+                } else {
+                    faviconUrl = new URL('/favicon.ico', url).href;
+                }
+                applyCloak(title, faviconUrl);
+                saveCustomCloak(title, faviconUrl, new URL(url).hostname);
+                populateSavedCloaks();
+                customUrlInput.value = '';
+            } catch (error) {
+                alert(`Error: ${error.message}. Could not apply custom cloak.`);
+            } finally {
+                customCloakBtn.textContent = originalBtnText;
+                customCloakBtn.disabled = false;
+            }
+        }
+
+        // --- Event Listeners ---
+        openNewTabBtn.addEventListener('click', openInNewTab);
+        cloakBtn.addEventListener('click', () => {
+            cloakModalOverlay.classList.add('visible');
+            populateSavedCloaks();
+        });
+        cloakModalClose.addEventListener('click', () => {
+            cloakModalOverlay.classList.remove('visible');
+        });
+        cloakModalOverlay.addEventListener('click', (e) => {
+            if (e.target === cloakModalOverlay) {
+                cloakModalOverlay.classList.remove('visible');
+            }
+        });
+        customCloakBtn.addEventListener('click', applyCustomCloak);
+        customUrlInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                applyCustomCloak();
+            }
+        });
+
+        // --- Initial Population ---
+        populatePresets();
     });
   </script>
 </body>
