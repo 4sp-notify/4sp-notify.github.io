@@ -133,6 +133,21 @@
     .badge-cat-normal { background: linear-gradient(135deg, #29a0b1 0%, #29a0b1 100%); }
     .badge-cat-explicit { background: linear-gradient(135deg, #757f9a 0%, #d7dde8 100%); color: #333; }
     .badge-example { background: linear-gradient(135deg, #f7971e 0%, #ffd200 100%); color: #212529; }
+    
+    /* NEW: Styles for the replication badge and info button */
+    .badge-replication {
+        background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+    }
+    .replication-info-btn {
+        background: #6c757d; color: white; border: none; border-radius: 50%;
+        width: 20px; height: 20px; font-size: 0.8em; font-weight: bold;
+        cursor: pointer; padding: 0; line-height: 20px; text-align: center;
+        transition: background-color 0.2s;
+    }
+    .replication-info-btn:hover { background-color: #343a40; }
 
 
     .request-title {
@@ -196,7 +211,7 @@
         box-shadow: 0 5px 25px rgba(0,0,0,0.2); position: relative; max-height: 90vh; overflow-y: auto;
         font-family: PrimaryFont, sans-serif;
     }
-    #detailsModal .modal-content, #scheduleModal .modal-content { max-width: 600px; }
+    #detailsModal .modal-content, #scheduleModal .modal-content, #replicationInfoModal .modal-content { max-width: 600px; }
 
     .modal-close-btn { position: absolute; top: 15px; right: 15px; background: none; border: none; font-size: 1.8em; cursor: pointer; color: #888; line-height: 1; }
     .modal-header { border-bottom: 1px solid #eee; padding-bottom: 15px; margin-bottom: 20px; }
@@ -400,6 +415,21 @@
         <div id="formStatus" class="status-msg"></div>
     </div>
   </div>
+
+  <div id="replicationInfoModal" class="modal-overlay">
+    <div class="modal-content" style="max-width: 500px;">
+        <button class="modal-close-btn">×</button>
+        <div class="modal-header">
+            <h3 class="modal-title"><i class="fas fa-sync-alt"></i> What is a Replicated Request?</h3>
+        </div>
+        <div class="modal-body">
+            <p>To improve database efficiency and reduce waste, this system reuses the "slots" of very old requests.</p>
+            <p>Your submission has been placed into one of these recycled slots. This is a background process that you (and admins) can see, but it is invisible to other users and has <strong>no effect</strong> on your request's visibility, voting, or potential implementation.</p>
+            <p style="font-size: 0.9em; color: #666;">This process helps keep the platform fast and free.</p>
+        </div>
+    </div>
+  </div>
+
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
@@ -408,7 +438,8 @@
   <script>
     // --- START OF FULL SCRIPT ---
     const ADMIN_EMAILS = ["4simpleproblems@gmail.com", "belkwy30@minerva.sparcc.org", "admin1@example.com", "admin2@example.com", "admin3@example.com"];
-    const MAX_REQUESTS_PER_DAY = 5;
+    // UPDATED: Daily request limit changed to 3
+    const MAX_REQUESTS_PER_DAY = 3; 
     let IS_ADMIN_ACCOUNT = false;
     let currentUser = null;
     let currentUserProfile = { username: null };
@@ -425,6 +456,8 @@
     const scheduleModal = document.getElementById('scheduleModal');
     const formModal = document.getElementById('formModal');
     const detailsModal = document.getElementById('detailsModal');
+    // NEW: DOM element for replication info modal
+    const replicationInfoModal = document.getElementById('replicationInfoModal');
     const requestForm = document.getElementById('requestForm');
     const requestsListEl = document.getElementById('requestsList');
     const sortRequestsEl = document.getElementById('sortRequests');
@@ -461,6 +494,52 @@
         const percentage = (upvotes / totalVotes) * 100;
         return { percent: `${percentage.toFixed(0)}%`, class: '' };
     }
+    
+    // NEW: Smart-delete function to mark old requests for replication
+    async function smartDeleteOldRequests() {
+        // Run this check only once per browser session to avoid redundant database reads.
+        if (sessionStorage.getItem('replicationCheckDone')) {
+            console.log('Replication check already performed this session.');
+            return;
+        }
+
+        const db = firebase.firestore();
+        const REPLICATION_AGE_DAYS = 21;
+        const cutOffDate = new Date();
+        cutOffDate.setDate(cutOffDate.getDate() - REPLICATION_AGE_DAYS);
+        const cutOffTimestamp = firebase.firestore.Timestamp.fromDate(cutOffDate);
+
+        console.log(`Checking for active requests older than ${cutOffDate.toLocaleDateString()} to mark for replication.`);
+
+        try {
+            const oldRequestsQuery = db.collection('requests')
+                .where('status', '==', 'active')
+                .where('timestamp', '<', cutOffTimestamp);
+
+            const snapshot = await oldRequestsQuery.get();
+            if (snapshot.empty) {
+                console.log('No old requests to mark for replication.');
+                sessionStorage.setItem('replicationCheckDone', 'true');
+                return;
+            }
+
+            const batch = db.batch();
+            snapshot.docs.forEach(doc => {
+                const requestRef = db.collection('requests').doc(doc.id);
+                // We don't delete. We change the status so it can be reused.
+                batch.update(requestRef, { status: 'replication' }); 
+            });
+
+            await batch.commit();
+            console.log(`✅ Successfully marked ${snapshot.size} request(s) for replication.`);
+            sessionStorage.setItem('replicationCheckDone', 'true');
+
+        } catch (error) {
+            console.error("Error during smart-delete/replication process:", error);
+            // Don't set the session flag if there was an error, so it can try again.
+        }
+    }
+
 
     // --- Core Data Fetching and Display ---
     async function fetchAndDisplayRequests() {
@@ -478,6 +557,7 @@
             if (sortBy === 'deleted' && IS_ADMIN_ACCOUNT) {
                 query = query.where('status', '==', 'deleted').orderBy('deletedAt', 'desc');
             } else {
+                // IMPORTANT: We only display 'active' requests. 'replication' requests are hidden.
                 query = query.where('status', '==', 'active');
                 if (sortBy === 'newest') query = query.orderBy('timestamp', 'desc');
                 else if (sortBy === 'oldest') query = query.orderBy('timestamp', 'asc');
@@ -517,6 +597,16 @@
                 const typeInfo = { sound: { text: 'Sound' }, feature: { text: 'Feature' }, issue: { text: 'Issue' }}[request.type] || {text: 'General'};
                 let badges = `<span class="request-type-badge ${ {sound: 'badge-sound', feature: 'badge-feature', issue: 'badge-issue'}[request.type] || '' }">${typeInfo.text}</span>`;
                 if(request.type === 'sound' && request.soundCategory) badges += `<span class="request-type-badge ${ {Normal: 'badge-cat-normal', Explicit: 'badge-cat-explicit'}[request.soundCategory] || '' }">${request.soundCategory}</span>`;
+
+                // NEW: Add replication badge if applicable
+                if (request.isReplication && (isCreator || IS_ADMIN_ACCOUNT)) {
+                    badges += `
+                        <span class="request-type-badge badge-replication" title="This is a replicated request.">
+                            <i class="fas fa-sync-alt"></i> Replicated
+                        </span>
+                        <button class="replication-info-btn" title="What is this?">?</button>
+                    `;
+                }
 
                 const showUsername = !request.isAnonymous || IS_ADMIN_ACCOUNT;
                 
@@ -665,7 +755,7 @@
             }
 
             if (confirmDelete) {
-                // MODIFICATION: Calculate expiration date (4 weeks / 28 days from now)
+                // MODIFICATION: Calculate expiration date (4 weeks / 28 days from now) for Firestore TTL policy
                 const expiryDate = new Date();
                 expiryDate.setDate(expiryDate.getDate() + 28);
 
@@ -722,6 +812,9 @@
         const userInfoEmailEl = headerUserInfo.querySelector('.email');
 
         if (user) {
+            // NEW: Run the smart-delete check when a user logs in.
+            smartDeleteOldRequests();
+
             IS_ADMIN_ACCOUNT = ADMIN_EMAILS.includes(user.email);
             createRequestBtn.style.display = 'block';
             userInfoEmailEl.textContent = user.email;
@@ -754,11 +847,9 @@
     
     // --- Scheduling Logic ---
     function handleSubmissionSchedule() {
-        // Admins are not affected by the schedule
         if (IS_ADMIN_ACCOUNT) {
             createRequestBtn.disabled = false;
             createRequestBtn.title = 'Admin account: Submissions always open.';
-            // Set schedule modal text for admin view
             document.getElementById('scheduleStatus').textContent = 'ALWAYS OPEN (Admin)';
             document.getElementById('scheduleStatus').className = 'open';
             document.getElementById('countdownTimer').textContent = 'Your account is not affected by the schedule.';
@@ -766,10 +857,8 @@
         }
 
         const now = new Date();
-        const day = now.getDay();   // 0 = Sunday, 1 = Monday, ..., 5 = Friday, 6 = Saturday
+        const day = now.getDay();    // 0 = Sunday, 1 = Monday, ..., 5 = Friday, 6 = Saturday
         const hour = now.getHours();
-
-        // Submissions are closed on the weekend (Sat/Sun), after 3 PM on Friday, or before 6 AM on Monday.
         const isClosed = (day === 6 || day === 0) || (day === 5 && hour >= 15) || (day === 1 && hour < 6);
 
         const statusEl = document.getElementById('scheduleStatus');
@@ -778,29 +867,23 @@
         createRequestBtn.disabled = isClosed;
         
         if (!isClosed) {
-            // State: OPEN
             createRequestBtn.textContent = 'Create Request';
             createRequestBtn.title = 'Submissions are currently open.';
             statusEl.textContent = 'ACTIVE';
             statusEl.className = 'open';
-
-            // Calculate time until Friday 3 PM
             let nextClose = new Date(now);
             const daysUntilFriday = (5 - day + 7) % 7;
             nextClose.setDate(now.getDate() + daysUntilFriday);
             nextClose.setHours(15, 0, 0, 0);
             countdownEl.textContent = `Submissions close in: ${getCountdownText(nextClose)}`;
         } else {
-            // State: CLOSED
             createRequestBtn.textContent = 'Submissions Closed';
             createRequestBtn.title = 'Submissions are currently closed. See schedule for details.';
             statusEl.textContent = 'INACTIVE';
             statusEl.className = 'closed';
-
-            // Calculate time until Monday 6 AM
             let nextOpen = new Date(now);
             const daysUntilMonday = (1 - day + 7) % 7;
-            nextOpen.setDate(now.getDate() + (daysUntilMonday === 0 ? 7 : daysUntilMonday)); // Add 7 if it's already Monday but before 6 AM
+            nextOpen.setDate(now.getDate() + (daysUntilMonday === 0 ? 7 : daysUntilMonday)); 
             nextOpen.setHours(6, 0, 0, 0);
             countdownEl.textContent = `Submissions open in: ${getCountdownText(nextOpen)}`;
         }
@@ -809,13 +892,11 @@
     function getCountdownText(targetDate) {
         const now = new Date();
         let delta = Math.max(0, targetDate.getTime() - now.getTime()) / 1000;
-
         const days = Math.floor(delta / 86400);
         delta -= days * 86400;
         const hours = Math.floor(delta / 3600);
         delta -= hours * 3600;
         const minutes = Math.floor(delta / 60);
-        
         return `${days}d ${hours}h ${minutes}m`;
     }
 
@@ -832,10 +913,9 @@
 
         if (toggleSidebarBtn && sidebar) toggleSidebarBtn.addEventListener('click', () => sidebar.classList.toggle('collapsed'));
         if (refreshRequestsBtn) refreshRequestsBtn.addEventListener('click', fetchAndDisplayRequests);
-        
         if (scheduleBtn) scheduleBtn.addEventListener('click', () => scheduleModal.style.display = 'flex');
         
-        setInterval(handleSubmissionSchedule, 60000); // Check the schedule every minute
+        setInterval(handleSubmissionSchedule, 60000);
     });
 
     const handleLogout = () => firebase.auth().signOut().then(() => location.href = '../login.html');
@@ -910,7 +990,17 @@
                 }
             }
 
-            const submission = {
+            // NEW: Replication Logic
+            // 1. Check if a request marked for replication is available.
+            const replicationQuery = db.collection('requests')
+                .where('status', '==', 'replication')
+                .orderBy('timestamp', 'asc') // Get the oldest one first
+                .limit(1);
+            const replicationSnapshot = await replicationQuery.get();
+            const isReplicating = !replicationSnapshot.empty;
+
+            // 2. Prepare the full data object for the new/updated request.
+            const submissionData = {
                 userId: currentUser.uid,
                 username: currentUserProfile.username || 'Anonymous',
                 email: currentUser.email,
@@ -919,16 +1009,35 @@
                 description: document.getElementById('requestDescriptionForm').value,
                 isAnonymous: anonymousCheckbox.checked,
                 timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                upvotes: 0, downvotes: 0, upvotedBy: [], downvotedBy: [],
-                status: 'active',
-                edited: false
+                upvotes: 0,
+                downvotes: 0,
+                upvotedBy: [],
+                downvotedBy: [],
+                status: 'active', // Always set to active
+                edited: false,
+                isReplication: isReplicating,
+                // Explicitly nullify fields that might exist on an old record to clean it up
+                deletionReason: null, 
+                deletedAt: null,
+                expiresAt: null,
             };
-            if (submission.type === 'sound') {
-                submission.soundCategory = document.getElementById('soundCategory').value;
-                submission.soundUrl = document.getElementById('soundUrl').value;
+
+            if (submissionData.type === 'sound') {
+                submissionData.soundCategory = document.getElementById('soundCategory').value;
+                submissionData.soundUrl = document.getElementById('soundUrl').value || null;
             }
 
-            await db.collection('requests').add(submission);
+            // 3. Either update the old record (replicate) or create a new one.
+            if (isReplicating) {
+                const replicationDocRef = replicationSnapshot.docs[0].ref;
+                console.log(`♻️ Replicating request. Reusing document ID: ${replicationDocRef.id}`);
+                // Use .set() to completely overwrite the old document with the new data structure.
+                await replicationDocRef.set(submissionData);
+            } else {
+                console.log('➕ No replication card available. Creating a new request.');
+                await db.collection('requests').add(submissionData);
+            }
+            
             formModal.style.display = 'none';
             fetchAndDisplayRequests();
         } catch (error) {
@@ -961,6 +1070,12 @@
         if (target.closest('.delete-btn-card')) {
             e.stopPropagation();
             handleDeleteRequest(requestId);
+            return;
+        }
+        // NEW: Event listener for the replication info button
+        if (target.classList.contains('replication-info-btn')) {
+            e.stopPropagation(); // Prevent the details modal from opening
+            replicationInfoModal.style.display = 'flex';
             return;
         }
         
