@@ -60,7 +60,24 @@
     .header-user-info .username { font-family: PrimaryFont, sans-serif; font-size: 1.2em; font-weight: bold; color: #333; }
     .header-user-info .email { font-family: SecondaryFont, sans-serif; font-size: 0.9em; color: #777; }
     
-    .header-actions { display: flex; gap: 10px; }
+    .header-actions { display: flex; align-items: center; gap: 10px; } /* MODIFIED: Added align-items */
+    
+    /* --- NEW: Style for the request counter --- */
+    #requestCounter {
+        margin-right: 5px; /* Creates a small gap between it and the next button */
+        font-family: PrimaryFont, sans-serif;
+        font-size: 0.9em;
+        font-weight: 600;
+        color: #495057;
+        background-color: #f1f3f5;
+        padding: 12px 15px;
+        border-radius: 8px;
+        border: 1px solid #dee2e6;
+        display: none; /* Hidden by default; JS will show it for logged-in users */
+        transition: opacity 0.3s ease;
+        white-space: nowrap;
+    }
+
     #createRequestBtn, #scheduleBtn {
         border: none; color: #fff; padding: 12px 20px;
         border-radius: 8px; font-family: PrimaryFont, sans-serif; cursor: pointer; transition: all 0.3s ease;
@@ -306,6 +323,7 @@
       <div class="page-header">
           <div class="header-user-info" id="headerUserInfo"><div class="username">Loading...</div><div class="email"></div></div>
           <div class="header-actions">
+              <div id="requestCounter"></div>
               <button id="scheduleBtn" class="btn">View Schedule</button>
               <button id="createRequestBtn" class="btn">Create Request</button>
           </div>
@@ -438,7 +456,6 @@
   <script>
     // --- START OF FULL SCRIPT ---
     const ADMIN_EMAILS = ["4simpleproblems@gmail.com", "belkwy30@minerva.sparcc.org", "admin1@example.com", "admin2@example.com", "admin3@example.com"];
-    // UPDATED: Daily request limit changed to 3
     const MAX_REQUESTS_PER_DAY = 3; 
     let IS_ADMIN_ACCOUNT = false;
     let currentUser = null;
@@ -456,7 +473,6 @@
     const scheduleModal = document.getElementById('scheduleModal');
     const formModal = document.getElementById('formModal');
     const detailsModal = document.getElementById('detailsModal');
-    // NEW: DOM element for replication info modal
     const replicationInfoModal = document.getElementById('replicationInfoModal');
     const requestForm = document.getElementById('requestForm');
     const requestsListEl = document.getElementById('requestsList');
@@ -473,6 +489,7 @@
     const toggleSidebarBtn = document.getElementById('toggleSidebar');
     const logoutBtn = document.getElementById('logoutBtn');
     const signOutLink = document.getElementById('signOutLink');
+    const requestCounterEl = document.getElementById('requestCounter'); // NEW: Request counter element
 
     // --- Utility Functions ---
     function escapeHTML(str) {
@@ -495,9 +512,8 @@
         return { percent: `${percentage.toFixed(0)}%`, class: '' };
     }
     
-    // NEW: Smart-delete function to mark old requests for replication
+    // --- Smart-delete function to mark old requests for replication ---
     async function smartDeleteOldRequests() {
-        // Run this check only once per browser session to avoid redundant database reads.
         if (sessionStorage.getItem('replicationCheckDone')) {
             console.log('Replication check already performed this session.');
             return;
@@ -537,6 +553,50 @@
         } catch (error) {
             console.error("Error during smart-delete/replication process:", error);
             // Don't set the session flag if there was an error, so it can try again.
+        }
+    }
+
+    // --- NEW: Function to check and display the daily request count ---
+    async function updateRequestCounter() {
+        if (!currentUser) {
+            requestCounterEl.style.display = 'none';
+            return;
+        }
+
+        if (IS_ADMIN_ACCOUNT) {
+            requestCounterEl.innerHTML = `Admin Requests: <strong style="margin-left: 5px; color: #6720bd;">∞</strong>`;
+            requestCounterEl.style.display = 'flex';
+            return;
+        }
+        
+        const db = firebase.firestore();
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+
+        try {
+            requestCounterEl.style.display = 'flex';
+            requestCounterEl.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`; // Loading state
+
+            const userRequestsToday = await db.collection('requests')
+                .where('userId', '==', currentUser.uid)
+                .where('timestamp', '>=', today)
+                .where('timestamp', '<', tomorrow)
+                .get();
+
+            const count = userRequestsToday.size;
+            requestCounterEl.innerHTML = `Requests: <strong style="margin-left: 5px;">${count} / ${MAX_REQUESTS_PER_DAY}</strong>`;
+
+            // This check runs after the schedule check. If the button is not already disabled by the schedule, check the count.
+            if (!createRequestBtn.disabled && count >= MAX_REQUESTS_PER_DAY) {
+                createRequestBtn.disabled = true;
+                createRequestBtn.title = `You have reached the daily limit of ${MAX_REQUESTS_PER_DAY} requests.`;
+            }
+
+        } catch (error) {
+            console.error("Error fetching request count:", error);
+            requestCounterEl.innerHTML = `<span title="${error.message}">Count Error</span>`;
         }
     }
 
@@ -812,7 +872,7 @@
         const userInfoEmailEl = headerUserInfo.querySelector('.email');
 
         if (user) {
-            // NEW: Run the smart-delete check when a user logs in.
+            // Run the smart-delete check when a user logs in.
             smartDeleteOldRequests();
 
             IS_ADMIN_ACCOUNT = ADMIN_EMAILS.includes(user.email);
@@ -840,19 +900,23 @@
             userInfoEmailEl.textContent = 'Please log in to participate.';
             sidebarUserEmailEl.textContent = 'Please log in.';
             sortDeletedOption.style.display = 'none';
+            requestCounterEl.style.display = 'none'; // MODIFIED: Explicitly hide counter on logout
         }
         fetchAndDisplayRequests();
-        handleSubmissionSchedule(); // Initial check for schedule
+        handleSubmissionSchedule(); // MODIFIED: This now also handles the initial counter display
     });
     
     // --- Scheduling Logic ---
+    // MODIFIED: This function now calls the request counter update function.
     function handleSubmissionSchedule() {
         if (IS_ADMIN_ACCOUNT) {
             createRequestBtn.disabled = false;
+            createRequestBtn.textContent = 'Create Request';
             createRequestBtn.title = 'Admin account: Submissions always open.';
             document.getElementById('scheduleStatus').textContent = 'ALWAYS OPEN (Admin)';
             document.getElementById('scheduleStatus').className = 'open';
             document.getElementById('countdownTimer').textContent = 'Your account is not affected by the schedule.';
+            updateRequestCounter(); // Update the counter to show "Admin"
             return;
         }
 
@@ -864,9 +928,9 @@
         const statusEl = document.getElementById('scheduleStatus');
         const countdownEl = document.getElementById('countdownTimer');
         
-        createRequestBtn.disabled = isClosed;
-        
         if (!isClosed) {
+            // Schedule is OPEN
+            createRequestBtn.disabled = false; // Enable button (counter check will disable it if needed)
             createRequestBtn.textContent = 'Create Request';
             createRequestBtn.title = 'Submissions are currently open.';
             statusEl.textContent = 'ACTIVE';
@@ -876,7 +940,10 @@
             nextClose.setDate(now.getDate() + daysUntilFriday);
             nextClose.setHours(15, 0, 0, 0);
             countdownEl.textContent = `Submissions close in: ${getCountdownText(nextClose)}`;
+            updateRequestCounter(); // Check and display the request count
         } else {
+            // Schedule is CLOSED
+            createRequestBtn.disabled = true;
             createRequestBtn.textContent = 'Submissions Closed';
             createRequestBtn.title = 'Submissions are currently closed. See schedule for details.';
             statusEl.textContent = 'INACTIVE';
@@ -886,6 +953,7 @@
             nextOpen.setDate(now.getDate() + (daysUntilMonday === 0 ? 7 : daysUntilMonday)); 
             nextOpen.setHours(6, 0, 0, 0);
             countdownEl.textContent = `Submissions open in: ${getCountdownText(nextOpen)}`;
+            requestCounterEl.style.display = 'none'; // Hide the counter when submissions are closed
         }
     }
 
@@ -925,7 +993,8 @@
     createRequestBtn.addEventListener('click', () => {
         if (!currentUser) { alert('Please log in to create a request.'); return; }
         if (createRequestBtn.disabled) {
-            alert('Submissions are currently closed. Please check the schedule for opening times.');
+            // The title will already have the correct reason (closed or limit reached)
+            alert(createRequestBtn.title);
             return;
         }
         requestForm.reset();
@@ -965,6 +1034,7 @@
         });
     }
 
+    // MODIFIED: Calls the counter update function on successful submission.
     requestForm.addEventListener('submit', async (e) => {
         e.preventDefault();
         const submitBtn = document.getElementById('submitRequestBtn');
@@ -973,13 +1043,14 @@
         formStatusEl.style.display = 'none';
 
         const db = firebase.firestore();
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
-
+        
         try {
+            // The check here remains as a final safeguard before writing to the database.
             if (!IS_ADMIN_ACCOUNT) {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const tomorrow = new Date(today);
+                tomorrow.setDate(tomorrow.getDate() + 1);
                 const userRequestsToday = await db.collection('requests')
                     .where('userId', '==', currentUser.uid)
                     .where('timestamp', '>=', today)
@@ -1040,6 +1111,7 @@
             
             formModal.style.display = 'none';
             fetchAndDisplayRequests();
+            updateRequestCounter(); // Refresh the counter immediately after submission
         } catch (error) {
             console.error("Form submission error:", error);
             formStatusEl.textContent = `Error: ${error.message}`;
