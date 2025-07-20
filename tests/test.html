@@ -207,12 +207,15 @@
     }
     .modal-overlay { background: rgba(0,0,0,0.6); z-index: 1000; display:flex; justify-content: center; align-items: center; }
     #menu-overlay { background-color: rgba(0,0,0,0.1); z-index: 1000; }
-    .modal-overlay.show, #menu-overlay.show { display: block; opacity: 1; pointer-events: auto; }
+    /* FIXED: Changed display: block to display: flex to properly center modals */
+    .modal-overlay.show, #menu-overlay.show { opacity: 1; pointer-events: auto; }
+    #menu-overlay.show { display: block; } /* Overlay can be block */
+    .modal-overlay.show { display: flex; } /* Modals need flex for centering */
     
     .modal-content {
         background: white; padding: 20px; border-radius: 15px; width: 100%;
         box-shadow: 0 5px 25px rgba(0,0,0,0.2); position: relative; max-height: 90vh; overflow-y: auto;
-        max-width: 600px; /* Added max-width for consistency */
+        max-width: 600px;
     }
     
     #adminStatusMenu {
@@ -482,24 +485,46 @@
         } catch (error) { console.error("Firestore fetch failed:", error); requestsListEl.innerHTML = `<li>Error loading requests: ${error.message}</li>`; }
     }
     
-    async function handleVote(requestId, isUpvote) { if (!currentUser) { alert("You must be logged in to vote."); return; } const db = firebase.firestore(); const requestRef = db.collection('requests').doc(requestId); try { await db.runTransaction(async (transaction) => { const doc = await transaction.get(requestRef); if (!doc.exists) throw "Document not found."; const data = doc.data(); if (data.userId === currentUser.uid) { alert("You cannot vote on your own request."); return; } if (data.status === 'recyclable') return; let { upvotedBy = [], downvotedBy = [] } = data; const upvoteIndex = upvotedBy.indexOf(currentUser.uid); const downvoteIndex = downvotedBy.indexOf(currentUser.uid); if (isUpvote) { if (upvoteIndex > -1) upvotedBy.splice(upvoteIndex, 1); else upvotedBy.push(currentUser.uid); if (downvoteIndex > -1) downvotedBy.splice(downvoteIndex, 1); } else { if (downvoteIndex > -1) downvotedBy.splice(downvoteIndex, 1); else downvotedBy.push(currentUser.uid); if (upvoteIndex > -1) upvotedBy.splice(upvoteIndex, 1); } transaction.update(requestRef, { upvotedBy, downvotedBy, upvotes: upvotedBy.length, downvotes: downvotedBy.length }); }); fetchAndDisplayRequests(); } catch (error) { console.error("Vote failed: ", error); } }
-    async function handleDeleteRequest(requestId) { const db = firebase.firestore(); const requestRef = db.collection('requests').doc(requestId); try { const doc = await requestRef.get(); if (!doc.exists) return; const isCreator = currentUser && doc.data().userId === currentUser.uid; if (!IS_ADMIN_ACCOUNT && !isCreator) { alert("You do not have permission to delete this request."); return; } if (confirm("Are you sure you want to PERMANENTLY delete this request? This cannot be undone.")) { await requestRef.delete(); closeAdminMenu(); fetchAndDisplayRequests(); } } catch (error) { console.error("Error deleting request:", error); alert("An error occurred while deleting the request."); } }
-    async function updateAdminStatus(requestId, status) { if (!IS_ADMIN_ACCOUNT) return; const db = firebase.firestore(); const requestRef = db.collection('requests').doc(requestId); try { await requestRef.update({ adminStatus: status, adminStatusUpdatedAt: firebase.firestore.FieldValue.serverTimestamp() }); fetchAndDisplayRequests(); } catch (error) { console.error("Error updating admin status:", error); alert("Failed to update status."); } }
-    
+    // --- UI Interaction & Event Listeners ---
     function openAdminMenu(button, requestId) { const rect = button.getBoundingClientRect(); adminStatusMenu.style.top = `${rect.bottom + 8}px`; adminStatusMenu.style.left = `${rect.right - adminStatusMenu.offsetWidth}px`; adminStatusMenu.dataset.requestId = requestId; menuOverlay.classList.add('show'); adminStatusMenu.classList.add('show'); }
     function closeAdminMenu() { menuOverlay.classList.remove('show'); adminStatusMenu.classList.remove('show'); }
     function openDetailsModal(requestId) { const modal = detailsModal; firebase.firestore().collection('requests').doc(requestId).get().then(doc => { if (!doc.exists) return; const data = doc.data(); modal.querySelector('#modalTitle').textContent = censorText(data.title); modal.querySelector('#modalDescription').textContent = censorText(data.description); const urlContainer = modal.querySelector('#modalUrlContainer'); if (data.type === 'sound' && data.soundUrl) { const link = urlContainer.querySelector('a'); let fullUrl = data.soundUrl; if (!fullUrl.startsWith('http')) fullUrl = 'https://' + fullUrl; link.href = fullUrl; link.textContent = data.soundUrl; urlContainer.style.display = 'block'; } else { urlContainer.style.display = 'none'; } modal.classList.add('show'); }).catch(err => console.error("Error opening details:", err)); }
 
-    // --- Page Setup & Event Listeners ---
+    requestsListEl.addEventListener('click', (e) => {
+        const target = e.target;
+        const requestItem = target.closest('.request-item');
+        if (!requestItem) return;
+        const button = target.closest('button');
+        const requestId = requestItem.dataset.id;
+        if (button) {
+            e.stopPropagation();
+            if (button.matches('.vote-button-redesigned')) handleVote(requestId, button.classList.contains('up'));
+            else if (button.matches('.status-menu-btn')) openAdminMenu(button, requestId);
+            else if (button.matches('.delete-btn-card')) handleDeleteRequest(requestId);
+        } else if (!requestItem.classList.contains('recyclable-item')) {
+            openDetailsModal(requestId);
+        }
+    });
+
+    adminStatusMenu.addEventListener('click', (e) => { if (e.target.tagName === 'LI') { const requestId = adminStatusMenu.dataset.requestId; const status = e.target.dataset.status; if (requestId && status) { const colors = { accepted: '#28a745', working: '#ffc107', acknowledged: '#007bff', denied: '#dc3545' }; createParticleEffect(e, colors[status]); updateAdminStatus(requestId, status); } } closeAdminMenu(); });
+    menuOverlay.addEventListener('click', closeAdminMenu);
+    
+    async function handleVote(requestId, isUpvote) { if (!currentUser) { alert("You must be logged in to vote."); return; } const db = firebase.firestore(); const requestRef = db.collection('requests').doc(requestId); try { await db.runTransaction(async (transaction) => { const doc = await transaction.get(requestRef); if (!doc.exists) throw "Document not found."; const data = doc.data(); if (data.userId === currentUser.uid) { alert("You cannot vote on your own request."); return; } if (data.status === 'recyclable') return; let { upvotedBy = [], downvotedBy = [] } = data; const upvoteIndex = upvotedBy.indexOf(currentUser.uid); const downvoteIndex = downvotedBy.indexOf(currentUser.uid); if (isUpvote) { if (upvoteIndex > -1) upvotedBy.splice(upvoteIndex, 1); else upvotedBy.push(currentUser.uid); if (downvoteIndex > -1) downvotedBy.splice(downvoteIndex, 1); } else { if (downvoteIndex > -1) downvotedBy.splice(downvoteIndex, 1); else downvotedBy.push(currentUser.uid); if (upvoteIndex > -1) upvotedBy.splice(upvoteIndex, 1); } transaction.update(requestRef, { upvotedBy, downvotedBy, upvotes: upvotedBy.length, downvotes: downvotedBy.length }); }); fetchAndDisplayRequests(); } catch (error) { console.error("Vote failed: ", error); } }
+    async function handleDeleteRequest(requestId) { const db = firebase.firestore(); const requestRef = db.collection('requests').doc(requestId); try { const doc = await requestRef.get(); if (!doc.exists) return; const isCreator = currentUser && doc.data().userId === currentUser.uid; if (!IS_ADMIN_ACCOUNT && !isCreator) { alert("You do not have permission to delete this request."); return; } if (confirm("Are you sure you want to PERMANENTLY delete this request? This cannot be undone.")) { await requestRef.delete(); closeAdminMenu(); fetchAndDisplayRequests(); } } catch (error) { console.error("Error deleting request:", error); alert("An error occurred while deleting the request."); } }
+    async function updateAdminStatus(requestId, status) { if (!IS_ADMIN_ACCOUNT) return; const db = firebase.firestore(); const requestRef = db.collection('requests').doc(requestId); try { await requestRef.update({ adminStatus: status, adminStatusUpdatedAt: firebase.firestore.FieldValue.serverTimestamp() }); fetchAndDisplayRequests(); } catch (error) { console.error("Error updating admin status:", error); alert("Failed to update status."); } }
+
+    // --- Page Setup & Authentication ---
     document.addEventListener('DOMContentLoaded', () => {
         firebase.auth().onAuthStateChanged(async user => {
             currentUser = user;
             const headerUserInfo = document.getElementById('headerUserInfo');
             const sidebarUserNameEl = document.getElementById('userName');
             const sidebarUserEmailEl = document.getElementById('userEmail');
+            const createRequestBtn = document.getElementById('createRequestBtn');
             if (user) {
                 IS_ADMIN_ACCOUNT = ADMIN_EMAILS.includes(user.email);
                 if(IS_ADMIN_ACCOUNT) markOldRequestsForRecycling();
+                createRequestBtn.style.display = 'block';
                 headerUserInfo.querySelector('.username').textContent = 'Loading...';
                 headerUserInfo.querySelector('.email').textContent = user.email;
                 sidebarUserEmailEl.textContent = user.email;
@@ -512,7 +537,7 @@
                     currentUserProfile.username = null; headerUserInfo.querySelector('.username').textContent = 'No Username Set'; sidebarUserNameEl.textContent = 'User';
                 }
             } else {
-                IS_ADMIN_ACCOUNT = false; currentUserProfile.username = null;
+                IS_ADMIN_ACCOUNT = false; currentUserProfile.username = null; createRequestBtn.style.display = 'none';
                 headerUserInfo.querySelector('.username').textContent = 'Not Logged In';
                 headerUserInfo.querySelector('.email').textContent = 'Please log in to participate.';
                 sidebarUserNameEl.textContent = 'Not Logged In';
@@ -524,7 +549,6 @@
 
         fetch('https://4simpleproblems.github.io/Protify/protify-list.json').then(res => res.ok ? res.json() : Promise.reject('Network error')).then(data => { badWordsList = data.words || []; if (currentUser) fetchAndDisplayRequests(); }).catch(err => console.error('Failed to load profanity list:', err));
         
-        // Static event listeners
         document.getElementById('toggleSidebar')?.addEventListener('click', () => sidebar.classList.toggle('collapsed'));
         document.getElementById('refreshRequestsBtn')?.addEventListener('click', fetchAndDisplayRequests);
         document.getElementById('scheduleBtn')?.addEventListener('click', () => scheduleModal.classList.add('show'));
@@ -534,14 +558,11 @@
         document.getElementById('sortRequests').addEventListener('change', fetchAndDisplayRequests);
         document.getElementById('searchBar').addEventListener('input', () => filterRequests());
 
-        requestsListEl.addEventListener('click', (e) => { const target = e.target; const requestItem = target.closest('.request-item'); if (!requestItem) return; const button = target.closest('button'); const requestId = requestItem.dataset.id; if (button) { e.stopPropagation(); if (button.matches('.vote-button-redesigned')) handleVote(requestId, button.classList.contains('up')); else if (button.matches('.status-menu-btn')) openAdminMenu(button, requestId); else if (button.matches('.delete-btn-card')) handleDeleteRequest(requestId); } else if (!requestItem.classList.contains('recyclable-item')) { openDetailsModal(requestId); } });
-        adminStatusMenu.addEventListener('click', (e) => { if (e.target.tagName === 'LI') { const requestId = adminStatusMenu.dataset.requestId; const status = e.target.dataset.status; if (requestId && status) { const colors = { accepted: '#28a745', working: '#ffc107', acknowledged: '#007bff', denied: '#dc3545' }; createParticleEffect(e, colors[status]); updateAdminStatus(requestId, status); } } closeAdminMenu(); });
-        menuOverlay.addEventListener('click', closeAdminMenu);
         setInterval(handleSubmissionSchedule, 60000);
     });
     
     function filterRequests() { const query = document.getElementById('searchBar').value.toLowerCase(); document.querySelectorAll('#requestsList .request-item').forEach(item => { item.style.display = item.textContent.toLowerCase().includes(query) ? 'flex' : 'none'; }); }
-    function handleSubmissionSchedule() { if (IS_ADMIN_ACCOUNT) { document.getElementById('createRequestBtn').disabled = false; return; } const now = new Date(); const day = now.getDay(); const hour = now.getHours(); const isClosed = (day === 6 || day === 0) || (day === 5 && hour >= 15) || (day === 1 && hour < 6); document.getElementById('createRequestBtn').disabled = isClosed; /* Update countdown */ }
+    function handleSubmissionSchedule() { const createRequestBtn = document.getElementById('createRequestBtn'); const statusEl = document.getElementById('scheduleStatus'); const countdownEl = document.getElementById('countdownTimer'); if (IS_ADMIN_ACCOUNT) { createRequestBtn.disabled = false; statusEl.textContent = 'ALWAYS OPEN (Admin)'; statusEl.className = 'open'; countdownEl.textContent = 'Your account is not affected by the schedule.'; return; } const now = new Date(); const day = now.getDay(); const hour = now.getHours(); const isClosed = (day === 6 || day === 0) || (day === 5 && hour >= 15) || (day === 1 && hour < 6); createRequestBtn.disabled = isClosed; if (!isClosed) { createRequestBtn.title = 'Submissions are currently open.'; statusEl.textContent = 'ACTIVE'; statusEl.className = 'open'; } else { createRequestBtn.title = 'Submissions are currently closed.'; statusEl.textContent = 'INACTIVE'; statusEl.className = 'closed'; } }
     
     document.getElementById('createRequestBtn').addEventListener('click', () => { if (!currentUser) { alert('Please log in to create a request.'); return; } if (document.getElementById('createRequestBtn').disabled) { alert('Submissions are currently closed. Please check the schedule.'); return; } document.getElementById('requestForm').reset(); document.getElementById('soundOptionsContainer').style.display = 'none'; document.getElementById('formStatus').style.display = 'none'; const anonymousCheckbox = document.getElementById('anonymousCheckbox'); if (currentUserProfile.username) { anonymousCheckbox.checked = false; anonymousCheckbox.disabled = false; document.getElementById('anonymousNote').style.display = 'none'; } else { anonymousCheckbox.checked = true; anonymousCheckbox.disabled = true; document.getElementById('anonymousNote').style.display = 'block'; } formModal.classList.add('show'); });
     document.getElementById('requestType').addEventListener('change', (e) => { document.getElementById('soundOptionsContainer').style.display = e.target.value === 'sound' ? 'flex' : 'none'; });
