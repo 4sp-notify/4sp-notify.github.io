@@ -69,9 +69,6 @@
         .playlist-card:hover { transform: translateY(-5px); box-shadow: 0 8px 35px rgba(0,0,0,0.12); }
         .playlist-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; }
         .playlist-info { flex-grow: 1; min-width: 0; }
-        .playlist-name, .playlist-description { white-space: nowrap; overflow: hidden; margin: 0; }
-        .playlist-name { font-size: 1.6em; font-weight: bold; color: var(--v4-text-primary); }
-        .playlist-description { font-size: 1em; color: var(--v4-text-secondary); font-family: var(--v4-font-secondary); }
         .playlist-card-actions { display: flex; gap: 10px; flex-shrink: 0; }
         .action-btn { background: none; border: 1px solid var(--v4-border-light); padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; }
         .action-btn:hover { border-color: var(--v4-purple-accent); background: #f0e8ff; }
@@ -136,11 +133,24 @@
         #applyEqTuneBtn:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(103, 32, 189, 0.3); }
 
         /* NEW APPLE-STYLE MARQUEE */
-        .marquee-v2-container { overflow: hidden; white-space: nowrap; width: 100%; }
-        .marquee-v2-inner { display: inline-block; }
-        .marquee-v2-inner.is-scrolling { animation: marquee-scroll-v2 15s linear infinite; }
-        .marquee-v2-text { display: inline-block; padding-right: 3em; }
-        @keyframes marquee-scroll-v2 {
+        .marquee-container {
+            overflow: hidden;
+            white-space: nowrap;
+            width: 100%;
+        }
+        .playlist-name { font-size: 1.6em; font-weight: bold; color: var(--v4-text-primary); }
+        .playlist-description { font-size: 1em; color: var(--v4-text-secondary); font-family: var(--v4-font-secondary); }
+        .marquee-content-wrapper {
+            display: inline-block;
+        }
+        .marquee-content-wrapper.is-scrolling {
+            animation: marquee-scroll 15s linear infinite;
+        }
+        .marquee-content-wrapper > span {
+            display: inline-block;
+            padding-right: 3em;
+        }
+        @keyframes marquee-scroll {
             from { transform: translateX(0); }
             to { transform: translateX(-50%); }
         }
@@ -227,7 +237,7 @@
             <div class="modal-body">
                 <input type="hidden" id="playlistIdInput">
                 <div class="form-group"> <label for="playlistNameInput">Playlist Name</label> <input type="text" id="playlistNameInput" maxlength="36" placeholder="e.g., My Favorite Sounds"> </div>
-                <div class="form-group"> <label for="playlistDescriptionInput">Description (Optional)</label> <textarea id="playlistDescriptionInput" maxlength="72" placeholder="A short description of your playlist"></textarea> </div>
+                <div class="form-group"> <label for="playlistDescriptionInput">Description (Optional)</label> <textarea id="playlistDescriptionInput" maxlength="108" placeholder="A short description of your playlist"></textarea> </div>
                 <div class="form-group"> <label>Select Sounds</label> <div class="sound-selection-grid sound-buttons-grid-v4"></div> </div>
             </div>
             <div class="modal-footer"> <button id="closeModalBtn" class="btn-secondary">Cancel</button> <button id="savePlaylistBtn" class="btn-primary">Save Playlist</button> </div>
@@ -238,31 +248,28 @@
 
     <script>
     const dbRef_ = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
-    const marqueeEls_ = document.querySelectorAll('.marquee-content');
-    firebase.auth().onAuthStateChanged(async user => { if (!user) { window.location.href = '../login.html'; } else { const userEmailEl = document.getElementById('userEmail'); const userNameEl = document.getElementById('userName'); if (userEmailEl) userEmailEl.textContent = user.email; if (userNameEl) { try { const doc = await dbRef_().get(); userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User'); } catch (error) { userNameEl.textContent = 'User'; } } updateMarquees_(); } });
+    const sidebarMarqueeEls_ = document.querySelectorAll('.user-info .marquee-content');
+    firebase.auth().onAuthStateChanged(async user => { if (!user) { window.location.href = '../login.html'; } else { const userEmailEl = document.getElementById('userEmail'); const userNameEl = document.getElementById('userName'); if (userEmailEl) userEmailEl.textContent = user.email; if (userNameEl) { try { const doc = await dbRef_().get(); userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User'); } catch (error) { userNameEl.textContent = 'User'; } } initializeMarquees(); } });
     document.getElementById('logoutBtn')?.addEventListener('click', () => { firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
     document.getElementById('signOutLink')?.addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
     const sidebar_ = document.getElementById('sidebar');
     const toggleSidebarBtn_ = document.getElementById('toggleSidebar');
-    if (toggleSidebarBtn_ && sidebar_) { toggleSidebarBtn_.addEventListener('click', () => { sidebar_.classList.toggle('collapsed'); setTimeout(updateMarquees_, 550); }); }
+    if (toggleSidebarBtn_ && sidebar_) { toggleSidebarBtn_.addEventListener('click', () => { sidebar_.classList.toggle('collapsed'); setTimeout(initializeMarquees, 550); }); }
     
-    function updateMarquees_() {
-        // Sidebar marquee
-        marqueeEls_.forEach(el => { if (!el || !el.parentElement) return; const parent = el.parentElement; const overflow = el.scrollWidth > parent.clientWidth; const shouldScroll = sidebar_.classList.contains('collapsed') || (overflow && !sidebar_.classList.contains('collapsed')); el.classList.toggle('marquee-active', shouldScroll); if (!overflow && !sidebar_.classList.contains('collapsed')) { el.classList.remove('marquee-active'); } });
-        
-        // New Playlist Card Marquee
-        document.querySelectorAll('.marquee-v2-container').forEach(container => {
-            const inner = container.querySelector('.marquee-v2-inner');
-            if (!inner) return;
-            inner.classList.remove('is-scrolling');
-            const textElement = inner.querySelector('.marquee-v2-text');
-            if (!textElement) return;
-            if (textElement.offsetWidth > container.offsetWidth) {
-                inner.classList.add('is-scrolling');
+    function initializeMarquees() {
+        sidebarMarqueeEls_.forEach(el => { if (!el || !el.parentElement) return; const parent = el.parentElement; const overflow = el.scrollWidth > parent.clientWidth; const shouldScroll = sidebar_.classList.contains('collapsed') || (overflow && !sidebar_.classList.contains('collapsed')); el.classList.toggle('marquee-active', shouldScroll); if (!overflow && !sidebar_.classList.contains('collapsed')) { el.classList.remove('marquee-active'); } });
+        document.querySelectorAll('.playlist-card .marquee-container').forEach(container => {
+            const wrapper = container.querySelector('.marquee-content-wrapper');
+            if (!wrapper) return;
+            wrapper.classList.remove('is-scrolling');
+            const firstSpan = wrapper.querySelector('span');
+            if (!firstSpan) return;
+            if (firstSpan.offsetWidth > container.offsetWidth) {
+                wrapper.classList.add('is-scrolling');
             }
         });
     }
-    window.addEventListener('resize', updateMarquees_);
+    window.addEventListener('resize', initializeMarquees);
 
     document.addEventListener('DOMContentLoaded', () => {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -317,8 +324,8 @@
             const container = document.getElementById('playlistsView');
             container.innerHTML = '';
             if (playlists.length === 0) { container.innerHTML = `<p style="text-align:center; color: var(--v4-text-secondary); margin-top: 20px;">You haven't created any playlists yet. Click a button above to get started!</p>`; return; }
-            playlists.forEach(playlist => { const card = document.createElement('div'); card.className = 'playlist-card'; card.dataset.playlistId = playlist.id; card.innerHTML = `<div class="playlist-card-header"><div class="playlist-info"><div class="playlist-name marquee-v2-container"><div class="marquee-v2-inner"><span class="marquee-v2-text">${playlist.name}</span><span class="marquee-v2-text">${playlist.name}</span></div></div><div class="playlist-description marquee-v2-container"><div class="marquee-v2-inner"><span class="marquee-v2-text">${playlist.description || 'No description'}</span><span class="marquee-v2-text">${playlist.description || 'No description'}</span></div></div></div><div class="playlist-card-actions"><button class="action-btn share" title="Share Playlist">🔗</button><button class="action-btn edit" title="Edit Playlist">✏️</button><button class="action-btn delete" title="Delete Playlist">🗑️</button></div></div>`; card.querySelector('.playlist-info').addEventListener('click', () => renderPlaylistSoundboard(playlist.id)); card.querySelector('.action-btn.share').addEventListener('click', (e) => { e.stopPropagation(); exportPlaylist(playlist.id); }); card.querySelector('.action-btn.edit').addEventListener('click', (e) => { e.stopPropagation(); openModal(playlist.id); }); card.querySelector('.action-btn.delete').addEventListener('click', (e) => { e.stopPropagation(); deletePlaylist(playlist.id); }); container.appendChild(card); });
-            updateMarquees_();
+            playlists.forEach(playlist => { const card = document.createElement('div'); card.className = 'playlist-card'; card.dataset.playlistId = playlist.id; card.innerHTML = `<div class="playlist-card-header"><div class="playlist-info"><div class="marquee-container playlist-name"><div class="marquee-content-wrapper"><span>${playlist.name}</span><span>${playlist.name}</span></div></div><div class="marquee-container playlist-description"><div class="marquee-content-wrapper"><span>${playlist.description || 'No description'}</span><span>${playlist.description || 'No description'}</span></div></div></div><div class="playlist-card-actions"><button class="action-btn share" title="Share Playlist">🔗</button><button class="action-btn edit" title="Edit Playlist">✏️</button><button class="action-btn delete" title="Delete Playlist">🗑️</button></div></div>`; card.querySelector('.playlist-info').addEventListener('click', () => renderPlaylistSoundboard(playlist.id)); card.querySelector('.action-btn.share').addEventListener('click', (e) => { e.stopPropagation(); exportPlaylist(playlist.id); }); card.querySelector('.action-btn.edit').addEventListener('click', (e) => { e.stopPropagation(); openModal(playlist.id); }); card.querySelector('.action-btn.delete').addEventListener('click', (e) => { e.stopPropagation(); deletePlaylist(playlist.id); }); container.appendChild(card); });
+            initializeMarquees();
         }
 
         function renderPlaylistSoundboard(playlistId) {
@@ -395,7 +402,7 @@
             reader.readAsText(file);
         }
 
-        async function initialize() {
+        async function initializeApp() {
             try { const response = await fetch('../SoundboardNames.json'); allSoundsData = await response.json(); } catch (error) { showStatus('Failed to load sound list.', 'error'); }
             
             document.getElementById('createNewPlaylistBtn').addEventListener('click', () => openModal());
@@ -420,7 +427,7 @@
             loadSettings();
         }
 
-        initialize();
+        initializeApp();
     });
     </script>
 </body>
