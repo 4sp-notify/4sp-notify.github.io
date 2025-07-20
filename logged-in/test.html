@@ -83,7 +83,7 @@
         .playlist-soundboard-header h2 { margin: 0; font-size: 1.8em; color: var(--v4-text-primary); }
         .playlist-soundboard-header p { margin: 5px 0 0; color: var(--v4-text-secondary); }
         
-        .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); z-index: 2000; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; }
+        .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); z-index: 2000; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; display: flex; align-items: center; justify-content: center; }
         .modal-backdrop.visible { opacity: 1; pointer-events: auto; }
         .modal-content { background: var(--v4-card-bg); width: 90%; max-width: 800px; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); display: flex; flex-direction: column; max-height: 90vh; transform: scale(0.95); transition: transform 0.3s ease; }
         .modal-backdrop.visible .modal-content { transform: scale(1); }
@@ -328,14 +328,21 @@
         function exportPlaylist(playlistId) {
             const playlist = getPlaylists().find(p => p.id === playlistId);
             if (!playlist) return;
+
+            const defaultFilename = playlist.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() || "playlist";
+            let userFilename = prompt("Please enter a name for the playlist file:", defaultFilename);
+            if (userFilename === null) { showStatus("Export cancelled.", "info"); return; }
+            userFilename = userFilename.trim() || defaultFilename;
+            if (!userFilename.toLowerCase().endsWith('.json')) { userFilename += '.json'; }
+
             const jsonString = JSON.stringify(playlist);
-            const base64Data = btoa(jsonString);
+            const base64Data = btoa(unescape(encodeURIComponent(jsonString))); // Handle UTF-8 characters
             const exportObject = { dataType: "4sp_playlist", version: 1, data: base64Data };
             const blob = new Blob([JSON.stringify(exportObject, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `${playlist.name.replace(/[^a-z0-9]/gi, '_').toLowerCase()}.json`;
+            a.download = userFilename;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
@@ -351,7 +358,7 @@
                 try {
                     const importObject = JSON.parse(e.target.result);
                     if (importObject.dataType !== '4sp_playlist' || !importObject.data) { throw new Error('Invalid file format.'); }
-                    const decodedJson = atob(importObject.data);
+                    const decodedJson = decodeURIComponent(escape(atob(importObject.data)));
                     const importedPlaylist = JSON.parse(decodedJson);
                     if (!importedPlaylist.name || !Array.isArray(importedPlaylist.sounds)) { throw new Error('Playlist data is corrupted.'); }
                     
