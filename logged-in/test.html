@@ -141,20 +141,31 @@
         }
         .playlist-name { font-size: 1.6em; font-weight: bold; color: var(--v4-text-primary); }
         .playlist-description { font-size: 1em; color: var(--v4-text-secondary); font-family: var(--v4-font-secondary); }
-        .marquee-content-wrapper {
-            display: inline-block;
+        .marquee-content-wrapper { display: inline-block; }
+        .marquee-content-wrapper.is-scrolling { animation: marquee-scroll 25s linear infinite; }
+        .marquee-content-wrapper > span { display: inline-block; padding-right: 3em; }
+        @keyframes marquee-scroll { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+
+        /* NEW IMPORT MODAL STYLES */
+        #importDropZone {
+            border: 2px dashed var(--v4-border-light);
+            border-radius: 10px;
+            padding: 40px 20px;
+            text-align: center;
+            font-family: var(--v4-font-secondary);
+            color: var(--v4-text-secondary);
+            transition: all 0.3s ease;
         }
-        .marquee-content-wrapper.is-scrolling {
-            animation: marquee-scroll 25s linear infinite;
+        #importDropZone.dragover {
+            border-color: var(--v4-purple-accent);
+            background-color: #f0e8ff;
         }
-        .marquee-content-wrapper > span {
-            display: inline-block;
-            padding-right: 3em;
-        }
-        @keyframes marquee-scroll {
-            from { transform: translateX(0); }
-            to { transform: translateX(-50%); }
-        }
+        #importDropZone span { display: block; margin: 10px 0; font-style: italic; }
+        #importDiagnosisResults { text-align: center; }
+        #diagnosisStatus.success { color: #155724; }
+        #diagnosisStatus.error { color: #721c24; }
+        #openPlaylistBtn { opacity: 0; transition: opacity 0.4s ease; }
+        #openPlaylistBtn.visible { opacity: 1; }
     </style>
 </head>
 <body class="soundboard-page">
@@ -224,7 +235,7 @@
             </div>
 
             <div class="playlist-actions-bar">
-                <button id="importPlaylistBtn" class="btn-import">Import Playlist</button>
+                <button id="openImportModalBtn" class="btn-import">Import Playlist</button>
                 <input type="file" id="importFileInput" accept=".json" style="display:none;">
                 <button id="createNewPlaylistBtn" class="btn-primary">✨ Create New Playlist</button>
             </div>
@@ -242,6 +253,28 @@
                 <div class="form-group"> <label>Select Sounds</label> <div class="sound-selection-grid sound-buttons-grid-v4"></div> </div>
             </div>
             <div class="modal-footer"> <button id="closeModalBtn" class="btn-cancel">Cancel</button> <button id="savePlaylistBtn" class="btn-primary">Save Playlist</button> </div>
+        </div>
+    </div>
+
+    <div id="importModal" class="modal-backdrop">
+        <div class="modal-content">
+            <div class="modal-header"> <h2>Import Playlist</h2> </div>
+            <div class="modal-body">
+                <div id="importDropZone">
+                    <p>Drag & Drop a playlist file here</p>
+                    <span>or</span>
+                    <button id="selectFileBtn" class="btn-primary">Select File</button>
+                </div>
+                <div id="importDiagnosisResults" style="display: none;">
+                    <h4>Diagnosis Results</h4>
+                    <p id="diagnosisStatus"></p>
+                    <h3 id="diagnosisTitle" style="font-family: var(--v4-font-secondary);"></h3>
+                </div>
+            </div>
+            <div class="modal-footer"> 
+                <button id="cancelImportBtn" class="btn-cancel">Cancel</button>
+                <button id="addPlaylistBtn" class="btn-primary" style="opacity: 0;">Add Playlist</button> 
+            </div>
         </div>
     </div>
 
@@ -289,6 +322,7 @@
         let allSoundsData = {}; let activeSounds = new Map();
         const soundCache = new Map();
         let isMuted = false; let lastVolumeBeforeMute = 1;
+        let validatedPlaylist = null;
 
         const unlockAudioContext = () => { if (audioContext.state === 'suspended') { audioContext.resume(); } document.body.removeEventListener('click', unlockAudioContext); };
         document.body.addEventListener('click', unlockAudioContext);
@@ -329,7 +363,7 @@
         function renderPlaylistsList() {
             settingsContainer.classList.remove('visible');
             document.getElementById('createNewPlaylistBtn').style.display = 'inline-block';
-            document.getElementById('importPlaylistBtn').style.display = 'inline-block';
+            document.getElementById('openImportModalBtn').style.display = 'inline-block';
             const playlists = getPlaylists();
             const container = document.getElementById('playlistsView');
             container.innerHTML = '';
@@ -343,7 +377,7 @@
             if (!playlist) { showStatus('Playlist not found.', 'error'); renderPlaylistsList(); return; }
             settingsContainer.classList.add('visible');
             document.getElementById('createNewPlaylistBtn').style.display = 'none';
-            document.getElementById('importPlaylistBtn').style.display = 'none';
+            document.getElementById('openImportModalBtn').style.display = 'none';
             const container = document.getElementById('playlistsView');
             container.innerHTML = `<div id="playlistSoundboardView"><div class="playlist-soundboard-header"><div><h2>${playlist.name}</h2><p>${playlist.description || 'Playing sounds from this playlist.'}</p></div><button id="backToPlaylistsBtn" class="btn btn-login">&larr; Back to Playlists</button></div><div class="sound-buttons-grid-v4"></div></div>`;
             const grid = container.querySelector('.sound-buttons-grid-v4');
@@ -362,10 +396,10 @@
             sound.play({ looping: controls.looping.checked }).catch(err => { showStatus(`Error playing ${fileName}`, 'error'); onEnd(sound); });
         }
 
-        const modal = document.getElementById('playlistModal');
+        const createModal = document.getElementById('playlistModal');
         let selectedSounds = new Set();
-        function openModal(playlistId = null) { const isEditing = playlistId !== null; modal.classList.add('visible'); const title = document.getElementById('modalTitle'); const nameInput = document.getElementById('playlistNameInput'); const descInput = document.getElementById('playlistDescriptionInput'); const idInput = document.getElementById('playlistIdInput'); const selectionGrid = modal.querySelector('.sound-selection-grid'); selectionGrid.innerHTML = 'Loading sounds...'; title.textContent = isEditing ? 'Edit Playlist' : 'Create Playlist'; idInput.value = playlistId || ''; selectedSounds.clear(); if (isEditing) { const playlist = getPlaylists().find(p => p.id === playlistId); nameInput.value = playlist.name; descInput.value = playlist.description; playlist.sounds.forEach(s => selectedSounds.add(s)); } else { nameInput.value = ''; descInput.value = ''; } selectionGrid.innerHTML = ''; for (const category in allSoundsData) { allSoundsData[category].sort().forEach(fileName => { const button = document.createElement('button'); button.className = 'sound-button-v4 selectable'; button.textContent = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); button.dataset.soundFile = fileName; if (selectedSounds.has(fileName)) { button.classList.add('selected'); } button.addEventListener('click', () => { if (selectedSounds.has(fileName)) { selectedSounds.delete(fileName); button.classList.remove('selected'); } else { selectedSounds.add(fileName); button.classList.add('selected'); } }); selectionGrid.appendChild(button); }); } }
-        function closeModal() { modal.classList.remove('visible'); }
+        function openModal(playlistId = null) { const isEditing = playlistId !== null; createModal.classList.add('visible'); const title = document.getElementById('modalTitle'); const nameInput = document.getElementById('playlistNameInput'); const descInput = document.getElementById('playlistDescriptionInput'); const idInput = document.getElementById('playlistIdInput'); const selectionGrid = createModal.querySelector('.sound-selection-grid'); selectionGrid.innerHTML = 'Loading sounds...'; title.textContent = isEditing ? 'Edit Playlist' : 'Create Playlist'; idInput.value = playlistId || ''; selectedSounds.clear(); if (isEditing) { const playlist = getPlaylists().find(p => p.id === playlistId); nameInput.value = playlist.name; descInput.value = playlist.description; playlist.sounds.forEach(s => selectedSounds.add(s)); } else { nameInput.value = ''; descInput.value = ''; } selectionGrid.innerHTML = ''; for (const category in allSoundsData) { allSoundsData[category].sort().forEach(fileName => { const button = document.createElement('button'); button.className = 'sound-button-v4 selectable'; button.textContent = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); button.dataset.soundFile = fileName; if (selectedSounds.has(fileName)) { button.classList.add('selected'); } button.addEventListener('click', () => { if (selectedSounds.has(fileName)) { selectedSounds.delete(fileName); button.classList.remove('selected'); } else { selectedSounds.add(fileName); button.classList.add('selected'); } }); selectionGrid.appendChild(button); }); } }
+        function closeModal() { createModal.classList.remove('visible'); }
         function savePlaylist() { const name = document.getElementById('playlistNameInput').value.trim(); if (!name) { alert('Playlist name is required.'); return; } const playlistData = { id: document.getElementById('playlistIdInput').value || Date.now().toString(), name: name, description: document.getElementById('playlistDescriptionInput').value.trim(), sounds: Array.from(selectedSounds) }; let playlists = getPlaylists(); const existingIndex = playlists.findIndex(p => p.id === playlistData.id); if (existingIndex > -1) { playlists[existingIndex] = playlistData; } else { playlists.push(playlistData); } savePlaylists(playlists); showStatus(`Playlist "${name}" saved!`, 'success'); closeModal(); renderPlaylistsList(); }
         
         function exportPlaylist(playlistId) {
@@ -389,42 +423,89 @@
             showStatus("Playlist exported!", "success");
         }
 
-        function importPlaylist(event) {
-            const file = event.target.files[0];
-            if (!file) return;
+        // --- NEW IMPORT MODAL LOGIC ---
+        const importModal = document.getElementById('importModal');
+        const dropZone = document.getElementById('importDropZone');
+        const diagnosisResults = document.getElementById('importDiagnosisResults');
+        const addPlaylistBtn = document.getElementById('addPlaylistBtn');
+
+        function openImportModal() { importModal.classList.add('visible'); }
+        function closeImportModal() {
+            importModal.classList.remove('visible');
+            setTimeout(() => { // Reset after fade out
+                dropZone.style.display = 'block';
+                diagnosisResults.style.display = 'none';
+                addPlaylistBtn.classList.remove('visible');
+                validatedPlaylist = null;
+            }, 300);
+        }
+
+        function processPlaylistFile(file) {
+            if (!file || !file.type === 'application/json') {
+                showStatus('Please select a valid .json file.', 'error');
+                return;
+            }
             const reader = new FileReader();
             reader.onload = (e) => {
+                const statusEl = document.getElementById('diagnosisStatus');
+                const titleEl = document.getElementById('diagnosisTitle');
+                dropZone.style.display = 'none';
+                diagnosisResults.style.display = 'block';
+                addPlaylistBtn.classList.remove('visible');
+                statusEl.className = '';
+                
                 try {
                     const importObject = JSON.parse(e.target.result);
                     if (importObject.dataType !== '4sp_playlist' || !importObject.data) { throw new Error('Invalid file format.'); }
                     const decodedJson = decodeURIComponent(escape(atob(importObject.data)));
                     const importedPlaylist = JSON.parse(decodedJson);
                     if (!importedPlaylist.name || !Array.isArray(importedPlaylist.sounds)) { throw new Error('Playlist data is corrupted.'); }
-                    importedPlaylist.id = Date.now().toString();
-                    const playlists = getPlaylists();
-                    playlists.push(importedPlaylist);
-                    savePlaylists(playlists);
-                    renderPlaylistsList();
-                    showStatus(`Playlist "${importedPlaylist.name}" imported successfully!`, 'success');
-                } catch (error) { showStatus(`Import failed: ${error.message}`, 'error');
-                } finally { event.target.value = null; }
+                    
+                    validatedPlaylist = importedPlaylist;
+                    statusEl.textContent = 'Playlist file is valid and ready to be added!';
+                    statusEl.classList.add('success');
+                    titleEl.textContent = validatedPlaylist.name;
+                    addPlaylistBtn.classList.add('visible');
+
+                } catch (error) {
+                    validatedPlaylist = null;
+                    statusEl.textContent = `Import failed: ${error.message}`;
+                    statusEl.classList.add('error');
+                    titleEl.textContent = '';
+                }
             };
             reader.readAsText(file);
         }
 
+        dropZone.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.add('dragover'); });
+        dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('dragover'); });
+        dropZone.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('dragover'); const file = e.dataTransfer.files[0]; processPlaylistFile(file); });
+
+        addPlaylistBtn.addEventListener('click', () => {
+            if (!validatedPlaylist) return;
+            validatedPlaylist.id = Date.now().toString();
+            const playlists = getPlaylists();
+            playlists.push(validatedPlaylist);
+            savePlaylists(playlists);
+            renderPlaylistsList();
+            showStatus(`Playlist "${validatedPlaylist.name}" imported successfully!`, 'success');
+            closeImportModal();
+        });
+
+
         async function initializeApp() {
             try { const response = await fetch('../SoundboardNames.json'); allSoundsData = await response.json(); } catch (error) { showStatus('Failed to load sound list.', 'error'); }
             
-            const modal = document.getElementById('playlistModal');
-            modal.addEventListener('click', (event) => {
-                if (event.target === modal) {
-                    closeModal();
-                }
-            });
+            createModal.addEventListener('click', (e) => { if(e.target === createModal) closeModal(); });
+            importModal.addEventListener('click', (e) => { if(e.target === importModal) closeImportModal(); });
+
             document.getElementById('createNewPlaylistBtn').addEventListener('click', () => openModal());
-            document.getElementById('importPlaylistBtn').addEventListener('click', () => document.getElementById('importFileInput').click());
-            document.getElementById('importFileInput').addEventListener('change', importPlaylist);
+            document.getElementById('openImportModalBtn').addEventListener('click', openImportModal);
+            document.getElementById('selectFileBtn').addEventListener('click', () => document.getElementById('importFileInput').click());
+            document.getElementById('importFileInput').addEventListener('change', (e) => processPlaylistFile(e.target.files[0]));
+            
             document.getElementById('closeModalBtn').addEventListener('click', closeModal);
+            document.getElementById('cancelImportBtn').addEventListener('click', closeImportModal);
             document.getElementById('savePlaylistBtn').addEventListener('click', savePlaylist);
             
             document.getElementById('saveSettingsBtn').addEventListener('click', saveSettings);
