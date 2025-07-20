@@ -165,7 +165,7 @@
     .request-url i { margin-right: 4px; }
     
     .card-actions {
-        position: absolute; top: 8px; right: 8px; display: flex; gap: 5px;
+        position: absolute; top: 8px; right: 8px; display: flex; align-items: center; gap: 8px;
         background: rgba(255,255,255,0.8); backdrop-filter: blur(2px); padding: 4px; border-radius: 12px;
         opacity: 0; transition: opacity 0.2s ease-in-out;
     }
@@ -177,17 +177,15 @@
     .card-action-btn:hover { background: #eee; color: #000; border-color: #ccc; }
     .card-action-btn.delete-btn-card:hover { color: #dc3545; }
     
-    /* --- NEW Admin Status Button Styles --- */
     .admin-status-btn {
       width: 24px; height: 24px; border-radius: 50%; border: 2px solid rgba(0,0,0,0.2);
-      cursor: pointer; transition: transform 0.2s ease;
+      cursor: pointer; transition: transform 0.2s ease; padding: 0;
     }
     .admin-status-btn:hover { transform: scale(1.2); }
     .status-btn-accepted { background-color: #28a745; }
     .status-btn-working { background-color: #ffc107; }
     .status-btn-acknowledged { background-color: #007bff; }
     .status-btn-declined { background-color: #dc3545; }
-
 
     /* --- Modal Styles --- */
     .modal-overlay {
@@ -282,7 +280,6 @@
       <div class="page-header">
           <div class="header-user-info" id="headerUserInfo"><div class="username">Loading...</div><div class="email"></div></div>
           <div class="header-actions">
-              <div id="requestCounter"></div>
               <button id="scheduleBtn" class="btn">View Schedule</button>
               <button id="createRequestBtn" class="btn">Create Request</button>
           </div>
@@ -298,7 +295,7 @@
                   <option value="working">Working On It</option>
                   <option value="acknowledged">Acknowledged</option>
                   <option value="oldest">Oldest First</option>
-                  <option id="sortDeletedOption" value="deleted">Deleted</option>
+                  <option id="sortDeletedOption" style="display:none;" value="deleted">Deleted</option>
               </select>
               <button id="refreshRequestsBtn" title="Refresh Requests">
                   <img src="../images/refresh-dark.png" alt="Refresh">
@@ -392,8 +389,8 @@
             <h3 class="modal-title"><i class="fas fa-sync-alt"></i> What is a Replicated Request?</h3>
         </div>
         <div class="modal-body">
-            <p>To improve database efficiency and reduce waste, this system reuses the "slots" of very old requests.</p>
-            <p>Your submission has been placed into one of these recycled slots. This is a background process that you (and admins) can see, but it is invisible to other users and has <strong>no effect</strong> on your request's visibility, voting, or potential implementation.</p>
+            <p>To improve database efficiency, this system reuses the "slots" of requests that are over 21 days old.</p>
+            <p>Your submission may be placed into one of these recycled slots. This is a background process that you can see, but it is invisible to other users and has <strong>no effect</strong> on your request's visibility, voting, or potential implementation.</p>
             <p style="font-size: 0.9em; color: #666;">This process helps keep the platform fast and free.</p>
         </div>
     </div>
@@ -405,13 +402,10 @@
   <script src="../firebase-config.js"></script>
 
   <script>
-    // --- START OF FULL SCRIPT ---
     const ADMIN_EMAILS = ["4simpleproblems@gmail.com", "belkwy30@minerva.sparcc.org", "admin1@example.com", "admin2@example.com", "admin3@example.com"];
     let IS_ADMIN_ACCOUNT = false;
     let currentUser = null;
     let currentUserProfile = { username: null };
-    let currentOpenRequestId = null;
-
     let badWordsList = [];
 
     // --- DOM Elements ---
@@ -439,31 +433,31 @@
     const toggleSidebarBtn = document.getElementById('toggleSidebar');
     const logoutBtn = document.getElementById('logoutBtn');
     const signOutLink = document.getElementById('signOutLink');
-    const requestCounterEl = document.getElementById('requestCounter');
-    
+
     // --- Utility Functions ---
-    function escapeHTML(str) {
+    const escapeHTML = (str) => {
         if (!str) return '';
         const p = document.createElement("p");
         p.textContent = str;
         return p.innerHTML;
-    }
+    };
     
-    function censorText(text) {
+    const censorText = (text) => {
         if (!text || !text.trim() || badWordsList.length === 0) return text;
         const regex = new RegExp(`\\b(${badWordsList.join('|')})\\b`, 'gi');
         return text.replace(regex, match => '*'.repeat(match.length));
-    }
+    };
 
-    function calculateVotePercent(upvotes = 0, downvotes = 0) {
+    const calculateVotePercent = (upvotes = 0, downvotes = 0) => {
         const totalVotes = upvotes + downvotes;
         if (totalVotes === 0) return { percent: 'N/A', class: '' };
         const percentage = (upvotes / totalVotes) * 100;
         return { percent: `${percentage.toFixed(0)}%`, class: '' };
-    }
+    };
     
+    // --- Core System Logic ---
     async function smartDeleteOldRequests() {
-        if (sessionStorage.getItem('replicationCheckDone')) { return; }
+        if (sessionStorage.getItem('replicationCheckDone')) return;
         const db = firebase.firestore();
         const REPLICATION_AGE_DAYS = 21;
         const cutOffDate = new Date();
@@ -484,11 +478,10 @@
             console.log(`Marked ${snapshot.size} old requests for replication.`);
             sessionStorage.setItem('replicationCheckDone', 'true');
         } catch (error) {
-            console.error("Error during smart-delete/replication process:", error);
+            console.error("Error during smart-delete process:", error);
         }
     }
 
-    // --- Core Data Fetching and Display ---
     async function fetchAndDisplayRequests() {
         if (!firebase.apps.length || !currentUser) {
             requestsListEl.innerHTML = '<li>Please log in to see requests.</li>';
@@ -499,9 +492,9 @@
         const sortBy = sortRequestsEl.value;
         let query = db.collection('requests');
         
-        // MODIFIED: Simplified query logic and removed display of user-deleted items (since they are now hard-deleted)
-        if (sortBy === 'deleted' && IS_ADMIN_ACCOUNT) {
-             requestsListEl.innerHTML = `<li>This filter is no longer used as requests are now permanently deleted.</li>`;
+        if (sortBy === 'deleted') {
+             requestsListEl.innerHTML = `<li>This filter is no longer used.</li>`;
+             sortDeletedOption.style.display = 'none';
              return;
         } else if (sortBy === 'accepted' || sortBy === 'working' || sortBy === 'acknowledged') {
             query = query.where('adminStatus', '==', sortBy).orderBy('adminStatusSetAt', 'desc');
@@ -597,7 +590,6 @@
         }
     }
     
-    // --- Modal Control ---
     function openModalForDetails(requestId) {
         const modal = detailsModal;
         firebase.firestore().collection('requests').doc(requestId).get().then(doc => {
@@ -612,7 +604,6 @@
         }).catch(error => console.error("Error opening modal:", error));
     }
 
-    // --- Actions ---
     async function handleDeleteRequest(requestId) {
         const db = firebase.firestore();
         const requestRef = db.collection('requests').doc(requestId);
@@ -628,7 +619,7 @@
             
             if (confirm("Are you sure you want to permanently delete this request? This action cannot be undone.")) {
                 await requestRef.delete();
-                fetchAndDisplayRequests(); // Refresh the list
+                fetchAndDisplayRequests();
             }
         } catch (error) {
             console.error("Error deleting request:", error);
@@ -645,7 +636,7 @@
         let reason = null;
         if (status === 'declined') {
             reason = prompt("Please provide a brief reason for declining this request (optional):");
-            if (reason === null) return; // Admin cancelled the prompt
+            if (reason === null) return;
         }
 
         const updateData = {
@@ -657,7 +648,7 @@
 
         try {
             await requestRef.update(updateData);
-            fetchAndDisplayRequests(); // Refresh list to show new status
+            fetchAndDisplayRequests();
         } catch (error) {
             console.error("Error updating status:", error);
             alert("Failed to update status.");
@@ -695,6 +686,7 @@
     // --- Authentication and Initial Setup ---
     firebase.auth().onAuthStateChanged(async user => {
         currentUser = user;
+        const mainElements = [sidebar, document.querySelector('.main-content')];
         if (user) {
             smartDeleteOldRequests();
             IS_ADMIN_ACCOUNT = ADMIN_EMAILS.includes(user.email);
@@ -704,7 +696,6 @@
             } catch (e) {
                 currentUserProfile.username = 'User';
             }
-            sortDeletedOption.style.display = 'none'; // Obsolete filter
         } else {
             IS_ADMIN_ACCOUNT = false;
             currentUserProfile.username = null;
@@ -715,7 +706,8 @@
     
     // --- Scheduling Logic ---
     function handleSubmissionSchedule() {
-        requestCounterEl.style.display = 'none'; // REMOVED daily limit counter
+        if(document.getElementById('requestCounter')) document.getElementById('requestCounter').style.display = 'none';
+        
         const statusEl = document.getElementById('scheduleStatus');
         const countdownEl = document.getElementById('countdownTimer');
         
@@ -744,7 +736,7 @@
             const daysUntilFriday = (5 - day + 7) % 7;
             nextClose.setDate(now.getDate() + daysUntilFriday);
             nextClose.setHours(15, 0, 0, 0);
-            countdownEl.textContent = `Submissions close in: ${getCountdownText(nextClose)}`;
+            countdownEl.textContent = `Submissions close in: ${getCountdownText(new Date(nextClose))}`;
         } else {
             createRequestBtn.disabled = true;
             createRequestBtn.textContent = 'Submissions Closed';
@@ -755,11 +747,20 @@
             const daysUntilMonday = (1 - day + 7) % 7;
             nextOpen.setDate(now.getDate() + (daysUntilMonday === 0 ? 7 : daysUntilMonday)); 
             nextOpen.setHours(6, 0, 0, 0);
-            countdownEl.textContent = `Submissions open in: ${getCountdownText(nextOpen)}`;
+            countdownEl.textContent = `Submissions open in: ${getCountdownText(new Date(nextOpen))}`;
         }
     }
 
-    function getCountdownText(targetDate) { /* ... (unchanged) ... */ }
+    const getCountdownText = (targetDate) => {
+        const now = new Date();
+        let delta = Math.max(0, targetDate.getTime() - now.getTime()) / 1000;
+        const days = Math.floor(delta / 86400);
+        delta -= days * 86400;
+        const hours = Math.floor(delta / 3600);
+        delta -= hours * 3600;
+        const minutes = Math.floor(delta / 60);
+        return `${days}d ${hours}h ${minutes}m`;
+    };
 
     // --- All Other Event Listeners ---
     document.addEventListener('DOMContentLoaded', () => {
@@ -768,18 +769,18 @@
             .then(data => { badWordsList = data.words || []; })
             .catch(error => console.error('Failed to load profanity list:', error));
         
-        if (toggleSidebarBtn && sidebar) toggleSidebarBtn.addEventListener('click', () => sidebar.classList.toggle('collapsed'));
-        if (refreshRequestsBtn) refreshRequestsBtn.addEventListener('click', fetchAndDisplayRequests);
-        if (scheduleBtn) scheduleBtn.addEventListener('click', () => scheduleModal.style.display = 'flex');
+        toggleSidebarBtn?.addEventListener('click', () => sidebar.classList.toggle('collapsed'));
+        refreshRequestsBtn?.addEventListener('click', fetchAndDisplayRequests);
+        scheduleBtn?.addEventListener('click', () => scheduleModal.style.display = 'flex');
         
         setInterval(handleSubmissionSchedule, 60000);
     });
 
     const handleLogout = () => firebase.auth().signOut().then(() => location.href = '../login.html');
-    logoutBtn.addEventListener('click', handleLogout);
-    signOutLink.addEventListener('click', handleLogout);
+    logoutBtn?.addEventListener('click', handleLogout);
+    signOutLink?.addEventListener('click', handleLogout);
 
-    createRequestBtn.addEventListener('click', () => { /* ... (unchanged) ... */ });
+    createRequestBtn?.addEventListener('click', () => { /* ... (logic unchanged) ... */ });
     
     document.querySelectorAll('.modal-overlay').forEach(modal => {
         modal.querySelector('.modal-close-btn')?.addEventListener('click', () => modal.style.display = 'none');
@@ -789,7 +790,7 @@
     requestTypeSelect.addEventListener('change', () => { soundOptionsContainer.style.display = requestTypeSelect.value === 'sound' ? 'flex' : 'none'; });
     searchBar.addEventListener('input', filterRequests);
     sortRequestsEl.addEventListener('change', fetchAndDisplayRequests);
-    function filterRequests() { /* ... (unchanged) ... */ }
+    function filterRequests() { /* ... (logic unchanged) ... */ }
 
     requestForm.addEventListener('submit', async (e) => {
         e.preventDefault();
