@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>4SP - GB-GAMES</title>
+
+  <link rel="stylesheet" href="../css/style.css" />
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+  <script src="../firebase-config.js"></script>
+  <script src="../panic-key.js"></script>
+  <style>
+    :root {
+        --v4-card-bg: #fff;
+        --v4-input-bg: #f8f9fa;
+        --v4-border-light: #ddd;
+        --v4-border-softer: #eee;
+        --v4-input-border: #ccc;
+        --v4-text-primary: #333;
+        --v4-text-secondary: #555;
+        --v4-purple-accent: #6720bd;
+        --v4-purple-accent-darker: #5a1aa8;
+        --v4-purple-gradient: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+        --v4-font-primary: 'PrimaryFont', sans-serif;
+        --v4-font-secondary: 'SecondaryFont', sans-serif;
+        --v4-bg-gradient: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
+    }
+
+    body.dashboard-page {
+        display: flex; flex-direction: column; min-height: 100vh;
+        margin: 0; font-family: var(--v4-font-primary);
+        background: var(--v4-bg-gradient);
+    }
+    .dashboard-container { display: flex; flex: 1; overflow: hidden; }
+
+    .sidebar {
+        width: 200px; background: linear-gradient(180deg, #333 0%, #2a2a2a 100%);
+        color: #fff; padding: 20px 10px; display: flex; flex-direction: column;
+        border-right: 1px solid #444; transition: width 0.5s ease-in-out;
+        position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1); flex-shrink: 0;
+        z-index: 1001;
+    }
+    .sidebar.collapsed { width: 85px; }
+    #toggleSidebar {
+        position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+        background: none; border: none; color: #fff; font-size: 1.2em;
+        cursor: pointer; padding: 4px; transition: transform 0.5s ease-in-out;
+    }
+    .sidebar.collapsed #toggleSidebar { transform: translateX(-50%) rotate(180deg); }
+
+    .user-info {
+        text-align: center; margin: 60px 0 30px;
+        border-bottom: 1px solid #555; padding-bottom: 20px;
+        overflow: visible;
+    }
+    .marquee-container {
+        overflow: hidden; white-space: nowrap; position: relative;
+        width: 100%; height: 1.8em; line-height: 1.8em;
+    }
+    .marquee-content-wrapper {
+        display: inline-block; padding-left: 100%; animation: none;
+        transform: translateX(0);
+    }
+    .marquee-content-wrapper.marquee-active { animation: scroll-left 12s linear infinite; }
+    @keyframes scroll-left { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+
+    .user-info .username {
+        font-family: var(--v4-font-primary); font-size: 1.3em;
+        margin-bottom: 8px; line-height: 0.2em; font-weight: bold;
+    }
+    .user-info .email {
+        font-family: var(--v4-font-secondary); font-size: 0.9em; color: #bbb;
+    }
+    .sidebar nav ul { list-style: none; padding: 0; margin: 60px 0 0; }
+    .sidebar nav li { margin-bottom: 10px; }
+    .sidebar nav a {
+        display: flex; align-items: center; padding: 12px 15px; color: #fff;
+        text-decoration: none; border-radius: 8px; transition: all 0.3s ease;
+        font-family: var(--v4-font-primary); text-transform: uppercase;
+        position: relative; overflow: hidden; font-size: 1em;
+    }
+    .sidebar nav a:hover, .sidebar nav a.active {
+        background: var(--v4-purple-gradient); transform: translateX(5px); color: #fff;
+    }
+    .sidebar nav a .icon { font-size: 1.2em; width: 24px; text-align: center;}
+    .sidebar nav a .label { margin-left: 10px; white-space: nowrap;}
+    .sidebar.collapsed nav a .label { display: none; }
+    
+    .main-content {
+        flex: 1; padding: 30px;
+        overflow-y: auto; display: flex; flex-direction: column;
+    }
+    
+    .page-header-v4 {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 30px; background: var(--v4-card-bg);
+        padding: 20px 30px; border-radius: 15px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    }
+    .page-title-v4 {
+        margin: 0; font-size: 2.2em; font-weight: bold;
+        background: var(--v4-purple-gradient);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        background-clip: text; font-family: var(--v4-font-primary);
+    }
+
+    /* Styles preserved for GB-GAMES list */
+    .controls-section, .games-list-section {
+        background: white; border-radius: 15px; padding: 30px;
+        box-shadow: 0 6px 30px rgba(0,0,0,0.08); margin-bottom: 30px;
+    }
+    .controls-section h3, .games-list-section h3 {
+        margin: 0 0 20px 0; font-size: 1.6em; color: #333;
+        border-bottom: 2px solid rgba(103, 32, 189, 0.1);
+        padding-bottom: 10px; font-family: var(--v4-font-primary);
+    }
+    .controls-section p { color: #555; font-size: 1em; line-height: 1.7; margin-bottom: 10px; }
+    .controls-section strong { color: var(--v4-purple-accent); font-weight: 600; }
+    #gameSearchInput {
+        width: 100%; box-sizing: border-box; padding: 12px; margin-bottom: 20px;
+        border: 1px solid var(--v4-border-light); border-radius: 8px; font-size: 1em;
+        font-family: var(--v4-font-primary);
+    }
+    .games-list-section ul { list-style: none; padding-left: 0; }
+    .games-list-section ul li { margin-bottom: 12px; }
+    .games-list-section ul li.hidden-game { display: none; }
+    .games-list-section ul li a {
+        text-decoration: none; color: var(--v4-purple-accent); font-weight: 500;
+        transition: color 0.3s ease, padding-left 0.3s ease, background-color 0.3s ease;
+        display: block; padding: 10px 15px; border-radius: 8px;
+        background-color: rgba(103, 32, 189, 0.05);
+        font-family: var(--v4-font-primary);
+    }
+    .games-list-section ul li a:hover { color: #fff; background-color: var(--v4-purple-accent); padding-left: 25px; }
+  </style>
+</head>
+
+<body class="dashboard-page">
+  <header class="main-header">
+    <div class="container">
+      <div class="logo">
+        <a href="../index.html"> <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer;" /> </a>
+      </div>
+      <div class="auth-buttons">
+        <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+        <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="dashboard-container">
+    <aside class="sidebar" id="sidebar">
+        <button id="toggleSidebar">☰</button>
+        <div class="user-info">
+            <div class="marquee-container">
+                <div class="marquee-content-wrapper"><span id="userName" class="username">Loading…</span></div>
+            </div>
+            <div class="marquee-container">
+                <div class="marquee-content-wrapper"><span id="userEmail" class="email">Loading…</span></div>
+            </div>
+        </div>
+        <nav>
+            <ul>
+                <li><a href="../logged-in/dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
+                <li><a href="../logged-in/proxies.html"><span class="icon">🛡️</span><span class="label">Proxies</span></a></li>
+                <li><a href="../logged-in/soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
+                <li><a href="../logged-in/games.html" class="active"><span class="icon">🎮</span><span class="label">Games</span></a></li>
+                <li><a href="../logged-in/others.html"><span class="icon">✨</span><span class="label">Others</span></a></li>
+                <li><a href="../logged-in/settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
+            </ul>
+        </nav>
+    </aside>
+
+    <main class="main-content">
+      <div class="page-header-v4">
+        <h2 class="page-title-v4">GB-GAMES</h2>
+      </div>
+      <div class="controls-section">
+        <h3>How To Control GB GAMES</h3>
+        <p><strong>X</strong> is the <strong>A</strong> button</p>
+        <p><strong>Z</strong> is the <strong>B</strong> button</p>
+        <p><strong>ENTER</strong> is the <strong>START</strong> Button</p>
+        <p><strong>R SHIFT</strong> is the <strong>Select</strong> Button</p>
+        <p><strong>1</strong> is the <strong>L TRIGGER</strong></p>
+        <p><strong>2</strong> is the <strong>R TRIGGER</strong></p>
+        <p><strong>X + Z + ENTER + R SHIFT</strong> (pressed at the same time) is <strong>RESET</strong></p>
+      </div>
+      <div class="games-list-section">
+        <h3>Available Games</h3>
+        <input type="text" id="gameSearchInput" placeholder="Search for games..." />
+        <ul id="gameList">
+            <li><a href="./launcher.html#advancewars2">DONKEY KONG COUNTRY</a></li>
+            <li><a href="./launcher.html#aladdin">Centipede, Breakout, Warlords</a></li>
+            <li><a href="./launcher.html#alienhominid">Alien Hominid</a></li>
+            <li><a href="./launcher.html#bomberman_max2blue">Bomberman Max 2 - Blue Advance</a></li>
+            <li><a href="./launcher.html#bomberman_tournament">Bomberman Tournament</a></li>
+            <li><a href="./launcher.html#bubblebobble">Bubble Bobble: Old and New</a></li>
+            <li><a href="./launcher.html#croket1">Croket! - Yume no Banker Survival!</a></li>
+            <li><a href="./launcher.html#croket2">Croket! 2 - Yami no Bank to Banqueen</a></li>
+            <li><a href="./launcher.html#croket3">Croket! 3 - Granu Oukoku no Nazo</a></li>
+            <li><a href="./launcher.html#croket4">Mario VS. Donkey Kong!</a></li>
+            <li><a href="./launcher.html#digimon_racing">Digimon Racing</a></li>
+            <li><a href="./launcher.html#dbz_supersonic">Pirates Of The Caribbean - Dead Man's Chest</a></li>
+            <li><a href="./launcher.html#drilldozer">Drill Dozer</a></li>
+            <li><a href="./launcher.html#earthwormjim">Earthworm Jim</a></li>
+            <li><a href="./launcher.html#earthwormjim2">Earthworm Jim 2</a></li>
+            <li><a href="./launcher.html#ff1and2">Final Fantasy 1 &amp; 2 Advance</a></li>
+            <li><a href="./launcher.html#ff4S">Final Fantasy IV Advance (Sound Restoration Mod)</a></li>
+            <li><a href="./launcher.html#ff6">Final Fantasy VI Advance</a></li>
+            <li><a href="./launcher.html#final_fantasy_tactics">Final Fantasy Tactics Advance</a></li>
+            <li><a href="./launcher.html#fire_emblem">Fire Emblem</a></li>
+            <li><a href="./launcher.html#frogger1">Frogger Advance - The Great Quest</a></li>
+            <li><a href="./launcher.html#frogger2">Frogger's Adventures - Temple of the Frog</a></li>
+            <li><a href="./launcher.html#frogger3">Frogger's Adventures 2 - The Lost Wand</a></li>
+            <li><a href="./launcher.html#fzero_gp">F-Zero - GP Legend</a></li>
+            <li><a href="./launcher.html#fzero_max">F-Zero - Maximum Velocity</a></li>
+            <li><a href="./launcher.html#gamewatch4">Game &amp; Watch Gallery 4</a></li>
+            <li><a href="./launcher.html#goldensun">Golden Sun</a></li>
+            <li><a href="./launcher.html#gta">Grand Theft Auto I</a></li>
+            <li><a href="./launcher.html#gunstar_super_heroes">Gunstar Super Heroes</a></li>
+            <li><a href="./launcher.html#hamtaro_heartbreak">Hamtaro - Ham-Ham Heartbreak</a></li>
+            <li><a href="./launcher.html#kirbymirror">Kirby &amp; The Amazing Mirror</a></li>
+            <li><a href="./launcher.html#kirbynightmare">Kirby: Nightmare in Dreamland</a></li>
+            <li><a href="./launcher.html#superstar">Mario &amp; Luigi: Superstar Saga</a></li>
+            <li><a href="./launcher.html#mariokart">Mario Kart: Super Circuit</a></li>
+            <li><a href="./launcher.html#marioparty">Mario Party Advance</a></li>
+            <li><a href="./launcher.html#mariopinball">Mario Pinball Land</a></li>
+            <li><a href="./launcher.html#megamanbass">Megaman &amp; Bass</a></li>
+            <li><a href="./launcher.html#megaman_battle1">Megaman Battle Network 1</a></li>
+            <li><a href="./launcher.html#megaman_battle2">Megaman Battle Network 2</a></li>
+            <li><a href="./launcher.html#megaman_battle3_blue">Megaman Battle Network 3 Blue</a></li>
+            <li><a href="./launcher.html#megaman_battle4_blue">Megaman Battle Network 4 Blue Moon</a></li>
+            <li><a href="./launcher.html#megaman_battle4_red">Megaman Battle Network 4 Red Sun</a></li>
+            <li><a href="./launcher.html#megaman_battle5">Megaman Battle Network 5 Team Protoman</a></li>
+            <li><a href="./launcher.html#megaman_battle6">Megaman Battle Network 6 Cybeast Falzar</a></li>
+            <li><a href="./launcher.html#megaman_zero1">Megaman Zero</a></li>
+            <li><a href="./launcher.html#megaman_zero2">Megaman Zero 2</a></li>
+            <li><a href="./launcher.html#megaman_zero3">Megaman Zero 3</a></li>
+            <li><a href="./launcher.html#megaman_zero4">Megaman Zero 4</a></li>
+            <li><a href="./launcher.html#metroid_fusion">Metroid Fusion</a></li>
+            <li><a href="./launcher.html#momotarou_dentetsu">Momotarou Dentetsu G Gold Deck wo Tsukure!</a></li>
+            <li><a href="./launcher.html#monopoly">Monopoly</a></li>
+            <li><a href="./launcher.html#monster_force">Monster Force</a></li>
+            <li><a href="./launcher.html#mortal_kombat">Mortal Kombat Advance</a></li>
+            <li><a href="./launcher.html#pacman_world">Pacman World</a></li>
+            <li><a href="./launcher.html#pacman_world2">Pacman World 2</a></li>
+            <li><a href="./launcher.html#pokemonemerald">Pokemon Emerald</a></li>
+            <li><a href="./launcher.html#pokemongreen">Pokemon Leaf Green</a></li>
+            <li><a href="./launcher.html#pokemonred">Pokemon Fire Red</a></li>
+            <li><a href="./launcher.html#mysteryred">Pokemon Mystery Dungeon Red</a></li>
+            <li><a href="./launcher.html#pokemonruby">Pokemon Ruby</a></li>
+            <li><a href="./launcher.html#pokemonsapphire">Pokemon Sapphire</a></li>
+            <li><a href="./launcher.html#gba_video_pokemon_1">Pokemon Video Show Pak 1</a></li>
+            <li><a href="./launcher.html#gba_video_pokemon_2">Pokemon Video Show Pak 2</a></li>
+            <li><a href="./launcher.html#gba_video_pokemon_3">Pokemon Video Show Pak 3</a></li>
+            <li><a href="./launcher.html#gba_video_pokemon_4">Pokemon Video Show Pak 4</a></li>
+            <li><a href="./launcher.html#sonic_advance">Sonic Advance</a></li>
+            <li><a href="./launcher.html#sonic_advance2">Sonic Advance 2</a></li>
+            <li><a href="./launcher.html#sonic_advance3">Sonic Advance 3</a></li>
+            <li><a href="./launcher.html#sonicbattle">Sonic Battle</a></li>
+            <li><a href="./launcher.html#sonicpinball">Sonic Pinball</a></li>
+            <li><a href="./launcher.html#spyro_adventure">Spyro Adventure</a></li>
+            <li><a href="./launcher.html#spyro_ice">Spyro: Season of Ice</a></li>
+            <li><a href="./launcher.html#spyro_flame">Spyro 2: Season of Flame</a></li>
+            <li><a href="./launcher.html#supermarioadvance">Super Mario Advance</a></li>
+            <li><a href="./launcher.html#supermarioadvance2">Super Mario Advance 2</a></li>
+            <li><a href="./launcher.html#supermarioadvance3">Super Mario Advance 3</a></li>
+            <li><a href="./launcher.html#supermarioadvance4">Super Mario Advance 4</a></li>
+            <li><a href="./launcher.html#supermonkeyballjr">Super Monkey Ball Jr</a></li>
+            <li><a href="./launcher.html#super_street_fighter_2_turbo_revival">Super Street Fighter II: Turbo Revival</a></li>
+            <li><a href="./launcher.html#super_street_fighter_3_alpha">Super Street Fighter III: Alpha</a></li>
+            <li><a href="./launcher.html#tales_of_phantasia">Tales of Phantasia</a></li>
+            <li><a href="./launcher.html#tak2_staff_of_dreams">Tak 2: The Staff of Dreams</a></li>
+            <li><a href="./launcher.html#tmnt">Teenage Mutant Ninja Turtles</a></li>
+            <li><a href="./launcher.html#tetris_worlds">Tetris Worlds</a></li>
+            <li><a href="./launcher.html#sims_bustin_out">The Sims: Bustin ' Out</a></li>
+            <li><a href="./launcher.html#sims2">Dragon Ball Z</a></li>
+            <li><a href="./launcher.html#simpsons">The Simpsons: Road Rage</a></li>
+            <li><a href="./launcher.html#turok_evolution">Turok Evolution</a></li>
+            <li><a href="./launcher.html#warioland4">Wario Land 4</a></li>
+            <li><a href="./launcher.html#wario_ware">Wario Ware Inc</a></li>
+            <li><a href="./launcher.html#zelda_past">The Legend of Zelda: A Link to the Past</a></li>
+            <li><a href="./launcher.html#zelda_minish">The Legend of Zelda: The Minish Cap</a></li>
+        </ul>
+      </div>
+    </main>
+  </div>
+
+  <script>
+    const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
+    const sidebarEl = document.getElementById('sidebar');
+    const toggleSidebarBtn = document.getElementById('toggleSidebar');
+
+    firebase.auth().onAuthStateChanged(async user => {
+        if (user) {
+            const userEmailEl = document.getElementById('userEmail');
+            const userNameEl = document.getElementById('userName');
+            if (userEmailEl) userEmailEl.textContent = user.email;
+            if (userNameEl) {
+                try {
+                    const doc = await dbRef().get();
+                    userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User');
+                } catch (error) { userNameEl.textContent = 'User'; }
+            }
+            initializeMarquees();
+        } else {
+            window.location.href = '../login.html';
+        }
+    });
+
+    document.getElementById('logoutBtn')?.addEventListener('click', () => firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }));
+    document.getElementById('signOutLink')?.addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
+    
+    if (toggleSidebarBtn && sidebarEl) {
+        toggleSidebarBtn.addEventListener('click', () => {
+            sidebarEl.classList.toggle('collapsed');
+            setTimeout(initializeMarquees, 550);
+        });
+    }
+
+    function initializeMarquees() {
+        document.querySelectorAll('.user-info .marquee-content-wrapper').forEach(wrapper => {
+            const span = wrapper.querySelector('span');
+            const container = wrapper.closest('.marquee-container');
+            if (!span || !container) return;
+            const overflow = span.scrollWidth > container.clientWidth;
+            const shouldScroll = sidebarEl.classList.contains('collapsed') || (overflow && !sidebarEl.classList.contains('collapsed'));
+            wrapper.classList.toggle('marquee-active', shouldScroll);
+        });
+    }
+    window.addEventListener('resize', initializeMarquees);
+
+    // --- GB-GAMES Index Specific JS ---
+    function setupGameSearch() {
+        const searchInput = document.getElementById('gameSearchInput');
+        const gameList = document.getElementById('gameList');
+        if (!searchInput || !gameList) { return; }
+        const gameItems = Array.from(gameList.getElementsByTagName('li'));
+
+        searchInput.addEventListener('input', function() {
+            const searchTerm = searchInput.value.toLowerCase().trim();
+            gameItems.forEach(item => {
+                const gameLink = item.getElementsByTagName('a')[0];
+                const gameName = gameLink.textContent.toLowerCase();
+                if (gameName.includes(searchTerm)) {
+                    item.classList.remove('hidden-game');
+                } else {
+                    item.classList.add('hidden-game');
+                }
+            });
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        setupGameSearch();
+        // Initial call to set up marquees after content loads
+        setTimeout(initializeMarquees, 100);
+    });
+  </script>
+</body>
+</html>
