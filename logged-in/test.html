@@ -28,6 +28,9 @@
             --v4-font-secondary: 'SecondaryFont', sans-serif;
         }
         body { display: flex; flex-direction: column; min-height: 100vh; margin: 0; font-family: var(--v4-font-primary); background: var(--v4-bg-gradient); color: var(--v4-text-primary); line-height: 1.6; }
+        body.grabbing, body.grabbing * {
+            cursor: grabbing !important;
+        }
         .soundboard-container-wrapper { display: flex; flex: 1; overflow: hidden; }
         .sidebar { width: 200px; background: linear-gradient(180deg, #333 0%, #2a2a2a 100%); color: #fff; padding: 20px 10px; display: flex; flex-direction: column; border-right: 1px solid #444; transition: width 0.5s ease-in-out; position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
         .sidebar.collapsed { width: 85px; }
@@ -79,27 +82,32 @@
             margin-bottom: 20px; 
             padding: 20px 25px; 
             box-shadow: 0 6px 30px rgba(0,0,0,0.08); 
-            transition: all 0.3s ease; 
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
             position: relative; 
-            overflow: hidden;
             cursor: grab;
             user-select: none;
         }
-        .playlist-card.dragging {
-            cursor: grabbing;
-            opacity: 0.8;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            transform: scale(1.02);
-            z-index: 1000;
+        .drag-placeholder {
+            background: rgba(103, 32, 189, 0.1);
+            border: 2px dashed var(--v4-purple-accent);
+            border-radius: 15px;
+            margin-bottom: 20px;
+            box-shadow: none;
         }
-        .playlist-card.drag-over {
-            transform: translateY(10px);
+        .playlist-card.dragging {
+            position: absolute;
+            opacity: 0.9;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
+            transform: scale(1.03);
+            z-index: 1000;
+            cursor: grabbing;
+            pointer-events: none;
         }
 
-        .playlist-card:hover { transform: translateY(-5px) scale(1.01); box-shadow: 0 8px 35px rgba(0,0,0,0.12); }
-        .playlist-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; position: relative; z-index: 2; pointer-events: none; /* allow clicks to pass to card */ }
+        .playlist-card:not(.dragging):hover { transform: translateY(-5px) scale(1.01); box-shadow: 0 8px 35px rgba(0,0,0,0.12); }
+        .playlist-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; position: relative; z-index: 2; pointer-events: none; }
         .playlist-info { flex-grow: 1; min-width: 0; }
-        .playlist-card-actions { display: flex; gap: 10px; flex-shrink: 0; pointer-events: auto; /* re-enable pointer events for buttons */ }
+        .playlist-card-actions { display: flex; gap: 10px; flex-shrink: 0; pointer-events: auto; }
         .action-btn { 
             background: none; 
             border: 1px solid var(--v4-border-light); 
@@ -108,7 +116,7 @@
             cursor: pointer; 
             transition: all 0.2s ease; 
             font-size: 1em;
-            text-shadow: 0 0 4px rgba(0, 0, 0, 0.5); /* ADDED SHADOW FOR EMOJIS */
+            text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
         }
         .action-btn:hover { border-color: var(--v4-purple-accent); background: #f0e8ff; }
         .action-btn.delete:hover { border-color: #dc3545; background: #f8d7da; }
@@ -534,33 +542,41 @@
         }
 
         function makePlaylistsDraggable(container) {
-            let draggedItem = null;
-            let holdTimer;
-            let isDragging = false;
-            let scrollInterval = null;
-            let clickStartX, clickStartY;
-
+            let draggedItem = null, placeholder = null, holdTimer, isDragging = false, scrollInterval = null, clickStartX, clickStartY, startX, startY, offsetX, offsetY;
+            
             container.addEventListener('mousedown', (e) => {
                 if (e.target.closest('.action-btn')) return;
-
                 const card = e.target.closest('.playlist-card');
                 if (!card) return;
-                
+
                 clickStartX = e.clientX;
                 clickStartY = e.clientY;
-                let wasLongPress = false;
-
+                
                 holdTimer = setTimeout(() => {
-                    wasLongPress = true;
                     isDragging = true;
                     draggedItem = card;
+                    
+                    placeholder = document.createElement('div');
+                    placeholder.className = 'drag-placeholder';
+                    placeholder.style.height = draggedItem.offsetHeight + 'px';
+                    
+                    draggedItem.parentNode.insertBefore(placeholder, draggedItem);
+                    
+                    const rect = draggedItem.getBoundingClientRect();
+                    offsetX = e.clientX - rect.left;
+                    offsetY = e.clientY - rect.top;
+
                     draggedItem.classList.add('dragging');
-                    document.body.style.cursor = 'grabbing';
+                    draggedItem.style.width = rect.width + 'px';
+                    draggedItem.style.left = `${e.clientX - offsetX}px`;
+                    draggedItem.style.top = `${e.clientY - offsetY}px`;
+                    
+                    document.body.classList.add('grabbing');
                 }, 1000);
 
                 const onMouseUp = (upEvent) => {
                     clearTimeout(holdTimer);
-                    if (!wasLongPress) {
+                    if (!isDragging) {
                         const dx = upEvent.clientX - clickStartX;
                         const dy = upEvent.clientY - clickStartY;
                         if (Math.sqrt(dx * dx + dy * dy) < 5) {
@@ -573,27 +589,25 @@
             });
 
             document.addEventListener('mousemove', (e) => {
-                if (!isDragging || !draggedItem) return;
-
+                if (!isDragging) return;
                 e.preventDefault();
 
-                const containerRect = container.getBoundingClientRect();
-                const afterElement = getDragAfterElement(container, e.clientY);
-                
-                const currentTop = draggedItem.offsetTop;
-                draggedItem.style.top = (e.clientY - containerRect.top - draggedItem.offsetHeight / 2) + 'px';
+                draggedItem.style.left = `${e.clientX - offsetX}px`;
+                draggedItem.style.top = `${e.clientY - offsetY}px`;
 
-                if (afterElement == null) {
-                    container.appendChild(draggedItem);
+                const afterElement = getDragAfterElement(container, e.clientY);
+                if (afterElement) {
+                    container.insertBefore(placeholder, afterElement);
                 } else {
-                    container.insertBefore(draggedItem, afterElement);
+                    container.appendChild(placeholder);
                 }
-                
-                const scrollZone = 50;
+
+                const containerRect = container.getBoundingClientRect();
+                const scrollZone = 60;
                 if (e.clientY < containerRect.top + scrollZone) {
-                    if (!scrollInterval) scrollInterval = setInterval(() => { container.scrollTop -= 10; }, 24);
+                    if (!scrollInterval) scrollInterval = setInterval(() => { container.scrollTop -= 15; }, 24);
                 } else if (e.clientY > containerRect.bottom - scrollZone) {
-                    if (!scrollInterval) scrollInterval = setInterval(() => { container.scrollTop += 10; }, 24);
+                    if (!scrollInterval) scrollInterval = setInterval(() => { container.scrollTop += 15; }, 24);
                 } else {
                     clearInterval(scrollInterval);
                     scrollInterval = null;
@@ -601,22 +615,31 @@
             });
 
             document.addEventListener('mouseup', () => {
+                clearTimeout(holdTimer);
                 if (!isDragging) return;
-                
+
                 clearInterval(scrollInterval);
                 scrollInterval = null;
+                
+                placeholder.parentNode.insertBefore(draggedItem, placeholder);
+                draggedItem.classList.remove('dragging');
+                draggedItem.style.left = '';
+                draggedItem.style.top = '';
+                draggedItem.style.width = '';
+                placeholder.remove();
+                
                 isDragging = false;
-                if (draggedItem) {
-                    draggedItem.classList.remove('dragging');
-                    draggedItem.style.top = '';
-                    draggedItem = null;
-                }
-                document.body.style.cursor = 'default';
-
+                draggedItem = null;
+                placeholder = null;
+                document.body.classList.remove('grabbing');
+                
                 const newOrderIds = Array.from(container.querySelectorAll('.playlist-card')).map(card => card.dataset.playlistId);
                 const oldPlaylists = getPlaylists();
                 const newPlaylists = newOrderIds.map(id => oldPlaylists.find(p => p.id === id));
                 savePlaylists(newPlaylists);
+
+                // A quick re-render ensures all styles and marquee logic are perfectly reset
+                setTimeout(() => renderPlaylistsList(), 50);
             });
 
             function getDragAfterElement(container, y) {
@@ -626,7 +649,7 @@
                     const box = child.getBoundingClientRect();
                     const offset = y - box.top - box.height / 2;
                     if (offset < 0 && offset > closest.offset) {
-                        return { offset: offset, element: child };
+                        return { offset, element: child };
                     } else {
                         return closest;
                     }
@@ -815,7 +838,6 @@
         function resetImportModalView() {
             dropZone.style.display = 'block';
             diagnosisResults.style.display = 'none';
-            // Clear previous results
             diagnosisResults.innerHTML = `
                 <h4>Diagnosis Results</h4>
                 <p id="diagnosisStatus"></p>
@@ -828,7 +850,6 @@
         
         function closeImportModal() {
             importModal.classList.remove('visible');
-            // Use a timeout to let the fade-out animation finish before resetting the view
             setTimeout(() => {
                 resetImportModalView();
             }, 300);
@@ -903,7 +924,6 @@
         dropZone.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('dragover'); const file = e.dataTransfer.files[0]; processPlaylistFile(file); });
         addPlaylistBtn.addEventListener('click', () => {
             if (!validatedPlaylist) return;
-            // Add to the end of the list on import
             let playlists = getPlaylists();
             validatedPlaylist.id = Date.now().toString();
             playlists.push(validatedPlaylist);
