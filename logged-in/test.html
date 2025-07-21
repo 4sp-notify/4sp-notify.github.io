@@ -383,9 +383,8 @@
             const overflow = el.scrollWidth > parent.clientWidth;
 
             let isSidebarMarquee = el.closest('.user-info');
-            let shouldScroll = false;
             if(isSidebarMarquee){
-                shouldScroll = sidebar_.classList.contains('collapsed') || (overflow && !sidebar_.classList.contains('collapsed'));
+                const shouldScroll = sidebar_.classList.contains('collapsed') || (overflow && !sidebar_.classList.contains('collapsed'));
                  el.classList.toggle('marquee-active', shouldScroll);
                  if (!overflow && !sidebar_.classList.contains('collapsed')) {
                     el.classList.remove('marquee-active');
@@ -398,19 +397,19 @@
             if (!wrapper) return;
             const firstSpan = wrapper.querySelector('span');
             if (!firstSpan) return;
+            
+            // Clear previous state
+            if (wrapper.children.length > 1) {
+                wrapper.removeChild(wrapper.lastChild);
+            }
+            wrapper.classList.remove('is-scrolling');
+
             const needsScrolling = firstSpan.scrollWidth > container.clientWidth;
             
             if (needsScrolling) {
-                if (wrapper.children.length === 1) {
-                    const secondSpan = firstSpan.cloneNode(true);
-                    wrapper.appendChild(secondSpan);
-                }
+                const secondSpan = firstSpan.cloneNode(true);
+                wrapper.appendChild(secondSpan);
                 wrapper.classList.add('is-scrolling');
-            } else {
-                if (wrapper.children.length > 1) {
-                    wrapper.removeChild(wrapper.lastChild);
-                }
-                wrapper.classList.remove('is-scrolling');
             }
         });
     }
@@ -513,7 +512,6 @@
                         </div>
                     </div>`;
 
-                // Set text content safely to prevent XSS
                 card.querySelector('.playlist-name span').textContent = playlist.name;
                 card.querySelector('.playlist-description span').textContent = playlist.description || 'No description';
 
@@ -668,10 +666,8 @@
 
         function updatePreview() {
             const preview = document.getElementById('playlistPreview');
-            const name = document.getElementById('playlistNameInput').value.trim();
-            const desc = document.getElementById('playlistDescriptionInput').value.trim();
-            document.getElementById('previewName').textContent = name || "Playlist Name";
-            document.getElementById('previewDescription').textContent = desc || "Description";
+            document.getElementById('previewName').textContent = document.getElementById('playlistNameInput').value.trim() || "Playlist Name";
+            document.getElementById('previewDescription').textContent = document.getElementById('playlistDescriptionInput').value.trim() || "Description";
 
             preview.style.backgroundColor = selectedColor || 'var(--v4-card-bg)';
             
@@ -816,14 +812,25 @@
         const diagnosisResults = document.getElementById('importDiagnosisResults');
         const addPlaylistBtn = document.getElementById('addPlaylistBtn');
 
+        function resetImportModalView() {
+            dropZone.style.display = 'block';
+            diagnosisResults.style.display = 'none';
+            // Clear previous results
+            diagnosisResults.innerHTML = `
+                <h4>Diagnosis Results</h4>
+                <p id="diagnosisStatus"></p>
+                <h3 id="diagnosisTitle" style="font-family: var(--v4-font-secondary);"></h3>`;
+            addPlaylistBtn.classList.remove('visible');
+            validatedPlaylist = null;
+        }
+
         function openImportModal() { importModal.classList.add('visible'); }
+        
         function closeImportModal() {
             importModal.classList.remove('visible');
+            // Use a timeout to let the fade-out animation finish before resetting the view
             setTimeout(() => {
-                dropZone.style.display = 'block';
-                diagnosisResults.style.display = 'none';
-                addPlaylistBtn.classList.remove('visible');
-                validatedPlaylist = null;
+                resetImportModalView();
             }, 300);
         }
 
@@ -841,6 +848,7 @@
                 addPlaylistBtn.classList.remove('visible');
                 statusEl.className = '';
                 
+                let wasEncrypted = false;
                 try {
                     const importObject = JSON.parse(e.target.result);
                     if ((importObject.dataType !== '4sp_playlist_v2' && importObject.dataType !== '4sp_playlist') || !importObject.data) {
@@ -849,10 +857,11 @@
                     
                     let decodedJson;
                     if (importObject.encrypted) {
+                        wasEncrypted = true;
                         const password = prompt("This playlist is encrypted. Please enter the password:");
                         if (password === null) {
                             showStatus('Import cancelled.', 'info');
-                            closeImportModal();
+                            resetImportModalView();
                             return;
                         }
                         const decryptedBase64 = xorCipher(base64ToUtf8(importObject.data), password);
@@ -872,9 +881,18 @@
 
                 } catch (error) {
                     validatedPlaylist = null;
-                    statusEl.textContent = `Import failed: ${error.message}. If password protected, it may be incorrect.`;
+                    statusEl.textContent = wasEncrypted 
+                        ? 'Import failed: Incorrect password or corrupted file.' 
+                        : `Import failed: ${error.message}`;
                     statusEl.classList.add('error');
                     titleEl.textContent = '';
+                    
+                    const tryAgainBtn = document.createElement('button');
+                    tryAgainBtn.textContent = 'Try Again';
+                    tryAgainBtn.className = 'btn-primary';
+                    tryAgainBtn.style.marginTop = '20px';
+                    tryAgainBtn.onclick = resetImportModalView;
+                    diagnosisResults.appendChild(tryAgainBtn);
                 }
             };
             reader.readAsText(file);
@@ -885,8 +903,9 @@
         dropZone.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('dragover'); const file = e.dataTransfer.files[0]; processPlaylistFile(file); });
         addPlaylistBtn.addEventListener('click', () => {
             if (!validatedPlaylist) return;
-            validatedPlaylist.id = Date.now().toString();
+            // Add to the end of the list on import
             let playlists = getPlaylists();
+            validatedPlaylist.id = Date.now().toString();
             playlists.push(validatedPlaylist);
             savePlaylists(playlists);
             renderPlaylistsList();
