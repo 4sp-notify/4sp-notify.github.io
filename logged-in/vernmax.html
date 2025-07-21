@@ -481,12 +481,13 @@
         const savedCloakList = document.getElementById('saved-cloak-list');
         const customUrlInput = document.getElementById('custom-url-input');
         const customCloakBtn = document.getElementById('custom-cloak-btn');
-        // --- NEW: Timer Element References ---
+        // --- Timer Element References ---
         const timerDisplay = document.getElementById('timer-display');
         const timeLimitOverlay = document.getElementById('time-limit-overlay');
-        let timerInterval = null;
+        let countdownInterval = null;
+        let isUserAdmin = false; // Track admin status globally
 
-        // --- NEW: Timer and Admin Configuration ---
+        // --- Timer and Admin Configuration ---
         const ADMIN_EMAILS = ["4simpleproblems@gmail.com", "belkwy30@minerva.sparcc.org"];
         const TIME_LIMIT_SECONDS = 3600; // 1 hour = 3600 seconds
 
@@ -524,10 +525,14 @@
             window.location.href = '/login.html';
         }, 8000);
 
-        // --- NEW: Timer Logic Functions ---
+        // --- REVISED: Timer Logic Functions ---
 
         // This function displays the time limit screen.
         function showTimeUpScreen() {
+            if (countdownInterval) {
+                clearInterval(countdownInterval);
+                countdownInterval = null;
+            }
             loadingOverlay.style.display = 'none'; // Hide the initial loading screen
             appContainer.style.display = 'none'; // Hide the main app content
             timeLimitOverlay.style.display = 'flex'; // Show the "Time's Up" message
@@ -545,16 +550,17 @@
             return `${paddedHours}:${paddedMinutes}:${paddedSeconds}`;
         }
 
-        // Starts the countdown timer visible to the user.
+        // Starts the active usage countdown timer.
         function startCountdown(totalSeconds) {
             let remainingSeconds = totalSeconds;
-            if (timerInterval) clearInterval(timerInterval); // Clear any existing timer
+            if (countdownInterval) clearInterval(countdownInterval); // Clear any existing timer
 
             timerDisplay.style.display = 'block'; // Make the timer visible
 
-            timerInterval = setInterval(() => {
+            countdownInterval = setInterval(() => {
                 if (remainingSeconds <= 0) {
-                    clearInterval(timerInterval);
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
                     timerDisplay.textContent = "Time Left: 00:00:00";
                     // If the user is in fullscreen, reload the page to exit and show the limit screen.
                     if (document.fullscreenElement) {
@@ -564,26 +570,36 @@
                     }
                     return;
                 }
+
+                // Update the visual display
                 timerDisplay.textContent = `Time Left: ${formatTime(remainingSeconds)}`;
+                
+                // Increment the persisted usage data every second
+                let timerData = JSON.parse(localStorage.getItem('userTimerData'));
+                if (timerData) {
+                    timerData.secondsUsed = (timerData.secondsUsed || 0) + 1;
+                    localStorage.setItem('userTimerData', JSON.stringify(timerData));
+                }
+
                 remainingSeconds--;
             }, 1000);
         }
 
-        // Checks the user's daily time and decides whether to load the app or show the limit screen.
+        // Checks the user's accumulated daily time and decides whether to load the app or show the limit screen.
         async function handleUserTimer() {
             const today = new Date().toISOString().split('T')[0];
             let timerData = JSON.parse(localStorage.getItem('userTimerData'));
 
             // If it's a new day or the first visit, reset the timer data in localStorage.
             if (!timerData || timerData.date !== today) {
-                timerData = { date: today, startTime: Date.now() };
+                timerData = { date: today, secondsUsed: 0 };
                 localStorage.setItem('userTimerData', JSON.stringify(timerData));
             }
 
-            const elapsedTimeMs = Date.now() - timerData.startTime;
-            const elapsedTimeSec = Math.floor(elapsedTimeMs / 1000);
+            const secondsUsed = timerData.secondsUsed || 0;
+            const remainingSeconds = TIME_LIMIT_SECONDS - secondsUsed;
 
-            if (elapsedTimeSec >= TIME_LIMIT_SECONDS) {
+            if (remainingSeconds <= 0) {
                 // Time is up for today.
                 showTimeUpScreen();
             } else {
@@ -596,7 +612,7 @@
                 }, { once: true });
                 document.body.style.overflow = 'auto';
 
-                const remainingSeconds = TIME_LIMIT_SECONDS - elapsedTimeSec;
+                // Start the fair countdown timer
                 startCountdown(remainingSeconds);
             }
         }
@@ -606,9 +622,9 @@
             clearTimeout(authTimeout);
             try {
                 if (user) {
-                    const isAdmin = ADMIN_EMAILS.includes(user.email);
+                    isUserAdmin = ADMIN_EMAILS.includes(user.email); // Set global admin flag
 
-                    if (isAdmin) {
+                    if (isUserAdmin) {
                         // Admin user: Bypass all timer logic and load the app.
                         console.log("Admin user detected. No time limit.");
                         timerDisplay.style.display = 'none'; // Admins don't need a timer display.
@@ -801,6 +817,45 @@
         customUrlInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 applyCustomCloak();
+            }
+        });
+
+        // --- NEW: Add Page Visibility listener to pause/resume the timer ---
+        document.addEventListener('visibilitychange', () => {
+            // This logic only applies to non-admin users.
+            if (isUserAdmin) {
+                return;
+            }
+
+            const timeUpIsShowing = timeLimitOverlay.style.display === 'flex';
+            if (timeUpIsShowing) {
+                // If the time up screen is already showing, do nothing.
+                return;
+            }
+
+            if (document.hidden) {
+                // Page is hidden, so pause the timer by clearing the interval.
+                // The time used is already saved in localStorage.
+                if (countdownInterval) {
+                    clearInterval(countdownInterval);
+                    countdownInterval = null;
+                    console.log("Timer paused.");
+                }
+            } else {
+                // Page is visible again, so resume the timer if it was paused.
+                if (!countdownInterval) {
+                    console.log("Timer resuming...");
+                    // Get the most up-to-date usage and restart the countdown.
+                    let timerData = JSON.parse(localStorage.getItem('userTimerData'));
+                    if (timerData) {
+                        const remainingSeconds = TIME_LIMIT_SECONDS - (timerData.secondsUsed || 0);
+                        if (remainingSeconds > 0) {
+                            startCountdown(remainingSeconds);
+                        } else {
+                            showTimeUpScreen(); // If time ran out while away, show the screen now.
+                        }
+                    }
+                }
             }
         });
 
