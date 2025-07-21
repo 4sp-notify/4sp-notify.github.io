@@ -28,9 +28,6 @@
             --v4-font-secondary: 'SecondaryFont', sans-serif;
         }
         body { display: flex; flex-direction: column; min-height: 100vh; margin: 0; font-family: var(--v4-font-primary); background: var(--v4-bg-gradient); color: var(--v4-text-primary); line-height: 1.6; }
-        body.grabbing, body.grabbing * {
-            cursor: grabbing !important;
-        }
         .soundboard-container-wrapper { display: flex; flex: 1; overflow: hidden; }
         .sidebar { width: 200px; background: linear-gradient(180deg, #333 0%, #2a2a2a 100%); color: #fff; padding: 20px 10px; display: flex; flex-direction: column; border-right: 1px solid #444; transition: width 0.5s ease-in-out; position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
         .sidebar.collapsed { width: 85px; }
@@ -84,30 +81,14 @@
             box-shadow: 0 6px 30px rgba(0,0,0,0.08); 
             transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
             position: relative; 
-            cursor: grab;
+            cursor: pointer;
             user-select: none;
         }
-        .drag-placeholder {
-            background: rgba(103, 32, 189, 0.1);
-            border: 2px dashed var(--v4-purple-accent);
-            border-radius: 15px;
-            margin-bottom: 20px;
-            box-shadow: none;
-        }
-        .playlist-card.dragging {
-            position: absolute;
-            opacity: 0.9;
-            box-shadow: 0 10px 40px rgba(0,0,0,0.2);
-            transform: scale(1.03);
-            z-index: 1000;
-            cursor: grabbing;
-            pointer-events: none;
-        }
 
-        .playlist-card:not(.dragging):hover { transform: translateY(-5px) scale(1.01); box-shadow: 0 8px 35px rgba(0,0,0,0.12); }
-        .playlist-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; position: relative; z-index: 2; pointer-events: none; }
+        .playlist-card:hover { transform: translateY(-5px) scale(1.01); box-shadow: 0 8px 35px rgba(0,0,0,0.12); }
+        .playlist-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; position: relative; z-index: 2; }
         .playlist-info { flex-grow: 1; min-width: 0; }
-        .playlist-card-actions { display: flex; gap: 10px; flex-shrink: 0; pointer-events: auto; }
+        .playlist-card-actions { display: flex; gap: 10px; flex-shrink: 0; }
         .action-btn { 
             background: none; 
             border: 1px solid var(--v4-border-light); 
@@ -126,6 +107,39 @@
         .action-btn.glassy.delete:hover { border-color: rgba(255, 255, 255, 0.5); background-color: rgba(220, 53, 69, 0.5); }
         .action-btn.glassy.share:hover { border-color: rgba(255, 255, 255, 0.5); background-color: rgba(13, 110, 253, 0.5); }
         
+        .playlist-reorder-arrows {
+            position: absolute;
+            left: -45px;
+            top: 50%;
+            transform: translateY(-50%);
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity 0.3s ease-in-out;
+        }
+        .playlist-reorder-arrows.visible {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .arrow-btn {
+            background-color: rgba(255, 255, 255, 0.7);
+            border: 1px solid var(--v4-border-light);
+            backdrop-filter: blur(4px);
+            border-radius: 8px;
+            width: 35px;
+            height: 35px;
+            font-size: 1.2em;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .arrow-btn:hover {
+            background-color: var(--v4-purple-accent);
+            color: white;
+            border-color: var(--v4-purple-accent-darker);
+        }
+
         #playlistSoundboardView { background: var(--v4-card-bg); border-radius: 15px; padding: 20px; box-shadow: 0 6px 30px rgba(0,0,0,0.08); }
         .playlist-soundboard-header { padding-bottom: 15px; margin-bottom: 15px; border-bottom: 1px solid var(--v4-border-softer); display: flex; justify-content: space-between; align-items: flex-start; }
         .playlist-soundboard-header h2 { margin: 0; font-size: 1.8em; color: var(--v4-text-primary); }
@@ -496,18 +510,22 @@
                 return;
             }
 
-            playlists.forEach(playlist => { 
+            let rightClickHoldTimer;
+
+            playlists.forEach((playlist, index) => { 
                 const card = document.createElement('div'); 
                 card.className = 'playlist-card'; 
                 card.dataset.playlistId = playlist.id;
 
                 const hasCustomization = !!playlist.color;
                 
-                if (hasCustomization) {
-                    card.style.backgroundColor = playlist.color;
-                }
+                if (hasCustomization) card.style.backgroundColor = playlist.color;
 
                 card.innerHTML = `
+                    <div class="playlist-reorder-arrows">
+                        <button class="arrow-btn up" title="Move Up">▲</button>
+                        <button class="arrow-btn down" title="Move Down">▼</button>
+                    </div>
                     <div class="playlist-card-header">
                         <div class="playlist-info">
                             <div class="marquee-container playlist-name"><div class="marquee-content-wrapper"><span></span></div></div>
@@ -532,129 +550,68 @@
                 
                 card.querySelector('.action-btn.share').addEventListener('click', (e) => { e.stopPropagation(); exportPlaylist(playlist.id); }); 
                 card.querySelector('.action-btn.edit').addEventListener('click', (e) => { e.stopPropagation(); openCreateModal(playlist.id); }); 
-                card.querySelector('.action-btn.delete').addEventListener('click', (e) => { e.stopPropagation(); deletePlaylist(playlist.id); }); 
+                card.querySelector('.action-btn.delete').addEventListener('click', (e) => { e.stopPropagation(); deletePlaylist(playlist.id); });
+                
+                // --- Reordering Logic ---
+                const reorderArrows = card.querySelector('.playlist-reorder-arrows');
+                const upBtn = card.querySelector('.arrow-btn.up');
+                const downBtn = card.querySelector('.arrow-btn.down');
+
+                upBtn.addEventListener('click', e => { e.stopPropagation(); movePlaylist(index, 'up'); });
+                downBtn.addEventListener('click', e => { e.stopPropagation(); movePlaylist(index, 'down'); });
+
+                card.addEventListener('click', e => {
+                     if (!e.target.closest('.action-btn') && !e.target.closest('.arrow-btn')) {
+                         renderPlaylistSoundboard(playlist.id);
+                     }
+                });
+
+                card.addEventListener('contextmenu', e => {
+                    e.preventDefault();
+                    clearTimeout(rightClickHoldTimer); // Prevent hold from firing on a single click
+
+                    // If all are visible, a single click should convert to single-visible mode
+                    const allVisible = document.querySelectorAll('.playlist-reorder-arrows.visible').length > 1;
+
+                    // First, hide all arrows
+                    document.querySelectorAll('.playlist-reorder-arrows').forEach(el => el.classList.remove('visible'));
+
+                    // Then, if the clicked one wasn't visible before (or if all were visible), show it.
+                    if (!reorderArrows.classList.contains('visible') || allVisible) {
+                         reorderArrows.classList.add('visible');
+                    }
+                });
+
+                card.addEventListener('mousedown', e => {
+                    if (e.button !== 2) return; // Only for right-click
+                    clearTimeout(rightClickHoldTimer);
+                    rightClickHoldTimer = setTimeout(() => {
+                        const allArrows = document.querySelectorAll('.playlist-reorder-arrows');
+                        const anyVisible = Array.from(allArrows).some(el => el.classList.contains('visible'));
+                        if (anyVisible) {
+                            allArrows.forEach(el => el.classList.remove('visible'));
+                        } else {
+                            allArrows.forEach(el => el.classList.add('visible'));
+                        }
+                    }, 1000);
+                });
+                card.addEventListener('mouseup', () => clearTimeout(rightClickHoldTimer));
                 
                 container.appendChild(card); 
             });
 
             initializeMarquees();
-            makePlaylistsDraggable(container);
         }
 
-        function makePlaylistsDraggable(container) {
-            let draggedItem = null, placeholder = null, holdTimer, isDragging = false, scrollInterval = null, clickStartX, clickStartY, startX, startY, offsetX, offsetY;
-            
-            container.addEventListener('mousedown', (e) => {
-                if (e.target.closest('.action-btn')) return;
-                const card = e.target.closest('.playlist-card');
-                if (!card) return;
-
-                clickStartX = e.clientX;
-                clickStartY = e.clientY;
-                
-                holdTimer = setTimeout(() => {
-                    isDragging = true;
-                    draggedItem = card;
-                    
-                    placeholder = document.createElement('div');
-                    placeholder.className = 'drag-placeholder';
-                    placeholder.style.height = draggedItem.offsetHeight + 'px';
-                    
-                    draggedItem.parentNode.insertBefore(placeholder, draggedItem);
-                    
-                    const rect = draggedItem.getBoundingClientRect();
-                    offsetX = e.clientX - rect.left;
-                    offsetY = e.clientY - rect.top;
-
-                    draggedItem.classList.add('dragging');
-                    draggedItem.style.width = rect.width + 'px';
-                    draggedItem.style.left = `${e.clientX - offsetX}px`;
-                    draggedItem.style.top = `${e.clientY - offsetY}px`;
-                    
-                    document.body.classList.add('grabbing');
-                }, 1000);
-
-                const onMouseUp = (upEvent) => {
-                    clearTimeout(holdTimer);
-                    if (!isDragging) {
-                        const dx = upEvent.clientX - clickStartX;
-                        const dy = upEvent.clientY - clickStartY;
-                        if (Math.sqrt(dx * dx + dy * dy) < 5) {
-                            renderPlaylistSoundboard(card.dataset.playlistId);
-                        }
-                    }
-                    document.removeEventListener('mouseup', onMouseUp, true);
-                };
-                document.addEventListener('mouseup', onMouseUp, true);
-            });
-
-            document.addEventListener('mousemove', (e) => {
-                if (!isDragging) return;
-                e.preventDefault();
-
-                draggedItem.style.left = `${e.clientX - offsetX}px`;
-                draggedItem.style.top = `${e.clientY - offsetY}px`;
-
-                const afterElement = getDragAfterElement(container, e.clientY);
-                if (afterElement) {
-                    container.insertBefore(placeholder, afterElement);
-                } else {
-                    container.appendChild(placeholder);
-                }
-
-                const containerRect = container.getBoundingClientRect();
-                const scrollZone = 60;
-                if (e.clientY < containerRect.top + scrollZone) {
-                    if (!scrollInterval) scrollInterval = setInterval(() => { container.scrollTop -= 15; }, 24);
-                } else if (e.clientY > containerRect.bottom - scrollZone) {
-                    if (!scrollInterval) scrollInterval = setInterval(() => { container.scrollTop += 15; }, 24);
-                } else {
-                    clearInterval(scrollInterval);
-                    scrollInterval = null;
-                }
-            });
-
-            document.addEventListener('mouseup', () => {
-                clearTimeout(holdTimer);
-                if (!isDragging) return;
-
-                clearInterval(scrollInterval);
-                scrollInterval = null;
-                
-                placeholder.parentNode.insertBefore(draggedItem, placeholder);
-                draggedItem.classList.remove('dragging');
-                draggedItem.style.left = '';
-                draggedItem.style.top = '';
-                draggedItem.style.width = '';
-                placeholder.remove();
-                
-                isDragging = false;
-                draggedItem = null;
-                placeholder = null;
-                document.body.classList.remove('grabbing');
-                
-                const newOrderIds = Array.from(container.querySelectorAll('.playlist-card')).map(card => card.dataset.playlistId);
-                const oldPlaylists = getPlaylists();
-                const newPlaylists = newOrderIds.map(id => oldPlaylists.find(p => p.id === id));
-                savePlaylists(newPlaylists);
-
-                // A quick re-render ensures all styles and marquee logic are perfectly reset
-                setTimeout(() => renderPlaylistsList(), 50);
-            });
-
-            function getDragAfterElement(container, y) {
-                const draggableElements = [...container.querySelectorAll('.playlist-card:not(.dragging)')];
-
-                return draggableElements.reduce((closest, child) => {
-                    const box = child.getBoundingClientRect();
-                    const offset = y - box.top - box.height / 2;
-                    if (offset < 0 && offset > closest.offset) {
-                        return { offset, element: child };
-                    } else {
-                        return closest;
-                    }
-                }, { offset: Number.NEGATIVE_INFINITY }).element;
+        function movePlaylist(index, direction) {
+            let playlists = getPlaylists();
+            if (direction === 'up' && index > 0) {
+                [playlists[index], playlists[index - 1]] = [playlists[index - 1], playlists[index]];
+            } else if (direction === 'down' && index < playlists.length - 1) {
+                [playlists[index], playlists[index + 1]] = [playlists[index + 1], playlists[index]];
             }
+            savePlaylists(playlists);
+            renderPlaylistsList();
         }
 
         function renderPlaylistSoundboard(playlistId) {
