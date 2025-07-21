@@ -100,7 +100,16 @@
         .playlist-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; position: relative; z-index: 2; pointer-events: none; /* allow clicks to pass to card */ }
         .playlist-info { flex-grow: 1; min-width: 0; }
         .playlist-card-actions { display: flex; gap: 10px; flex-shrink: 0; pointer-events: auto; /* re-enable pointer events for buttons */ }
-        .action-btn { background: none; border: 1px solid var(--v4-border-light); padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; font-size: 1em; }
+        .action-btn { 
+            background: none; 
+            border: 1px solid var(--v4-border-light); 
+            padding: 8px 12px; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            transition: all 0.2s ease; 
+            font-size: 1em;
+            text-shadow: 0 0 4px rgba(0, 0, 0, 0.5); /* ADDED SHADOW FOR EMOJIS */
+        }
         .action-btn:hover { border-color: var(--v4-purple-accent); background: #f0e8ff; }
         .action-btn.delete:hover { border-color: #dc3545; background: #f8d7da; }
         .action-btn.share:hover { border-color: #0d6efd; background: #cfe2ff; }
@@ -305,9 +314,9 @@
                      <div>
                         <label>Live Preview</label>
                         <div id="playlistPreview">
-                            <div id="previewContent" style="position: relative; z-index: 2;">
-                                <h3 id="previewName" style="margin: 0; color: var(--v4-text-primary);">Playlist Name</h3>
-                                <p id="previewDescription" style="margin: 5px 0 0; color: var(--v4-text-secondary);">Description</p>
+                            <div id="previewContent" style="position: relative; z-index: 2; pointer-events: none;">
+                                <div class="marquee-container playlist-name"><div class="marquee-content-wrapper"><span id="previewName">Playlist Name</span></div></div>
+                                <div class="marquee-container playlist-description"><div class="marquee-content-wrapper"><span id="previewDescription">Description</span></div></div>
                             </div>
                             <div id="previewActions">
                                 <button class="action-btn share" title="Share Playlist">🔗</button>
@@ -368,13 +377,29 @@
     if (toggleSidebarBtn_ && sidebar_) { toggleSidebarBtn_.addEventListener('click', () => { sidebar_.classList.toggle('collapsed'); setTimeout(initializeMarquees, 550); }); }
     
     function initializeMarquees() {
-        sidebarMarqueeEls_.forEach(el => { if (!el || !el.parentElement) return; const parent = el.parentElement; const overflow = el.scrollWidth > parent.clientWidth; const shouldScroll = sidebar_.classList.contains('collapsed') || (overflow && !sidebar_.classList.contains('collapsed')); el.classList.toggle('marquee-active', shouldScroll); if (!overflow && !sidebar_.classList.contains('collapsed')) { el.classList.remove('marquee-active'); } });
-        document.querySelectorAll('.playlist-card .marquee-container').forEach(container => {
+        document.querySelectorAll('.user-info .marquee-content, #previewContent .marquee-content-wrapper').forEach(el => {
+            const parent = el.closest('.marquee-container');
+            if (!el || !parent) return;
+            const overflow = el.scrollWidth > parent.clientWidth;
+
+            let isSidebarMarquee = el.closest('.user-info');
+            let shouldScroll = false;
+            if(isSidebarMarquee){
+                shouldScroll = sidebar_.classList.contains('collapsed') || (overflow && !sidebar_.classList.contains('collapsed'));
+                 el.classList.toggle('marquee-active', shouldScroll);
+                 if (!overflow && !sidebar_.classList.contains('collapsed')) {
+                    el.classList.remove('marquee-active');
+                }
+            }
+        });
+
+        document.querySelectorAll('.playlist-card .marquee-container, #playlistPreview .marquee-container').forEach(container => {
             const wrapper = container.querySelector('.marquee-content-wrapper');
             if (!wrapper) return;
             const firstSpan = wrapper.querySelector('span');
             if (!firstSpan) return;
-            const needsScrolling = firstSpan.offsetWidth > container.offsetWidth;
+            const needsScrolling = firstSpan.scrollWidth > container.clientWidth;
+            
             if (needsScrolling) {
                 if (wrapper.children.length === 1) {
                     const secondSpan = firstSpan.cloneNode(true);
@@ -478,8 +503,8 @@
                 card.innerHTML = `
                     <div class="playlist-card-header">
                         <div class="playlist-info">
-                            <div class="marquee-container playlist-name"><div class="marquee-content-wrapper"><span>${playlist.name}</span></div></div>
-                            <div class="marquee-container playlist-description"><div class="marquee-content-wrapper"><span>${playlist.description || 'No description'}</span></div></div>
+                            <div class="marquee-container playlist-name"><div class="marquee-content-wrapper"><span></span></div></div>
+                            <div class="marquee-container playlist-description"><div class="marquee-content-wrapper"><span></span></div></div>
                         </div>
                         <div class="playlist-card-actions">
                             <button class="action-btn share ${hasCustomization ? 'glassy' : ''}" title="Share Playlist">🔗</button>
@@ -488,6 +513,10 @@
                         </div>
                     </div>`;
 
+                // Set text content safely to prevent XSS
+                card.querySelector('.playlist-name span').textContent = playlist.name;
+                card.querySelector('.playlist-description span').textContent = playlist.description || 'No description';
+
                 if (hasCustomization) {
                     card.querySelectorAll('.marquee-content-wrapper span').forEach(span => {
                         span.style.color = '#fff';
@@ -495,8 +524,6 @@
                     });
                 }
                 
-                // Clicks are now handled by the mousedown->mouseup logic to differentiate from drags.
-                // The buttons inside have pointer-events: auto, so they work normally.
                 card.querySelector('.action-btn.share').addEventListener('click', (e) => { e.stopPropagation(); exportPlaylist(playlist.id); }); 
                 card.querySelector('.action-btn.edit').addEventListener('click', (e) => { e.stopPropagation(); openCreateModal(playlist.id); }); 
                 card.querySelector('.action-btn.delete').addEventListener('click', (e) => { e.stopPropagation(); deletePlaylist(playlist.id); }); 
@@ -513,13 +540,16 @@
             let holdTimer;
             let isDragging = false;
             let scrollInterval = null;
+            let clickStartX, clickStartY;
 
             container.addEventListener('mousedown', (e) => {
-                if (e.target.closest('.action-btn')) return; // Ignore clicks on buttons
+                if (e.target.closest('.action-btn')) return;
 
                 const card = e.target.closest('.playlist-card');
                 if (!card) return;
                 
+                clickStartX = e.clientX;
+                clickStartY = e.clientY;
                 let wasLongPress = false;
 
                 holdTimer = setTimeout(() => {
@@ -533,10 +563,8 @@
                 const onMouseUp = (upEvent) => {
                     clearTimeout(holdTimer);
                     if (!wasLongPress) {
-                        // This was a regular click, not a drag.
-                        // We check if the mouse has moved significantly to differentiate a click from a short drag.
-                        const dx = upEvent.clientX - e.clientX;
-                        const dy = upEvent.clientY - e.clientY;
+                        const dx = upEvent.clientX - clickStartX;
+                        const dy = upEvent.clientY - clickStartY;
                         if (Math.sqrt(dx * dx + dy * dy) < 5) {
                             renderPlaylistSoundboard(card.dataset.playlistId);
                         }
@@ -563,8 +591,7 @@
                     container.insertBefore(draggedItem, afterElement);
                 }
                 
-                // Auto-scroll logic
-                const scrollZone = 50; // 50px from top or bottom
+                const scrollZone = 50;
                 if (e.clientY < containerRect.top + scrollZone) {
                     if (!scrollInterval) scrollInterval = setInterval(() => { container.scrollTop -= 10; }, 24);
                 } else if (e.clientY > containerRect.bottom - scrollZone) {
@@ -592,7 +619,6 @@
                 const oldPlaylists = getPlaylists();
                 const newPlaylists = newOrderIds.map(id => oldPlaylists.find(p => p.id === id));
                 savePlaylists(newPlaylists);
-                // No need to re-render, the DOM is already correct.
             });
 
             function getDragAfterElement(container, y) {
@@ -653,11 +679,12 @@
             document.querySelectorAll('#previewActions .action-btn').forEach(btn => {
                 btn.classList.toggle('glassy', hasCustomization);
             });
-             document.querySelectorAll('#previewContent *').forEach(el => {
-                el.style.color = hasCustomization ? '#fff' : 'var(--v4-text-primary)';
-                if (el.matches('p')) el.style.color = hasCustomization ? '#eee' : 'var(--v4-text-secondary)';
+            document.querySelectorAll('#previewContent span').forEach(el => {
+                const isDesc = el.id === 'previewDescription';
+                el.style.color = hasCustomization ? (isDesc ? '#eee' : '#fff') : (isDesc ? 'var(--v4-text-secondary)' : 'var(--v4-text-primary)');
                 el.style.textShadow = hasCustomization ? '0 1px 3px rgba(0,0,0,0.4)' : '';
             });
+            initializeMarquees();
         }
 
         function openCreateModal(playlistId = null) {
@@ -859,7 +886,7 @@
         addPlaylistBtn.addEventListener('click', () => {
             if (!validatedPlaylist) return;
             validatedPlaylist.id = Date.now().toString();
-            const playlists = getPlaylists();
+            let playlists = getPlaylists();
             playlists.push(validatedPlaylist);
             savePlaylists(playlists);
             renderPlaylistsList();
