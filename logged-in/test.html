@@ -79,11 +79,19 @@
             margin-bottom: 20px; 
             padding: 20px 25px; 
             box-shadow: 0 6px 30px rgba(0,0,0,0.08); 
-            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out;
+            transition: transform 0.2s ease-in-out, box-shadow 0.2s ease-in-out, opacity 0.2s ease-in-out;
             position: relative; 
             cursor: pointer;
             user-select: none;
         }
+        .playlist-card.swapping {
+            opacity: 0;
+            transform: scale(0.95);
+        }
+        .playlist-card.nudge-up { animation: nudge-up 0.3s ease-in-out; }
+        .playlist-card.nudge-down { animation: nudge-down 0.3s ease-in-out; }
+        @keyframes nudge-up { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-6px); } }
+        @keyframes nudge-down { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(6px); } }
 
         .playlist-card:hover { transform: translateY(-5px) scale(1.01); box-shadow: 0 8px 35px rgba(0,0,0,0.12); }
         .playlist-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; position: relative; z-index: 2; }
@@ -98,7 +106,7 @@
             transition: all 0.2s ease; 
             font-size: 1em;
             text-shadow: 0 0 4px rgba(0, 0, 0, 0.5);
-            height: 37px; /* Match height for alignment */
+            height: 37px;
         }
         .action-btn:hover { border-color: var(--v4-purple-accent); background: #f0e8ff; }
         .action-btn.delete:hover { border-color: #dc3545; background: #f8d7da; }
@@ -115,14 +123,20 @@
         .action-btn.glassy.share:hover { border-color: rgba(255, 255, 255, 0.5); background-color: rgba(13, 110, 253, 0.5); }
         
         .reorder-btn-group {
-            display: none;
+            display: flex;
             flex-direction: column;
             height: 37px;
-            width: 35px;
+            width: 45px;
             border: 1px solid var(--v4-border-light);
             border-radius: 8px;
             overflow: hidden;
+            opacity: 0;
+            pointer-events: none;
             transition: all 0.2s ease;
+        }
+        .reorder-btn-group.visible {
+            opacity: 1;
+            pointer-events: auto;
         }
         .reorder-btn-group.glassy {
             background-color: rgba(255, 255, 255, 0.25); 
@@ -470,7 +484,7 @@
         const soundCache = new Map();
         let isMuted = false; let lastVolumeBeforeMute = 1;
         let validatedPlaylist = null;
-        
+
         const unlockAudioContext = () => { if (audioContext.state === 'suspended') { audioContext.resume(); } document.body.removeEventListener('click', unlockAudioContext); };
         document.body.addEventListener('click', unlockAudioContext);
 
@@ -576,17 +590,17 @@
                 card.querySelector('.action-btn.delete').addEventListener('click', (e) => { e.stopPropagation(); deletePlaylist(playlist.id); });
                 
                 const reorderGroup = card.querySelector('.reorder-btn-group');
-                card.querySelector('.half-btn.up').addEventListener('click', e => { e.stopPropagation(); movePlaylist(index, 'up'); });
-                card.querySelector('.half-btn.down').addEventListener('click', e => { e.stopPropagation(); movePlaylist(index, 'down'); });
+                card.querySelector('.half-btn.up').addEventListener('click', e => { e.stopPropagation(); movePlaylist(index, 'up', card); });
+                card.querySelector('.half-btn.down').addEventListener('click', e => { e.stopPropagation(); movePlaylist(index, 'down', card); });
 
                 card.addEventListener('contextmenu', e => {
                     if (e.target.closest('.action-btn') || e.target.closest('.reorder-btn-group')) return;
                     e.preventDefault();
                     e.stopPropagation();
-                    const wasVisible = reorderGroup.style.display === 'flex';
-                    document.querySelectorAll('.reorder-btn-group').forEach(el => el.style.display = 'none');
+                    const wasVisible = reorderGroup.classList.contains('visible');
+                    document.querySelectorAll('.reorder-btn-group').forEach(el => el.classList.remove('visible'));
                     if (!wasVisible) {
-                        reorderGroup.style.display = 'flex';
+                        reorderGroup.classList.add('visible');
                     }
                 });
                 
@@ -596,15 +610,32 @@
             initializeMarquees();
         }
 
-        function movePlaylist(index, direction) {
+        function movePlaylist(index, direction, cardElement) {
             let playlists = getPlaylists();
-            if (direction === 'up' && index > 0) {
-                [playlists[index], playlists[index - 1]] = [playlists[index - 1], playlists[index]];
-            } else if (direction === 'down' && index < playlists.length - 1) {
-                [playlists[index], playlists[index + 1]] = [playlists[index + 1], playlists[index]];
+            const canMoveUp = direction === 'up' && index > 0;
+            const canMoveDown = direction === 'down' && index < playlists.length - 1;
+
+            if (canMoveUp || canMoveDown) {
+                const swapIndex = direction === 'up' ? index - 1 : index + 1;
+                const allCards = document.querySelectorAll('.playlist-card');
+                const swapCardElement = allCards[swapIndex];
+
+                cardElement.classList.add('swapping');
+                swapCardElement.classList.add('swapping');
+
+                setTimeout(() => {
+                    [playlists[index], playlists[swapIndex]] = [playlists[swapIndex], playlists[index]];
+                    savePlaylists(playlists);
+                    renderPlaylistsList();
+                }, 200); // Wait for fade-out animation
+            } else {
+                // Nudge animation
+                const nudgeClass = direction === 'up' ? 'nudge-up' : 'nudge-down';
+                cardElement.classList.add(nudgeClass);
+                setTimeout(() => {
+                    cardElement.classList.remove(nudgeClass);
+                }, 300); // Duration of the animation
             }
-            savePlaylists(playlists);
-            renderPlaylistsList();
         }
 
         function renderPlaylistSoundboard(playlistId) {
@@ -902,7 +933,7 @@
             importModal.addEventListener('click', (e) => { if(e.target === importModal) closeImportModal(); });
             document.addEventListener('click', (e) => {
                 if (!e.target.closest('.playlist-card')) {
-                    document.querySelectorAll('.reorder-btn-group').forEach(el => el.style.display = 'none');
+                    document.querySelectorAll('.reorder-btn-group').forEach(el => el.classList.remove('visible'));
                 }
             });
 
