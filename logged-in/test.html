@@ -118,6 +118,7 @@
             opacity: 0;
             pointer-events: none;
             transition: opacity 0.3s ease-in-out;
+            z-index: 5;
         }
         .playlist-reorder-arrows.visible {
             opacity: 1;
@@ -420,7 +421,6 @@
             const firstSpan = wrapper.querySelector('span');
             if (!firstSpan) return;
             
-            // Clear previous state
             if (wrapper.children.length > 1) {
                 wrapper.removeChild(wrapper.lastChild);
             }
@@ -446,6 +446,7 @@
         const soundCache = new Map();
         let isMuted = false; let lastVolumeBeforeMute = 1;
         let validatedPlaylist = null;
+        let rightClickHoldTimer;
 
         const unlockAudioContext = () => { if (audioContext.state === 'suspended') { audioContext.resume(); } document.body.removeEventListener('click', unlockAudioContext); };
         document.body.addEventListener('click', unlockAudioContext);
@@ -497,6 +498,29 @@
             return category.replace(/([A-Z])/g, ' $1').trim();
         }
 
+        function handleRightClickHold() {
+            const allArrows = document.querySelectorAll('.playlist-reorder-arrows');
+            const anyVisible = Array.from(allArrows).some(el => el.classList.contains('visible'));
+            if (anyVisible) {
+                allArrows.forEach(el => el.classList.remove('visible'));
+            } else {
+                allArrows.forEach(el => el.classList.add('visible'));
+            }
+        }
+
+        function handleRightClickSingle(card) {
+            const allArrows = document.querySelectorAll('.playlist-reorder-arrows');
+            const targetArrows = card.querySelector('.playlist-reorder-arrows');
+            if (!targetArrows) return;
+            const wasVisible = targetArrows.classList.contains('visible');
+            
+            allArrows.forEach(el => el.classList.remove('visible'));
+
+            if (!wasVisible) {
+                targetArrows.classList.add('visible');
+            }
+        }
+
         function renderPlaylistsList() {
             settingsContainer.classList.remove('visible');
             document.getElementById('createNewPlaylistBtn').style.display = 'inline-block';
@@ -509,8 +533,6 @@
                 container.innerHTML = `<p style="text-align:center; color: var(--v4-text-secondary); margin-top: 20px;">You haven't created any playlists yet. Click a button above to get started!</p>`;
                 return;
             }
-
-            let rightClickHoldTimer;
 
             playlists.forEach((playlist, index) => { 
                 const card = document.createElement('div'); 
@@ -552,7 +574,8 @@
                 card.querySelector('.action-btn.edit').addEventListener('click', (e) => { e.stopPropagation(); openCreateModal(playlist.id); }); 
                 card.querySelector('.action-btn.delete').addEventListener('click', (e) => { e.stopPropagation(); deletePlaylist(playlist.id); });
                 
-                // --- Reordering Logic ---
+                card.querySelector('.playlist-info').addEventListener('click', () => renderPlaylistSoundboard(playlist.id));
+
                 const reorderArrows = card.querySelector('.playlist-reorder-arrows');
                 const upBtn = card.querySelector('.arrow-btn.up');
                 const downBtn = card.querySelector('.arrow-btn.down');
@@ -560,46 +583,22 @@
                 upBtn.addEventListener('click', e => { e.stopPropagation(); movePlaylist(index, 'up'); });
                 downBtn.addEventListener('click', e => { e.stopPropagation(); movePlaylist(index, 'down'); });
 
-                card.addEventListener('click', e => {
-                     if (!e.target.closest('.action-btn') && !e.target.closest('.arrow-btn')) {
-                         renderPlaylistSoundboard(playlist.id);
-                     }
-                });
-
                 card.addEventListener('contextmenu', e => {
                     e.preventDefault();
-                    clearTimeout(rightClickHoldTimer); // Prevent hold from firing on a single click
-
-                    // If all are visible, a single click should convert to single-visible mode
-                    const allVisible = document.querySelectorAll('.playlist-reorder-arrows.visible').length > 1;
-
-                    // First, hide all arrows
-                    document.querySelectorAll('.playlist-reorder-arrows').forEach(el => el.classList.remove('visible'));
-
-                    // Then, if the clicked one wasn't visible before (or if all were visible), show it.
-                    if (!reorderArrows.classList.contains('visible') || allVisible) {
-                         reorderArrows.classList.add('visible');
-                    }
+                    clearTimeout(rightClickHoldTimer);
+                    handleRightClickSingle(e.currentTarget);
                 });
 
                 card.addEventListener('mousedown', e => {
-                    if (e.button !== 2) return; // Only for right-click
+                    if (e.button !== 2) return;
                     clearTimeout(rightClickHoldTimer);
-                    rightClickHoldTimer = setTimeout(() => {
-                        const allArrows = document.querySelectorAll('.playlist-reorder-arrows');
-                        const anyVisible = Array.from(allArrows).some(el => el.classList.contains('visible'));
-                        if (anyVisible) {
-                            allArrows.forEach(el => el.classList.remove('visible'));
-                        } else {
-                            allArrows.forEach(el => el.classList.add('visible'));
-                        }
-                    }, 1000);
+                    rightClickHoldTimer = setTimeout(handleRightClickHold, 1000);
                 });
-                card.addEventListener('mouseup', () => clearTimeout(rightClickHoldTimer));
                 
                 container.appendChild(card); 
             });
 
+            document.addEventListener('mouseup', () => clearTimeout(rightClickHoldTimer));
             initializeMarquees();
         }
 
