@@ -75,6 +75,56 @@
     .loading-container p {
         margin: 0;
     }
+    
+    /* --- NEW: Time Limit Overlay Styles --- */
+    #time-limit-overlay {
+        position: fixed;
+        inset: 0;
+        background-color: var(--dark-bg-primary);
+        z-index: 9998; /* Below loading, above app */
+        display: flex; /* Set to 'flex' with JS when shown */
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        color: var(--dark-text-primary);
+        font-family: 'PrimaryFont', sans-serif;
+        text-align: center;
+        padding: 20px;
+        box-sizing: border-box;
+    }
+    .limit-container h1 {
+        font-size: 2.5em;
+        color: var(--dark-accent-purple);
+        margin-bottom: 10px;
+    }
+    .limit-container p {
+        font-size: 1.2em;
+        color: var(--dark-text-secondary);
+        margin-bottom: 30px;
+    }
+    .limit-buttons {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 20px;
+    }
+    .limit-buttons button {
+        background-color: var(--dark-bg-tertiary);
+        color: var(--dark-text-primary);
+        border: 1px solid var(--dark-border-color);
+        padding: 12px 24px;
+        border-radius: 12px;
+        cursor: pointer;
+        font-family: 'PrimaryFont', sans-serif;
+        font-weight: bold;
+        transition: background-color 0.2s ease;
+        text-transform: uppercase;
+        font-size: 1em;
+    }
+    .limit-buttons button:hover {
+        background-color: #333;
+    }
+
 
     /* --- App Container Visibility --- */
     #app-container {
@@ -105,10 +155,24 @@
         margin: 0 auto;
         max-width: 1400px;
     }
+    /* --- NEW: Grouping for Logo and Timer --- */
+    .logo-timer-group {
+        display: flex;
+        align-items: center;
+        gap: 25px; /* Space between logo and timer */
+    }
     .main-header .logo img {
         height: 40px;
         filter: invert(1) brightness(1.5) contrast(1.2);
         display: block;
+    }
+    /* --- NEW: Timer Display Style --- */
+    #timer-display {
+        font-family: 'PrimaryFont', sans-serif;
+        color: #c7c7c7; /* Light grey, almost white */
+        font-size: 16px;
+        font-weight: bold;
+        display: none; /* Hidden by default, shown via JS for non-admins */
     }
     .main-header .auth-buttons {
         display: flex;
@@ -320,12 +384,27 @@
     </div>
   </div>
 
+  <div id="time-limit-overlay" style="display: none;">
+      <div class="limit-container">
+          <h1>Time's Up!</h1>
+          <p>Your daily time limit is up.</p>
+          <div class="limit-buttons">
+              <button onclick="window.location.href='../logged-in/dashboard.html'">Go to Dashboard</button>
+              <button onclick="window.location.href='vernmini.html'">Go to VernMini</button>
+          </div>
+      </div>
+  </div>
+
   <div id="app-container">
     <header class="main-header">
       <div class="container">
-        <div class="logo">
-          <a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer" /></a>
+        <div class="logo-timer-group">
+            <div class="logo">
+              <a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer" /></a>
+            </div>
+            <div id="timer-display"></div>
         </div>
+
         <div class="auth-buttons">
           <button id="cloakBtn" class="header-icon-btn" title="Cloak Tab">
               <img src="../images/mask-white.png" alt="Cloak Tab Icon">
@@ -386,7 +465,7 @@
   <script src="../firebase-config.js"></script>
 
   <script>
-    document.addEventListener('DOMContentLoaded', () => {
+  document.addEventListener('DOMContentLoaded', () => {
         // --- Element References ---
         const loadingOverlay = document.getElementById('loading-overlay');
         const appContainer = document.getElementById('app-container');
@@ -402,6 +481,14 @@
         const savedCloakList = document.getElementById('saved-cloak-list');
         const customUrlInput = document.getElementById('custom-url-input');
         const customCloakBtn = document.getElementById('custom-cloak-btn');
+        // --- NEW: Timer Element References ---
+        const timerDisplay = document.getElementById('timer-display');
+        const timeLimitOverlay = document.getElementById('time-limit-overlay');
+        let timerInterval = null;
+
+        // --- NEW: Timer and Admin Configuration ---
+        const ADMIN_EMAILS = ["4simpleproblems@gmail.com", "belkwy30@minerva.sparcc.org"];
+        const TIME_LIMIT_SECONDS = 3600; // 1 hour = 3600 seconds
 
         // --- Core Application Logic (Auth & Iframe Loading) ---
 
@@ -416,12 +503,12 @@
                     const obfuscatedValue = data.obfuscatedUrl;
 
                     if (obfuscatedValue) {
-                      const finalUrl = atob(obfuscatedValue);
-                      if (proxyFrame) {
-                          proxyFrame.src = 'https://' + finalUrl;
-                      }
+                        const finalUrl = atob(obfuscatedValue);
+                        if (proxyFrame) {
+                            proxyFrame.src = 'https://' + finalUrl;
+                        }
                     } else {
-                      throw new Error("Field 'obfuscatedUrl' was not found in your 'config/proxy' document.");
+                        throw new Error("Field 'obfuscatedUrl' was not found in your 'config/proxy' document.");
                     }
                 } else {
                     throw new Error("The 'proxy' document was not found in your 'config' collection.");
@@ -437,17 +524,106 @@
             window.location.href = '/login.html';
         }, 8000);
 
+        // --- NEW: Timer Logic Functions ---
+
+        // This function displays the time limit screen.
+        function showTimeUpScreen() {
+            loadingOverlay.style.display = 'none'; // Hide the initial loading screen
+            appContainer.style.display = 'none'; // Hide the main app content
+            timeLimitOverlay.style.display = 'flex'; // Show the "Time's Up" message
+            proxyFrame.src = 'about:blank'; // Ensure iframe content is cleared
+        }
+
+        // Formats seconds into HH:MM:SS for the display.
+        function formatTime(totalSeconds) {
+            const hours = Math.floor(totalSeconds / 3600);
+            const minutes = Math.floor((totalSeconds % 3600) / 60);
+            const seconds = totalSeconds % 60;
+            const paddedHours = String(hours).padStart(2, '0');
+            const paddedMinutes = String(minutes).padStart(2, '0');
+            const paddedSeconds = String(seconds).padStart(2, '0');
+            return `${paddedHours}:${paddedMinutes}:${paddedSeconds}`;
+        }
+
+        // Starts the countdown timer visible to the user.
+        function startCountdown(totalSeconds) {
+            let remainingSeconds = totalSeconds;
+            if (timerInterval) clearInterval(timerInterval); // Clear any existing timer
+
+            timerDisplay.style.display = 'block'; // Make the timer visible
+
+            timerInterval = setInterval(() => {
+                if (remainingSeconds <= 0) {
+                    clearInterval(timerInterval);
+                    timerDisplay.textContent = "Time Left: 00:00:00";
+                    // If the user is in fullscreen, reload the page to exit and show the limit screen.
+                    if (document.fullscreenElement) {
+                        window.location.reload();
+                    } else {
+                        showTimeUpScreen();
+                    }
+                    return;
+                }
+                timerDisplay.textContent = `Time Left: ${formatTime(remainingSeconds)}`;
+                remainingSeconds--;
+            }, 1000);
+        }
+
+        // Checks the user's daily time and decides whether to load the app or show the limit screen.
+        async function handleUserTimer() {
+            const today = new Date().toISOString().split('T')[0];
+            let timerData = JSON.parse(localStorage.getItem('userTimerData'));
+
+            // If it's a new day or the first visit, reset the timer data in localStorage.
+            if (!timerData || timerData.date !== today) {
+                timerData = { date: today, startTime: Date.now() };
+                localStorage.setItem('userTimerData', JSON.stringify(timerData));
+            }
+
+            const elapsedTimeMs = Date.now() - timerData.startTime;
+            const elapsedTimeSec = Math.floor(elapsedTimeMs / 1000);
+
+            if (elapsedTimeSec >= TIME_LIMIT_SECONDS) {
+                // Time is up for today.
+                showTimeUpScreen();
+            } else {
+                // User has time remaining, so load the app and start the countdown.
+                appContainer.classList.add('is-visible');
+                loadingOverlay.classList.add('is-hiding');
+                await initializeProxy();
+                loadingOverlay.addEventListener('transitionend', () => {
+                    loadingOverlay.style.display = 'none';
+                }, { once: true });
+                document.body.style.overflow = 'auto';
+
+                const remainingSeconds = TIME_LIMIT_SECONDS - elapsedTimeSec;
+                startCountdown(remainingSeconds);
+            }
+        }
+        
+        // --- MODIFIED: onAuthStateChanged to handle user roles and timers ---
         firebase.auth().onAuthStateChanged(async (user) => {
             clearTimeout(authTimeout);
             try {
                 if (user) {
-                    appContainer.classList.add('is-visible');
-                    loadingOverlay.classList.add('is-hiding');
-                    await initializeProxy();
-                    loadingOverlay.addEventListener('transitionend', () => {
-                        loadingOverlay.style.display = 'none';
-                    }, { once: true });
-                    document.body.style.overflow = 'auto'; 
+                    const isAdmin = ADMIN_EMAILS.includes(user.email);
+
+                    if (isAdmin) {
+                        // Admin user: Bypass all timer logic and load the app.
+                        console.log("Admin user detected. No time limit.");
+                        timerDisplay.style.display = 'none'; // Admins don't need a timer display.
+                        appContainer.classList.add('is-visible');
+                        loadingOverlay.classList.add('is-hiding');
+                        await initializeProxy();
+                        loadingOverlay.addEventListener('transitionend', () => {
+                            loadingOverlay.style.display = 'none';
+                        }, { once: true });
+                        document.body.style.overflow = 'auto';
+                    } else {
+                        // Regular user: Go through the timer check process.
+                        console.log("Regular user detected. Initializing timer.");
+                        await handleUserTimer();
+                    }
                 } else {
                     console.log("No authenticated user found. Redirecting to login.");
                     window.location.href = '/login.html';
@@ -630,7 +806,7 @@
 
         // --- Initial Population ---
         populatePresets();
-    });
+  });
   </script>
 </body>
 </html>
