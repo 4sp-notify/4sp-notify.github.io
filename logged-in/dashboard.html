@@ -570,7 +570,7 @@
       display: none;
     }
     .timer-inputs input {
-        width: 50px;
+        width: 40px;
         padding: 8px;
         text-align: center;
         border: 1px solid #ccc;
@@ -1666,7 +1666,7 @@
       {
         templateId: 'stopwatch_widget', title: 'Stopwatch', icon: '⏱️', type: 'small',
         onMount: (cardElement) => {
-            const STORAGE_KEY = '4sp_stopwatchState_v3';
+            const STORAGE_KEY = '4sp_stopwatchState_v4';
             const display = cardElement.querySelector('.stopwatch-display');
             const startBtn = cardElement.querySelector('button[data-action="start"]');
             const pauseBtn = cardElement.querySelector('button[data-action="pause"]');
@@ -1695,11 +1695,25 @@
             
             function formatTime(ms) {
                 const totalSeconds = Math.floor(ms / 1000);
-                const hours = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
-                const minutes = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
-                const seconds = (totalSeconds % 60).toString().padStart(2, '0');
                 const centiseconds = Math.floor((ms % 1000) / 10).toString().padStart(2, '0');
-                return `${hours}:${minutes}:${seconds}.${centiseconds}`;
+
+                const weeks = Math.floor(totalSeconds / 604800);
+                const days = Math.floor((totalSeconds % 604800) / 86400);
+                const hours = Math.floor((totalSeconds % 86400) / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                const seconds = totalSeconds % 60;
+
+                const pad = (num) => num.toString().padStart(2, '0');
+
+                const timePart = `${pad(hours)}:${pad(minutes)}:${pad(seconds)}.${centiseconds}`;
+
+                if (weeks > 0) {
+                    return `${weeks}:${pad(days)}:${timePart}`;
+                }
+                if (days > 0) {
+                    return `${days}:${timePart}`;
+                }
+                return timePart;
             }
 
             function updateDisplay() {
@@ -1764,7 +1778,9 @@
       {
         templateId: 'timer_widget', title: 'Timer', icon: '⏲️', type: 'small',
         onMount: (cardElement) => {
-            const STORAGE_KEY = '4sp_timerState_v3';
+            const STORAGE_KEY = '4sp_timerState_v4';
+            const wInput = cardElement.querySelector('#timer-w');
+            const dInput = cardElement.querySelector('#timer-d');
             const hInput = cardElement.querySelector('#timer-h');
             const mInput = cardElement.querySelector('#timer-m');
             const sInput = cardElement.querySelector('#timer-s');
@@ -1774,16 +1790,30 @@
             const pauseBtn = cardElement.querySelector('button[data-action="pause"]');
             const resetBtn = cardElement.querySelector('button[data-action="reset"]');
 
-            let state = { targetTime: null, remainingTime: 300000, isRunning: false };
+            let state = { targetTime: null, remainingTime: 0, isRunning: false };
             let intervalId = null;
 
             function formatTime(ms) {
                 if (ms < 0) ms = 0;
                 const totalSeconds = Math.round(ms / 1000);
-                const hours = Math.floor(totalSeconds / 3600).toString().padStart(2, '0');
-                const minutes = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
-                const seconds = (totalSeconds % 60).toString().padStart(2, '0');
-                return `${hours}:${minutes}:${seconds}`;
+
+                const weeks = Math.floor(totalSeconds / 604800);
+                const days = Math.floor((totalSeconds % 604800) / 86400);
+                const hours = Math.floor((totalSeconds % 86400) / 3600);
+                const minutes = Math.floor((totalSeconds % 3600) / 60);
+                const seconds = totalSeconds % 60;
+
+                const pad = (num) => num.toString().padStart(2, '0');
+
+                const timePart = `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+
+                if (weeks > 0) {
+                    return `${weeks}:${pad(days)}:${timePart}`;
+                }
+                if (days > 0) {
+                    return `${days}:${timePart}`;
+                }
+                return timePart;
             }
 
             function updateDisplay() {
@@ -1797,10 +1827,27 @@
 
             function updateFromInputs() {
                 if (state.isRunning) return;
+                const w = parseInt(wInput.value) || 0;
+                const d = parseInt(dInput.value) || 0;
                 const h = parseInt(hInput.value) || 0;
                 const m = parseInt(mInput.value) || 0;
                 const s = parseInt(sInput.value) || 0;
-                state.remainingTime = (h * 3600 + m * 60 + s) * 1000;
+                
+                const ONE_WEEK_MS = 7 * 24 * 60 * 60 * 1000;
+                let totalMs = (w * 7 * 24 * 60 * 60 * 1000) +
+                              (d * 24 * 60 * 60 * 1000) +
+                              (h * 60 * 60 * 1000) +
+                              (m * 60 * 1000) +
+                              (s * 1000);
+                
+                if (totalMs > ONE_WEEK_MS) {
+                    totalMs = ONE_WEEK_MS;
+                    wInput.value = 1;
+                    dInput.value = 0; hInput.value = 0; mInput.value = 0; sInput.value = 0;
+                    showNotification("Timer capped at maximum of 1 week.", "info");
+                }
+
+                state.remainingTime = totalMs;
                 updateDisplay();
             }
 
@@ -1869,7 +1916,7 @@
                 }
             }
 
-            [hInput, mInput, sInput].forEach(input => {
+            [wInput, dInput, hInput, mInput, sInput].forEach(input => {
                 input.addEventListener('input', updateFromInputs);
             });
             
@@ -1920,10 +1967,12 @@
                     <button data-action="reset">Reset</button>
                 </div>`;
             case 'timer_widget': return () => `
-                <div class="timer-display-value">00:05:00</div>
+                <div class="timer-display-value">00:00:00</div>
                 <div class="timer-inputs">
-                    <input type="number" id="timer-h" placeholder="HH" min="0" value="0"> :
-                    <input type="number" id="timer-m" placeholder="MM" min="0" max="59" value="5"> :
+                    <input type="number" id="timer-w" placeholder="W" min="0" max="1" value="0"> :
+                    <input type="number" id="timer-d" placeholder="D" min="0" max="6" value="0"> :
+                    <input type="number" id="timer-h" placeholder="HH" min="0" max="23" value="0"> :
+                    <input type="number" id="timer-m" placeholder="MM" min="0" max="59" value="0"> :
                     <input type="number" id="timer-s" placeholder="SS" min="0" max="59" value="0">
                 </div>
                 <div class="controls-flex">
