@@ -295,6 +295,13 @@
       font-size: 1.8em;
       color: #6720bd;
     }
+    /* Style for the new "NOW" item */
+    .hourly-item.now {
+        background-color: rgba(103, 32, 189, 0.05);
+        border-left: 2px solid #6720bd;
+        border-right: 2px solid #6720bd;
+        font-weight: bold;
+    }
 
     /* Daily Card Styling */
     .daily-item-card {
@@ -614,6 +621,45 @@
       left: 25%;
     }
     
+    /* --- NEW: Forecast Graph Section --- */
+    .graph-forecast-container {
+        margin-top: 25px;
+        background: #f8f9fa;
+        border-radius: 15px;
+        padding: 20px;
+        border: 1px solid #e9ecef;
+    }
+    .graph-mode-selector {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 15px;
+    }
+    .graph-mode-btn {
+        padding: 8px 15px;
+        font-size: 0.9em;
+        font-weight: 600;
+        border: 1px solid #ccc;
+        background-color: #fff;
+        color: #555;
+        border-radius: 20px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    .graph-mode-btn.active,
+    .graph-mode-btn:hover {
+        background-color: #6720bd;
+        color: #fff;
+        border-color: #6720bd;
+        box-shadow: 0 2px 8px rgba(103, 32, 189, 0.3);
+    }
+    .graph-canvas-container {
+        position: relative;
+        height: 250px;
+    }
+
     /* --- Animation & Utility --- */
     .fade-in { animation: fadeIn 0.6s ease-out; }
     @keyframes fadeIn {
@@ -737,6 +783,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <script src="../firebase-config.js"></script>
   <script>
     // --- Globals & Firebase Refs ---
@@ -821,8 +868,7 @@
       const degreesToCardinal = (degrees) => {
         if (degrees === null || typeof degrees === 'undefined' || isNaN(degrees)) return 'N/A';
         const val = Math.floor((degrees / 22.5) + 0.5);
-        const arr = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
-        return arr[(val % 16)];
+        const arr = ["NORTH", "N-NORTHEAST", "NORTHEAST", "E-NORTHEAST", "EAST", "E-SOUTHEAST", "SOUTHEAST", "S-SOUTHEAST", "SOUTH", "S-SOUTHWEST", "SOUTHWEST", "W-SOUTHWEST", "WEST", "W-NORTHWEST", "NORTHWEST", "N-NORTHWEST"];        return arr[(val % 16)];
       };
 
       const formatNumber = (num, precision = 2) => {
@@ -845,6 +891,7 @@
       };
       let userCoords = null;
       let debounceTimer;
+      let forecastChartInstance = null; // To hold the chart instance
       
       const WMO_CODES = {
           0: { desc: "Clear sky", icon: "☀️" }, 1: { desc: "Mainly clear", icon: "🌤️" },
@@ -950,6 +997,14 @@
 
         let hourlyHTML = '';
         const currentHour = new Date(data.current.time).getHours();
+
+        // Add the new "NOW" item first
+        hourlyHTML += `<div class="hourly-item now">
+            <p class="hourly-time">NOW</p>
+            <p class="hourly-icon">${(WMO_CODES[data.current.weather_code] || {icon: '?'}).icon}</p>
+            <p class="hourly-temp">${Math.round(data.current.temperature_2m)}°</p>
+        </div>`;
+
         for (let i = currentHour; i < currentHour + 24 && i < data.hourly.time.length; i++) {
           const date = new Date(data.hourly.time[i]);
           const hour = date.getHours();
@@ -968,8 +1023,22 @@
         const dailyForecastHTML = `<div class="forecast-container"><h3 class="forecast-title">14-Day Forecast</h3><div class="scroll-frame">${dailyHTML}</div></div>`;
 
         const detailsHTML = `<div><h3 class="forecast-title">Additional Details For Today</h3><div class="details-grid"><div class="detail-box"><div class="detail-box-title">Sunrise</div><div class="detail-box-value">${new Date(data.daily.sunrise[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div><div class="detail-box"><div class="detail-box-title">Sunset</div><div class="detail-box-value">${new Date(data.daily.sunset[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div><div class="detail-box"><div class="detail-box-title">Max UV Index</div><div class="detail-box-value">${formatNumber(data.daily.uv_index_max[0], 1)}</div></div><div class="detail-box"><div class="detail-box-title">Precipitation</div><div class="detail-box-value">${formatNumber(data.daily.precipitation_sum[0])} <span class="unit">${precipSuffix}</span></div></div><div class="detail-box"><div class="detail-box-title">Wind Direction</div><div class="detail-box-value">${degreesToCardinal(data.daily.wind_direction_10m_dominant[0])}</div></div></div></div>`;
+        
+        // New Graph Section HTML
+        const graphSectionHTML = `
+            <div class="graph-forecast-container">
+                <div class="graph-mode-selector">
+                    <button class="graph-mode-btn active" data-mode="temperature">Temperature</button>
+                    <button class="graph-mode-btn" data-mode="precipitation">Precipitation</button>
+                    <button class="graph-mode-btn" data-mode="uv">UV Index</button>
+                    <button class="graph-mode-btn" data-mode="wind">Wind</button>
+                </div>
+                <div class="graph-canvas-container">
+                    <canvas id="forecast-chart"></canvas>
+                </div>
+            </div>`;
 
-       widgetContainer.innerHTML = headerHTML + currentConditionsHTML + hourlyForecastHTML + dailyForecastHTML + detailsHTML;
+       widgetContainer.innerHTML = headerHTML + currentConditionsHTML + hourlyForecastHTML + dailyForecastHTML + detailsHTML + graphSectionHTML;
         
        document.getElementById('refreshBtn').addEventListener('click', fetchAndDisplayWeather);
        document.getElementById('settingsBtn').addEventListener('click', openWeatherSettingsModal);
@@ -980,8 +1049,119 @@
            openDailyDetailModal(data, dayIndex);
          });
        });
+       
+       // Initialize the new forecast graph
+       initializeForecastGraph(data);
       };
       
+      const initializeForecastGraph = (data) => {
+        const ctx = document.getElementById('forecast-chart');
+        if (!ctx) return; // Exit if canvas not found
+
+        const modeButtons = document.querySelectorAll('.graph-mode-btn');
+
+        if (forecastChartInstance) {
+            forecastChartInstance.destroy(); // Destroy previous chart if it exists
+        }
+        
+        const dailyData = data.daily;
+        const labels = dailyData.time.map((t, i) => {
+            const date = new Date(t + 'T00:00:00');
+            return i === 0 ? 'Today' : date.toLocaleDateString(undefined, { weekday: 'short' });
+        });
+
+        const datasets = {
+            temperature: [{
+                    label: 'Max Temp', data: dailyData.temperature_2m_max, borderColor: '#ff6384',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)', tension: 0.4, fill: 'start',
+                }, {
+                    label: 'Min Temp', data: dailyData.temperature_2m_min, borderColor: '#36a2eb',
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)', tension: 0.4, fill: 'start',
+            }],
+            precipitation: [{
+                    label: 'Chance (%)', data: dailyData.precipitation_probability_max, borderColor: '#4bc0c0',
+                    backgroundColor: 'rgba(75, 192, 192, 0.5)', type: 'line', yAxisID: 'y1', tension: 0.4,
+                }, {
+                    label: `Amount (${weatherSettings.units === 'imperial' ? 'in' : 'mm'})`, data: dailyData.precipitation_sum,
+                    backgroundColor: '#9966ff', type: 'bar', yAxisID: 'y',
+            }],
+            uv: [{
+                label: 'Max UV Index', data: dailyData.uv_index_max,
+                backgroundColor: (context) => {
+                    const value = context.raw;
+                    if (value <= 2) return 'rgba(40, 167, 69, 0.7)';
+                    if (value <= 5) return 'rgba(255, 193, 7, 0.7)';
+                    if (value <= 7) return 'rgba(255, 140, 0, 0.7)';
+                    if (value <= 10) return 'rgba(220, 53, 69, 0.7)';
+                    return 'rgba(103, 32, 189, 0.7)';
+                },
+                borderColor: 'rgba(0,0,0,0.1)', borderWidth: 1, type: 'bar',
+            }],
+            wind: [{
+                    label: 'Max Wind', data: dailyData.wind_speed_10m_max, borderColor: '#ff9f40',
+                    backgroundColor: 'rgba(255, 159, 64, 0.2)', tension: 0.4, fill: true,
+                }, {
+                    label: 'Max Gust', data: dailyData.wind_gusts_10m_max, borderColor: '#c9cbcf',
+                    backgroundColor: 'rgba(201, 203, 207, 0.2)', tension: 0.4, fill: true,
+            }]
+        };
+        
+        const getChartOptions = (mode) => {
+            const tempSuffix = weatherSettings.units === 'imperial' ? '°F' : '°C';
+            const speedSuffix = weatherSettings.units === 'imperial' ? 'mph' : 'km/h';
+            const precipSuffix = weatherSettings.units === 'imperial' ? 'in' : 'mm';
+
+            let options = {
+                responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false, },
+                plugins: { legend: { position: 'top' }, tooltip: { callbacks: {} } },
+                scales: { x: { grid: { display: false } }, y: { beginAtZero: false, grid: { color: '#e0e0e0' },
+                        ticks: { callback: (value) => value + (mode === 'temperature' ? tempSuffix : (mode === 'wind' ? ' ' + speedSuffix : ''))}
+                }}
+            };
+
+            if (mode === 'precipitation') {
+                options.scales.y = { type: 'linear', display: true, position: 'left', title: { display: true, text: `Amount (${precipSuffix})`}, grid: { drawOnChartArea: false }, ticks: { callback: (v) => `${v} ${precipSuffix}` }};
+                options.scales.y1 = { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Chance (%)' }, min: 0, max: 100, ticks: { callback: (v) => `${v}%` }};
+            } else if (mode === 'uv') {
+                options.scales.y.beginAtZero = true;
+                options.plugins.tooltip.callbacks.label = (context) => {
+                    let label = context.dataset.label || '';
+                    if (label) { label += ': '; }
+                    let value = context.raw;
+                    let description = '';
+                    if (value <= 2) description = ' (Low)';
+                    else if (value <= 5) description = ' (Moderate)';
+                    else if (value <= 7) description = ' (High)';
+                    else if (value <= 10) description = ' (Very High)';
+                    else description = ' (Extreme)';
+                    return label + value + description;
+                }
+            }
+            return options;
+        };
+
+        const updateChart = (mode) => {
+            if (!forecastChartInstance) return;
+            forecastChartInstance.data.datasets = datasets[mode];
+            forecastChartInstance.options = getChartOptions(mode);
+            forecastChartInstance.update();
+        };
+
+        forecastChartInstance = new Chart(ctx.getContext('2d'), {
+            type: 'line',
+            data: { labels: labels, datasets: datasets.temperature },
+            options: getChartOptions('temperature')
+        });
+        
+        modeButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                document.querySelector('.graph-mode-btn.active')?.classList.remove('active');
+                button.classList.add('active');
+                updateChart(button.dataset.mode);
+            });
+        });
+    };
+
       function setupModal(modal) {
           const closeBtn = modal.querySelector('.modal-close-btn');
           if(closeBtn) closeBtn.onclick = () => modal.classList.remove('modal-open');
@@ -1028,21 +1208,15 @@
         settingsModal.classList.add('modal-open');
       };
       
-      // *** UPDATED AND MORE DETAILED FUNCTION ***
       const getShortLocationLabel = (address, fullDisplayName) => {
         if (!address) return fullDisplayName;
-
         const city = address.city || address.town || address.village || address.hamlet;
-
-        // If it's a specific address with a street number
         if (address.house_number && address.road && city) {
             return `${address.house_number} ${address.road}, ${city}`;
         }
-        // If it's just a street in a city
         if (address.road && city) {
             return `${address.road}, ${city}`;
         }
-        // Fallback for city and state/country
         if (city && address.state) {
             return `${city}, ${address.state}`;
         }
@@ -1052,7 +1226,6 @@
         if (city) {
             return city;
         }
-        // If all else fails, use the full name
         return fullDisplayName;
       };
 
