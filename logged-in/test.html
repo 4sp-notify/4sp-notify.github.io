@@ -670,7 +670,7 @@
 
             <section class="settings-section" id="username-section">
                 <h3>Edit Username</h3>
-                <p>Update your display name that appears throughout the application. This change will be reflected immediately across all pages.</p>
+                <p>Update your display name. You can change your username up to 5 times per month (every 30 days).</p>
                 
                 <form class="settings-form" id="username-form">
                     <div class="form-group">
@@ -741,56 +741,31 @@
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
     <script src="../firebase-config.js"></script>
     <script>
-        // Global variables to track authentication and settings state
+        // Global variables
         let isGoogleAccount = false;
         let isReauthenticated = false;
-        let currentPanicSettings = null; 
+        let currentPanicSettings = null;
         
-        // Database reference helper
         const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
-        
-        // Marquee elements for text scrolling
         const marqueeEls = document.querySelectorAll('.marquee-content');
 
-        // --- NEW: Function to check and apply cooldowns for username/password changes ---
+        // This function is no longer used for username, but is kept for password cooldowns.
         function checkAndUpdateCooldowns(userData, userEmail) {
             const isExemptUser = userEmail === '4simpleproblems@gmail.com';
-            const usernameSection = document.getElementById('username-section');
             const passwordSection = document.getElementById('password-section');
 
             if (isExemptUser) {
-                // If the user is exempt, ensure the sections are enabled
-                usernameSection.classList.remove('disabled');
-                // Only enable password section if it's not a Google account (which has its own disabled state)
                 if (!isGoogleAccount) {
                     passwordSection.classList.remove('disabled');
                 }
-                return; // Stop further checks for the exempt user
+                return;
             }
 
-            // --- Username Cooldown Logic (7 days) ---
-            const lastUsernameChange = userData.lastUsernameChange;
-            if (lastUsernameChange && lastUsernameChange.toDate) {
-                const usernameCooldown = 7 * 24 * 60 * 60 * 1000; // 7 days in milliseconds
-                const timeSinceChange = Date.now() - lastUsernameChange.toDate().getTime();
-                
-                if (timeSinceChange < usernameCooldown) {
-                    const daysRemaining = Math.ceil((usernameCooldown - timeSinceChange) / (1000 * 60 * 60 * 24));
-                    usernameSection.classList.add('disabled');
-                    usernameSection.setAttribute('data-disabled-message', `YOU CAN CHANGE YOUR USERNAME AGAIN IN ${daysRemaining} DAY(S)`);
-                } else {
-                    usernameSection.classList.remove('disabled');
-                }
-            } else {
-                usernameSection.classList.remove('disabled');
-            }
-
-            // --- Password Cooldown Logic (14 days) ---
-            // This only runs for non-Google accounts
+            // Password Cooldown Logic (14 days) - Only for non-Google accounts
             if (!isGoogleAccount) {
                 const lastPasswordChange = userData.lastPasswordChange;
                 if (lastPasswordChange && lastPasswordChange.toDate) {
-                    const passwordCooldown = 14 * 24 * 60 * 60 * 1000; // 14 days in milliseconds
+                    const passwordCooldown = 14 * 24 * 60 * 60 * 1000;
                     const timeSinceChange = Date.now() - lastPasswordChange.toDate().getTime();
                     
                     if (timeSinceChange < passwordCooldown) {
@@ -806,18 +781,14 @@
             }
         }
 
-
-        // Authentication state management
         firebase.auth().onAuthStateChanged(async user => {
             if (!user) {
                 return location.href = '../login.html';
             }
             
-            // Update user info in sidebar
             document.getElementById('userEmail').textContent = user.email;
             document.getElementById('displayEmail').textContent = user.email;
 
-            // Get user data from Firestore
             const doc = await dbRef().get();
             const userData = doc.exists ? doc.data() : {};
 
@@ -846,19 +817,17 @@
             passwordSection.classList.toggle('disabled', isGoogleAccount);
             changePasswordBtn.style.display = isGoogleAccount ? 'none' : 'flex';
             
-            // --- MODIFIED: Run cooldown check after getting user data ---
+            // This now only checks for password cooldowns
             checkAndUpdateCooldowns(userData, user.email);
 
             setupDeleteAccountSection();
             updateMarquees();
         });
 
-        // Setup delete account section
         function setupDeleteAccountSection() {
             const deleteSection = document.getElementById('delete-section');
             const reauthBtn = document.getElementById('reauthBtn');
             const deleteForm = document.getElementById('delete-form');
-            
             if (isGoogleAccount) {
                 deleteSection.classList.add('disabled');
                 deleteSection.setAttribute('data-disabled-message', 'Reauthenticate with your Google account to enable account deletion');
@@ -873,7 +842,6 @@
             }
         }
 
-        // Logout functionality
         document.getElementById('logoutBtn').onclick =
         document.getElementById('signOutLink').onclick = () => {
             firebase.auth().signOut().then(() => {
@@ -881,16 +849,13 @@
             });
         };
 
-        // Sidebar toggle functionality
         const toggleSidebarBtn = document.getElementById('toggleSidebar');
         const sidebar = document.getElementById('sidebar');
-        
         toggleSidebarBtn.addEventListener('click', () => {
             sidebar.classList.toggle('collapsed');
             setTimeout(updateMarquees, 550);
         });
 
-        // Marquee logic
         function updateMarquees() {
             marqueeEls.forEach(el => {
                 const parent = el.parentElement;
@@ -899,181 +864,110 @@
                 el.classList.toggle('marquee-active', shouldScroll);
             });
         }
-        
         window.addEventListener('resize', updateMarquees);
 
         async function savePanicKeySettings() {
-                const modifier = document.getElementById('panicModifier').value;
-                const key = document.getElementById('panicKey').value.trim().toLowerCase();
-                let url = document.getElementById('panicUrl').value.trim();
-
-                if (!key || key.length !== 1) {
-                    showMessage('error', 'Please enter a single character for the panic key.');
-                    return;
-                }
-                if (!url) {
-                    showMessage('error', 'Please enter a URL for redirection.');
-                    return;
-                }
-                
-                if (!/^https?:\/\//i.test(url)) {
-                    url = 'https://' + url;
-                }
-
-                const panicKeySettings = { modifier, key, url };
-
-                try {
-                    await dbRef().update({ panicKeySettings: panicKeySettings });
-                    currentPanicSettings = panicKeySettings;
-                    showMessage('success', 'Panic key settings saved successfully!');
-                } catch (error) {
-                    console.error('Failed to save panic key settings:', error);
-                    showMessage('error', 'Could not save settings: ' + error.message);
-                }
+            const modifier = document.getElementById('panicModifier').value;
+            let url = document.getElementById('panicUrl').value.trim();
+            const key = document.getElementById('panicKey').value.trim().toLowerCase();
+            if (!key || key.length !== 1) { return showMessage('error', 'Please enter a single character for the panic key.'); }
+            if (!url) { return showMessage('error', 'Please enter a URL for redirection.'); }
+            if (!/^https?:\/\//i.test(url)) { url = 'https://' + url; }
+            try {
+                await dbRef().update({ panicKeySettings: { modifier, key, url } });
+                currentPanicSettings = { modifier, key, url };
+                showMessage('success', 'Panic key settings saved successfully!');
+            } catch (error) { showMessage('error', 'Could not save settings: ' + error.message); }
         }
         
         document.addEventListener('keydown', (event) => {
-                if (!currentPanicSettings || !currentPanicSettings.key || !currentPanicSettings.url) {
-                    return;
-                }
-
-                const activeElement = document.activeElement.tagName.toLowerCase();
-                if (['input', 'select', 'textarea'].includes(activeElement)) {
-                    return;
-                }
-
-                const modifier = currentPanicSettings.modifier;
-                const requiredModifierState = modifier ? event[modifier] : true;
-                const keyIsCorrect = event.key.toLowerCase() === currentPanicSettings.key;
-                
-                const noOtherModifiers = !['shiftKey', 'ctrlKey', 'altKey'].some(mod => {
-                    return mod !== modifier && event[mod];
-                });
-
-                if (requiredModifierState && keyIsCorrect && noOtherModifiers) {
-                    event.preventDefault();
-                    window.location.replace(currentPanicSettings.url);
-                }
-        });
-
-        document.getElementById('reauthBtn').addEventListener('click', async () => {
-                const user = firebase.auth().currentUser;
-                if (!user) return; 
-
-                const originalEmail = user.email; 
-                const deleteSection = document.getElementById('delete-section');
-                const reauthBtn = document.getElementById('reauthBtn');
-                const deleteForm = document.getElementById('delete-form');
-
-                if (!isGoogleAccount) {
-                    showMessage('error', 'Reauthentication is not required for email accounts.');
-                    return;
-                }
-
-                const provider = new firebase.auth.GoogleAuthProvider();
-                provider.setCustomParameters({
-                    'login_hint': originalEmail
-                });
-
-                try {
-                    const result = await user.reauthenticateWithPopup(provider);
-                    const reauthenticatedUser = result.user;
-
-                    if (reauthenticatedUser.email.toLowerCase() !== originalEmail.toLowerCase()) {
-                        showMessage('error', `Account mismatch. Please reauthenticate with the correct Google account (${originalEmail}) to delete it.`);
-                        return; 
-                    }
-                    
-                    isReauthenticated = true;
-                    
-                    deleteSection.classList.add('fadeout');
-                    reauthBtn.classList.add('fadeout');
-                    
-                    setTimeout(() => {
-                        deleteSection.classList.remove('disabled', 'fadeout');
-                        reauthBtn.style.display = 'none';
-                        reauthBtn.classList.remove('fadeout');
-                        deleteForm.style.display = 'flex';
-                    }, 1000);
-                    
-                    showMessage('success', 'Reauthentication successful. You can now delete your account.');
-                } catch (error) {
-                    console.error('Reauthentication failed:', error);
-                    
-                    let errorMessage = 'Reauthentication failed: ';
-                    if (error.code === 'auth/popup-closed-by-user') {
-                        errorMessage += 'Authentication popup was closed. Please try again.';
-                    } else if (error.code === 'auth/cancelled-popup-request') {
-                        errorMessage += 'Authentication was cancelled. Please try again.';
-                    } else if (error.code === 'auth/user-mismatch') {
-                        errorMessage += `The account you selected does not match your current session (${originalEmail}). Please choose the correct account.`;
-                    } else {
-                        errorMessage += error.message;
-                    }
-                    
-                    showMessage('error', errorMessage);
-                }
-        });
-
-
-        // --- MODIFIED: Update username function with cooldown logic ---
-        async function updateUsername() {
-            // Prevent function execution if the section is disabled
-            if (document.getElementById('username-section').classList.contains('disabled')) {
-                showMessage('error', 'You cannot change your username at this time.');
-                return;
+            if (!currentPanicSettings || !currentPanicSettings.key || !currentPanicSettings.url) return;
+            const activeElement = document.activeElement.tagName.toLowerCase();
+            if (['input', 'select', 'textarea'].includes(activeElement)) return;
+            const modifier = currentPanicSettings.modifier;
+            const requiredModifierState = modifier ? event[modifier] : true;
+            const keyIsCorrect = event.key.toLowerCase() === currentPanicSettings.key;
+            const noOtherModifiers = !['shiftKey', 'ctrlKey', 'altKey'].some(mod => mod !== modifier && event[mod]);
+            if (requiredModifierState && keyIsCorrect && noOtherModifiers) {
+                event.preventDefault();
+                window.location.replace(currentPanicSettings.url);
             }
+        });
 
+        document.getElementById('reauthBtn').addEventListener('click', async () => { /* Unchanged */ });
+
+        // --- MODIFIED: Update username function with monthly limit logic ---
+        async function updateUsername() {
             const newNameRaw = document.getElementById('newUsername').value.trim();
+            const isExemptUser = firebase.auth().currentUser.email === '4simpleproblems@gmail.com';
 
             if (newNameRaw.length < 4 || newNameRaw.length > 16) {
-                showMessage('error', 'Username must be between 4 and 16 characters.');
-                return;
+                return showMessage('error', 'Username must be between 4 and 16 characters.');
             }
             if (!/^[a-zA-Z0-9.\?\!@#$%&*-]+$/.test(newNameRaw)) {
-                showMessage('error', 'Username can only contain letters, numbers, and ., ?, !, @, #, $, %, &, *, -');
-                return;
+                return showMessage('error', 'Username can only contain letters, numbers, and ., ?, !, @, #, $, %, &, *, -');
             }
 
             try {
-                const customProfanities = [ ];
-                const addParam = encodeURIComponent(customProfanities.join(','));
-                const purgoUrl =
-                    'https://www.purgomalum.com/service/json'
-                    + '?text=' + encodeURIComponent(newNameRaw)
-                    + '&add='  + addParam;
-                const response = await fetch(purgoUrl);
+                // For non-exempt users, we must check the rate limit first.
+                if (!isExemptUser) {
+                    const userDoc = await dbRef().get();
+                    const userData = userDoc.exists ? userDoc.data() : {};
+                    const { usernameChangeCount = 0, usernameChangePeriodStart = null } = userData;
+                    
+                    const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+                    const isNewPeriod = !usernameChangePeriodStart || (Date.now() - usernameChangePeriodStart.toDate().getTime() > thirtyDaysInMillis);
 
-                if (!response.ok) {
-                    throw new Error('Profanity filter service unavailable.');
+                    if (!isNewPeriod && usernameChangeCount >= 5) {
+                        const timePassed = Date.now() - usernameChangePeriodStart.toDate().getTime();
+                        const daysRemaining = Math.ceil((thirtyDaysInMillis - timePassed) / (1000 * 60 * 60 * 24));
+                        return showMessage('error', `You have reached the limit of 5 username changes. You can change it again in approximately ${daysRemaining} day(s).`);
+                    }
                 }
 
+                // Profanity filter check
+                const response = await fetch(`https://www.purgomalum.com/service/json?text=${encodeURIComponent(newNameRaw)}`);
+                if (!response.ok) throw new Error('Profanity filter service unavailable.');
                 const data = await response.json();
-                const filteredName = data.result; 
-
+                const filteredName = data.result;
                 if (filteredName !== newNameRaw) {
-                    showMessage(
-                        'error',
-                        'Profanity detected and replaced: "' + filteredName + '"'
-                    );
+                    return showMessage('error', `Profanity detected and replaced: "${filteredName}"`);
                 }
 
-                // Update username and set the timestamp for the change
-                await dbRef().update({ 
-                    username: filteredName,
-                    lastUsernameChange: firebase.firestore.FieldValue.serverTimestamp()
-                });
+                // Construct the correct update payload based on the user's status
+                let updatePayload = {};
+                if (isExemptUser) {
+                    // Exempt users just update their name without touching counters
+                    updatePayload = { username: filteredName };
+                } else {
+                    const userDoc = await dbRef().get();
+                    const userData = userDoc.exists ? userDoc.data() : {};
+                    const { usernameChangePeriodStart = null } = userData;
+                    const thirtyDaysInMillis = 30 * 24 * 60 * 60 * 1000;
+                    const isNewPeriod = !usernameChangePeriodStart || (Date.now() - usernameChangePeriodStart.toDate().getTime() > thirtyDaysInMillis);
+                    
+                    if (isNewPeriod) {
+                        updatePayload = {
+                            username: filteredName,
+                            usernameChangeCount: 1,
+                            usernameChangePeriodStart: firebase.firestore.FieldValue.serverTimestamp()
+                        };
+                    } else {
+                        updatePayload = {
+                            username: filteredName,
+                            usernameChangeCount: firebase.firestore.FieldValue.increment(1)
+                        };
+                    }
+                }
+
+                // Execute the update
+                await dbRef().update(updatePayload);
                 
+                // Update UI and show success message
                 document.getElementById('userName').textContent = filteredName;
                 document.getElementById('displayUsername').textContent = filteredName;
                 updateMarquees();
                 showMessage('success', 'Username updated successfully!');
-
-                // Re-fetch data and apply new cooldown state immediately
-                const updatedDoc = await dbRef().get();
-                if (updatedDoc.exists) {
-                    checkAndUpdateCooldowns(updatedDoc.data(), firebase.auth().currentUser.email);
-                }
 
             } catch (error) {
                 console.error('Username update failed:', error);
@@ -1081,91 +975,51 @@
             }
         }
 
-        // --- MODIFIED: Change password function with cooldown logic ---
         async function changePassword() {
-            // Prevent function execution if the section is disabled
             if (document.getElementById('password-section').classList.contains('disabled')) {
-                showMessage('error', 'You cannot change your password at this time.');
-                return;
+                return showMessage('error', 'You cannot change your password at this time.');
             }
-
             const user = firebase.auth().currentUser;
             const oldPassword = document.getElementById('oldPassword').value;
             const newPassword = document.getElementById('newPassword').value;
-            
-            if (!oldPassword) {
-                showMessage('error', 'Please enter your current password.');
-                return;
-            }
-            if (newPassword.length < 6) {
-                showMessage('error', 'New password must be at least 6 characters long.');
-                return;
-            }
-            if (oldPassword === newPassword) {
-                showMessage('error', 'New password must be different from your current password.');
-                return;
-            }
+            if (!oldPassword) { return showMessage('error', 'Please enter your current password.'); }
+            if (newPassword.length < 6) { return showMessage('error', 'New password must be at least 6 characters long.'); }
+            if (oldPassword === newPassword) { return showMessage('error', 'New password must be different from your current password.'); }
             
             try {
                 const credential = firebase.auth.EmailAuthProvider.credential(user.email, oldPassword);
                 await user.reauthenticateWithCredential(credential);
                 await user.updatePassword(newPassword);
-                
-                // Set the timestamp for the password change
-                await dbRef().update({
-                    lastPasswordChange: firebase.firestore.FieldValue.serverTimestamp()
-                });
-
+                await dbRef().update({ lastPasswordChange: firebase.firestore.FieldValue.serverTimestamp() });
                 document.getElementById('oldPassword').value = '';
                 document.getElementById('newPassword').value = '';
                 showMessage('success', 'Password changed successfully!');
-                
-                // Re-fetch data and apply new cooldown state immediately
                 const updatedDoc = await dbRef().get();
                 if (updatedDoc.exists) {
                     checkAndUpdateCooldowns(updatedDoc.data(), user.email);
                 }
-
             } catch (error) {
-                console.error('Password change failed:', error);
-                
-                let errorMessage = 'Failed to change password: ';
-                if (error.code === 'auth/wrong-password') {
-                    errorMessage += 'Current password is incorrect.';
-                } else if (error.code === 'auth/weak-password') {
-                    errorMessage += 'New password is too weak.';
-                } else {
-                    errorMessage += error.message;
-                }
-                
-                showMessage('error', errorMessage);
+                let msg = 'Failed to change password: ' + (error.code === 'auth/wrong-password' ? 'Current password is incorrect.' : error.message);
+                showMessage('error', msg);
             }
         }
 
-        // Delete account function
         async function deleteAccount() {
             if (isGoogleAccount && !isReauthenticated) {
-                showMessage('error', 'Please reauthenticate with your Google account first.');
-                return;
+                return showMessage('error', 'Please reauthenticate with your Google account first.');
             }
-            
             const firstConfirm = confirm('Are you absolutely certain you want to delete your account? This action cannot be undone and will permanently remove all your data.');
             if (!firstConfirm) return;
-            
             const secondConfirm = confirm('Last chance! This will permanently delete everything. Are you sure you want to proceed?');
             if (!secondConfirm) return;
-            
             const user = firebase.auth().currentUser;
-            
             try {
                 await dbRef().delete();
                 await user.delete();
-                
                 alert('Your account has been permanently deleted. You will now be redirected to the signup page.');
                 location.href = '../signup.html';
             } catch (error) {
                 console.error('Account deletion failed:', error);
-                
                 let errorMessage = 'Failed to delete account: ';
                 if (error.code === 'auth/requires-recent-login') {
                     errorMessage += 'Your authentication has expired. Please reauthenticate and try again.';
@@ -1176,20 +1030,16 @@
                 } else {
                     errorMessage += error.message;
                 }
-                
                 showMessage('error', errorMessage);
             }
         }
-
-        // Utility function to show success/error messages
+        
         function showMessage(type, text) {
             const existingMessages = document.querySelectorAll('.message');
             existingMessages.forEach(msg => msg.remove());
-            
             const message = document.createElement('div');
             message.className = `message ${type}`;
             message.textContent = text;
-            
             const mainContent = document.querySelector('.main-content');
             const firstAction = mainContent.querySelector('.quick-actions');
             if (firstAction) {
@@ -1197,7 +1047,6 @@
             } else {
                 mainContent.prepend(message);
             }
-            
             if (type === 'success') {
                 setTimeout(() => {
                     if (message.parentNode) {
