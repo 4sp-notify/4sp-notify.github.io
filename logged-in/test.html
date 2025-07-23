@@ -295,11 +295,8 @@
       font-size: 1.8em;
       color: #6720bd;
     }
-    /* Style for the new "NOW" item */
+    /* Style for the "NOW" item (highlighting removed) */
     .hourly-item.now {
-        background-color: rgba(103, 32, 189, 0.05);
-        border-left: 2px solid #6720bd;
-        border-right: 2px solid #6720bd;
         font-weight: bold;
     }
 
@@ -621,7 +618,7 @@
       left: 25%;
     }
     
-    /* --- NEW: Forecast Graph Section --- */
+    /* --- Forecast Graph Section --- */
     .graph-forecast-container {
         margin-top: 25px;
         background: #f8f9fa;
@@ -629,13 +626,44 @@
         padding: 20px;
         border: 1px solid #e9ecef;
     }
+    .graph-controls {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 15px;
+        margin-bottom: 20px;
+        border-bottom: 1px solid #ddd;
+        padding-bottom: 15px;
+    }
+    .time-range-selector {
+        display: flex;
+        gap: 10px;
+        background-color: #e9ecef;
+        padding: 4px;
+        border-radius: 8px;
+    }
+    .time-range-btn {
+        padding: 6px 12px;
+        font-size: 0.85em;
+        font-weight: 600;
+        border: 1px solid transparent;
+        background-color: transparent;
+        color: #555;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.3s ease;
+    }
+    .time-range-btn.active,
+    .time-range-btn:hover {
+        background-color: #fff;
+        border-color: #ddd;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+    }
     .graph-mode-selector {
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
-        margin-bottom: 20px;
-        border-bottom: 1px solid #ddd;
-        padding-bottom: 15px;
     }
     .graph-mode-btn {
         padding: 8px 15px;
@@ -644,7 +672,7 @@
         border: 1px solid #ccc;
         background-color: #fff;
         color: #555;
-        border-radius: 20px;
+        border-radius: 6px; /* Updated from pill shape */
         cursor: pointer;
         transition: all 0.3s ease;
     }
@@ -891,6 +919,8 @@
       };
       let userCoords = null;
       let debounceTimer;
+      let fullWeatherData = null; // To store the complete API response
+      let currentForecastScope = 'daily'; // 'daily' or 'hourly'
       let forecastChartInstance = null; // To hold the chart instance
       
       const WMO_CODES = {
@@ -941,7 +971,8 @@
 
         const params = {
           current: "temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_gusts_10m",
-          hourly: "temperature_2m,weather_code",
+          // ADDED more hourly params for the new charts
+          hourly: "temperature_2m,weather_code,precipitation_probability,uv_index,wind_speed_10m,wind_gusts_10m",
           daily: "weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,sunrise,sunset,daylight_duration,uv_index_max,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant",
           timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
           forecast_days: 14
@@ -953,6 +984,7 @@
           const response = await fetch(url);
           if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
           const data = await response.json();
+          fullWeatherData = data; // Store full response
           renderWidget(data);
         } catch (error) {
           console.error("Fetch Error:", error);
@@ -998,7 +1030,6 @@
         let hourlyHTML = '';
         const currentHour = new Date(data.current.time).getHours();
 
-        // Add the new "NOW" item first
         hourlyHTML += `<div class="hourly-item now">
             <p class="hourly-time">NOW</p>
             <p class="hourly-icon">${(WMO_CODES[data.current.weather_code] || {icon: '?'}).icon}</p>
@@ -1024,14 +1055,19 @@
 
         const detailsHTML = `<div><h3 class="forecast-title">Additional Details For Today</h3><div class="details-grid"><div class="detail-box"><div class="detail-box-title">Sunrise</div><div class="detail-box-value">${new Date(data.daily.sunrise[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div><div class="detail-box"><div class="detail-box-title">Sunset</div><div class="detail-box-value">${new Date(data.daily.sunset[0]).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div></div><div class="detail-box"><div class="detail-box-title">Max UV Index</div><div class="detail-box-value">${formatNumber(data.daily.uv_index_max[0], 1)}</div></div><div class="detail-box"><div class="detail-box-title">Precipitation</div><div class="detail-box-value">${formatNumber(data.daily.precipitation_sum[0])} <span class="unit">${precipSuffix}</span></div></div><div class="detail-box"><div class="detail-box-title">Wind Direction</div><div class="detail-box-value">${degreesToCardinal(data.daily.wind_direction_10m_dominant[0])}</div></div></div></div>`;
         
-        // New Graph Section HTML
         const graphSectionHTML = `
             <div class="graph-forecast-container">
-                <div class="graph-mode-selector">
-                    <button class="graph-mode-btn active" data-mode="temperature">Temperature</button>
-                    <button class="graph-mode-btn" data-mode="precipitation">Precipitation</button>
-                    <button class="graph-mode-btn" data-mode="uv">UV Index</button>
-                    <button class="graph-mode-btn" data-mode="wind">Wind</button>
+                <div class="graph-controls">
+                     <div class="graph-mode-selector">
+                        <button class="graph-mode-btn active" data-mode="temperature">Temperature</button>
+                        <button class="graph-mode-btn" data-mode="precipitation">Precipitation</button>
+                        <button class="graph-mode-btn" data-mode="uv">UV Index</button>
+                        <button class="graph-mode-btn" data-mode="wind">Wind</button>
+                    </div>
+                    <div class="time-range-selector">
+                        <button class="time-range-btn active" data-range="daily">14-Day Forecast</button>
+                        <button class="time-range-btn" data-range="hourly">24-Hour Forecast</button>
+                    </div>
                 </div>
                 <div class="graph-canvas-container">
                     <canvas id="forecast-chart"></canvas>
@@ -1050,117 +1086,131 @@
          });
        });
        
-       // Initialize the new forecast graph
-       initializeForecastGraph(data);
+       setupForecastGraph();
       };
       
-      const initializeForecastGraph = (data) => {
-        const ctx = document.getElementById('forecast-chart');
-        if (!ctx) return; // Exit if canvas not found
-
-        const modeButtons = document.querySelectorAll('.graph-mode-btn');
-
-        if (forecastChartInstance) {
-            forecastChartInstance.destroy(); // Destroy previous chart if it exists
-        }
-        
-        const dailyData = data.daily;
-        const labels = dailyData.time.map((t, i) => {
-            const date = new Date(t + 'T00:00:00');
-            return i === 0 ? 'Today' : date.toLocaleDateString(undefined, { weekday: 'short' });
+      function setupForecastGraph() {
+        document.querySelectorAll('.time-range-btn').forEach(button => {
+            button.addEventListener('click', () => {
+                currentForecastScope = button.dataset.range;
+                document.querySelector('.time-range-btn.active')?.classList.remove('active');
+                button.classList.add('active');
+                
+                // Reset mode to temperature and redraw
+                document.querySelector('.graph-mode-btn.active')?.classList.remove('active');
+                document.querySelector('.graph-mode-btn[data-mode="temperature"]').classList.add('active');
+                drawChart();
+            });
         });
 
-        const datasets = {
-            temperature: [{
-                    label: 'Max Temp', data: dailyData.temperature_2m_max, borderColor: '#ff6384',
-                    backgroundColor: 'rgba(255, 99, 132, 0.2)', tension: 0.4, fill: 'start',
-                }, {
-                    label: 'Min Temp', data: dailyData.temperature_2m_min, borderColor: '#36a2eb',
-                    backgroundColor: 'rgba(54, 162, 235, 0.2)', tension: 0.4, fill: 'start',
-            }],
-            precipitation: [{
-                    label: 'Chance (%)', data: dailyData.precipitation_probability_max, borderColor: '#4bc0c0',
-                    backgroundColor: 'rgba(75, 192, 192, 0.5)', type: 'line', yAxisID: 'y1', tension: 0.4,
-                }, {
-                    label: `Amount (${weatherSettings.units === 'imperial' ? 'in' : 'mm'})`, data: dailyData.precipitation_sum,
-                    backgroundColor: '#9966ff', type: 'bar', yAxisID: 'y',
-            }],
-            uv: [{
-                label: 'Max UV Index', data: dailyData.uv_index_max,
-                backgroundColor: (context) => {
-                    const value = context.raw;
-                    if (value <= 2) return 'rgba(40, 167, 69, 0.7)';
-                    if (value <= 5) return 'rgba(255, 193, 7, 0.7)';
-                    if (value <= 7) return 'rgba(255, 140, 0, 0.7)';
-                    if (value <= 10) return 'rgba(220, 53, 69, 0.7)';
-                    return 'rgba(103, 32, 189, 0.7)';
-                },
-                borderColor: 'rgba(0,0,0,0.1)', borderWidth: 1, type: 'bar',
-            }],
-            wind: [{
-                    label: 'Max Wind', data: dailyData.wind_speed_10m_max, borderColor: '#ff9f40',
-                    backgroundColor: 'rgba(255, 159, 64, 0.2)', tension: 0.4, fill: true,
-                }, {
-                    label: 'Max Gust', data: dailyData.wind_gusts_10m_max, borderColor: '#c9cbcf',
-                    backgroundColor: 'rgba(201, 203, 207, 0.2)', tension: 0.4, fill: true,
-            }]
-        };
-        
-        const getChartOptions = (mode) => {
-            const tempSuffix = weatherSettings.units === 'imperial' ? '°F' : '°C';
-            const speedSuffix = weatherSettings.units === 'imperial' ? 'mph' : 'km/h';
-            const precipSuffix = weatherSettings.units === 'imperial' ? 'in' : 'mm';
-
-            let options = {
-                responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false, },
-                plugins: { legend: { position: 'top' }, tooltip: { callbacks: {} } },
-                scales: { x: { grid: { display: false } }, y: { beginAtZero: false, grid: { color: '#e0e0e0' },
-                        ticks: { callback: (value) => value + (mode === 'temperature' ? tempSuffix : (mode === 'wind' ? ' ' + speedSuffix : ''))}
-                }}
-            };
-
-            if (mode === 'precipitation') {
-                options.scales.y = { type: 'linear', display: true, position: 'left', title: { display: true, text: `Amount (${precipSuffix})`}, grid: { drawOnChartArea: false }, ticks: { callback: (v) => `${v} ${precipSuffix}` }};
-                options.scales.y1 = { type: 'linear', display: true, position: 'right', title: { display: true, text: 'Chance (%)' }, min: 0, max: 100, ticks: { callback: (v) => `${v}%` }};
-            } else if (mode === 'uv') {
-                options.scales.y.beginAtZero = true;
-                options.plugins.tooltip.callbacks.label = (context) => {
-                    let label = context.dataset.label || '';
-                    if (label) { label += ': '; }
-                    let value = context.raw;
-                    let description = '';
-                    if (value <= 2) description = ' (Low)';
-                    else if (value <= 5) description = ' (Moderate)';
-                    else if (value <= 7) description = ' (High)';
-                    else if (value <= 10) description = ' (Very High)';
-                    else description = ' (Extreme)';
-                    return label + value + description;
-                }
-            }
-            return options;
-        };
-
-        const updateChart = (mode) => {
-            if (!forecastChartInstance) return;
-            forecastChartInstance.data.datasets = datasets[mode];
-            forecastChartInstance.options = getChartOptions(mode);
-            forecastChartInstance.update();
-        };
-
-        forecastChartInstance = new Chart(ctx.getContext('2d'), {
-            type: 'line',
-            data: { labels: labels, datasets: datasets.temperature },
-            options: getChartOptions('temperature')
-        });
-        
-        modeButtons.forEach(button => {
+        document.querySelectorAll('.graph-mode-btn').forEach(button => {
             button.addEventListener('click', () => {
                 document.querySelector('.graph-mode-btn.active')?.classList.remove('active');
                 button.classList.add('active');
-                updateChart(button.dataset.mode);
+                drawChart();
             });
         });
-    };
+
+        drawChart(); // Initial draw
+    }
+
+    function drawChart() {
+        if (!fullWeatherData) return;
+        const ctx = document.getElementById('forecast-chart');
+        if (!ctx) return;
+        
+        if (forecastChartInstance) {
+            forecastChartInstance.destroy();
+        }
+
+        const activeMode = document.querySelector('.graph-mode-btn.active').dataset.mode;
+        let chartData = {};
+        let chartOptions = {};
+        
+        // Define shared properties
+        const tempSuffix = weatherSettings.units === 'imperial' ? '°F' : '°C';
+        const speedSuffix = weatherSettings.units === 'imperial' ? 'mph' : 'km/h';
+        const precipSuffix = weatherSettings.units === 'imperial' ? 'in' : 'mm';
+
+        if (currentForecastScope === 'daily') {
+            const dailyData = fullWeatherData.daily;
+            const labels = dailyData.time.map((t, i) => i === 0 ? 'Today' : new Date(t + 'T00:00:00').toLocaleDateString(undefined, { weekday: 'short' }));
+            
+            const datasets = {
+                temperature: [{
+                    label: 'Max Temp', data: dailyData.temperature_2m_max, borderColor: 'hsl(13, 94%, 66%)',
+                    backgroundColor: 'hsla(13, 94%, 66%, 0.4)', tension: 0.4, fill: 1 // Fill to next dataset
+                }, {
+                    label: 'Min Temp', data: dailyData.temperature_2m_min, borderColor: 'hsl(206, 94%, 66%)',
+                    backgroundColor: 'hsla(206, 94%, 66%, 0.4)', tension: 0.4
+                }],
+                precipitation: [{
+                    label: `Amount (${precipSuffix})`, data: dailyData.precipitation_sum, backgroundColor: 'hsl(265, 78%, 65%)',
+                    type: 'bar', yAxisID: 'y'
+                }, {
+                    label: 'Chance (%)', data: dailyData.precipitation_probability_max, borderColor: 'hsl(195, 87%, 50%)',
+                    type: 'line', yAxisID: 'y1', tension: 0.4, pointRadius: 2
+                }],
+                uv: [{
+                    label: 'Max UV Index', data: dailyData.uv_index_max, type: 'bar',
+                    backgroundColor: (c) => ['#58b15e', '#58b15e', '#58b15e', '#f5c34c', '#f5c34c', '#f5c34c', '#f28e3b', '#f28e3b', '#e7534f', '#e7534f', '#e7534f', '#a16aa8'][Math.round(c.raw)] || '#a16aa8',
+                }],
+                wind: [{
+                    label: 'Max Wind', data: dailyData.wind_speed_10m_max, borderColor: 'hsl(154, 76%, 45%)',
+                    backgroundColor: 'hsla(154, 76%, 45%, 0.2)', tension: 0.4, fill: true,
+                }, {
+                    label: 'Max Gust', data: dailyData.wind_gusts_10m_max, borderColor: 'hsl(45, 94%, 57%)',
+                    backgroundColor: 'hsla(45, 94%, 57%, 0.2)', tension: 0.4, fill: true,
+                }]
+            };
+            chartData = { labels: labels, datasets: datasets[activeMode] };
+            
+            chartOptions = { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { x: { grid: { display: false } } }};
+            if(activeMode === 'precipitation') {
+                chartOptions.scales.y = { type: 'linear', position: 'left', title: { display: true, text: `Amount (${precipSuffix})`}, grid: { drawOnChartArea: false }};
+                chartOptions.scales.y1 = { type: 'linear', position: 'right', title: { display: true, text: 'Chance (%)' }, min: 0, max: 100 };
+            }
+
+        } else { // Hourly Scope
+            const hourlyData = fullWeatherData.hourly;
+            const currentHourIndex = hourlyData.time.findIndex(t => new Date(t) >= new Date(fullWeatherData.current.time));
+            constendIndex = currentHourIndex + 24;
+
+            const labels = hourlyData.time.slice(currentHourIndex, endIndex).map(t => new Date(t).toLocaleTimeString([], { hour: 'numeric' }));
+            
+            const datasets = {
+                temperature: [{
+                    label: `Temperature (${tempSuffix})`, data: hourlyData.temperature_2m.slice(currentHourIndex, endIndex),
+                    borderColor: 'hsl(265, 78%, 65%)', backgroundColor: 'hsla(265, 78%, 65%, 0.2)',
+                    tension: 0.4, fill: true
+                }],
+                precipitation: [{
+                    label: 'Chance (%)', data: hourlyData.precipitation_probability.slice(currentHourIndex, endIndex),
+                    borderColor: 'hsl(195, 87%, 50%)', backgroundColor: 'hsla(195, 87%, 50%, 0.2)',
+                    tension: 0.4, fill: true, stepped: true
+                }],
+                uv: [{
+                    label: 'UV Index', data: hourlyData.uv_index.slice(currentHourIndex, endIndex), type: 'bar',
+                    backgroundColor: (c) => ['#58b15e', '#58b15e', '#58b15e', '#f5c34c', '#f5c34c', '#f5c34c', '#f28e3b', '#f28e3b', '#e7534f', '#e7534f', '#e7534f', '#a16aa8'][Math.round(c.raw)] || '#a16aa8',
+                }],
+                wind: [{
+                    label: `Wind (${speedSuffix})`, data: hourlyData.wind_speed_10m.slice(currentHourIndex, endIndex),
+                    borderColor: 'hsl(154, 76%, 45%)', tension: 0.4, fill: false
+                }, {
+                    label: `Gusts (${speedSuffix})`, data: hourlyData.wind_gusts_10m.slice(currentHourIndex, endIndex),
+                    borderColor: 'hsl(45, 94%, 57%)', tension: 0.4, fill: false, borderDash: [5, 5]
+                }]
+            };
+            chartData = { labels: labels, datasets: datasets[activeMode] };
+            chartOptions = { responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false }, scales: { x: { grid: { display: false } }, y: { beginAtZero: true } }};
+        }
+
+        forecastChartInstance = new Chart(ctx.getContext('2d'), {
+            type: 'line',
+            data: chartData,
+            options: chartOptions
+        });
+    }
 
       function setupModal(modal) {
           const closeBtn = modal.querySelector('.modal-close-btn');
