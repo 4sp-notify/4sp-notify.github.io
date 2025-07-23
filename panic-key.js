@@ -1,10 +1,10 @@
 /**
  * panic-key.js
  * * This script provides a user-configurable panic key functionality for a website using Firebase.
- * When activated, it redirects the user to a pre-configured URL while safely manipulating
- * the browser history to prevent easily navigating back to the sensitive page.
+ * When activated, it redirects the user to a pre-configured URL.
+ * The key press must be a single key without any modifiers (Shift, Ctrl, Alt, etc.).
  *
- * Final version as of: June 20, 2025
+ * Final version as of: July 23, 2025
  */
 
 // This message helps confirm that the script file itself is being loaded by the browser.
@@ -63,7 +63,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 /**
  * Attaches the 'keydown' event listener to the document with the user's specific settings.
- * @param {object} settings - The user's panic key settings object { modifier, key, url }.
+ * @param {object} settings - The user's panic key settings object { key, url }.
  */
 function addPanicKeyListener(settings) {
     // A safeguard to ensure we don't attach a listener with incomplete settings.
@@ -81,18 +81,14 @@ function addPanicKeyListener(settings) {
             return;
         }
 
-        const modifier = settings.modifier; // e.g., 'shiftKey', 'ctrlKey', or ''
-        const requiredModifierState = modifier ? event[modifier] : true;
+        // --- MODIFIED LOGIC ---
+        // The new logic is simpler: check for the correct key and ensure NO modifiers are pressed.
         const keyIsCorrect = event.key.toLowerCase() === settings.key;
-        
-        // This ensures no OTHER modifier keys are accidentally pressed.
-        const noOtherModifiers = !['shiftKey', 'ctrlKey', 'altKey'].some(mod => {
-            return mod !== modifier && event[mod];
-        });
+        const noModifiersPressed = !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
 
         // If all conditions are met, we execute the panic action.
-        if (requiredModifierState && keyIsCorrect && noOtherModifiers) {
-            console.log("SUCCESS: Panic key combination detected! Redirecting...");
+        if (keyIsCorrect && noModifiersPressed) {
+            console.log("SUCCESS: Panic key detected! Redirecting...");
             
             // This prevents the browser from performing the default action for the key press.
             event.preventDefault();
