@@ -317,33 +317,69 @@
             const db = firebase.firestore();
             const auth = firebase.auth();
 
-            // Main view containers
             const loginContainer = document.getElementById('loginContainer');
             const resetPasswordContainer = document.getElementById('resetPasswordContainer');
-
-            // Message divs
             const loginMessageDiv = document.getElementById('loginMessage');
             const resetMessageDiv = document.getElementById('resetMessage');
 
-            // --- View Switching ---
             document.getElementById('forgotPasswordLink').addEventListener('click', () => {
                 loginContainer.style.display = 'none';
-                resetPasswordContainer.style.display = 'flex'; // Use flex for alignment
+                resetPasswordContainer.style.display = 'flex';
                 resetPasswordContainer.style.flexDirection = 'column';
                 loginMessageDiv.innerHTML = '';
             });
 
             document.getElementById('backToLoginLink').addEventListener('click', () => {
                 resetPasswordContainer.style.display = 'none';
-                loginContainer.style.display = 'flex'; // Use flex for alignment
+                loginContainer.style.display = 'flex';
                 loginContainer.style.flexDirection = 'column';
                 resetMessageDiv.innerHTML = '';
             });
 
-            // --- Helper to display messages ---
             const showMessage = (element, text, isError = true) => {
                 element.textContent = text;
                 element.className = isError ? 'message-area error-message' : 'message-area success-message';
+            };
+            
+            // --- NEW: Centralized function to handle all successful logins ---
+            const handleSuccessfulLogin = async (user) => {
+                await user.reload(); // IMPORTANT: Get the latest user state from Auth
+
+                if (user.emailVerified) {
+                    // Auth status is verified. Now sync with Firestore.
+                    const userDocRef = db.collection('users').doc(user.uid);
+                    const userDoc = await userDocRef.get();
+
+                    if (userDoc.exists) {
+                        if (!userDoc.data().emailVerified) {
+                            // If Firestore is out of sync, update it.
+                            await userDocRef.update({ emailVerified: true });
+                        }
+                        // All checks passed, proceed to dashboard.
+                        window.location.href = 'logged-in/dashboard.html';
+                    } else {
+                        // Edge Case: User exists in Auth but not Firestore.
+                        await auth.signOut();
+                        showMessage(loginMessageDiv, 'Your account record is incomplete. Please sign up or contact support.');
+                    }
+                } else {
+                    // User's email is NOT verified. Block login.
+                    loginMessageDiv.innerHTML = 'Your email is not verified. Please check your inbox. <a href="#" id="resend-link" class="resend-verification-link">Resend verification email</a>';
+                    loginMessageDiv.className = 'message-area error-message';
+
+                    document.getElementById('resend-link').addEventListener('click', async (event) => {
+                        event.preventDefault();
+                        try {
+                            await user.sendEmailVerification();
+                            showMessage(loginMessageDiv, 'A new verification link has been sent!', false);
+                        } catch (err) {
+                            console.error('Resend verification error:', err);
+                            showMessage(loginMessageDiv, `Error sending email: ${err.message}`);
+                        }
+                    });
+                    // Sign out the unverified user to prevent access.
+                    await auth.signOut();
+                }
             };
 
             // --- Password Reset Logic ---
@@ -368,7 +404,7 @@
                 }
             });
 
-            // --- Email/Password Login Logic ---
+            // --- Email/Password Login Logic (REFACTORED) ---
             document.getElementById('loginForm').addEventListener('submit', async (e) => {
                 e.preventDefault();
                 loginMessageDiv.innerHTML = '';
@@ -378,27 +414,7 @@
 
                 try {
                     const userCredential = await auth.signInWithEmailAndPassword(email, password);
-                    const user = userCredential.user;
-
-                    await user.reload(); // IMPORTANT: Get latest user state
-
-                    if (user.emailVerified) {
-                        window.location.href = 'logged-in/dashboard.html';
-                    } else {
-                        loginMessageDiv.innerHTML = 'Your email is not verified. Please check your inbox. <a href="#" id="resend-link" class="resend-verification-link">Resend verification email</a>';
-                        loginMessageDiv.className = 'message-area error-message';
-
-                        document.getElementById('resend-link').addEventListener('click', async (event) => {
-                            event.preventDefault();
-                            try {
-                                await user.sendEmailVerification();
-                                showMessage(loginMessageDiv, 'A new verification link has been sent!', false);
-                            } catch (err) {
-                                console.error('Resend verification error:', err);
-                                showMessage(loginMessageDiv, `Error sending email: ${err.message}`);
-                            }
-                        });
-                    }
+                    await handleSuccessfulLogin(userCredential.user); // Use the new centralized handler
                 } catch (error) {
                     console.error('Login error:', error);
                     let message = 'An unknown login error occurred. Please try again.';
@@ -416,7 +432,7 @@
                 }
             });
 
-            // --- Google Login Logic (UPDATED) ---
+            // --- Google Login Logic (REFACTORED) ---
             document.getElementById('googleLoginBtn').addEventListener('click', async () => {
                 loginMessageDiv.innerHTML = '';
                 const provider = new firebase.auth.GoogleAuthProvider();
@@ -425,28 +441,14 @@
                     const result = await auth.signInWithPopup(provider);
                     const user = result.user;
 
-                    // Check if the user was just created
                     if (result.additionalUserInfo && result.additionalUserInfo.isNewUser) {
-                        // User was created by the popup. This is not allowed on the login page.
-                        // We must delete this new user immediately.
+                        // User tried to create an account on the login page. This is not allowed.
                         await user.delete();
-                        
-                        // Then, inform the user that no account was found and they need to sign up.
+                        await auth.signOut();
                         showMessage(loginMessageDiv, 'No account exists for this Google user. Please sign up first.');
-
                     } else {
-                        // This is an existing user, let them log in.
-                        // As a failsafe, you can also check if they exist in your Firestore database.
-                        const userDoc = await db.collection('users').doc(user.uid).get();
-                        if (userDoc.exists) {
-                            // User is verified to exist, redirect to the dashboard.
-                            window.location.href = 'logged-in/dashboard.html';
-                        } else {
-                            // Edge case: User exists in Firebase Auth but not in your database.
-                            // Sign them out and ask them to contact support or try signing up.
-                            await auth.signOut();
-                            showMessage(loginMessageDiv, 'Your account record is incomplete. Please sign up or contact support.');
-                        }
+                        // This is an existing user.
+                        await handleSuccessfulLogin(user); // Use the new centralized handler
                     }
                 } catch (error) {
                     console.error('Google Sign-In error:', error);
@@ -454,18 +456,16 @@
                     if (error.code === 'auth/account-exists-with-different-credential') {
                         message = 'An account with this email already exists using a password. Please log in with your email and password.';
                     } else if (error.code === 'auth/popup-closed-by-user') {
-                        // This is not an error, just the user cancelling the login.
                         return; 
                     }
                     showMessage(loginMessageDiv, message);
                 }
             });
 
-            // Set initial state for containers on page load
             loginContainer.style.display = 'flex';
             loginContainer.style.flexDirection = 'column';
             resetPasswordContainer.style.display = 'none';
         });
     </script>
 </body>
-</html>
+</html>f
