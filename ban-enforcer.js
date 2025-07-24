@@ -1,36 +1,60 @@
 /**
  * ban-enforcer.js
  * * This script is the primary enforcement mechanism for website bans.
- * It checks if the currently logged-in user's ID exists in the 'bans' collection in Firestore.
- * If a ban is found, it completely blocks the UI by injecting a full-screen overlay
- * that displays the ban reason and prevents any interaction with the page.
+ * It immediately injects a transparent "shield" to block interaction, then checks
+ * if the user's ID exists in the 'bans' collection in Firestore.
+ * If banned, the shield becomes a visible overlay with the ban reason.
+ * If not banned, the shield is removed, allowing normal interaction.
  *
  * * IMPORTANT:
  * 1. This script must be placed AFTER the Firebase SDK scripts in your HTML.
- * (e.g., after firebase-app-compat.js, firebase-auth-compat.js, etc.)
- * 2. It should be included on EVERY page you want to protect to ensure a consistent user lockout.
+ * 2. It should be included on EVERY page you want to protect.
  */
 
 console.log("Debug: ban-enforcer.js script has started.");
+
+// --- 1. Immediately create and inject the pre-ban shield ---
+// This IIFE (Immediately Invoked Function Expression) runs as soon as the script is parsed by the browser.
+(function() {
+    // Check if the shield already exists to prevent duplication.
+    if (document.getElementById('ban-enforcer-shield')) return;
+
+    const shield = document.createElement('div');
+    shield.id = 'ban-enforcer-shield';
+    // Style the shield to be a full-screen, transparent overlay that blocks clicks.
+    shield.style.position = 'fixed';
+    shield.style.top = '0';
+    shield.style.left = '0';
+    shield.style.width = '100vw';
+    shield.style.height = '100vh';
+    shield.style.zIndex = '2147483647'; // Max z-index to cover everything.
+    shield.style.backgroundColor = 'transparent'; // It's invisible by default.
+    // Append to the root <html> element to ensure it loads before the body content is interactive.
+    document.documentElement.appendChild(shield);
+    console.log("Debug: Pre-ban shield has been deployed.");
+})();
+
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log("Debug: DOMContentLoaded event fired. Ban enforcer is running.");
 
     // Check for the Firebase library, which is a critical dependency.
     if (typeof firebase === 'undefined' || typeof firebase.auth === 'undefined' || typeof firebase.firestore === 'undefined') {
-        console.error("FATAL ERROR: Firebase is not loaded correctly. Check the script order in your HTML file. Ban enforcement is disabled.");
+        console.error("FATAL ERROR: Firebase is not loaded correctly. Check the script order. Ban enforcement is disabled.");
+        const shield = document.getElementById('ban-enforcer-shield');
+        if (shield) shield.remove(); // Remove shield if Firebase fails to load.
         return;
     }
 
-    // firebase.auth().onAuthStateChanged is the entry point. It automatically
-    // determines if a user is logged in.
+    // firebase.auth().onAuthStateChanged is the entry point.
     firebase.auth().onAuthStateChanged(user => {
+        const shield = document.getElementById('ban-enforcer-shield');
+
         if (user) {
             // A user is logged in. We now need to check if they are banned.
             console.log("Debug: User is logged in. Checking ban status for UID:", user.uid);
             
             const db = firebase.firestore();
-            // We look for a document with the user's ID in the 'bans' collection.
             const banDocRef = db.collection('bans').doc(user.uid);
 
             banDocRef.get().then(doc => {
@@ -38,29 +62,40 @@ document.addEventListener('DOMContentLoaded', () => {
                     // --- USER IS BANNED ---
                     const banData = doc.data();
                     console.warn(`User ${user.uid} is BANNED. Reason: ${banData.reason}. Locking page.`);
-                    // Call the function to display the ban overlay.
-                    showBanScreen(banData);
+                    // Call the function to make the shield visible and display the ban message.
+                    showBanScreen(shield, banData);
                 } else {
-                    // User is not in the ban list, so we do nothing.
-                    console.log("Debug: User is not banned. Access granted.");
+                    // --- USER IS NOT BANNED ---
+                    console.log("Debug: User is not banned. Removing shield.");
+                    if (shield) shield.remove();
                 }
             }).catch(error => {
-                console.error("Debug: An error occurred while checking the ban status:", error);
+                console.error("Debug: An error occurred while checking ban status. Removing shield to prevent lockout.", error);
+                if (shield) shield.remove(); // Failsafe: remove shield on error.
             });
 
         } else {
-            // No user is logged in. The script does nothing.
-            console.log("Debug: No user is logged in. Ban enforcer is idle.");
+            // --- NO USER LOGGED IN ---
+            console.log("Debug: No user is logged in. Removing shield.");
+            if (shield) shield.remove();
         }
     });
 });
 
 /**
- * Injects a full-screen overlay and a sleek, bottom-right message to block content.
+ * Makes the shield visible and injects the sleek, bottom-right message.
+ * @param {HTMLElement} shield - The shield element that is already on the page.
  * @param {object} banData - The data from the user's document in the 'bans' collection.
  */
-function showBanScreen(banData) {
-    // --- 1. Inject the custom font ---
+function showBanScreen(shield, banData) {
+    // --- 1. Make the existing shield visible ---
+    if (shield) {
+        shield.style.backgroundColor = 'rgba(10, 10, 10, 0.85)';
+        shield.style.backdropFilter = 'blur(8px)';
+        shield.style.webkitBackdropFilter = 'blur(8px)'; // For Safari support
+    }
+
+    // --- 2. Inject the custom font ---
     const fontStyle = document.createElement('style');
     fontStyle.textContent = `
         @font-face {
@@ -72,22 +107,10 @@ function showBanScreen(banData) {
     `;
     document.head.appendChild(fontStyle);
 
-    // --- 2. Sanitize data to prevent potential HTML injection ---
+    // --- 3. Sanitize data to prevent potential HTML injection ---
     const reason = banData.reason ? String(banData.reason).replace(/</g, "&lt;").replace(/>/g, "&gt;") : 'No reason provided.';
     const bannedBy = banData.bannedBy ? `by ${String(banData.bannedBy).replace(/</g, "&lt;").replace(/>/g, "&gt;")}` : '';
     const banDate = banData.bannedAt && banData.bannedAt.toDate ? `on ${banData.bannedAt.toDate().toLocaleDateString()}`: '';
-
-    // --- 3. Create the background overlay ---
-    const overlay = document.createElement('div');
-    overlay.style.position = 'fixed';
-    overlay.style.top = '0';
-    overlay.style.left = '0';
-    overlay.style.width = '100vw';
-    overlay.style.height = '100vh';
-    overlay.style.backgroundColor = 'rgba(10, 10, 10, 0.85)';
-    overlay.style.zIndex = '2147483646'; // High z-index
-    overlay.style.backdropFilter = 'blur(8px)';
-    overlay.style.webkitBackdropFilter = 'blur(8px)'; // For Safari support
 
     // --- 4. Create the sleek message box for the bottom right ---
     const messageBox = document.createElement('div');
@@ -98,7 +121,7 @@ function showBanScreen(banData) {
     messageBox.style.textAlign = 'right';
     messageBox.style.color = '#ffffff';
     messageBox.style.fontFamily = "'PrimaryFont', Arial, sans-serif";
-    messageBox.style.zIndex = '2147483647'; // Max z-index to be on top
+    messageBox.style.zIndex = '2147483647'; // Ensure it's on top of the shield.
     messageBox.style.textShadow = '0 2px 8px rgba(0,0,0,0.7)';
     
     messageBox.innerHTML = `
@@ -108,8 +131,7 @@ function showBanScreen(banData) {
         <p style="font-size: 0.8em; color: #9e9e9e;">Ban issued ${bannedBy} ${banDate}.</p>
     `;
 
-    // --- 5. Append elements to the body and lock the page ---
-    document.body.appendChild(overlay);
+    // --- 5. Append message to the body and lock the page scroll ---
     document.body.appendChild(messageBox);
     document.body.style.overflow = 'hidden';
 }
