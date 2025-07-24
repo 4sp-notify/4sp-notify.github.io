@@ -109,7 +109,7 @@ function showBanScreen(shield, banData) {
 
     // --- 3. Sanitize data to prevent potential HTML injection ---
     const reason = banData.reason ? String(banData.reason).replace(/</g, "&lt;").replace(/>/g, "&gt;") : 'No reason provided.';
-    const bannedBy = banData.bannedBy ? `by ${String(banData.bannedBy).replace(/</g, "&lt;").replace(/>/g, "&gt;")}` : '';
+    // **MODIFICATION**: The `bannedBy` information is no longer prepared for display to the user.
     const banDate = banData.bannedAt && banData.bannedAt.toDate ? `on ${banData.bannedAt.toDate().toLocaleDateString()}`: '';
 
     // --- 4. Create the sleek message box for the bottom right ---
@@ -124,11 +124,12 @@ function showBanScreen(shield, banData) {
     messageBox.style.zIndex = '2147483647'; // Ensure it's on top of the shield.
     messageBox.style.textShadow = '0 2px 8px rgba(0,0,0,0.7)';
     
+    // **MODIFICATION**: The message no longer includes the ${bannedBy} variable.
     messageBox.innerHTML = `
         <h1 style="font-size: 2.2em; color: #ff1744; margin: 0 0 10px 0; font-weight: bold;">Access Denied</h1>
-        <p style="font-size: 1.1em; margin: 0 0 15px 0; line-height: 1.4; color: #e0e0e0;">Your account has been banned from this service.</p>
+        <p style="font-size: 1.1em; margin: 0 0 15px 0; line-height: 1.4; color: #e0e0e0;">Your account has been suspended from this service.</p>
         <p style="font-size: 1em; margin: 0 0 20px 0; color: #bdbdbd;"><strong>Reason:</strong> ${reason}</p>
-        <p style="font-size: 0.8em; color: #9e9e9e;">Ban issued ${bannedBy} ${banDate}.</p>
+        <p style="font-size: 0.8em; color: #9e9e9e;">This action was taken ${banDate}. If you believe this is an error, please contact support.</p>
     `;
 
     // --- 5. Append message to the body and lock the page scroll ---
