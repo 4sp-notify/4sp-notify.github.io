@@ -56,55 +56,60 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 /**
- * Injects a full-screen overlay into the page to block content.
+ * Injects a full-screen overlay and a sleek, bottom-right message to block content.
  * @param {object} banData - The data from the user's document in the 'bans' collection.
  */
 function showBanScreen(banData) {
-    // Sanitize data to prevent potential HTML injection from the database.
+    // --- 1. Inject the custom font ---
+    const fontStyle = document.createElement('style');
+    fontStyle.textContent = `
+        @font-face {
+            font-family: 'PrimaryFont';
+            src: url('../fonts/primary.woff') format('woff');
+            font-weight: normal;
+            font-style: normal;
+        }
+    `;
+    document.head.appendChild(fontStyle);
+
+    // --- 2. Sanitize data to prevent potential HTML injection ---
     const reason = banData.reason ? String(banData.reason).replace(/</g, "&lt;").replace(/>/g, "&gt;") : 'No reason provided.';
     const bannedBy = banData.bannedBy ? `by ${String(banData.bannedBy).replace(/</g, "&lt;").replace(/>/g, "&gt;")}` : '';
     const banDate = banData.bannedAt && banData.bannedAt.toDate ? `on ${banData.bannedAt.toDate().toLocaleDateString()}`: '';
 
-    // Create the overlay elements
+    // --- 3. Create the background overlay ---
     const overlay = document.createElement('div');
-    const messageBox = document.createElement('div');
-
-    // Style the overlay using inline styles to ensure they are applied
-    // without relying on external stylesheets. This makes them more resilient.
     overlay.style.position = 'fixed';
     overlay.style.top = '0';
     overlay.style.left = '0';
     overlay.style.width = '100vw';
     overlay.style.height = '100vh';
-    overlay.style.backgroundColor = 'rgba(10, 10, 10, 0.95)';
-    overlay.style.zIndex = '2147483647'; // Max z-index to cover everything
-    overlay.style.display = 'flex';
-    overlay.style.justifyContent = 'center';
-    overlay.style.alignItems = 'center';
-    overlay.style.color = '#fff';
-    overlay.style.fontFamily = 'Arial, sans-serif';
+    overlay.style.backgroundColor = 'rgba(10, 10, 10, 0.85)';
+    overlay.style.zIndex = '2147483646'; // High z-index
     overlay.style.backdropFilter = 'blur(8px)';
     overlay.style.webkitBackdropFilter = 'blur(8px)'; // For Safari support
 
-    messageBox.style.maxWidth = '600px';
-    messageBox.style.textAlign = 'center';
-    messageBox.style.padding = '40px';
-    messageBox.style.border = '1px solid #555';
-    messageBox.style.borderRadius = '10px';
-    messageBox.style.background = 'rgba(30, 30, 30, 0.8)';
-    messageBox.style.boxShadow = '0 10px 30px rgba(0,0,0,0.5)';
-
+    // --- 4. Create the sleek message box for the bottom right ---
+    const messageBox = document.createElement('div');
+    messageBox.style.position = 'fixed';
+    messageBox.style.bottom = '40px';
+    messageBox.style.right = '40px';
+    messageBox.style.maxWidth = '450px';
+    messageBox.style.textAlign = 'right';
+    messageBox.style.color = '#ffffff';
+    messageBox.style.fontFamily = "'PrimaryFont', Arial, sans-serif";
+    messageBox.style.zIndex = '2147483647'; // Max z-index to be on top
+    messageBox.style.textShadow = '0 2px 8px rgba(0,0,0,0.7)';
+    
     messageBox.innerHTML = `
-        <h1 style="font-size: 2.5em; color: #ef5350; margin-bottom: 20px; font-weight: bold; text-shadow: 0 0 10px rgba(239, 83, 80, 0.5);">Access Denied</h1>
-        <p style="font-size: 1.2em; margin-bottom: 15px; line-height: 1.5;">Your account has been banned from this service.</p>
-        <p style="font-size: 1em; color: #ccc; margin-bottom: 30px; background: rgba(0,0,0,0.3); padding: 10px 15px; border-radius: 5px;"><strong>Reason:</strong> ${reason}</p>
-        <p style="font-size: 0.8em; color: #888;">This ban was issued ${bannedBy} ${banDate}. If you believe this is a mistake, please contact support.</p>
+        <h1 style="font-size: 2.2em; color: #ef5350; margin: 0 0 10px 0; font-weight: bold;">Access Denied</h1>
+        <p style="font-size: 1.1em; margin: 0 0 15px 0; line-height: 1.4; color: #e0e0e0;">Your account has been banned from this service.</p>
+        <p style="font-size: 1em; margin: 0 0 20px 0; color: #bdbdbd;"><strong>Reason:</strong> ${reason}</p>
+        <p style="font-size: 0.8em; color: #9e9e9e;">Ban issued ${bannedBy} ${banDate}.</p>
     `;
 
-    // Append the message box to the overlay, and the overlay to the body
-    overlay.appendChild(messageBox);
+    // --- 5. Append elements to the body and lock the page ---
     document.body.appendChild(overlay);
-
-    // For good measure, stop the page from scrolling and hide the main content
+    document.body.appendChild(messageBox);
     document.body.style.overflow = 'hidden';
 }
