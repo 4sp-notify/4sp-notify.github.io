@@ -1,13 +1,14 @@
 /**
  * ban-enforcer.js
- * * This script checks if the currently logged-in user has been banned.
- * It reads from a central 'bans' collection in Firestore.
- * If the user's ID is found in the collection, it displays a full-screen
- * overlay, effectively locking them out of the page content.
+ * * This script is the primary enforcement mechanism for website bans.
+ * It checks if the currently logged-in user's ID exists in the 'bans' collection in Firestore.
+ * If a ban is found, it completely blocks the UI by injecting a full-screen overlay
+ * that displays the ban reason and prevents any interaction with the page.
+ *
  * * IMPORTANT:
  * 1. This script must be placed AFTER the Firebase SDK scripts in your HTML.
- * (e.g., after firebase-app-compat.js, firebase-auth-compat.js, and firebase-firestore-compat.js)
- * 2. It should be included on every page you want to protect.
+ * (e.g., after firebase-app-compat.js, firebase-auth-compat.js, etc.)
+ * 2. It should be included on EVERY page you want to protect to ensure a consistent user lockout.
  */
 
 console.log("Debug: ban-enforcer.js script has started.");
@@ -59,30 +60,31 @@ document.addEventListener('DOMContentLoaded', () => {
  * @param {object} banData - The data from the user's document in the 'bans' collection.
  */
 function showBanScreen(banData) {
-    // Sanitize data to prevent HTML injection
+    // Sanitize data to prevent potential HTML injection from the database.
     const reason = banData.reason ? String(banData.reason).replace(/</g, "&lt;").replace(/>/g, "&gt;") : 'No reason provided.';
     const bannedBy = banData.bannedBy ? `by ${String(banData.bannedBy).replace(/</g, "&lt;").replace(/>/g, "&gt;")}` : '';
-    const banDate = banData.bannedAt ? `on ${banData.bannedAt.toDate().toLocaleDateString()}`: '';
+    const banDate = banData.bannedAt && banData.bannedAt.toDate ? `on ${banData.bannedAt.toDate().toLocaleDateString()}`: '';
 
     // Create the overlay elements
     const overlay = document.createElement('div');
     const messageBox = document.createElement('div');
 
     // Style the overlay using inline styles to ensure they are applied
-    // without relying on external stylesheets.
+    // without relying on external stylesheets. This makes them more resilient.
     overlay.style.position = 'fixed';
     overlay.style.top = '0';
     overlay.style.left = '0';
     overlay.style.width = '100vw';
     overlay.style.height = '100vh';
     overlay.style.backgroundColor = 'rgba(10, 10, 10, 0.95)';
-    overlay.style.zIndex = '999999999'; // Extremely high z-index
+    overlay.style.zIndex = '2147483647'; // Max z-index to cover everything
     overlay.style.display = 'flex';
     overlay.style.justifyContent = 'center';
     overlay.style.alignItems = 'center';
     overlay.style.color = '#fff';
     overlay.style.fontFamily = 'Arial, sans-serif';
     overlay.style.backdropFilter = 'blur(8px)';
+    overlay.style.webkitBackdropFilter = 'blur(8px)'; // For Safari support
 
     messageBox.style.maxWidth = '600px';
     messageBox.style.textAlign = 'center';
@@ -90,11 +92,12 @@ function showBanScreen(banData) {
     messageBox.style.border = '1px solid #555';
     messageBox.style.borderRadius = '10px';
     messageBox.style.background = 'rgba(30, 30, 30, 0.8)';
+    messageBox.style.boxShadow = '0 10px 30px rgba(0,0,0,0.5)';
 
     messageBox.innerHTML = `
-        <h1 style="font-size: 2.5em; color: #ef5350; margin-bottom: 20px;">Access Denied</h1>
-        <p style="font-size: 1.2em; margin-bottom: 15px;">Your account has been banned from this service.</p>
-        <p style="font-size: 1em; color: #ccc; margin-bottom: 30px;"><strong>Reason:</strong> ${reason}</p>
+        <h1 style="font-size: 2.5em; color: #ef5350; margin-bottom: 20px; font-weight: bold; text-shadow: 0 0 10px rgba(239, 83, 80, 0.5);">Access Denied</h1>
+        <p style="font-size: 1.2em; margin-bottom: 15px; line-height: 1.5;">Your account has been banned from this service.</p>
+        <p style="font-size: 1em; color: #ccc; margin-bottom: 30px; background: rgba(0,0,0,0.3); padding: 10px 15px; border-radius: 5px;"><strong>Reason:</strong> ${reason}</p>
         <p style="font-size: 0.8em; color: #888;">This ban was issued ${bannedBy} ${banDate}. If you believe this is a mistake, please contact support.</p>
     `;
 
@@ -102,6 +105,6 @@ function showBanScreen(banData) {
     overlay.appendChild(messageBox);
     document.body.appendChild(overlay);
 
-    // For good measure, stop the page from scrolling
+    // For good measure, stop the page from scrolling and hide the main content
     document.body.style.overflow = 'hidden';
 }
