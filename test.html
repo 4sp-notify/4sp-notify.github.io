@@ -72,6 +72,7 @@
             font-family: 'SecondaryFont', sans-serif;
             font-size: 1em;
             color: #333;
+            box-sizing: border-box; /* Ensures padding doesn't affect width */
             transition: border-color 0.3s ease;
         }
 
@@ -224,9 +225,10 @@
             }
         }
     </style>
-    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js"></script>
+    
     <script src="firebase-config.js"></script>
 </head>
 <body>
@@ -303,219 +305,271 @@
         </div>
     </footer>
 
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            const db = firebase.firestore();
-            const auth = firebase.auth();
+    <script type="module">
+        // --- Import necessary functions from the Firebase SDKs ---
+        // This is the standard "modular" way to use Firebase v9+.
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+        import { 
+            getAuth, 
+            createUserWithEmailAndPassword, 
+            sendEmailVerification, 
+            signOut,
+            GoogleAuthProvider,
+            signInWithPopup
+        } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-auth.js";
+        import { 
+            getFirestore, 
+            doc, 
+            getDoc, 
+            setDoc,
+            updateDoc,
+            serverTimestamp
+        } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-firestore.js";
 
-            // Form elements
-            const signupForm = document.getElementById('signupForm');
-            const emailSignupBtn = document.getElementById('emailSignupBtn');
-            const googleSignupBtn = document.getElementById('googleSignupBtn');
-            const signupMessageDiv = document.getElementById('signupMessage');
-            const agreeTermsCheckbox = document.getElementById('agreeTerms');
-            const agreePrivacyCheckbox = document.getElementById('agreePrivacy');
-            
-            // --- Helper to display messages ---
-            const showMessage = (text, isError = true) => {
-                signupMessageDiv.textContent = text;
-                signupMessageDiv.className = isError ? 'message-area error-message' : 'message-area success-message';
-            };
-            
-            // === Function to check for profanity using an external API ===
-            const checkProfanity = async (text) => {
-                // This uses the PurgoMalum API, a simple, open-source profanity filter.
-                if (!text || !text.trim()) {
-                    return false; // No text to check, not profane.
-                }
-                try {
-                    const response = await fetch(`https://www.purgomalum.com/service/containsprofanity?text=${encodeURIComponent(text)}`);
-                    if (!response.ok) {
-                        console.error('Profanity check API failed:', response.statusText);
-                        // FAIL-SAFE: If the API is down, block the username to be safe.
-                        return true; 
-                    }
-                    const result = await response.text();
-                    return result === 'true';
-                } catch (error) {
-                    console.error('Error calling profanity API:', error);
-                    // FAIL-SAFE: Block on any network error during the check.
-                    return true;
-                }
-            };
+        // --- Firebase Initialization ---
+        // 'firebaseConfig' should be defined in your firebase-config.js file
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
 
-            // --- Function to check if an email is banned in Firestore ---
-            const isEmailBanned = async (email) => {
-                if (!email) return false;
-                const emailToCheck = email.toLowerCase();
-                try {
-                    const banDocRef = db.collection('bannedEmails').doc(emailToCheck);
-                    const doc = await banDocRef.get();
-                    return doc.exists;
-                } catch (error) {
-                    console.error("Error checking for banned email:", error);
-                    // Fail-safe: block the signup if the check fails to protect the service.
-                    showMessage("Could not verify email. Please try again later.", true);
-                    return true;
+        // --- DOM Element References ---
+        const signupForm = document.getElementById('signupForm');
+        const emailSignupBtn = document.getElementById('emailSignupBtn');
+        const googleSignupBtn = document.getElementById('googleSignupBtn');
+        const signupMessageDiv = document.getElementById('signupMessage');
+        const agreeTermsCheckbox = document.getElementById('agreeTerms');
+        const agreePrivacyCheckbox = document.getElementById('agreePrivacy');
+        
+        // This will be used to stop the polling interval later
+        let pollForVerificationInterval = null;
+
+        // --- Helper function to display messages to the user ---
+        const showMessage = (text, isError = true) => {
+            signupMessageDiv.textContent = text;
+            signupMessageDiv.className = isError ? 'message-area error-message' : 'message-area success-message';
+        };
+        
+        // === Function to check for profanity using an external API ===
+        const checkProfanity = async (text) => {
+            if (!text || !text.trim()) return false;
+            try {
+                // Using a simple API for profanity check. Consider more robust solutions for production.
+                const response = await fetch(`https://www.purgomalum.com/service/containsprofanity?text=${encodeURIComponent(text)}`);
+                if (!response.ok) {
+                    console.error('Profanity check API failed:', response.statusText);
+                    return true; // FAIL-SAFE: Block on API error to be safe.
                 }
+                const result = await response.text();
+                return result === 'true';
+            } catch (error) {
+                console.error('Error calling profanity API:', error);
+                return true; // FAIL-SAFE: Block on network error.
+            }
+        };
+
+        // --- Function to check if an email is in the 'bannedEmails' collection ---
+        const isEmailBanned = async (email) => {
+            if (!email) return false;
+            const emailToCheck = email.toLowerCase();
+            try {
+                const banDocRef = doc(db, 'bannedEmails', emailToCheck);
+                const docSnap = await getDoc(banDocRef);
+                return docSnap.exists();
+            } catch (error) {
+                console.error("Error checking for banned email:", error);
+                showMessage("Could not verify email. Please try again later.", true);
+                return true; // FAIL-SAFE: Block if the check fails.
+            }
+        };
+        
+        // --- Function for creating a user document in Firestore ---
+        // This centralizes user data creation for both email and Google sign-ups.
+        const createUserDocument = async (user, authMethod, username = null) => {
+            const userDocRef = doc(db, 'users', user.uid);
+            const userData = {
+                email: user.email,
+                username: username || user.displayName || `user_${user.uid.substring(0, 8)}`,
+                authMethod: authMethod,
+                createdAt: serverTimestamp(), // Uses the server's time for consistency
+                emailVerified: user.emailVerified, // Save the initial verification state
+                role: 'user' // Assign a default role
             };
-            
-            // --- Function for creating a user document in Firestore ---
-            const createUserDocument = async (user, authMethod, username = null) => {
-                const userData = {
-                    email: user.email,
-                    authMethod: authMethod,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    username: username || user.displayName || null,
-                    emailVerified: user.emailVerified // Pass the auth verification state
+            await setDoc(userDocRef, userData);
+        };
+
+        // --- Button State Management ---
+        const updateButtonState = () => {
+            const areCheckboxesChecked = agreeTermsCheckbox.checked && agreePrivacyCheckbox.checked;
+            [emailSignupBtn, googleSignupBtn].forEach(btn => {
+                btn.disabled = !areCheckboxesChecked;
+                btn.classList.toggle('btn-disabled', !areCheckboxesChecked);
+            });
+        };
+        
+        // Add event listeners to checkboxes to enable/disable buttons
+        agreeTermsCheckbox.addEventListener('change', updateButtonState);
+        agreePrivacyCheckbox.addEventListener('change', updateButtonState);
+
+        // --- Email/Password Signup Logic ---
+        signupForm.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            showMessage('', false); // Clear previous messages
+
+            const email = document.getElementById('signupEmail').value;
+            const username = document.getElementById('signupUsername').value.trim();
+            const password = document.getElementById('signupPassword').value;
+
+            // --- Client-Side Validation ---
+            if (await isEmailBanned(email)) {
+                showMessage('This email address is not allowed to register.');
+                return;
+            }
+            if (username.length < 4 || username.length > 16) {
+                showMessage('Username must be between 4 and 16 characters.');
+                return;
+            }
+            if (await checkProfanity(username)) {
+                showMessage('Username contains inappropriate language. Please choose another.');
+                return;
+            }
+            if (password.length < 6) {
+                showMessage('Password must be at least 6 characters long.');
+                return;
+            }
+
+            try {
+                // 1. Create the user in Firebase Auth
+                const userCredential = await createUserWithEmailAndPassword(auth, email, password);
+                const user = userCredential.user;
+
+                // 2. Define Action Code Settings for the verification email
+                // This tells Firebase where to redirect the user after they click the link.
+                // It's crucial this domain is whitelisted in your Firebase console.
+                const actionCodeSettings = {
+                    url: `${window.location.protocol}//${window.location.host}/login.html`,
+                    handleCodeInApp: true, // Recommended setting
                 };
-                await db.collection('users').doc(user.uid).set(userData);
-            };
 
-            // --- Button State Management ---
-            const updateButtonState = () => {
-                const areCheckboxesChecked = agreeTermsCheckbox.checked && agreePrivacyCheckbox.checked;
-                [emailSignupBtn, googleSignupBtn].forEach(btn => {
-                    btn.disabled = !areCheckboxesChecked;
-                    if (areCheckboxesChecked) {
-                        btn.classList.remove('btn-disabled');
-                    } else {
-                        btn.classList.add('btn-disabled');
+                // 3. Send the verification email
+                await sendEmailVerification(user, actionCodeSettings);
+
+                // 4. Create the user document in Firestore
+                // We do this immediately, storing their verification status as 'false'.
+                await createUserDocument(user, 'password', username); 
+
+                // 5. Inform the user and disable the form
+                showMessage('Account created! A verification link has been sent to your email. Please check your inbox (and spam folder). This page will update once you verify.', false);
+                emailSignupBtn.disabled = true;
+                emailSignupBtn.classList.add('btn-disabled');
+
+                // 6. Start polling to check if the user has verified their email
+                // This provides a good UX if the user verifies in the same session.
+                let pollCount = 0;
+                const maxPolls = 60; // Poll for 5 minutes (60 polls * 5 seconds)
+                
+                // Clear any previous polling intervals to be safe
+                if (pollForVerificationInterval) clearInterval(pollForVerificationInterval);
+
+                pollForVerificationInterval = setInterval(async () => {
+                    pollCount++;
+                    // Reload the user object to get the latest state from Firebase servers
+                    await user.reload();
+
+                    if (user.emailVerified) {
+                        clearInterval(pollForVerificationInterval);
+                        
+                        // Update the user's document in Firestore to reflect verification
+                        const userDocRef = doc(db, 'users', user.uid);
+                        await updateDoc(userDocRef, { emailVerified: true });
+
+                        showMessage('✅ Success! Your email is verified. You can now log in.', false);
+                        
+                        // Sign the user out to force a clean login with their verified account.
+                        await signOut(auth);
+                        
+                        // Reset the form for the next user
+                        signupForm.reset();
+                        agreeTermsCheckbox.checked = false;
+                        agreePrivacyCheckbox.checked = false;
+                        updateButtonState();
+
+                    } else if (pollCount >= maxPolls) {
+                        // If 5 minutes pass without verification, stop polling.
+                        clearInterval(pollForVerificationInterval);
+                        showMessage('Verification link sent. Please check your email to complete registration. You may now close this page.', false);
+                        await signOut(auth);
+                        signupForm.reset();
+                        agreeTermsCheckbox.checked = false;
+                        agreePrivacyCheckbox.checked = false;
+                        updateButtonState();
                     }
-                });
-            };
+                }, 5000); // Check every 5 seconds
 
-            agreeTermsCheckbox.addEventListener('change', updateButtonState);
-            agreePrivacyCheckbox.addEventListener('change', updateButtonState);
+            } catch (error) {
+                console.error('Sign-up error:', error);
+                // Provide user-friendly error messages
+                let message = `Sign-up failed: ${error.message}`;
+                if (error.code === 'auth/email-already-in-use') {
+                    message = 'This email is already registered. Please try logging in instead.';
+                } else if (error.code === 'auth/invalid-email') {
+                    message = 'Please enter a valid email address.';
+                }
+                showMessage(message, true);
+            }
+        });
 
-            // --- Email/Password Signup Logic ---
-            signupForm.addEventListener('submit', async (e) => {
-                e.preventDefault();
-                showMessage('', false);
+        // --- Google Signup/Login Logic ---
+        googleSignupBtn.addEventListener('click', async () => {
+            showMessage('', false);
 
-                const email = document.getElementById('signupEmail').value;
-                const username = document.getElementById('signupUsername').value.trim();
-                const password = document.getElementById('signupPassword').value;
+            try {
+                const provider = new GoogleAuthProvider();
+                const result = await signInWithPopup(auth, provider);
+                
+                const user = result.user;
+                const isNewUser = result.additionalUserInfo.isNewUser;
 
-                // --- Validation Steps ---
-                if (await isEmailBanned(email)) {
+                // Check if the Google email is on the banned list
+                if (await isEmailBanned(user.email)) {
+                    // If the email is banned, we must delete the newly created user account
+                    // and sign them out immediately.
+                    await user.delete(); 
+                    await signOut(auth); 
                     showMessage('This email address is not allowed to register.');
                     return;
                 }
+
+                if (isNewUser) {
+                    // For a brand new user, create their document in Firestore.
+                    await createUserDocument(user, 'google');
+                    showMessage('✅ Account created with Google! You can now log in using the "Login with Google" button on the login page.', false);
+                } else {
+                    // If they already have an account, inform them to log in.
+                    showMessage('An account with this Google email already exists. Please log in instead.', true);
+                }
+
+                // In both cases, sign the user out. This forces them to go through the
+                // formal login flow, ensuring your application state is consistent.
+                await signOut(auth);
                 
-                if (username.length < 4 || username.length > 16) {
-                    showMessage('Username must be between 4 and 16 characters.');
-                    return;
+                signupForm.reset();
+                agreeTermsCheckbox.checked = false;
+                agreePrivacyCheckbox.checked = false;
+                updateButtonState();
+
+            } catch (error) {
+                console.error('Google Sign-In error:', error);
+                let message = 'Failed to sign up with Google.';
+                // Don't show an error if the user simply closes the pop-up window.
+                if (error.code !== 'auth/popup-closed-by-user') {
+                    message = error.message;
                 }
-                const containsProfaneWord = await checkProfanity(username);
-                if (containsProfaneWord) {
-                    showMessage('Username contains inappropriate language. Please choose another.');
-                    return;
-                }
-                
-                if (password.length < 6) {
-                    showMessage('Password must be at least 6 characters long.');
-                    return;
-                }
-
-                try {
-                    const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-                    const user = userCredential.user;
-
-                    // --- Dynamic Action Code Settings for Verification Email ---
-                    // This creates the correct redirect URL for local testing and your live site,
-                    // which is crucial for preventing "domain not allowed" errors.
-                    const actionCodeSettings = {
-                        url: `${window.location.protocol}//${window.location.host}/login.html`,
-                    };
-
-                    await user.sendEmailVerification(actionCodeSettings);
-                    await createUserDocument(user, 'password', username); 
-
-                    showMessage('Account created! A verification link has been sent. Please check your email. This page will update automatically once you verify.', false);
-                    emailSignupBtn.disabled = true;
-                    emailSignupBtn.classList.add('btn-disabled');
-
-                    // --- Polling for immediate verification feedback ---
-                    let pollCount = 0;
-                    const maxPolls = 60; // Poll for 5 minutes (60 polls * 5 seconds)
-                    
-                    const pollForVerification = setInterval(async () => {
-                        pollCount++;
-                        await user.reload(); // Reload user state from Firebase
-
-                        if (user.emailVerified) {
-                            clearInterval(pollForVerification);
-                            await db.collection('users').doc(user.uid).update({ emailVerified: true });
-                            showMessage('Success! Your email has been verified. You may now log in.', false);
-                            await auth.signOut();
-                            signupForm.reset();
-                            agreeTermsCheckbox.checked = false;
-                            agreePrivacyCheckbox.checked = false;
-                            updateButtonState();
-                        } else if (pollCount >= maxPolls) {
-                            // If polling times out, stop checking and sign the user out.
-                            clearInterval(pollForVerification);
-                            await auth.signOut();
-                            signupForm.reset();
-                            agreeTermsCheckbox.checked = false;
-                            agreePrivacyCheckbox.checked = false;
-                            updateButtonState();
-                        }
-                    }, 5000); // Check every 5 seconds
-
-                } catch (error) {
-                    console.error('Sign-up error:', error);
-                    showMessage(`Sign-up failed: ${error.message}`);
-                }
-            });
-
-            // --- Google Signup/Login Logic ---
-            googleSignupBtn.addEventListener('click', async () => {
-                showMessage('', false);
-
-                try {
-                    const provider = new firebase.auth.GoogleAuthProvider();
-                    const result = await auth.signInWithPopup(provider);
-                    
-                    const user = result.user;
-                    const isNewUser = result.additionalUserInfo.isNewUser;
-
-                    if (await isEmailBanned(user.email)) {
-                        await user.delete(); 
-                        await auth.signOut(); 
-                        showMessage('This email address is not allowed to register.');
-                        return;
-                    }
-
-                    if (isNewUser) {
-                        // Create the user document and then require them to log in formally.
-                        await createUserDocument(user, 'google');
-                        showMessage('Account created with Google! You can now log in using the "Login with Google" button.', false);
-                        await auth.signOut();
-                    } else {
-                        // If the Google user already exists, don't create a new one.
-                        await auth.signOut();
-                        showMessage('An account with this Google email already exists. Please login instead.');
-                    }
-                    signupForm.reset();
-                    agreeTermsCheckbox.checked = false;
-                    agreePrivacyCheckbox.checked = false;
-                    updateButtonState();
-
-                } catch (error) {
-                    console.error('Google Sign-In error:', error);
-                    let message = 'Failed to sign up with Google.';
-                    if (error.code !== 'auth/popup-closed-by-user') {
-                        message = error.message;
-                    }
-                    showMessage(message);
-                }
-            });
-            
-            // Run once on load to set initial button state
-            updateButtonState();
+                showMessage(message, true);
+            }
         });
+        
+        // Run once on initial page load to set the correct button state
+        updateButtonState();
     </script>
 </body>
 </html>
