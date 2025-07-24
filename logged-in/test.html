@@ -819,23 +819,23 @@
             </section>
             
             <section class="settings-section" id="ban-management-section" style="display: none;">
-                <h3>🚫 Admin Ban Management</h3>
-                <p>This panel is for site administrators only. Add or remove bans for users across the entire website. Bans are applied instantly and will lock the user out upon their next page load.</p>
+                <h3>🚫 Admin Email Ban Management</h3>
+                <p>This panel is for site administrators only. Add or remove bans for specific email addresses. Banned emails cannot be used to sign up. This does not affect existing accounts.</p>
                 
                 <form class="settings-form" id="ban-management-form">
                     <div class="form-group">
-                        <label for="banUserId">User ID to Ban</label>
-                        <input type="text" id="banUserId" placeholder="Enter the full User ID (UID) of the user" required />
+                        <label for="banEmail">Email to Ban</label>
+                        <input type="email" id="banEmail" placeholder="Enter the full email address to ban" required />
                     </div>
                     <div class="form-group">
                         <label for="banReason">Reason for Ban</label>
                         <input type="text" id="banReason" placeholder="e.g., Spamming, abusive behavior" required />
                     </div>
-                    <button type="button" onclick="addBan()">Add Ban</button>
+                    <button type="button" onclick="addBan()">Add Email Ban</button>
                 </form>
 
                 <div id="banned-users-list">
-                    <p style="text-align: center; color: #888; padding: 20px;">Loading ban list...</p>
+                    <p style="text-align: center; color: #888; padding: 20px;">Loading banned email list...</p>
                 </div>
             </section>
             <section class="settings-section" id="delete-section" data-disabled-message="REAUTHENTICATE WITH YOUR GOOGLE ACCOUNT TO ENABLE ACCOUNT DELETION">
@@ -859,7 +859,7 @@
         let isGoogleAccount = false;
         let isReauthenticated = false;
         let currentPanicSettings = null;
-        let isAdmin = false; // NEW: Admin status flag
+        let isAdmin = false; // Admin status flag
         
         const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
         const marqueeEls = document.querySelectorAll('.marquee-content');
@@ -899,7 +899,7 @@
                 return location.href = '../login.html';
             }
             
-            // NEW: Check for admin status
+            // Check for admin status
             if (user.email === '4simpleproblems@gmail.com') {
                 isAdmin = true;
                 initializeAdminFeatures();
@@ -941,19 +941,19 @@
             updateMarquees();
         });
 
-        // --- NEW BAN MANAGEMENT FUNCTIONS ---
+        // --- UPDATED BAN MANAGEMENT FUNCTIONS (Now for Emails) ---
         function initializeAdminFeatures() {
             // Show the admin-only UI elements
             document.getElementById('manageBansBtn').style.display = 'flex';
             document.getElementById('ban-management-section').style.display = 'block';
 
-            const bansRef = firebase.firestore().collection('bans');
+            const bansRef = firebase.firestore().collection('bannedEmails');
             const bannedUsersList = document.getElementById('banned-users-list');
 
-            // Listen for real-time updates on the bans collection
+            // Listen for real-time updates on the bannedEmails collection
             bansRef.orderBy('bannedAt', 'desc').onSnapshot(snapshot => {
                 if (snapshot.empty) {
-                    bannedUsersList.innerHTML = '<p style="text-align: center; color: #888; padding: 20px;">No users are currently banned.</p>';
+                    bannedUsersList.innerHTML = '<p style="text-align: center; color: #888; padding: 20px;">No emails are currently banned.</p>';
                     return;
                 }
                 
@@ -961,21 +961,22 @@
                 snapshot.forEach(doc => {
                     const banData = doc.data();
                     const banDate = banData.bannedAt ? banData.bannedAt.toDate().toLocaleString() : 'Unknown date';
+                    const bannedEmail = doc.id; // The document ID is the email address
                     
                     const item = document.createElement('div');
                     item.className = 'banned-user-item';
                     item.innerHTML = `
                         <div class="banned-user-info">
-                            <strong>User ID:</strong><span>${doc.id}</span>
+                            <strong>Email:</strong><span>${bannedEmail}</span>
                             <strong>Reason:</strong><span>${banData.reason || 'No reason provided'}</span>
                             <strong>Banned By:</strong><span>${banData.bannedBy || 'Unknown'} on ${banDate}</span>
                         </div>
-                        <button onclick="removeBan('${doc.id}')">Remove Ban</button>
+                        <button onclick="removeBan('${bannedEmail}')">Remove Ban</button>
                     `;
                     bannedUsersList.appendChild(item);
                 });
             }, error => {
-                console.error("Error listening to ban collection:", error);
+                console.error("Error listening to banned email collection:", error);
                 bannedUsersList.innerHTML = '<p style="text-align: center; color: red; padding: 20px;">Error loading ban list.</p>';
             });
         }
@@ -983,58 +984,56 @@
         async function addBan() {
             if (!isAdmin) return; // Security check
 
-            const userIdToBan = document.getElementById('banUserId').value.trim();
+            const emailToBan = document.getElementById('banEmail').value.trim().toLowerCase();
             const reason = document.getElementById('banReason').value.trim();
             const adminEmail = firebase.auth().currentUser.email;
 
-            if (!userIdToBan) {
-                return showMessage('error', 'Please enter a User ID to ban.');
+            if (!emailToBan) {
+                return showMessage('error', 'Please enter an email address to ban.');
             }
             if (!reason) {
                 return showMessage('error', 'Please provide a reason for the ban.');
             }
+            // Basic email format validation
+            if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailToBan)) {
+                 return showMessage('error', 'Please enter a valid email address format.');
+            }
 
-            const bansRef = firebase.firestore().collection('bans');
+            const bansRef = firebase.firestore().collection('bannedEmails');
             try {
-                // Check if the user to be banned exists
-                const userDoc = await firebase.firestore().collection('users').doc(userIdToBan).get();
-                if (!userDoc.exists) {
-                    return showMessage('error', 'Cannot ban user: No user found with that ID.');
-                }
-
-                await bansRef.doc(userIdToBan).set({
+                await bansRef.doc(emailToBan).set({
                     reason: reason,
                     bannedBy: adminEmail,
                     bannedAt: firebase.firestore.FieldValue.serverTimestamp()
                 });
 
-                showMessage('success', `User ${userIdToBan} has been successfully banned.`);
-                document.getElementById('banUserId').value = '';
+                showMessage('success', `Email ${emailToBan} has been successfully banned.`);
+                document.getElementById('banEmail').value = '';
                 document.getElementById('banReason').value = '';
 
             } catch (error) {
-                console.error("Error adding ban: ", error);
-                showMessage('error', 'Failed to add ban: ' + error.message);
+                console.error("Error adding email ban: ", error);
+                showMessage('error', 'Failed to add email ban: ' + error.message);
             }
         }
 
-        async function removeBan(userIdToRemove) {
+        async function removeBan(emailToRemove) {
             if (!isAdmin) return; // Security check
 
-            if (!confirm(`Are you sure you want to remove the ban for user ${userIdToRemove}?`)) {
+            if (!confirm(`Are you sure you want to remove the ban for email ${emailToRemove}? This will allow the user to sign up.`)) {
                 return;
             }
 
-            const bansRef = firebase.firestore().collection('bans');
+            const bansRef = firebase.firestore().collection('bannedEmails');
             try {
-                await bansRef.doc(userIdToRemove).delete();
-                showMessage('success', `Ban for user ${userIdToRemove} has been successfully removed.`);
+                await bansRef.doc(emailToRemove).delete();
+                showMessage('success', `Ban for email ${emailToRemove} has been successfully removed.`);
             } catch (error) {
-                console.error("Error removing ban: ", error);
+                console.error("Error removing email ban: ", error);
                 showMessage('error', 'Failed to remove ban: ' + error.message);
             }
         }
-        // --- END OF NEW FUNCTIONS ---
+        // --- END OF UPDATED BAN FUNCTIONS ---
 
         function setupDeleteAccountSection() {
             const deleteSection = document.getElementById('delete-section');
