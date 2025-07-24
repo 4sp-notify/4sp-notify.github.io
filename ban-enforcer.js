@@ -91,8 +91,8 @@ function showBanScreen(shield, banData) {
     // --- 1. Make the existing shield visible ---
     if (shield) {
         shield.style.backgroundColor = 'rgba(10, 10, 10, 0.85)';
-        shield.style.backdropFilter = 'blur(8px)';
-        shield.style.webkitBackdropFilter = 'blur(8px)'; // For Safari support
+        shield.style.backdropFilter = 'blur(12px)'; // Increased blur
+        shield.style.webkitBackdropFilter = 'blur(12px)'; // Increased blur for Safari support
     }
 
     // --- 2. Inject the custom font ---
@@ -125,7 +125,7 @@ function showBanScreen(shield, banData) {
     messageBox.style.textShadow = '0 2px 8px rgba(0,0,0,0.7)';
     
     messageBox.innerHTML = `
-        <h1 style="font-size: 2.2em; color: #ef5350; margin: 0 0 10px 0; font-weight: bold;">Access Denied</h1>
+        <h1 style="font-size: 2.2em; color: #ff1744; margin: 0 0 10px 0; font-weight: bold;">Access Denied</h1>
         <p style="font-size: 1.1em; margin: 0 0 15px 0; line-height: 1.4; color: #e0e0e0;">Your account has been banned from this service.</p>
         <p style="font-size: 1em; margin: 0 0 20px 0; color: #bdbdbd;"><strong>Reason:</strong> ${reason}</p>
         <p style="font-size: 0.8em; color: #9e9e9e;">Ban issued ${bannedBy} ${banDate}.</p>
