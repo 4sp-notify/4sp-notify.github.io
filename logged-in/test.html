@@ -48,7 +48,7 @@
         .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 15px rgba(103, 32, 189, 0.25); }
         .btn-primary:disabled { background: #ccc; cursor: not-allowed; transform: none; box-shadow: none; opacity: 0.7; }
 
-        .active-countdown-wrapper, .local-saves-section { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
+        .active-countdown-wrapper, .cloud-saves-section { background: #fff; padding: 20px; border-radius: 10px; box-shadow: 0 2px 10px rgba(0,0,0,0.05); }
         
         #activeCountdownNameDisplay { font-family: 'PrimaryFont', sans-serif; font-size: 1.5em; margin-bottom: 15px; color: #333; font-weight: bold; text-align: center; }
         
@@ -79,12 +79,12 @@
             margin-left: 2px; 
         }
         
-        .local-saves-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
-        .local-saves-header h3 { margin: 0; color: #333; font-size: 1.2em; font-family: 'PrimaryFont', sans-serif; }
-        .local-stats { font-size: 0.85em; color: #555; margin-bottom: 15px; font-family: 'SecondaryFont', sans-serif; }
-        #localSavesList { list-style: none; padding: 0; max-height: 300px; overflow-y: auto; }
-        #localSavesList li { display: flex; justify-content: space-between; align-items: center; padding: 12px 10px; border-bottom: 1px solid #f0f0f0; }
-        #localSavesList li:last-child { border-bottom: none; }
+        .cloud-saves-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #eee; padding-bottom: 8px; }
+        .cloud-saves-header h3 { margin: 0; color: #333; font-size: 1.2em; font-family: 'PrimaryFont', sans-serif; }
+        .cloud-stats { font-size: 0.85em; color: #555; margin-bottom: 15px; font-family: 'SecondaryFont', sans-serif; }
+        #cloudSavesList { list-style: none; padding: 0; max-height: 300px; overflow-y: auto; }
+        #cloudSavesList li { display: flex; justify-content: space-between; align-items: center; padding: 12px 10px; border-bottom: 1px solid #f0f0f0; }
+        #cloudSavesList li:last-child { border-bottom: none; }
         .save-info { flex-grow: 1; margin-right: 10px; }
         .save-name { font-weight: bold; color: #6720bd; font-size:1.1em; }
         .save-details { font-size: 0.8em; color: #777; margin-top: 3px; font-family: 'SecondaryFont', sans-serif;}
@@ -183,6 +183,7 @@
             <div class="logo"><a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo" /></a></div>
             <div class="auth-buttons">
                 <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
             </div>
         </div>
     </header>
@@ -192,10 +193,10 @@
             <button id="toggleSidebar">☰</button>
             <div class="user-info">
                 <div class="marquee-container">
-                    <span id="userName" class="marquee-content username">Local Session</span>
+                    <span id="userName" class="marquee-content username">Loading...</span>
                 </div>
                 <div class="marquee-container">
-                    <span id="userEmail" class="marquee-content email">No cloud account required</span>
+                    <span id="userEmail" class="marquee-content email">...</span>
                 </div>
             </div>
             <nav>
@@ -206,6 +207,7 @@
                     <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
                     <li><a href="others.html" class="active"><span class="icon">✨</span><span class="label">Others</span></a></li>
                     <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                    <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
                 </ul>
             </nav>
         </aside>
@@ -222,10 +224,10 @@
                     <h3 id="activeCountdownNameDisplay">No countdown selected</h3>
                     <div class="timer-display" id="timerDisplay">Select or create a countdown.</div>
                 </div>
-                <div class="local-saves-section">
-                    <div class="local-saves-header"><h3>Your Countdowns</h3></div>
-                    <div class="local-stats">Count: <span id="countdownCounterDisplay">0</span></div>
-                    <ul id="localSavesList"></ul>
+                <div class="cloud-saves-section">
+                    <div class="cloud-saves-header"><h3>Your Countdowns</h3></div>
+                    <div class="cloud-stats">Count: <span id="countdownCounterDisplay">0</span>/50</div>
+                    <ul id="cloudSavesList"></ul>
                 </div>
             </div>
         </main>
@@ -249,16 +251,19 @@
         </div>
     </div>
 
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="../firebase-config.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
 
     <script>
         // --- Globals ---
-        let userCountdowns = [], activeCountdownId, countdownInterval, flatpickrInstance;
+        let currentUser, userCountdowns = [], activeCountdownId, countdownInterval, flatpickrInstance;
         let isEditing = false, editingId = null;
-        const LOCAL_STORAGE_KEY = '4sp_countdowns';
+        const MAX_COUNTDOWNS = 50;
 
         // --- DOM Elements ---
-        const countdownListEl = document.getElementById('localSavesList');
+        const countdownListEl = document.getElementById('cloudSavesList');
         const activeCountdownNameEl = document.getElementById('activeCountdownNameDisplay');
         const timerDisplayEl = document.getElementById('timerDisplay');
         const countDisplayEl = document.getElementById('countdownCounterDisplay');
@@ -274,6 +279,8 @@
         const toggleSidebarBtn = document.getElementById('toggleSidebar');
         const sidebarUserNameEl = document.getElementById('userName');
         const sidebarUserEmailEl = document.getElementById('userEmail');
+        const logoutBtn = document.getElementById('logoutBtn');
+        const signOutLink = document.getElementById('signOutLink');
 
         // --- Utility ---
         const generateId = () => `id_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
@@ -305,13 +312,20 @@
             modalOverlay.classList.remove('visible');
         }
 
-        // --- Data Handling (Local Storage) ---
+        // --- Data Handling (User-Scoped Local Storage) ---
+        function getStorageKey() {
+            if (!currentUser) return null;
+            return `4sp_countdowns_${currentUser.uid}`;
+        }
+
         function loadCountdowns() {
+            const storageKey = getStorageKey();
+            if (!storageKey) return;
+
             try {
-                const storedCountdowns = localStorage.getItem(LOCAL_STORAGE_KEY);
+                const storedCountdowns = localStorage.getItem(storageKey);
                 if (storedCountdowns) {
                     const parsedData = JSON.parse(storedCountdowns);
-                    // Convert timestamp strings back to Date objects
                     userCountdowns = parsedData.map(cd => ({
                         ...cd,
                         targetTimestamp: new Date(cd.targetTimestamp)
@@ -320,20 +334,22 @@
                     userCountdowns = [];
                 }
             } catch (error) {
-                console.error("Error loading countdowns from local storage:", error);
-                userCountdowns = []; // Reset on error
+                console.error("Error loading user countdowns:", error);
+                userCountdowns = [];
             }
             renderList();
             if (!userCountdowns.length) clearActiveCountdown();
         }
 
         function saveCountdowns() {
+            const storageKey = getStorageKey();
+            if (!storageKey) return;
+            
             try {
-                // Sort before saving to maintain order
                 userCountdowns.sort((a, b) => a.name.localeCompare(b.name));
-                localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(userCountdowns));
+                localStorage.setItem(storageKey, JSON.stringify(userCountdowns));
             } catch (error) {
-                console.error("Error saving countdowns to local storage:", error);
+                console.error("Error saving user countdowns:", error);
                 alert("Could not save countdowns. Your browser's storage might be full.");
             }
         }
@@ -342,6 +358,7 @@
         function renderList() {
             countdownListEl.innerHTML = '';
             countDisplayEl.textContent = userCountdowns.length;
+            addBtn.disabled = userCountdowns.length >= MAX_COUNTDOWNS;
             
             if (!userCountdowns.length) {
                 countdownListEl.innerHTML = `<li>No countdowns saved.</li>`;
@@ -425,7 +442,7 @@
                 { v: millenniums, l: 'ml' }, { v: centuries, l: 'c' }, { v: years, l: 'y' },
                 { v: months, l: 'mo' }, { v: weeks, l: 'w' }, { v: days, l: 'd' },
                 { v: hours, l: 'h' }, { v: minutes, l: 'm' }, { v: seconds, l: 's' },
-                { v: tenths, l: 'ts' } // Label changed to 'ts'
+                { v: tenths, l: 'ts' }
             ];
             
             const visibleUnits = allUnits.filter(unit => unit.v > 0);
@@ -468,6 +485,7 @@
                 const index = userCountdowns.findIndex(cd => cd.id === editingId);
                 if (index > -1) { userCountdowns[index] = {...userCountdowns[index], name, targetTimestamp: selectedDate}; }
             } else {
+                if (userCountdowns.length >= MAX_COUNTDOWNS) { alert("Max countdowns reached."); return; }
                 userCountdowns.push({ id: generateId(), name, targetTimestamp: selectedDate });
             }
             
@@ -495,10 +513,24 @@
             }
         }
         
+        function handleLogout() {
+            firebase.auth().signOut().then(() => {
+                window.location.href = '../login.html';
+            }).catch((error) => {
+                console.error('Logout Error:', error);
+                alert('Failed to log out. Please try again.');
+            });
+        }
+        
         // --- Initialization ---
         document.addEventListener('DOMContentLoaded', () => {
             flatpickrInstance = flatpickr("#dateTimePicker", {
-                enableTime: true, dateFormat: "Y-m-d H:i", altInput: true, altFormat: "F j, Y at h:i K"
+                enableTime: true,
+                dateFormat: "Y-m-d H:i",
+                altInput: true,
+                altFormat: "F j, Y at h:i K",
+                minDate: "today",
+                maxDate: "2999-12-31 23:59"
             });
             
             // Event Listeners
@@ -509,13 +541,24 @@
             countdownListEl.addEventListener('click', handleListClick);
             toggleSidebarBtn.addEventListener('click', () => {
                 sidebar.classList.toggle('collapsed');
-                setTimeout(updateMarquees, 500); // Update marquee after animation
+                setTimeout(updateMarquees, 500);
             });
             window.addEventListener('resize', updateMarquees);
+            logoutBtn.addEventListener('click', handleLogout);
+            signOutLink.addEventListener('click', handleLogout);
 
-            // Set initial state and load data from local storage
-            updateMarquees();
-            loadCountdowns();
+            // Auth listener
+            firebase.auth().onAuthStateChanged(user => {
+                if (user) {
+                    currentUser = user;
+                    sidebarUserNameEl.textContent = user.displayName || user.email;
+                    sidebarUserEmailEl.textContent = user.email;
+                    updateMarquees();
+                    loadCountdowns();
+                } else {
+                    window.location.href = '../login.html';
+                }
+            });
         });
     </script>
 </body>
