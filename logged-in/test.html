@@ -375,14 +375,14 @@
         position: relative;
     }
     #saveNoteBtn {
-        background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        background: linear-gradient(135deg, #007bff 0%, #0056b3 100%);
         border: none; color: #fff; padding: 8px 15px; border-radius: 8px;
         font-family: 'PrimaryFont', sans-serif; cursor: pointer; transition: all 0.3s ease;
         font-size: 0.9em; font-weight: 600;
         display: flex; align-items: center; gap: 8px;
     }
     #saveNoteBtn:hover {
-        transform: translateY(-2px); box-shadow: 0 6px 15px rgba(40, 167, 69, 0.3);
+        transform: translateY(-2px); box-shadow: 0 6px 15px rgba(0, 123, 255, 0.3);
     }
     #saveOptionsMenu {
         position: absolute;
@@ -580,7 +580,7 @@
                     <div id="saveOptionsMenu" class="save-options-menu">
                         <div class="save-option" data-save-type="cloud">
                             <h4>Cloud Save</h4>
-                            <p><em>Accessible anywhere. Backed up. Requires login & daily action points.</em></p>
+                            <p><em>Accessible anywhere. Backed up. Requires login.</em></p>
                         </div>
                         <div class="save-option" data-save-type="local">
                             <h4>Local Save</h4>
@@ -621,7 +621,6 @@
     // --- Global Config ---
     const MAX_CLOUD_SAVES = 25;
     const MAX_CLOUD_CHARS = 750000;
-    const MAX_DAILY_ACTIONS = 5;
 
     // --- DOM Elements ---
     const notesTextArea = document.getElementById('notesTextArea');
@@ -917,14 +916,7 @@
         const totalChars = saves.reduce((sum, s) => sum + (s.charCount || 0), 0);
         const charPercent = MAX_CLOUD_CHARS > 0 ? ((totalChars / MAX_CLOUD_CHARS) * 100).toFixed(1) : '0.0';
         
-        const today = getTodaysDateString();
-        const record = data.dailyActionRecord || { date: '', count: 0 };
-        let actionsLeft = MAX_DAILY_ACTIONS;
-        if (record.date === today) {
-            actionsLeft = Math.max(0, MAX_DAILY_ACTIONS - record.count);
-        }
-        
-        storageStatsEl.innerHTML = `Cloud: <b>${saves.length}</b>/50 slots | <b>${bytesToSize(totalChars)}</b>/${bytesToSize(MAX_CLOUD_CHARS)} (${charPercent}%) | <b>${actionsLeft}</b> daily actions left`;
+        storageStatsEl.innerHTML = `Cloud: <b>${saves.length}</b>/${MAX_CLOUD_SAVES} slots | <b>${bytesToSize(totalChars)}</b>/${bytesToSize(MAX_CLOUD_CHARS)} (${charPercent}%)`;
     };
     
     const refreshCloudSavesDisplay = async (showLoadingMessage = true) => {
@@ -1018,23 +1010,17 @@
                 const docSnap = await transaction.get(docRef);
                 const data = docSnap.exists ? docSnap.data() : {};
                 const cloudSaves = data.cloudSaves || [];
-                const dailyActionRecord = data.dailyActionRecord || { date: '', count: 0 };
-                const today = getTodaysDateString();
 
-                if (dailyActionRecord.date === today && dailyActionRecord.count >= MAX_DAILY_ACTIONS) {
-                    throw new Error(`Daily limit of ${MAX_DAILY_ACTIONS} cloud creations/edits reached.`);
-                }
                 if (cloudSaves.length >= MAX_CLOUD_SAVES) throw new Error(`Cloud save limit of ${MAX_CLOUD_SAVES} slots reached.`);
                 const currentTotalChars = cloudSaves.reduce((sum, s) => sum + (s.charCount || 0), 0);
                 if (currentTotalChars + charCountToSave > MAX_CLOUD_CHARS) {
                     throw new Error(`Saving this would exceed the total character limit of ${MAX_CLOUD_CHARS.toLocaleString()}.`);
                 }
 
-                const newActionCount = (dailyActionRecord.date === today) ? dailyActionRecord.count + 1 : 1;
                 const newSave = { name: saveName, content: contentToSave, charCount: charCountToSave, timestamp: new Date() };
                 cloudSaves.push(newSave);
                 
-                const updatedData = { cloudSaves, dailyActionRecord: { date: today, count: newActionCount } };
+                const updatedData = { ...data, cloudSaves };
                 if (docSnap.exists) {
                     transaction.update(docRef, updatedData);
                 } else {
@@ -1147,24 +1133,18 @@
                     if (!docSnap.exists) throw new Error("User data not found.");
                     const data = docSnap.data();
                     let cloudSaves = sortSaves(data.cloudSaves || []);
-                    const dailyActionRecord = data.dailyActionRecord || { date: '', count: 0 };
-                    const today = getTodaysDateString();
-
-                    if (dailyActionRecord.date === today && dailyActionRecord.count >= MAX_DAILY_ACTIONS) {
-                        throw new Error(`Daily limit of ${MAX_DAILY_ACTIONS} cloud edits reached.`);
-                    }
+                    
                     if (currentlyEditing.id < 0 || currentlyEditing.id >= cloudSaves.length) {
                         throw new Error("Invalid save index.");
                     }
                     const newName = prompt("Confirm or change the save name:", cloudSaves[currentlyEditing.id].name);
                     if (!newName) throw new Error("Save cancelled. Name is required.");
 
-                    const newActionCount = (dailyActionRecord.date === today) ? dailyActionRecord.count + 1 : 1;
                     cloudSaves[currentlyEditing.id].name = newName;
                     cloudSaves[currentlyEditing.id].content = notesTextArea.value;
                     cloudSaves[currentlyEditing.id].charCount = notesTextArea.value.length;
                     cloudSaves[currentlyEditing.id].timestamp = new Date();
-                    transaction.update(docRef, { cloudSaves, dailyActionRecord: { date: today, count: newActionCount } });
+                    transaction.update(docRef, { cloudSaves });
                 });
                 showStatusMessage('Note updated successfully!', 'success');
                 exitEditMode();
