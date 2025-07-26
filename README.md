@@ -17,7 +17,6 @@ Accounts are required for most features — because this version is made for peo
 - Sleek homebase with **cards** for:
   - Timer  
   - Stopwatch  
-  - Real-time Clock  
   - Weather (auto-fetched)  
   - Shortcut Launcher *(editable mode launching soon)*
 - All pages are deeply linked — no more dead ends
@@ -29,7 +28,7 @@ Accounts are required for most features — because this version is made for peo
 - Tested for smoothness on Chromium-based browsers
 
 ### 🎧 Soundboard 2.0
-- **Spatial audio engine**
+- **Spatial audio simulation engine**
 - **Bass / Mid / Treble sliders**
 - Sound themes + layout presets
 - Settings saved across sessions
@@ -44,7 +43,7 @@ Accounts are required for most features — because this version is made for peo
 - Create & save **custom playlists**
 - Color-tagging for each list
 - Export/import using **JSON**  
-- Save everything **locally + in the cloud**
+- Save everything **locally**
 
 ### 🧠 Smart Requests (Recycling System)
 - The **Requests** page now includes **smart recycling**
@@ -61,7 +60,7 @@ Accounts are required for most features — because this version is made for peo
 - Change username (**5x/month limit**)
 - Update password (**1x every 2 weeks**)
 - Set up a **Panic Key** to redirect instantly
-- Theme + Audio settings stored per account
+- Audio settings stored per account
 
 ---
 
@@ -77,7 +76,7 @@ Maybe it’ll come back if I get rich or find some clever free solution that doe
 
 ## ⚙️ Tech Stack
 
-- HTML / CSS / JS (Vanilla, Tailwind-inspired)
+- HTML / CSS / JS (Style inspired by Koyeb)
 - Firebase (Auth, Firestore, Hosting)
 - CryptoJS (for encrypted URLs + data)
 - LocalStorage (offline tools)
@@ -90,9 +89,9 @@ Maybe it’ll come back if I get rich or find some clever free solution that doe
 
 | Version | Date           | Summary |
 |--------:|:---------------|:--------|
-| V1      | March 17, 2025 | First ever version, simple buttons, light/dark mode |
+| V1      | March 13, 2025 | First ever version, simple buttons, light/dark mode |
 | V2      | April 11, 2025 | Black/white theme, pill shapes continued |
-| V3      | May 14, 2025   | Clean layout, square corners, grid system |
+| V3      | May 15, 2025   | Clean layout, square corners, grid system |
 | **V4** *(Vanadium)* | **August 23, 2025** | Full dashboard, GBA, Soundboard v2, Notes, Smart Requests |
 
 ---
@@ -106,16 +105,9 @@ Maybe it’ll come back if I get rich or find some clever free solution that doe
 
 ## 👤 Author
 
-Made by **Wyatt Belknap**  
+Made By: 4simpleproblems, 2025
+
 GitHub: [@4simpleproblems](https://github.com/4simpleproblems)  
-Also found coding too much and drinking sweet tea.
-
----
-
-## 📜 License
-
-**MIT License**  
-This project is open source — use it, remix it, credit it. Just don’t steal it and pretend it’s yours.
 
 ---
 
@@ -127,3 +119,12 @@ Thanks to everyone who stuck around since V1.
 And if this is your first time here — welcome to the chaos, it's organized now (mostly).
 
 ---
+
+Copyright © 2025 4simpleproblems
+
+All rights reserved.
+
+This software is provided for personal viewing and reference only.  
+No part of this project may be copied, modified, distributed, or used in any derivative works without explicit written permission from the author.
+
+Unauthorized use is strictly prohibited.
