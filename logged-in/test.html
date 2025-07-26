@@ -621,6 +621,7 @@
     // --- Global Config ---
     const MAX_CLOUD_SAVES = 25;
     const MAX_CLOUD_CHARS = 750000;
+    const MAX_DAILY_ACTIONS = 5;
 
     // --- DOM Elements ---
     const notesTextArea = document.getElementById('notesTextArea');
@@ -649,6 +650,7 @@
     let currentlyEditing = { type: null, id: null };
     let originalNoteBeforeEdit = null;
     let isRefreshingCloudSaves = false;
+    let latestCloudData = {};
 
     // --- Utility Functions ---
     const showStatusMessage = (message, type = 'info', duration = 4000) => {
@@ -702,6 +704,13 @@
             targetButton.classList.add('active');
             const tabName = targetButton.dataset.tab;
             document.getElementById(`${tabName}SavesContent`).classList.add('active');
+
+            // Update stats display when tab changes
+            if (tabName === 'local') {
+                updateLocalStorageEstimate();
+            } else if (tabName === 'cloud') {
+                updateCloudStatsUI();
+            }
         });
     };
     
@@ -785,16 +794,19 @@
 
     // --- Local Saves Logic ---
     const updateLocalStorageEstimate = async () => {
+        const saves = getLocalSaves();
+        const count = saves.length;
+        const countDisplay = count >= 1000 ? "1000+" : count;
         if (navigator.storage && navigator.storage.estimate) {
             try {
                 const estimate = await navigator.storage.estimate();
-                storageStatsEl.textContent = `Local Storage: ${bytesToSize(estimate.usage)} / ${bytesToSize(estimate.quota)} estimated.`;
+                storageStatsEl.innerHTML = `Local Saves: <b>${countDisplay}</b> | Usage: <b>${bytesToSize(estimate.usage)}</b> / ${bytesToSize(estimate.quota)} estimated.`;
             } catch (error) {
                 console.warn("Could not get storage estimate:", error);
-                storageStatsEl.textContent = "Cannot determine local storage space.";
+                storageStatsEl.innerHTML = `Local Saves: <b>${countDisplay}</b> | Cannot determine remaining storage space.`;
             }
         } else {
-            storageStatsEl.textContent = "Storage estimation API not supported by your browser.";
+            storageStatsEl.innerHTML = `Local Saves: <b>${countDisplay}</b> | Storage estimation API not supported.`;
         }
     };
 
@@ -832,35 +844,36 @@
 
         if (saves.length === 0) {
             localSavesListEl.innerHTML = '<div class="no-items-message">No local saves yet.</div>';
-            return;
+        } else {
+            saves.forEach(save => {
+                const li = document.createElement('li');
+                const saveDate = save.timestamp ? new Date(save.timestamp).toLocaleString() : 'N/A';
+                const charCount = save.content ? save.content.length : 0;
+                const sizeInBytes = new Blob([save.content || '']).size;
+
+                li.innerHTML = `
+                    <div class="save-info">
+                        <span class="save-name">${save.name}</span>
+                        <div class="save-details">
+                            Chars: ${charCount.toLocaleString()} | Size: ${bytesToSize(sizeInBytes)} | Saved: ${saveDate}
+                        </div>
+                    </div>
+                    <div class="save-actions">
+                        <button class="open-save-btn" data-id="${save.id}">Open</button>
+                        <button class="edit-save-btn" data-id="${save.id}">Edit</button>
+                        <button class="delete-save-btn" data-id="${save.id}">Delete</button>
+                    </div>`;
+                localSavesListEl.appendChild(li);
+            });
+            
+            localSavesListEl.querySelectorAll('.open-save-btn').forEach(btn => btn.onclick = () => openLocalSave(btn.dataset.id));
+            localSavesListEl.querySelectorAll('.edit-save-btn').forEach(btn => btn.onclick = () => handleLocalEdit(btn.dataset.id));
+            localSavesListEl.querySelectorAll('.delete-save-btn').forEach(btn => btn.onclick = () => deleteLocalSave(btn.dataset.id));
         }
         
-        saves.forEach(save => {
-            const li = document.createElement('li');
-            const saveDate = save.timestamp ? new Date(save.timestamp).toLocaleString() : 'N/A';
-            const charCount = save.content ? save.content.length : 0;
-            const sizeInBytes = new Blob([save.content || '']).size;
-
-            li.innerHTML = `
-                <div class="save-info">
-                    <span class="save-name">${save.name}</span>
-                    <div class="save-details">
-                        Chars: ${charCount.toLocaleString()} | Size: ${bytesToSize(sizeInBytes)} | Saved: ${saveDate}
-                    </div>
-                </div>
-                <div class="save-actions">
-                    <button class="open-save-btn" data-id="${save.id}">Open</button>
-                    <button class="edit-save-btn" data-id="${save.id}">Edit</button>
-                    <button class="delete-save-btn" data-id="${save.id}">Delete</button>
-                </div>`;
-            localSavesListEl.appendChild(li);
-        });
-        
-        localSavesListEl.querySelectorAll('.open-save-btn').forEach(btn => btn.onclick = () => openLocalSave(btn.dataset.id));
-        localSavesListEl.querySelectorAll('.edit-save-btn').forEach(btn => btn.onclick = () => handleLocalEdit(btn.dataset.id));
-        localSavesListEl.querySelectorAll('.delete-save-btn').forEach(btn => btn.onclick = () => deleteLocalSave(btn.dataset.id));
-        
-        updateLocalStorageEstimate();
+        if (document.querySelector('.section-tab-button[data-tab="local"].active')) {
+            updateLocalStorageEstimate();
+        }
     };
 
     const handleSaveToLocal = () => {
@@ -911,12 +924,20 @@
     };
 
     // --- Cloud Saves Logic ---
-    const updateCloudStatsUI = (data) => {
+    const updateCloudStatsUI = () => {
+        const data = latestCloudData || {};
         const saves = data.cloudSaves || [];
         const totalChars = saves.reduce((sum, s) => sum + (s.charCount || 0), 0);
         const charPercent = MAX_CLOUD_CHARS > 0 ? ((totalChars / MAX_CLOUD_CHARS) * 100).toFixed(1) : '0.0';
         
-        storageStatsEl.innerHTML = `Cloud: <b>${saves.length}</b>/${MAX_CLOUD_SAVES} slots | <b>${bytesToSize(totalChars)}</b>/${bytesToSize(MAX_CLOUD_CHARS)} (${charPercent}%)`;
+        const today = getTodaysDateString();
+        const record = data.dailyActionRecord || { date: '', count: 0 };
+        let actionsLeft = MAX_DAILY_ACTIONS;
+        if (record.date === today) {
+            actionsLeft = Math.max(0, MAX_DAILY_ACTIONS - record.count);
+        }
+        
+        storageStatsEl.innerHTML = `Cloud: <b>${saves.length}</b>/${MAX_CLOUD_SAVES} slots | <b>${bytesToSize(totalChars)}</b>/${bytesToSize(MAX_CLOUD_CHARS)} (${charPercent}%) | <b>${actionsLeft}</b> daily actions left`;
     };
     
     const refreshCloudSavesDisplay = async (showLoadingMessage = true) => {
@@ -942,50 +963,52 @@
             cloudSavesListEl.innerHTML = '';
             
             if (docSnap && docSnap.exists) {
-                const data = docSnap.data();
-                let saves = data.cloudSaves || [];
+                latestCloudData = docSnap.data();
+                let saves = latestCloudData.cloudSaves || [];
                 saves = sortSaves(saves);
                 
                 cloudTabBtn.childNodes[0].nodeValue = `Cloud Saves (${saves.length}) `;
-                updateCloudStatsUI(data);
                 
                 if (saves.length === 0) {
                     cloudSavesListEl.innerHTML = '<div class="no-items-message">No cloud saves yet.</div>';
-                }
+                } else {
+                    saves.forEach((save, index) => {
+                        const li = document.createElement('li');
+                        const saveDate = save.timestamp?.toDate ? save.timestamp.toDate().toLocaleString() : 'N/A';
+                        const sizeInBytes = new Blob([save.content || '']).size;
 
-                saves.forEach((save, index) => {
-                    const li = document.createElement('li');
-                    const saveDate = save.timestamp?.toDate ? save.timestamp.toDate().toLocaleString() : 'N/A';
-                    const sizeInBytes = new Blob([save.content || '']).size;
-
-                    li.innerHTML = `
-                        <div class="save-info">
-                            <span class="save-name">${save.name || `Save ${index + 1}`}</span>
-                            <div class="save-details">
-                                Chars: ${(save.charCount || 0).toLocaleString()} | Size: ${bytesToSize(sizeInBytes)} | Saved: ${saveDate}
+                        li.innerHTML = `
+                            <div class="save-info">
+                                <span class="save-name">${save.name || `Save ${index + 1}`}</span>
+                                <div class="save-details">
+                                    Chars: ${(save.charCount || 0).toLocaleString()} | Size: ${bytesToSize(sizeInBytes)} | Saved: ${saveDate}
+                                </div>
                             </div>
-                        </div>
-                        <div class="save-actions">
-                            <button class="open-save-btn" data-index="${index}">Open</button>
-                            <button class="edit-save-btn" data-index="${index}">Edit</button>
-                            <button class="delete-save-btn" data-index="${index}">Delete</button>
-                        </div>`;
-                    cloudSavesListEl.appendChild(li);
-                });
-                
-                cloudSavesListEl.querySelectorAll('.open-save-btn').forEach(btn => btn.onclick = (e) => openCloudSave(parseInt(e.target.dataset.index)));
-                cloudSavesListEl.querySelectorAll('.edit-save-btn').forEach(btn => btn.onclick = (e) => handleEdit(parseInt(e.target.dataset.index)));
-                cloudSavesListEl.querySelectorAll('.delete-save-btn').forEach(btn => btn.onclick = (e) => deleteCloudSave(parseInt(e.target.dataset.index)));
+                            <div class="save-actions">
+                                <button class="open-save-btn" data-index="${index}">Open</button>
+                                <button class="edit-save-btn" data-index="${index}">Edit</button>
+                                <button class="delete-save-btn" data-index="${index}">Delete</button>
+                            </div>`;
+                        cloudSavesListEl.appendChild(li);
+                    });
+                    
+                    cloudSavesListEl.querySelectorAll('.open-save-btn').forEach(btn => btn.onclick = (e) => openCloudSave(parseInt(e.target.dataset.index)));
+                    cloudSavesListEl.querySelectorAll('.edit-save-btn').forEach(btn => btn.onclick = (e) => handleEdit(parseInt(e.target.dataset.index)));
+                    cloudSavesListEl.querySelectorAll('.delete-save-btn').forEach(btn => btn.onclick = (e) => deleteCloudSave(parseInt(e.target.dataset.index)));
+                }
             } else {
+                latestCloudData = {};
                 cloudSavesListEl.innerHTML = '<div class="no-items-message">No cloud data found. Start saving!</div>';
                 cloudTabBtn.childNodes[0].nodeValue = 'Cloud Saves (0) ';
-                updateCloudStatsUI({});
             }
         } catch (error) {
             console.error("Error fetching cloud saves:", error);
             showStatusMessage('Error fetching cloud saves: ' + error.message, 'error');
             cloudSavesListEl.innerHTML = `<div class="no-items-message">Error loading saves.</div>`;
         } finally {
+            if (document.querySelector('.section-tab-button[data-tab="cloud"].active')) {
+                updateCloudStatsUI();
+            }
             isRefreshingCloudSaves = false;
             refreshCloudSavesBtn.classList.remove('refreshing');
             refreshCloudSavesBtn.disabled = false;
@@ -1010,17 +1033,23 @@
                 const docSnap = await transaction.get(docRef);
                 const data = docSnap.exists ? docSnap.data() : {};
                 const cloudSaves = data.cloudSaves || [];
+                const dailyActionRecord = data.dailyActionRecord || { date: '', count: 0 };
+                const today = getTodaysDateString();
 
+                if (dailyActionRecord.date === today && dailyActionRecord.count >= MAX_DAILY_ACTIONS) {
+                    throw new Error(`Daily limit of ${MAX_DAILY_ACTIONS} cloud creations/edits reached.`);
+                }
                 if (cloudSaves.length >= MAX_CLOUD_SAVES) throw new Error(`Cloud save limit of ${MAX_CLOUD_SAVES} slots reached.`);
                 const currentTotalChars = cloudSaves.reduce((sum, s) => sum + (s.charCount || 0), 0);
                 if (currentTotalChars + charCountToSave > MAX_CLOUD_CHARS) {
                     throw new Error(`Saving this would exceed the total character limit of ${MAX_CLOUD_CHARS.toLocaleString()}.`);
                 }
 
+                const newActionCount = (dailyActionRecord.date === today) ? dailyActionRecord.count + 1 : 1;
                 const newSave = { name: saveName, content: contentToSave, charCount: charCountToSave, timestamp: new Date() };
                 cloudSaves.push(newSave);
                 
-                const updatedData = { ...data, cloudSaves };
+                const updatedData = { ...data, cloudSaves, dailyActionRecord: { date: today, count: newActionCount } };
                 if (docSnap.exists) {
                     transaction.update(docRef, updatedData);
                 } else {
@@ -1133,18 +1162,24 @@
                     if (!docSnap.exists) throw new Error("User data not found.");
                     const data = docSnap.data();
                     let cloudSaves = sortSaves(data.cloudSaves || []);
-                    
+                    const dailyActionRecord = data.dailyActionRecord || { date: '', count: 0 };
+                    const today = getTodaysDateString();
+
+                    if (dailyActionRecord.date === today && dailyActionRecord.count >= MAX_DAILY_ACTIONS) {
+                        throw new Error(`Daily limit of ${MAX_DAILY_ACTIONS} cloud edits reached.`);
+                    }
                     if (currentlyEditing.id < 0 || currentlyEditing.id >= cloudSaves.length) {
                         throw new Error("Invalid save index.");
                     }
                     const newName = prompt("Confirm or change the save name:", cloudSaves[currentlyEditing.id].name);
                     if (!newName) throw new Error("Save cancelled. Name is required.");
 
+                    const newActionCount = (dailyActionRecord.date === today) ? dailyActionRecord.count + 1 : 1;
                     cloudSaves[currentlyEditing.id].name = newName;
                     cloudSaves[currentlyEditing.id].content = notesTextArea.value;
                     cloudSaves[currentlyEditing.id].charCount = notesTextArea.value.length;
                     cloudSaves[currentlyEditing.id].timestamp = new Date();
-                    transaction.update(docRef, { cloudSaves });
+                    transaction.update(docRef, { cloudSaves, dailyActionRecord: { date: today, count: newActionCount } });
                 });
                 showStatusMessage('Note updated successfully!', 'success');
                 exitEditMode();
@@ -1268,6 +1303,7 @@
         setupSidebar();
         setupTabs();
         updateCharacterCount();
+        updateLocalStorageEstimate(); // Set initial stats for the default local tab
     });
   </script>
 </body>
