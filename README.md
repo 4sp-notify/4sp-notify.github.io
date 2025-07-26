@@ -75,5 +75,55 @@ Maybe it’ll come back if I get rich or find some clever free solution that doe
 
 ---
 
-## 📂 Project Structure (Simplified)
+## ⚙️ Tech Stack
 
+- HTML / CSS / JS (Vanilla, Tailwind-inspired)
+- Firebase (Auth, Firestore, Hosting)
+- CryptoJS (for encrypted URLs + data)
+- LocalStorage (offline tools)
+- Gameframe GBA Emulator
+- Designed for Chromium browsers (Edge, Chrome, etc.)
+
+---
+
+## 📅 Version History
+
+| Version | Date           | Summary |
+|--------:|:---------------|:--------|
+| V1      | March 17, 2025 | First ever version, simple buttons, light/dark mode |
+| V2      | April 11, 2025 | Black/white theme, pill shapes continued |
+| V3      | May 14, 2025   | Clean layout, square corners, grid system |
+| **V4** *(Vanadium)* | **August 23, 2025** | Full dashboard, GBA, Soundboard v2, Notes, Smart Requests |
+
+---
+
+## 🔗 Links
+
+- 📺 YouTube Channel: [4simpleproblems](https://www.youtube.com/@4simpleproblems)  
+- 🌐 Wiki: [4SP on Fandom](https://4simpleproblems.fandom.com)
+
+---
+
+## 👤 Author
+
+Made by **Wyatt Belknap**  
+GitHub: [@4simpleproblems](https://github.com/4simpleproblems)  
+Also found coding too much and drinking sweet tea.
+
+---
+
+## 📜 License
+
+**MIT License**  
+This project is open source — use it, remix it, credit it. Just don’t steal it and pretend it’s yours.
+
+---
+
+## 💬 Final Note
+
+**Proj-Vanadium** is the most complete version of 4SP so far. It’s not perfect, but it’s consistent, clean, and made for people who care about simplicity with power underneath.
+
+Thanks to everyone who stuck around since V1.  
+And if this is your first time here — welcome to the chaos, it's organized now (mostly).
+
+---
