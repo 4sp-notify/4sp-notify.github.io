@@ -1,48 +1,81 @@
-4simpleproblems (4sp)
-this is the repo for the 4simpleproblems website. it's basically just a place with a bunch of tools and features for students to waste time.
+# Proj-Vanadium (4SP V4)
 
-the live site is at: 4simpleproblems.github.io
+**Release Date:** August 23rd, 2025  
+**Tagline:** *Built for more. Not built perfect.*
 
-v4 features
-here's all the stuff that was added in version 4.
+**Proj-Vanadium** is the fourth major version of [4SP (4simpleproblems)](https://github.com/4simpleproblems), and easily the biggest update it’s ever had. This version was basically a full rebuild — new dashboard, new layout, new tools, and a bunch of stuff I probably should’ve done in earlier versions but didn’t think of until now.
 
-login stuff
-there's a real signup and login system now. you have to make an account to use most of the site, otherwise you can't save anything.
+Everything’s been made to feel more solid and usable without turning into a bloated mess. It’s **mostly optimized for desktop**, but parts of it still kinda work on mobile if you're chill with it being a little squished.
 
-the logged-in ui
-once you're logged in, there's a sidebar on every page so you can get around faster. it has shortcuts to all the tools. it also shows your username and email scrolling at the top in a marquee effect.
+Oh, and yeah — the proxies page? That’s **archived** now, because I’m broke and don’t have a job to keep paying for bare servers that go down every 2 days. 💀  
+If I ever strike it rich or find a workaround that doesn’t get banned by Koyeb in 10 minutes, maybe I’ll bring it back.
 
-personal dashboard
-this is the main page you see after you log in. it has a few widgets.
+---
 
-weather: tells u the weather. pretty straightforward.
+## 🧠 What's New in Vanadium
 
-clock & timer: a clock so you know the time, and a timer you can use for whatever.
+### 🖥️ Dashboard 2.0
+- Widgets like:
+  - Timer  
+  - Stopwatch  
+  - Weather  
+  - Clock  
+  - Shortcut editor *(editing mode is “coming soon” — like for real this time)*
+- Every card is functional and actually useful now.
+- All pages link together — no more getting stuck on a page with no way back.
 
-high-precision countdowns
-this is its own app on the site. you can make a countdown for any future date you want. it's super precise and tracks time down to a tenth of a second, so you can watch the numbers go crazy when it gets close.
+### 📚 Sidebar + Topbar
+- Sidebar shows the active page and has links to everything.
+- Top bar has:
+  - Home button (`index.html`)
+  - Logout button
+  - 4SP logo (yeah, branding lol)
 
-notes app
-a page for taking notes. you can write and save whatever you want here.
+### 🎧 Soundboard Overhaul
+- Spatial audio (for those who pretend to know what that means)
+- Sliders for bass, mid, and treble
+- Theme settings + options panel
+- Feels more like a real feature and not just a meme page anymore
 
-about the limit: just so you know, there's a 750,000 character limit for all of your notes put together. if you hit the limit, you have to delete some old notes before you can save any new ones.
+### 🕹️ Games Page
+- GN-Math browser games
+- **GBA emulator support** (yep, you can actually play Pokémon now)
+- Fullscreen mode and works surprisingly well on most devices
 
-requests page
-this is a page where you can tell me what you want.
+### 📝 Notes System
+- Cloud saving (via Firebase)
+- Local saving fallback
+- Import/export `.txt` files
+- Cleaner layout + better for real note-taking now
 
-request sounds: ask for sounds you want on the soundboard.
-request features: if you have an idea for a new tool, suggest it here.
-report issues: if something is broken or doesn't work right, you can report the bug.
+### 📅 Countdown Tools
+- Create local-saved countdowns
+- Use for school, birthdays, whatever
+- All local, no login needed
 
-entertainment & utilities
-a few things for fun or for getting around school filters.
+### 🎵 Playlists
+- Save playlists locally or export as JSON
+- Choose playlist colors (because vibes)
+- Not super complex, but works well
 
-soundboard: it has a bunch of sounds and a simulated spatial audio feature.
-proxies: for private Browse.
-gba & browser games: a bunch of classic game boy advance games and other browser games that you can play to kill some time.
+### ⚙️ Settings
+- Username change limit: 5x/month  
+- Password changes: 1x every 2 weeks  
+- Panic key setup (redirect to a different page fast)  
+- Theme and sound controls
 
-advanced account settings
-a page to manage your account.
+---
 
-manage your info: you can change your username and password whenever you want.
-account deletion: you can also delete your account from here. be careful, this gets rid of everything permanently—your notes, your settings, all of it. there's no going back.
+## 🪦 Archived: Proxies Page
+
+Yeah... proxies are **gone for now**.
+
+I tried hosting them with bare servers, but those things died constantly and got banned everywhere. And since I don’t have a job, I couldn’t keep paying for stable ones — so instead of pretending it works, I just archived it.
+
+If you go looking for the proxies page, you'll find a little goodbye note instead.  
+RIP to the most unstable feature in 4SP history.
+
+---
+
+## 📁 Folder Structure (Kinda Simplified)
+
