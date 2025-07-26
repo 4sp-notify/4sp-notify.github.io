@@ -1,81 +1,79 @@
 # Proj-Vanadium (4SP V4)
 
 **Release Date:** August 23rd, 2025  
-**Tagline:** *Built for more. Not built perfect.*
+**Motto:** *Built for more.*
 
-**Proj-Vanadium** is the fourth major version of [4SP (4simpleproblems)](https://github.com/4simpleproblems), and easily the biggest update it’s ever had. This version was basically a full rebuild — new dashboard, new layout, new tools, and a bunch of stuff I probably should’ve done in earlier versions but didn’t think of until now.
+**Proj-Vanadium** is the fourth and most complete version of [4SP (4simpleproblems)](https://github.com/4simpleproblems). After experimenting with design, structure, and features through V1–V3, Vanadium is where it all finally clicks — a cleaner UI, smart tools, deeper personalization, and a more consistent vibe.
 
-Everything’s been made to feel more solid and usable without turning into a bloated mess. It’s **mostly optimized for desktop**, but parts of it still kinda work on mobile if you're chill with it being a little squished.
+Everything is optimized for **desktop-first** use. Most things still *work* on mobile, but you’ll get the best experience with a proper screen.
 
-Oh, and yeah — the proxies page? That’s **archived** now, because I’m broke and don’t have a job to keep paying for bare servers that go down every 2 days. 💀  
-If I ever strike it rich or find a workaround that doesn’t get banned by Koyeb in 10 minutes, maybe I’ll bring it back.
+Accounts are required for most features — because this version is made for people who are actually here to use it. No more just pulling up a page and leaving.
 
 ---
 
-## 🧠 What's New in Vanadium
+## 💡 What's New in Vanadium
 
-### 🖥️ Dashboard 2.0
-- Widgets like:
+### 🧩 Modular Dashboard
+- Sleek homebase with **cards** for:
   - Timer  
   - Stopwatch  
-  - Weather  
-  - Clock  
-  - Shortcut editor *(editing mode is “coming soon” — like for real this time)*
-- Every card is functional and actually useful now.
-- All pages link together — no more getting stuck on a page with no way back.
+  - Real-time Clock  
+  - Weather (auto-fetched)  
+  - Shortcut Launcher *(editable mode launching soon)*
+- All pages are deeply linked — no more dead ends
 
-### 📚 Sidebar + Topbar
-- Sidebar shows the active page and has links to everything.
-- Top bar has:
-  - Home button (`index.html`)
-  - Logout button
-  - 4SP logo (yeah, branding lol)
+### 🎮 Games
+- Full list of **GN-Math browser games**
+- Built-in **Game Boy Advance emulator**
+- Works fullscreen with decent controls
+- Tested for smoothness on Chromium-based browsers
 
-### 🎧 Soundboard Overhaul
-- Spatial audio (for those who pretend to know what that means)
-- Sliders for bass, mid, and treble
-- Theme settings + options panel
-- Feels more like a real feature and not just a meme page anymore
+### 🎧 Soundboard 2.0
+- **Spatial audio engine**
+- **Bass / Mid / Treble sliders**
+- Sound themes + layout presets
+- Settings saved across sessions
 
-### 🕹️ Games Page
-- GN-Math browser games
-- **GBA emulator support** (yep, you can actually play Pokémon now)
-- Fullscreen mode and works surprisingly well on most devices
-
-### 📝 Notes System
-- Cloud saving (via Firebase)
-- Local saving fallback
-- Import/export `.txt` files
-- Cleaner layout + better for real note-taking now
-
-### 📅 Countdown Tools
-- Create local-saved countdowns
-- Use for school, birthdays, whatever
-- All local, no login needed
+### 📝 Notes
+- Write, edit, and organize notes
+- **Cloud saving (Firebase)** and local fallback
+- **Import/export `.txt` files**
+- Scroll-sync, autosave, cleaner layout
 
 ### 🎵 Playlists
-- Save playlists locally or export as JSON
-- Choose playlist colors (because vibes)
-- Not super complex, but works well
+- Create & save **custom playlists**
+- Color-tagging for each list
+- Export/import using **JSON**  
+- Save everything **locally + in the cloud**
+
+### 🧠 Smart Requests (Recycling System)
+- The **Requests** page now includes **smart recycling**
+- Suggestions from past users rotate back in to reduce clutter
+- Prioritized by frequency and freshness
+- Saves bandwidth *and* brainpower
+
+### ⏱️ Countdowns
+- Track future events with auto-updating timers
+- All countdowns saved per user
+- Built for goal-setting and deadlines
 
 ### ⚙️ Settings
-- Username change limit: 5x/month  
-- Password changes: 1x every 2 weeks  
-- Panic key setup (redirect to a different page fast)  
-- Theme and sound controls
+- Change username (**5x/month limit**)
+- Update password (**1x every 2 weeks**)
+- Set up a **Panic Key** to redirect instantly
+- Theme + Audio settings stored per account
 
 ---
 
 ## 🪦 Archived: Proxies Page
 
-Yeah... proxies are **gone for now**.
+Yep, it’s gone.  
+The **Proxies page is archived** because I’m broke, bare servers got banned, and I can’t keep pretending it works when it’s offline every other day.
 
-I tried hosting them with bare servers, but those things died constantly and got banned everywhere. And since I don’t have a job, I couldn’t keep paying for stable ones — so instead of pretending it works, I just archived it.
-
-If you go looking for the proxies page, you'll find a little goodbye note instead.  
-RIP to the most unstable feature in 4SP history.
+You’ll still find the page, but all it does now is explain why it's gone.  
+Maybe it’ll come back if I get rich or find some clever free solution that doesn’t violate 6 TOS pages.
 
 ---
 
-## 📁 Folder Structure (Kinda Simplified)
+## 📂 Project Structure (Simplified)
 
