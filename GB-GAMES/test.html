@@ -367,6 +367,8 @@
         const headerLogoutBtn = document.getElementById('logoutBtn');
         const sidebarSignOutLink = document.getElementById('signOutLink');
 
+        let authoritativeTitle = ''; // This will hold the title that we want to enforce.
+
         function showNotification(message, type = 'info', duration = 3000) {
             const notification = document.createElement('div');
             notification.className = `notification ${type}`; 
@@ -398,10 +400,24 @@
             });
         }
 
+        // This function determines what the page title should be based on your settings.
+        function setAuthoritativeTitle(gameName, urlPreset) {
+            if (urlPreset && urlPreset.trim().toLowerCase() !== 'none' && urlPreset.trim() !== '') {
+                authoritativeTitle = urlPreset;
+            } else if (urlPreset && urlPreset.trim().toLowerCase() === 'none') {
+                authoritativeTitle = `4SP - ${gameName}`;
+            } else {
+                authoritativeTitle = gameName;
+            }
+            document.title = authoritativeTitle;
+        }
+
         firebase.auth().onAuthStateChanged(async user => {
             if (user) {
                 if (userEmailEl) userEmailEl.textContent = user.email;
                 
+                let urlPreset = null;
+
                 const userDocRef = dbRef();
                 if (userDocRef) {
                     try {
@@ -411,22 +427,21 @@
                             if (userNameEl) {
                                 userNameEl.textContent = userData.username || user.displayName || 'Gamer';
                             }
+                            urlPreset = userData.urlPreset || null;
                         } else {
-                            if (userNameEl) {
-                                userNameEl.textContent = user.displayName || 'Gamer';
-                            }
+                            if (userNameEl) userNameEl.textContent = user.displayName || 'Gamer';
                         }
                     } catch (error) {
                         console.error("Error fetching user data:", error);
-                        if (userNameEl) {
-                            userNameEl.textContent = user.displayName || 'Gamer';
-                        }
+                        if (userNameEl) userNameEl.textContent = user.displayName || 'Gamer';
                     }
                 } else {
-                     if (userNameEl) {
-                        userNameEl.textContent = user.displayName || 'Gamer';
-                    }
+                     if (userNameEl) userNameEl.textContent = user.displayName || 'Gamer';
                 }
+                
+                // Set the correct title based on the user's preset.
+                // The 'formattedGameName' variable is set when the DOM loads.
+                setAuthoritativeTitle(formattedGameName, urlPreset);
 
             } else {
                 window.location.href = '../login.html';
@@ -439,9 +454,7 @@
                 sidebarEl.classList.toggle('collapsed');
                 setTimeout(() => {
                     updateMarquees();
-                    if (typeof applyAspectRatio === 'function') {
-                        applyAspectRatio(); 
-                    }
+                    if (typeof applyAspectRatio === 'function') applyAspectRatio(); 
                 }, 550);
             });
         }
@@ -457,9 +470,7 @@
         window.addEventListener('resize', () => {
             setTimeout(() => {
                 updateMarquees();
-                if (typeof applyAspectRatio === 'function') {
-                    applyAspectRatio();
-                }
+                if (typeof applyAspectRatio === 'function') applyAspectRatio();
             }, 300);
         });
 
@@ -472,6 +483,7 @@
         const emulatorCanvas = document.getElementById('emulator_target');
         const aspectRatioButtons = document.querySelectorAll('.aspect-ratio-controls button');
         
+        let formattedGameName = "Game";
         let currentAspectRatio = 'auto';
         const GBA_NATIVE_ASPECT_RATIO = 240 / 160;
 
@@ -536,13 +548,24 @@
             document.documentElement.style.scrollBehavior = 'smooth';
 
             const gameHash = window.location.hash;
-            const formattedName = formatGameName(gameHash);
+            formattedGameName = formatGameName(gameHash);
             
-            // Update the H1 header on the page immediately
-            if (gameNameDisplay) gameNameDisplay.textContent = formattedName;
+            if (gameNameDisplay) gameNameDisplay.textContent = formattedGameName;
             
-            // NOTE: All logic for changing document.title has been removed to allow
-            // the url-changer.js script to function without interference.
+            // This observer watches for changes to the <title> tag.
+            // If the emulator or another script changes the title, this will catch it.
+            const titleElement = document.querySelector('title');
+            const observer = new MutationObserver(() => {
+                // If the title was changed to something other than what we want,
+                // and we have determined what we want, force it back.
+                if (authoritativeTitle && document.title !== authoritativeTitle) {
+                    document.title = authoritativeTitle;
+                }
+            });
+
+            // Start watching the title for changes.
+            observer.observe(titleElement, { childList: true });
+
 
             if (fullscreenBtn && emulatorArea) {
                 fullscreenBtn.addEventListener('click', toggleFullScreen);
