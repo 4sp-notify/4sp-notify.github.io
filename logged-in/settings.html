@@ -525,7 +525,7 @@
         box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
     }
     
-    /* NEW: Wrapper to lift reauth controls above the overlay */
+    /* Wrapper to lift reauth controls above the overlay */
     .reauth-wrapper {
         position: relative;
         z-index: 7;
@@ -614,7 +614,6 @@
         transition: background-color 0.2s, transform 0.2s;
         font-size: 0.9em;
         margin-left: 10px;
-        /* UPDATED: Added font family for consistency */
         font-family: 'PrimaryFont', sans-serif; 
         text-transform: uppercase;
         font-weight: bold;
@@ -808,14 +807,14 @@
                         <input type="text" id="panicKey" placeholder="e.g., p" required maxlength="1" />
                     </div>
                     <div class="form-group">
-                        <label for="panicUrl">Redirect URL</label>
+                        <label for="panicUrl">Redirect URL (domain name only)</label>
                         <input type="text" id="panicUrl" placeholder="example.com" required />
                     </div>
                     <button type="button" onclick="savePanicKeySettings()">Save Panic Key</button>
                 </form>
             </section>
 
-            <section class="settings-section" id="password-section" data-disabled-message="PASSWORD CHANGES AREN'T AVALIABLE FOR GOOGLE ACCOUNTS">
+            <section class="settings-section" id="password-section" data-disabled-message="PASSWORD CHANGES AREN'T AVAILABLE FOR GOOGLE ACCOUNTS">
                 <h3>Change Password</h3>
                 <p>Update your account password for enhanced security. Your new password must be at least 6 characters long and different from your current password.</p>
                 
@@ -908,6 +907,31 @@
         const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
         const marqueeEls = document.querySelectorAll('.marquee-content');
 
+        function checkPanicKeyCooldown(userData, userEmail) {
+            const isExemptUser = userEmail === '4simpleproblems@gmail.com';
+            if (isExemptUser) return;
+
+            const panicSection = document.getElementById('panic-key-section');
+            const lastChange = userData.lastPanicKeyChange;
+
+            if (lastChange && lastChange.toDate) {
+                const cooldown = 24 * 60 * 60 * 1000; // 24 hours
+                const timeSinceChange = Date.now() - lastChange.toDate().getTime();
+
+                if (timeSinceChange < cooldown) {
+                    const hoursRemaining = Math.ceil((cooldown - timeSinceChange) / (1000 * 60 * 60));
+                    panicSection.classList.add('disabled');
+                    panicSection.setAttribute('data-disabled-message', `YOU CAN UPDATE YOUR PANIC KEY AGAIN IN ${hoursRemaining} HOUR(S)`);
+                } else {
+                    panicSection.classList.remove('disabled');
+                    panicSection.removeAttribute('data-disabled-message');
+                }
+            } else {
+                panicSection.classList.remove('disabled');
+                panicSection.removeAttribute('data-disabled-message');
+            }
+        }
+
         function checkAndUpdateCooldowns(userData, userEmail) {
             const isExemptUser = userEmail === '4simpleproblems@gmail.com';
             const passwordSection = document.getElementById('password-section');
@@ -979,7 +1003,9 @@
             passwordSection.classList.toggle('disabled', isGoogleAccount);
             changePasswordBtn.style.display = isGoogleAccount ? 'none' : 'flex';
             
+            // Run all cooldown checks on page load
             checkAndUpdateCooldowns(userData, user.email);
+            checkPanicKeyCooldown(userData, user.email);
 
             setupDeleteAccountSection();
             updateMarquees();
@@ -1094,8 +1120,6 @@
                 deleteSection.setAttribute('data-disabled-message', 'Reauthenticate with your Google account to enable account deletion');
                 googleReauthBtn.style.display = 'block';
             } else {
-                // For email users, show the re-auth form directly.
-                // The "lock" is the absence of the delete button.
                 emailReauthForm.style.display = 'flex';
             }
         }
@@ -1113,7 +1137,6 @@
                 await user.reauthenticateWithCredential(credential);
                 isReauthenticated = true;
                 
-                // Hide the re-auth form and show the final delete button
                 document.getElementById('email-reauth-form').style.display = 'none';
                 document.getElementById('delete-form').style.display = 'flex';
 
@@ -1150,7 +1173,7 @@
                 
                 const deleteSection = document.getElementById('delete-section');
                 deleteSection.classList.add('fadeout');
-                document.querySelector('.reauth-wrapper').style.display = 'none'; // Hide the wrapper with the button
+                document.querySelector('.reauth-wrapper').style.display = 'none';
                 
                 setTimeout(() => {
                     deleteSection.classList.remove('disabled', 'fadeout');
@@ -1181,24 +1204,46 @@
         window.addEventListener('resize', updateMarquees);
 
         async function savePanicKeySettings() {
+            if (document.getElementById('panic-key-section').classList.contains('disabled')) return;
+
             const key = document.getElementById('panicKey').value;
             let url = document.getElementById('panicUrl').value.trim();
+            const user = firebase.auth().currentUser;
+            const isExemptUser = user.email === '4simpleproblems@gmail.com';
 
             if (!key || key.length !== 1) {
                 return showMessage('error', 'Please enter a single character for the panic key.');
             }
-
             if (/[!@#$%^&*()_+~{}|:"<>?]/.test(key) || key !== key.toLowerCase()) {
-                return showMessage('error', 'Panic key cannot be a capital letter or a special character like !, @, #, etc.');
+                return showMessage('error', 'Panic key cannot be a capital letter or a special character.');
+            }
+            if (!url) {
+                return showMessage('error', 'Please enter a URL for redirection.');
+            }
+            if (url.includes('/')) {
+                return showMessage('error', 'Panic URL cannot include a path (e.g., "/page.html"). Please enter a domain name only.');
+            }
+            if (!/^https?:\/\//i.test(url)) {
+                url = 'https://' + url;
             }
 
-            if (!url) return showMessage('error', 'Please enter a URL for redirection.'); 
-            if (!/^https?:\/\//i.test(url)) url = 'https://' + url; 
-
             try {
-                await dbRef().update({ panicKeySettings: { key, url } });
+                const updatePayload = {
+                    panicKeySettings: { key, url }
+                };
+                if (!isExemptUser) {
+                    updatePayload.lastPanicKeyChange = firebase.firestore.FieldValue.serverTimestamp();
+                }
+
+                await dbRef().update(updatePayload);
+
                 currentPanicSettings = { key, url };
                 showMessage('success', 'Panic key settings saved successfully!');
+
+                if (!isExemptUser) {
+                    const updatedDoc = await dbRef().get();
+                    checkPanicKeyCooldown(updatedDoc.data(), user.email);
+                }
             } catch (error) { 
                 showMessage('error', 'Could not save settings: ' + error.message); 
             }
