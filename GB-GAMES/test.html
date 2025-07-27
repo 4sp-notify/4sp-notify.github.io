@@ -8,6 +8,7 @@
     <link rel="stylesheet" href="../css/style.css" />
     <script src="../ban-enforcer.js"></script>
     <script src="../panic-key.js"></script>
+    <script src="../url-changer.js"></script>
     <style>
         :root {
             --v4-card-bg: #fff;
@@ -319,7 +320,6 @@
             <nav>
                 <ul>
                     <li><a href="../logged-in/dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
-                    <li><a href="../logged-in/proxies.html"><span class="icon">🛡️</span><span class="label">Proxies</span></a></li>
                     <li><a href="../logged-in/soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
                     <li><a href="../logged-in/games.html" class="active"><span class="icon">🎮</span><span class="label">Games</span></a></li>
                     <li><a href="../logged-in/others.html"><span class="icon">✨</span><span class="label">Others</span></a></li>
@@ -398,23 +398,63 @@
             });
         }
 
+        // --- Launcher Specific Global Variable ---
+        let formattedGameName = "Game"; // To hold the game name across different function scopes
+
+        // --- NEW: Function to set the page title based on cloak settings ---
+        function setPageTitle(gameName, urlPreset) {
+            if (urlPreset && urlPreset.toLowerCase() !== 'none' && urlPreset.trim() !== '') {
+                // A specific cloak is active (e.g., "Google Classroom", "My Drive")
+                document.title = urlPreset;
+            } else if (urlPreset && urlPreset.toLowerCase() === 'none') {
+                // The "None" preset is explicitly selected
+                document.title = `4SP - ${gameName}`;
+            } else {
+                // No preset is configured, or the setting is empty.
+                // The title will be just the game's name.
+                document.title = gameName;
+            }
+        }
+
         firebase.auth().onAuthStateChanged(async user => {
             if (user) {
                 if (userEmailEl) userEmailEl.textContent = user.email;
-                if (userNameEl) {
-                    const userDocRef = dbRef();
-                    if (userDocRef) {
-                        try {
-                            const doc = await userDocRef.get();
-                            userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'Gamer');
-                        } catch (error) {
-                            userNameEl.textContent = user.displayName || 'Gamer';
-                            console.error("Error fetching username:", error);
+                
+                let urlPreset = null; // Default to null if no setting is found
+
+                const userDocRef = dbRef();
+                if (userDocRef) {
+                    try {
+                        const doc = await userDocRef.get();
+                        if (doc.exists) {
+                            const userData = doc.data();
+                            if (userNameEl) {
+                                userNameEl.textContent = userData.username || user.displayName || 'Gamer';
+                            }
+                            // Fetch the URL preset setting from the user's document in Firestore.
+                            // This assumes the field in Firestore is named 'urlPreset'.
+                            urlPreset = userData.urlPreset || null;
+                        } else {
+                            if (userNameEl) {
+                                userNameEl.textContent = user.displayName || 'Gamer';
+                            }
                         }
-                    } else {
+                    } catch (error) {
+                        console.error("Error fetching user data:", error);
+                        if (userNameEl) {
+                            userNameEl.textContent = user.displayName || 'Gamer';
+                        }
+                    }
+                } else {
+                     if (userNameEl) {
                         userNameEl.textContent = user.displayName || 'Gamer';
                     }
                 }
+
+                // After fetching user settings, update the page title.
+                // 'formattedGameName' is set when the DOM content loads.
+                setPageTitle(formattedGameName, urlPreset);
+
             } else {
                 window.location.href = '../login.html';
             }
@@ -464,6 +504,7 @@
 
         function formatGameName(hash) {
             if (!hash || hash.length < 2) return "Game";
+            // This decodes URL-encoded characters (like %20 for space), removing the "weird percent".
             let name = decodeURIComponent(hash.substring(1));
             name = name.replace(/[_\-\.]/g, ' ');
             name = name.replace(/\b\w/g, l => l.toUpperCase());
@@ -523,9 +564,14 @@
             document.documentElement.style.scrollBehavior = 'smooth';
 
             const gameHash = window.location.hash;
-            const formattedName = formatGameName(gameHash);
-            if (gameNameDisplay) gameNameDisplay.textContent = formattedName;
-            document.title = `Playing: ${formattedName} - 4SP`;
+            // Set the global variable for use after Firebase loads
+            formattedGameName = formatGameName(gameHash);
+            
+            // Update the H1 header on the page immediately
+            if (gameNameDisplay) gameNameDisplay.textContent = formattedGameName;
+            
+            // Set a temporary title until user settings are fetched
+            document.title = `Loading: ${formattedGameName}...`;
 
             if (fullscreenBtn && emulatorArea) {
                 fullscreenBtn.addEventListener('click', toggleFullScreen);
