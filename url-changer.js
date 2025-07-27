@@ -28,9 +28,9 @@ const urlChanger = {
             favicon: '../favicons/google-classroom.png'
         },
         {
-            name: 'Gmail',
-            title: 'Inbox (2) - user@gmail.com', // Placeholder email
-            favicon: '../favicons/google-mail.png'
+            name: 'HAC',
+            title: 'Login',
+            favicon: '../favicons/hac.png'
         },
         {
             name: 'Google Docs',
@@ -90,31 +90,6 @@ const urlChanger = {
     },
 
     /**
-     * NEW FUNCTION
-     * Updates the placeholder email in preset titles with the actual user's email.
-     * This function is designed to be called from an authentication script after the user logs in.
-     * @param {string} userEmail - The email of the signed-in user.
-     */
-    updateUserEmail: function(userEmail) {
-        if (!userEmail) return;
-
-        let presetWasUpdated = false;
-        const gmailPreset = this.presets.find(p => p.name === 'Gmail');
-
-        if (gmailPreset && gmailPreset.title.includes('user@gmail.com')) {
-            gmailPreset.title = `Inbox (2) - ${userEmail}`;
-            presetWasUpdated = true;
-            console.log(`Debug: Updated Gmail preset title for user: ${userEmail}`);
-        }
-
-        // If the Gmail preset was updated and it's the currently active one, re-apply it to update the live tab title.
-        const activePreset = localStorage.getItem('selectedUrlPreset');
-        if (presetWasUpdated && activePreset === 'Gmail') {
-            this.applyPreset('Gmail');
-        }
-    },
-
-    /**
      * Applies a given preset by changing the document title and favicon.
      * For custom presets, it scales the favicon image to fit correctly using a canvas.
      * @param {string} presetName - The name of the preset to apply.
@@ -140,6 +115,7 @@ const urlChanger = {
 
         // Handle the 'None' preset to revert to the original state directly.
         if (preset.name === 'None') {
+            // preset.favicon was set to this.originalFavicon during init.
             if (preset.favicon) {
                 favicon.href = preset.favicon;
                 favicon.style.display = '';
@@ -147,42 +123,50 @@ const urlChanger = {
                 favicon.href = '';
                 favicon.style.display = 'none';
             }
-            return;
+            return; // End execution for the 'None' case.
         }
 
+        // For all other presets, load the image and draw it on a canvas to ensure proper scaling.
         const img = new Image();
-        img.crossOrigin = "Anonymous";
+        img.crossOrigin = "Anonymous"; // Use if loading images from a different domain.
 
         img.onload = () => {
             const canvas = document.createElement('canvas');
-            const size = 32;
+            const size = 32; // A standard favicon size (e.g., 32x32 pixels).
             canvas.width = size;
             canvas.height = size;
             const ctx = canvas.getContext('2d');
 
+            // Calculate dimensions to fit the image within the canvas while maintaining aspect ratio.
             const scale = Math.min(size / img.width, size / img.height);
             const scaledWidth = img.width * scale;
             const scaledHeight = img.height * scale;
 
+            // Calculate coordinates to center the scaled image on the canvas.
             const x = (size - scaledWidth) / 2;
             const y = (size - scaledHeight) / 2;
             
+            // Draw the scaled image onto the canvas.
             ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
 
+            // Update the favicon link's href with the canvas data URL.
             favicon.href = canvas.toDataURL('image/png');
             favicon.style.display = '';
         };
 
         img.onerror = () => {
             console.error(`URL Changer: Failed to load favicon image at "${preset.favicon}". Reverting to original.`);
+            // Fallback to the original favicon if the new one fails to load.
             if (this.originalFavicon) {
                 favicon.href = this.originalFavicon;
             } else {
+                // If there was no original favicon, just hide it.
                 favicon.href = '';
                 favicon.style.display = 'none';
             }
         };
 
+        // Set the image source to start loading. This must be done after setting up onload/onerror.
         img.src = preset.favicon;
     },
 
@@ -197,6 +181,8 @@ const urlChanger = {
     }
 };
 
+// Add an event listener to run the init function once the DOM is fully loaded.
+// This ensures that all HTML elements are available before the script tries to manipulate them.
 document.addEventListener('DOMContentLoaded', () => {
     urlChanger.init();
 });
