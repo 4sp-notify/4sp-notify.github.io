@@ -23,8 +23,8 @@ const urlChanger = {
             favicon: '../images/logo.png' // This will be replaced by the original favicon
         },
         {
-            name: 'Home',
-            title: 'Classes',
+            name: 'Google Classroom',
+            title: 'Home',
             favicon: '../favicons/google-classroom.png'
         },
         {
