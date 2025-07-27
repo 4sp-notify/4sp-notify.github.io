@@ -50,7 +50,7 @@ const urlChanger = {
         {
             name: 'Google Drive',
             title: 'My Drive - Google Drive',
-            favicon: '../favicons/google-drive.jpeg'
+            favicon: '../favicons/google-drive.png'
         }
     ],
 
