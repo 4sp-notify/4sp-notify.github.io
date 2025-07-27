@@ -23,14 +23,19 @@ const urlChanger = {
             favicon: '../images/logo.png' // This will be replaced by the original favicon
         },
         {
-            name: 'Google Classroom',
-            title: 'Home',
-            favicon: '../favicons/google-classroom.png'
-        },
-        {
             name: 'HAC',
             title: 'Login',
             favicon: '../favicons/hac.png'
+        },
+        {
+            name: 'Kahoot',
+            title: 'Kahoot! | Learning games | Make learning awesome!',
+            favicon: '../favicons/kahoot.png'
+        },
+        {
+            name: 'Google Classroom',
+            title: 'Home',
+            favicon: '../favicons/google-classroom.png'
         },
         {
             name: 'Google Docs',
