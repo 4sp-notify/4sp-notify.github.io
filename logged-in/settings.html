@@ -7,6 +7,8 @@
     <link rel="stylesheet" href="../css/style.css" />
     <script src="../ban-enforcer.js"></script>
     <script src="../panic-key.js"></script>
+    <!-- Injected the new url-changer.js script -->
+    <script src="../url-changer.js"></script>
     <style>
     /* --- Settings Layout (matching dashboard structure) --- */
     body.settings-page {
@@ -409,6 +411,17 @@
         position: relative;
         overflow: hidden;
     }
+    
+    .settings-form button:disabled {
+        background: #9e8fbe;
+        cursor: not-allowed;
+        transform: none;
+        box-shadow: none;
+    }
+    
+    .settings-form button:disabled:hover::before {
+        display: none;
+    }
 
     .settings-form button::before {
         content: '';
@@ -759,6 +772,9 @@
                     <button class="action-btn" onclick="document.getElementById('panic-key-section').scrollIntoView({ behavior: 'smooth' });">
                         <span>🚨</span> Set Panic Key
                     </button>
+                     <button class="action-btn" onclick="document.getElementById('tab-disguise-section').scrollIntoView({ behavior: 'smooth' });">
+                        <span>🎭</span> Tab Disguise
+                    </button>
                     <button class="action-btn" id="manageBansBtn" style="display: none;" onclick="document.getElementById('ban-management-section').scrollIntoView({ behavior: 'smooth' });">
                         <span>🚫</span> Manage Bans
                     </button>
@@ -811,6 +827,19 @@
                         <input type="text" id="panicUrl" placeholder="example.com" required />
                     </div>
                     <button type="button" onclick="savePanicKeySettings()">Save Panic Key</button>
+                </form>
+            </section>
+            
+            <!-- NEW TAB DISGUISE SECTION -->
+            <section class="settings-section" id="tab-disguise-section">
+                <h3>Tab Disguise</h3>
+                <p>Change the appearance of the browser tab to blend in. This setting is saved locally on this browser and has a 1-minute cooldown.</p>
+                <form class="settings-form" id="tab-disguise-form">
+                    <div class="form-group">
+                        <label for="tab-preset">Choose a Preset</label>
+                        <select id="tab-preset"></select>
+                    </div>
+                    <button type="button" id="saveTabPresetBtn">Save Preset</button>
                 </form>
             </section>
 
@@ -903,6 +932,7 @@
         let isReauthenticated = false;
         let currentPanicSettings = null;
         let isAdmin = false; // Admin status flag
+        let tabCooldownInterval = null; // Holds the interval for the tab disguise cooldown
         
         const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
         const marqueeEls = document.querySelectorAll('.marquee-content');
@@ -1008,8 +1038,80 @@
             checkPanicKeyCooldown(userData, user.email);
 
             setupDeleteAccountSection();
+            initializeTabDisguise(); // Initialize the new tab disguise feature
             updateMarquees();
         });
+
+        // --- NEW TAB DISGUISE LOGIC ---
+        function initializeTabDisguise() {
+            // Check if the urlChanger object is available from the other script
+            if (typeof urlChanger === 'undefined') {
+                console.error("urlChanger script not loaded or initialized before settings script.");
+                return;
+            }
+
+            const select = document.getElementById('tab-preset');
+            const saveBtn = document.getElementById('saveTabPresetBtn');
+            const COOLDOWN_MINUTES = 1;
+
+            // 1. Populate the dropdown with presets from url-changer.js
+            // Clear any existing options first
+            select.innerHTML = ''; 
+            urlChanger.presets.forEach(preset => {
+                const option = document.createElement('option');
+                option.value = preset.name;
+                option.textContent = preset.name;
+                select.appendChild(option);
+            });
+
+            // 2. Set the dropdown's current value based on localStorage
+            const savedPreset = localStorage.getItem('selectedUrlPreset') || 'None';
+            select.value = savedPreset;
+
+            // 3. Cooldown logic handler
+            function handleCooldown() {
+                if (tabCooldownInterval) clearInterval(tabCooldownInterval); // Clear any existing timer
+
+                const lastSave = parseInt(localStorage.getItem('tabPresetLastSave') || '0');
+                const now = Date.now();
+                const timeSinceSave = (now - lastSave);
+                const cooldownMillis = COOLDOWN_MINUTES * 60 * 1000;
+
+                if (timeSinceSave < cooldownMillis) {
+                    saveBtn.disabled = true;
+                    
+                    const updateTimer = () => {
+                        const newTimeLeft = Math.ceil((cooldownMillis - (Date.now() - lastSave)) / 1000);
+                        if (newTimeLeft <= 0) {
+                            clearInterval(tabCooldownInterval);
+                            saveBtn.disabled = false;
+                            saveBtn.textContent = 'Save Preset';
+                        } else {
+                            saveBtn.textContent = `Wait ${newTimeLeft}s`;
+                        }
+                    };
+                    
+                    updateTimer(); // Initial call
+                    tabCooldownInterval = setInterval(updateTimer, 1000); // Update every second
+                } else {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = 'Save Preset';
+                }
+            }
+
+            // 4. Save button click handler
+            saveBtn.addEventListener('click', () => {
+                const selectedValue = select.value;
+                urlChanger.savePreset(selectedValue);
+                localStorage.setItem('tabPresetLastSave', Date.now().toString());
+                showMessage('success', `Tab preset saved as "${selectedValue}".`);
+                handleCooldown();
+            });
+
+            // 5. Initial cooldown check on page load
+            handleCooldown();
+        }
+        // --- END OF TAB DISGUISE LOGIC ---
 
         // --- BAN MANAGEMENT FUNCTIONS ---
         function initializeAdminFeatures() {
