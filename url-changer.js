@@ -23,7 +23,7 @@ const urlChanger = {
             favicon: '../images/logo.png' // This will be replaced by the original favicon
         },
         {
-            name: 'Google Classroom',
+            name: 'Home',
             title: 'Classes',
             favicon: '../favicons/google-classroom.png'
         },
@@ -44,12 +44,12 @@ const urlChanger = {
         },
         {
             name: 'Clever',
-            title: 'Dashboard',
+            title: 'Clever | Connect every student to a world of learning',
             favicon: '../favicons/clever.png'
         },
         {
             name: 'Google Drive',
-            title: 'My Drive - Google Drive',
+            title: 'Home - Google Drive',
             favicon: '../favicons/google-drive.png'
         }
     ],
