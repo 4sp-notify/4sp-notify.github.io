@@ -28,6 +28,11 @@ const urlChanger = {
             favicon: '../favicons/google-classroom.png'
         },
         {
+            name: 'Gmail',
+            title: 'Inbox (2) - user@gmail.com',
+            favicon: '../favicons/google-mail.png'
+        },
+        {
             name: 'Google Docs',
             title: 'Google Docs',
             favicon: '../favicons/google-docs.png'
@@ -38,6 +43,11 @@ const urlChanger = {
             favicon: '../favicons/google-slides.png'
         },
         {
+            name: 'Google Drive',
+            title: 'Home - Google Drive',
+            favicon: '../favicons/google-drive.png'
+        },
+        {
             name: 'Wikipedia',
             title: 'Wikipedia',
             favicon: '../favicons/wikipedia.png'
@@ -46,11 +56,6 @@ const urlChanger = {
             name: 'Clever',
             title: 'Clever | Connect every student to a world of learning',
             favicon: '../favicons/clever.png'
-        },
-        {
-            name: 'Google Drive',
-            title: 'Home - Google Drive',
-            favicon: '../favicons/google-drive.png'
         }
     ],
 
