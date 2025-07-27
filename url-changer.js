@@ -2,7 +2,7 @@
  * url-changer.js
  * This script manages the dynamic changing of the website's title and favicon
  * based on user-selected presets. The user's choice is saved to localStorage
- * to persist across sessions.
+ * to persist across sessions. It properly scales favicons to prevent clipping.
  *
  * To add more options, simply add a new object to the 'presets' array.
  * Each object needs:
@@ -86,6 +86,7 @@ const urlChanger = {
 
     /**
      * Applies a given preset by changing the document title and favicon.
+     * For custom presets, it scales the favicon image to fit correctly using a canvas.
      * @param {string} presetName - The name of the preset to apply.
      */
     applyPreset: function(presetName) {
@@ -99,25 +100,69 @@ const urlChanger = {
         // Change the document title.
         document.title = preset.title;
 
-        // Find the existing favicon link element.
+        // Find the existing favicon link element, or create it if it doesn't exist.
         let favicon = document.querySelector("link[rel*='icon']");
-
-        // If no favicon link exists, create one and append it to the head.
         if (!favicon) {
             favicon = document.createElement('link');
             favicon.rel = 'icon';
             document.head.appendChild(favicon);
         }
 
-        // Update the href to the new favicon path.
-        // If the path is empty (for the 'None' option with no original favicon), hide it.
-        if (preset.favicon) {
-            favicon.href = preset.favicon;
-            favicon.style.display = '';
-        } else {
-            favicon.href = '';
-            favicon.style.display = 'none';
+        // Handle the 'None' preset to revert to the original state directly.
+        if (preset.name === 'None') {
+            // preset.favicon was set to this.originalFavicon during init.
+            if (preset.favicon) {
+                favicon.href = preset.favicon;
+                favicon.style.display = '';
+            } else {
+                favicon.href = '';
+                favicon.style.display = 'none';
+            }
+            return; // End execution for the 'None' case.
         }
+
+        // For all other presets, load the image and draw it on a canvas to ensure proper scaling.
+        const img = new Image();
+        img.crossOrigin = "Anonymous"; // Use if loading images from a different domain.
+
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            const size = 32; // A standard favicon size (e.g., 32x32 pixels).
+            canvas.width = size;
+            canvas.height = size;
+            const ctx = canvas.getContext('2d');
+
+            // Calculate dimensions to fit the image within the canvas while maintaining aspect ratio.
+            const scale = Math.min(size / img.width, size / img.height);
+            const scaledWidth = img.width * scale;
+            const scaledHeight = img.height * scale;
+
+            // Calculate coordinates to center the scaled image on the canvas.
+            const x = (size - scaledWidth) / 2;
+            const y = (size - scaledHeight) / 2;
+            
+            // Draw the scaled image onto the canvas.
+            ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+
+            // Update the favicon link's href with the canvas data URL.
+            favicon.href = canvas.toDataURL('image/png');
+            favicon.style.display = '';
+        };
+
+        img.onerror = () => {
+            console.error(`URL Changer: Failed to load favicon image at "${preset.favicon}". Reverting to original.`);
+            // Fallback to the original favicon if the new one fails to load.
+            if (this.originalFavicon) {
+                favicon.href = this.originalFavicon;
+            } else {
+                // If there was no original favicon, just hide it.
+                favicon.href = '';
+                favicon.style.display = 'none';
+            }
+        };
+
+        // Set the image source to start loading. This must be done after setting up onload/onerror.
+        img.src = preset.favicon;
     },
 
     /**
