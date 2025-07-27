@@ -20,7 +20,7 @@ const urlChanger = {
         {
             name: 'None',
             title: 'Default Title', // This will be replaced by the original page title
-            favicon: '' // This will be replaced by the original favicon
+            favicon: '../images/logo.png' // This will be replaced by the original favicon
         },
         {
             name: 'Google Classroom',
@@ -33,14 +33,19 @@ const urlChanger = {
             favicon: '../favicons/google-docs.png'
         },
         {
+            name: 'Google Slides',
+            title: 'Google Slides',
+            favicon: '../favicons/google-slides.png'
+        },
+        {
             name: 'Wikipedia',
             title: 'Wikipedia',
             favicon: '../favicons/wikipedia.png'
         },
         {
-            name: 'Canvas',
+            name: 'Clever',
             title: 'Dashboard',
-            favicon: '../favicons/canvas.png'
+            favicon: '../favicons/clever.png'
         },
         {
             name: 'Google Drive',
