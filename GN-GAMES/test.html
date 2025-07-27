@@ -13,6 +13,7 @@
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
     <script src="../firebase-config.js"></script>
+    <script src="../ban-enforcer.js"></script>
     <script src="../panic-key.js"></script>
 
     <script src="https://cdn.jsdelivr.net/gh/gn-math/gn-math.github.io@main/gnmath.js"></script>
@@ -70,23 +71,28 @@
             border-bottom: 1px solid #555; padding-bottom: 20px;
             overflow: visible;
         }
+        
         .marquee-container {
-            overflow: hidden; white-space: nowrap; position: relative;
-            width: 100%; height: 1.8em; line-height: 1.8em;
+            overflow: hidden;
+            white-space: nowrap;
+            position: relative;
+            width: 100%;
+            height: 1.8em;
+            line-height: 1.8em;
         }
-        .marquee-content-wrapper {
-             /* Wrapper for sidebar marquee items to prevent initial jump */
+        .marquee-content {
             display: inline-block;
+            padding-left: 100%;
             transform: translateX(0);
             animation: none;
+            line-height: 1.8em;
         }
-        .marquee-active .marquee-content-wrapper {
-            padding-left: 100%;
-            animation: scroll-disappearing 12s linear infinite;
+        .marquee-active {
+            animation: scroll-left 12s linear infinite;
         }
-        @keyframes scroll-disappearing {
-            from { transform: translateX(0%); }
-            to { transform: translateX(-100%); }
+        @keyframes scroll-left {
+            0% { transform: translateX(0); }
+            100% { transform: translateX(-100%); }
         }
 
         .user-info .username { 
@@ -117,8 +123,12 @@
         .sidebar.collapsed nav a .label { display: none; }
         
         .main-content {
-            flex: 1; padding: 30px;
-            overflow-y: auto; display: flex; flex-direction: column;
+            flex: 1;
+            padding: 30px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            background: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
         }
         
         .page-header-v4 {
@@ -261,7 +271,6 @@
         #zoneViewer .zone-header .zone-title h2 { margin: 0; font-size: 1.3em; color: var(--v4-text-primary); font-family: var(--v4-font-primary); }
         #zoneViewer .zone-header .zone-controls button { margin-left: 10px; padding: 8px 15px; background: var(--v4-purple-gradient); color: white; border: none; border-radius: 6px; cursor: pointer; font-family: var(--v4-font-primary); font-size: 0.9em; }
         #zoneViewer iframe { flex-grow: 1; border: none; background-color: #000; }
-        footer { background-color: var(--v4-card-bg); color: var(--v4-text-secondary); text-align: center; padding: 20px 0; border-top: 1px solid var(--v4-border-softer); font-family: var(--v4-font-secondary); font-size: 0.9em; margin-top: auto; }
         .hidden { display: none !important; }
     </style>
 </head>
@@ -284,10 +293,10 @@
             <button id="toggleSidebar">☰</button>
             <div class="user-info">
                 <div class="marquee-container">
-                    <div class="marquee-content-wrapper"><span id="userName" class="username">Loading…</span></div>
+                    <span id="userName" class="marquee-content username">Loading…</span>
                 </div>
                 <div class="marquee-container">
-                    <div class="marquee-content-wrapper"><span id="userEmail" class="email">Loading…</span></div>
+                    <span id="userEmail" class="marquee-content email">Loading…</span>
                 </div>
             </div>
             <nav>
@@ -339,12 +348,6 @@
         <iframe id="zoneFrame" title="Game Content" allowfullscreen></iframe>
     </div>
     
-    <footer>
-        <div class="container">
-            <p>&copy; <span id="currentYear"></span> 4SP. All rights reserved.</p>
-        </div>
-    </footer>
-
     <script>
     const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
     const sidebarEl = document.getElementById('sidebar');
@@ -361,7 +364,7 @@
                     userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User');
                 } catch (error) { userNameEl.textContent = 'User'; }
             }
-            initializeSidebarMarquees();
+            updateMarquees();
             if (typeof listZones === 'function') listZones();
         } else {
             window.location.href = '../login.html';
@@ -374,30 +377,23 @@
     if (toggleSidebarBtn && sidebarEl) {
         toggleSidebarBtn.addEventListener('click', () => {
             sidebarEl.classList.toggle('collapsed');
-            setTimeout(initializeSidebarMarquees, 550);
+            setTimeout(updateMarquees, 550);
         });
     }
 
-    function initializeSidebarMarquees() {
-        document.querySelectorAll('.user-info .marquee-container').forEach(container => {
-            const el = container.querySelector('.marquee-content-wrapper > span');
-            if (!el) return;
-            container.classList.remove('marquee-active');
-            void el.offsetWidth; // Reflow
-            const overflow = el.scrollWidth > container.clientWidth;
-            const shouldScroll = sidebarEl.classList.contains('collapsed') || (overflow && !sidebarEl.classList.contains('collapsed'));
-            if (shouldScroll) {
-                container.classList.add('marquee-active');
-            }
+    function updateMarquees() {
+        document.querySelectorAll('.marquee-content').forEach(el => {
+            el.classList.remove('marquee-active');
+            void el.offsetWidth;
+            el.classList.add('marquee-active');
         });
     }
-    window.addEventListener('resize', initializeSidebarMarquees);
+    window.addEventListener('resize', updateMarquees);
 
     function initializeTitleMarquees() {
         document.querySelectorAll('#container .title-container').forEach(container => {
             const title = container.querySelector('.title-content')?.textContent || '';
             container.classList.remove('marquee-active');
-            // Check based on character length
             if (title.length > 29) {
                 container.classList.add('marquee-active');
             }
@@ -533,7 +529,6 @@
             titleContent1.textContent = file.name;
             titleWrapper.appendChild(titleContent1);
             
-            // If the title is long, add a duplicate for the constant scroll effect
             if (file.name.length > 29) {
                 const titleContent2 = document.createElement("span");
                 titleContent2.className = "title-content";
@@ -637,8 +632,6 @@
     });
     
     document.getElementById('closeBtnZone')?.addEventListener('click', closeZoneViewer);
-
-    document.getElementById('currentYear').textContent = new Date().getFullYear();
     </script>
 </body>
 </html>
