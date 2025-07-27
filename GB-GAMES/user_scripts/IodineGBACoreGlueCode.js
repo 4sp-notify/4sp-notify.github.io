@@ -172,9 +172,12 @@ function registerGUIEvents() {
     addEvent("keydown", document, keyDown);
     addEvent("keyup", document, keyUpPreprocess);
     addEvent("unload", window, ExportSave);
+    /*
+    // By commenting out this block, the title will no longer be changed by the emulator.
     Iodine.attachSpeedHandler(function (speed) {
         document.title = games[location.hash.substr(1)] + " - " + speed;
     });
+    */
 }
 function lowerVolume() {
     Iodine.incrementVolume(-0.04);
