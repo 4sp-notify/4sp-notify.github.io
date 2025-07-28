@@ -411,9 +411,9 @@
   <div id="limitsModal" class="modal-overlay">
       <div class="modal-content">
           <button class="modal-close-btn-redesigned"><img src="../images/cross-white.png" alt="Close"></button>
-          <div class="modal-header"><h3 class="modal-title">Daily Account Limits</h3></div>
+          <div class="modal-header"><h3 class="modal-title">Daily Device Limits</h3></div>
           <div class="modal-body" style="text-align: center;">
-              <p>To ensure fair usage, some actions are limited on your account per day.</p>
+              <p>To ensure fair usage, some actions are limited on each device per day.</p>
               <hr style="margin: 20px 0;">
               <strong>Votes Cast</strong>
               <div class="progress-bar-container">
@@ -527,8 +527,7 @@
     <li data-duration="indefinite">Indefinite</li>
   </ul>
 
-
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
   <script src="../firebase-config.js"></script>
@@ -540,7 +539,6 @@
     const MAX_VOTES_PER_DAY = 10;
     let IS_ADMIN_ACCOUNT = false;
     let currentUser = null;
-    // MODIFIED: currentUserProfile now holds daily limit data from Firestore
     let currentUserProfile = { 
         username: null, 
         requestsBannedUntil: null, 
@@ -567,93 +565,94 @@
     function calculateVoteStats(upvotes = 0, downvotes = 0) { const totalVotes = upvotes + downvotes; if (totalVotes === 0) return { score: 0, rawPercentage: 50 }; const score = upvotes - downvotes; const rawPercentage = (upvotes / totalVotes) * 100; return { score, rawPercentage }; }
     function createParticleEffect(event, color) { const count = 25; const rect = event.target.getBoundingClientRect(); const startX = rect.left + rect.width / 2; const startY = rect.top + rect.height / 2; for (let i = 0; i < count; i++) { const particle = document.createElement('div'); particle.classList.add('particle'); document.body.appendChild(particle); const size = Math.random() * 5 + 2; particle.style.width = `${size}px`; particle.style.height = `${size}px`; particle.style.backgroundColor = color; let x = startX, y = startY; const angle = Math.random() * 2 * Math.PI; const velocity = Math.random() * 4 + 2; let vx = Math.cos(angle) * velocity; let vy = Math.sin(angle) * velocity; let gravity = 0.1, opacity = 1; function animate() { x += vx; y += vy; vy += gravity; opacity -= 0.02; particle.style.transform = `translate(${x - startX}px, ${y - startY}px)`; particle.style.left = `${startX}px`; particle.style.top = `${startY}px`; particle.style.opacity = opacity; if (opacity > 0) requestAnimationFrame(animate); else particle.remove(); } requestAnimationFrame(animate); } }
 
-    // --- REMOVED: Local Limit Tracker Functions ---
-    // The initializeVoteTracker and initializeRequestActionTracker functions have been removed.
-    // Logic is now handled by checkAndResetDailyLimits using Firestore.
+    // --- Firestore-based Limit Functions ---
+    function updateLimitsModalContent() {
+        if (!currentUser) return;
+        
+        const votesCount = currentUserProfile.dailyVotes?.count || 0;
+        const votesProgress = (votesCount / MAX_VOTES_PER_DAY) * 100;
+        limitsModal.querySelector('#votesUsed').textContent = votesCount;
+        limitsModal.querySelector('#votesTotal').textContent = MAX_VOTES_PER_DAY;
+        limitsModal.querySelector('#limitProgressBarVotes').style.width = `${votesProgress}%`;
 
-    // NEW: Checks user's daily limits from Firestore and resets them if it's a new day
-    async function checkAndResetDailyLimits() {
+        const requestActionsCount = currentUserProfile.dailyRequestActions?.count || 0;
+        const requestActionsProgress = (requestActionsCount / MAX_REQUESTS_PER_DAY) * 100;
+        limitsModal.querySelector('#requestActionsUsed').textContent = requestActionsCount;
+        limitsModal.querySelector('#requestActionsTotal').textContent = MAX_REQUESTS_PER_DAY;
+        limitsModal.querySelector('#limitProgressBarRequestActions').style.width = `${requestActionsProgress}%`;
+    }
+
+    function openLimitsModal() {
+        updateLimitsModalContent();
+        limitsModal.classList.add('show');
+    }
+
+    async function incrementUserActionCount(actionType) {
         if (!currentUser || IS_ADMIN_ACCOUNT) return;
 
         const db = firebase.firestore();
         const userRef = db.collection('users').doc(currentUser.uid);
         const todayStr = new Date().toISOString().split('T')[0];
         
-        const currentVoteData = currentUserProfile.dailyVotes;
-        const currentRequestData = currentUserProfile.dailyRequestActions;
+        try {
+            await db.runTransaction(async (transaction) => {
+                const userDoc = await transaction.get(userRef);
 
-        let needsUpdate = false;
-        const updateData = {};
+                if (!userDoc.exists) {
+                    throw new Error("Your user profile does not exist. Please re-login.");
+                }
 
-        // Check and reset vote counter
-        if (currentVoteData.date !== todayStr) {
-            needsUpdate = true;
-            currentUserProfile.dailyVotes = { date: todayStr, count: 0 };
-            updateData.dailyVotes = currentUserProfile.dailyVotes;
-        }
+                const userData = userDoc.data();
+                const currentActionCounter = userData[actionType];
 
-        // Check and reset request action counter
-        if (currentRequestData.date !== todayStr) {
-            needsUpdate = true;
-            currentUserProfile.dailyRequestActions = { date: todayStr, count: 0 };
-            updateData.dailyRequestActions = currentUserProfile.dailyRequestActions;
-        }
+                const newCount = (currentActionCounter && currentActionCounter.date === todayStr)
+                    ? currentActionCounter.count + 1
+                    : 1;
 
-        if (needsUpdate) {
-            try {
-                // This update ensures the counters are reset in Firestore for the new day.
-                // The new security rules will allow this specific update.
-                await userRef.update(updateData);
-            } catch (error) {
-                console.error("Error resetting daily limits in Firestore:", error);
-                // If this fails, the user might be stuck with old limits, 
-                // but security rules will still prevent overuse.
+                const newCounter = { date: todayStr, count: newCount };
+                transaction.update(userRef, { [actionType]: newCounter });
+                
+                currentUserProfile[actionType] = newCounter;
+            });
+            
+            console.log(`${actionType} successfully incremented. New local state:`, currentUserProfile[actionType]);
+            
+            if (limitsModal.classList.contains('show')) {
+                updateLimitsModalContent();
             }
+
+        } catch (error) {
+            console.error(`Firestore transaction failed for ${actionType}:`, error);
+            
+            await userRef.get().then(doc => {
+                 if (doc.exists) {
+                    const data = doc.data();
+                    currentUserProfile.dailyVotes = (data.dailyVotes && data.dailyVotes.date === todayStr) ? data.dailyVotes : { date: todayStr, count: 0 };
+                    currentUserProfile.dailyRequestActions = (data.dailyRequestActions && data.dailyRequestActions.date === todayStr) ? data.dailyRequestActions : { date: todayStr, count: 0 };
+                 }
+            });
+
+            alert(`A critical error occurred while saving your action. Your limits might not have been updated. Please try again. Error: ${error.message}`);
         }
-    }
-
-
-    // MODIFIED: Updated to show account-wide limits from the currentUserProfile object
-    function openLimitsModal() {
-        // Votes
-        const votesUsed = currentUserProfile.dailyVotes.count || 0;
-        const votesProgress = (votesUsed / MAX_VOTES_PER_DAY) * 100;
-        limitsModal.querySelector('#votesUsed').textContent = votesUsed;
-        limitsModal.querySelector('#votesTotal').textContent = MAX_VOTES_PER_DAY;
-        limitsModal.querySelector('#limitProgressBarVotes').style.width = `${votesProgress}%`;
-
-        // Request Actions
-        const requestActionsUsed = currentUserProfile.dailyRequestActions.count || 0;
-        const requestActionsProgress = (requestActionsUsed / MAX_REQUESTS_PER_DAY) * 100;
-        limitsModal.querySelector('#requestActionsUsed').textContent = requestActionsUsed;
-        limitsModal.querySelector('#requestActionsTotal').textContent = MAX_REQUESTS_PER_DAY;
-        limitsModal.querySelector('#limitProgressBarRequestActions').style.width = `${requestActionsProgress}%`;
-        
-        limitsModal.classList.add('show');
     }
 
     function initializeMarquees() {
         document.querySelectorAll('.request-description-scroller').forEach(scroller => {
             const content = scroller.querySelector('.request-description-content');
             if (!content) return;
-
             scroller.classList.remove('is-overflowing');
             scroller.style.animationDuration = '';
             scroller.style.setProperty('--scroll-width', '0px');
             const clones = scroller.querySelectorAll('.request-description-clone');
             clones.forEach(clone => clone.remove());
-
             if (content.scrollWidth > scroller.clientWidth) {
                 scroller.classList.add('is-overflowing');
-                
                 const clone = content.cloneNode(true);
                 clone.classList.add('request-description-clone');
                 scroller.appendChild(clone);
-
                 const scrollWidth = content.offsetWidth;
                 const gap = 40;
                 scroller.style.setProperty('--scroll-width', `-${scrollWidth + gap}px`);
-
                 const duration = (scrollWidth + gap) / 50; 
                 scroller.style.animationDuration = `${Math.max(15, duration)}s`;
             }
@@ -669,45 +668,34 @@
         const db = firebase.firestore();
         const sortBy = document.getElementById('sortWrapper')?.dataset.value || 'newest';
         const adminFilter = document.getElementById('adminFilterWrapper')?.dataset.status || 'all';
-
         try {
             const validStatuses = IS_ADMIN_ACCOUNT ? ['active', 'recyclable'] : ['active'];
             let query = db.collection('requests').where('status', 'in', validStatuses);
-            
             if (IS_ADMIN_ACCOUNT && adminFilter !== 'all') {
                 if (adminFilter === 'potentially-explicit') { query = query.where('isPotentiallyExplicit', '==', true); } 
                 else { query = query.where('adminStatus', '==', adminFilter); }
             }
-
             if (sortBy === 'newest') query = query.orderBy('timestamp', 'desc');
             else if (sortBy === 'oldest') query = query.orderBy('timestamp', 'asc');
-            
             const snapshot = await query.get();
             let allRequests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-
             if (sortBy === 'top') { allRequests.sort((a, b) => ((b.upvotes || 0) - (b.downvotes || 0)) - ((a.upvotes || 0) - (a.downvotes || 0))); }
-
             requestsListEl.innerHTML = ''; 
             if (allRequests.length === 0) { requestsListEl.innerHTML = '<li>No requests found matching the current filters.</li>'; return; }
-
             allRequests.forEach(request => {
                 const li = document.createElement('li');
                 const isRecyclable = request.status === 'recyclable';
                 li.className = `request-item ${isRecyclable ? 'recyclable-item' : ''}`;
-                
                 if (IS_ADMIN_ACCOUNT && request.isPotentiallyExplicit) {
                     li.classList.add('potentially-explicit-admin-flag');
                     li.title = "This request was flagged for potentially explicit content.";
                 }
-
                 li.dataset.id = request.id;
                 li.dataset.userId = request.userId;
                 li.dataset.username = request.username;
-                
                 const isCreator = currentUser && request.userId === currentUser.uid;
                 const voteStats = calculateVoteStats(request.upvotes, request.downvotes);
                 const voteSectionHTML = `<div class="vote-section-redesigned ${isRecyclable ? 'hidden' : ''}"><div class="vote-bar"><div class="vote-progress" style="width: ${voteStats.rawPercentage}%;"></div><button class="vote-button-redesigned up ${request.upvotedBy?.includes(currentUser?.uid) ? 'voted' : ''}" title="Upvote"><i class="fas fa-thumbs-up"></i></button><span class="vote-score">${voteStats.score}</span><button class="vote-button-redesigned down ${request.downvotedBy?.includes(currentUser?.uid) ? 'voted' : ''}" title="Downvote"><i class="fas fa-thumbs-down"></i></button></div></div>`;
-
                 let actionButtonsHTML = '';
                 if (isRecyclable) {
                     if (IS_ADMIN_ACCOUNT) actionButtonsHTML = `<div class="card-actions"><button class="card-action-btn delete-btn-card" title="Delete Request"><i class="fas fa-trash-alt"></i></button></div>`;
@@ -720,32 +708,23 @@
                     if (isCreator || IS_ADMIN_ACCOUNT) buttons += `<button class="card-action-btn delete-btn-card" title="Delete Request"><i class="fas fa-trash-alt"></i></button>`;
                     if(buttons) actionButtonsHTML = `<div class="card-actions">${buttons}</div>`;
                 }
-                
                 let adminStatusHTML = '';
                 if ((IS_ADMIN_ACCOUNT || isCreator) && request.adminStatus && request.adminStatusUpdatedAt) { const statusText = { accepted: 'Accepted', working: 'Working on it', acknowledged: 'Acknowledgement', denied: 'Denied' }[request.adminStatus] || 'Unknown'; const statusDate = request.adminStatusUpdatedAt.toDate().toLocaleDateString(); adminStatusHTML = `<div class="admin-status-info status-${request.adminStatus}">Status: <strong>${statusText}</strong> <small>(${statusDate})</small></div>`; }
-                
                 const showUsername = !request.isAnonymous || IS_ADMIN_ACCOUNT;
                 const submittedDate = request.timestamp ? (IS_ADMIN_ACCOUNT ? request.timestamp.toDate().toLocaleString() : request.timestamp.toDate().toLocaleDateString()) : 'N/A';
                 const adminEmailHTML = (IS_ADMIN_ACCOUNT && request.email) ? `<div class="admin-info"><i class="fas fa-envelope"></i> ${escapeHTML(request.email)}</div>` : '';
                 const typeInfo = { sound: { text: 'Sound' }, feature: { text: 'Feature' }, issue: { text: 'Issue' }}[request.type] || {text: 'General'};
                 let badges = `<span class="request-type-badge ${ {sound: 'badge-sound', feature: 'badge-feature', issue: 'badge-issue'}[request.type] || '' }">${typeInfo.text}</span>`;
                 if(request.type === 'sound' && request.soundCategory) badges += `<span class="request-type-badge badge-cat-${request.soundCategory.toLowerCase()}">${request.soundCategory}</span>`;
-                
                 let fullUrl = request.soundUrl || '';
                 if (fullUrl && !fullUrl.startsWith('http')) fullUrl = 'https://' + fullUrl;
                 const urlHTML = (request.type === 'sound' && request.soundUrl) ? `<span class="request-url"><a href="${fullUrl}" target="_blank" rel="noopener noreferrer" title="${escapeHTML(request.soundUrl)}"><i class="fas fa-link"></i> Source URL</a></span>` : '';
-                
                 const descriptionHTML = `<div class="request-description-wrapper"><div class="request-description-scroller"><span class="request-description-content">${escapeHTML(request.description)}</span></div></div>`;
-
                 li.innerHTML = voteSectionHTML + `<div class="request-content"><div class="request-header">${badges}</div><h4 class="request-title" title="${escapeHTML(request.title)}">${escapeHTML(request.title)}</h4>${descriptionHTML}${adminStatusHTML}<div class="request-footer"><div class="footer-info-left"><span>By <strong>${showUsername ? escapeHTML(request.username) : 'Anonymous'}</strong> on ${submittedDate}</span>${adminEmailHTML}</div>${urlHTML}</div></div>` + actionButtonsHTML;
-                
                 if (isRecyclable) li.innerHTML += `<div class="recyclable-overlay"><div class="recyclable-reason">RECYCLABLE<small>This old request slot will be used for a future submission.</small></div></div>`;
-                
                 requestsListEl.appendChild(li);
             });
-            
             initializeMarquees();
-
         } catch (error) { console.error("Firestore fetch failed:", error); requestsListEl.innerHTML = `<li>Error loading requests: ${error.message}</li>`; }
     }
     
@@ -779,10 +758,7 @@
         adminBanMenu.classList.add('show');
     }
 
-    function closeAdminBanMenu() {
-        menuOverlay.classList.remove('show');
-        adminBanMenu.classList.remove('show');
-    }
+    function closeAdminBanMenu() { menuOverlay.classList.remove('show'); adminBanMenu.classList.remove('show'); }
     
     function openDetailsModal(requestId) {
         const modal = detailsModal;
@@ -849,28 +825,30 @@
         }
     });
 
-    menuOverlay.addEventListener('click', () => {
-        closeAdminMenu();
-        closeAdminBanMenu();
-    });
+    menuOverlay.addEventListener('click', () => { closeAdminMenu(); closeAdminBanMenu(); });
     
-    // MODIFIED: handleVote now checks and increments the user's vote count in Firestore.
     async function handleVote(requestId, isUpvote) {
         if (!currentUser) { alert("You must be logged in to vote."); return; }
+        
+        if (!IS_ADMIN_ACCOUNT && (currentUserProfile.dailyVotes?.count || 0) >= MAX_VOTES_PER_DAY) {
+            alert(`You have reached your daily voting limit of ${MAX_VOTES_PER_DAY}.`);
+            openLimitsModal();
+            return;
+        }
 
         const db = firebase.firestore();
         const requestRef = db.collection('requests').doc(requestId);
-        const userRef = db.collection('users').doc(currentUser.uid);
         
         try {
+            let isNewVoteAction = false;
             await db.runTransaction(async (transaction) => {
                 const doc = await transaction.get(requestRef);
-                const userDoc = await transaction.get(userRef);
-
                 if (!doc.exists) throw "Document not found.";
                 
                 const data = doc.data();
-                if (data.userId === currentUser.uid) { alert("You cannot vote on your own request."); return; }
+                if (data.userId === currentUser.uid) { 
+                    throw new Error("You cannot vote on your own request."); 
+                }
                 if (data.status === 'recyclable') return;
 
                 let { upvotedBy = [], downvotedBy = [] } = data;
@@ -878,14 +856,8 @@
                 const downvoteIndex = downvotedBy.indexOf(currentUser.uid);
                 const isAlreadyUpvoted = upvoteIndex > -1;
                 const isAlreadyDownvoted = downvoteIndex > -1;
-
-                const isNewVoteAction = (isUpvote && !isAlreadyUpvoted) || (!isUpvote && !isAlreadyDownvoted);
-
-                if (!IS_ADMIN_ACCOUNT && isNewVoteAction && currentUserProfile.dailyVotes.count >= MAX_VOTES_PER_DAY) {
-                    alert(`You have reached your daily voting limit of ${MAX_VOTES_PER_DAY}.`);
-                    openLimitsModal();
-                    return; // Abort transaction
-                }
+                
+                isNewVoteAction = (isUpvote && !isAlreadyUpvoted) || (!isUpvote && !isAlreadyDownvoted);
 
                 if (isUpvote) {
                     if (isAlreadyUpvoted) upvotedBy.splice(upvoteIndex, 1);
@@ -896,42 +868,25 @@
                     else downvotedBy.push(currentUser.uid);
                     if (isAlreadyUpvoted) upvotedBy.splice(upvoteIndex, 1);
                 }
-                
                 transaction.update(requestRef, { upvotedBy, downvotedBy, upvotes: upvotedBy.length, downvotes: downvotedBy.length });
-                
-                // If this is a new vote, increment the counter in the user's document
-                if (!IS_ADMIN_ACCOUNT && isNewVoteAction) {
-                    const todayStr = new Date().toISOString().split('T')[0];
-                    // Ensure the date is current before incrementing
-                    const currentCount = (userDoc.data()?.dailyVotes?.date === todayStr) ? userDoc.data().dailyVotes.count : 0;
-                    transaction.update(userRef, { 
-                        dailyVotes: {
-                            date: todayStr,
-                            count: currentCount + 1
-                        } 
-                    });
-                }
             });
-
-            // On successful transaction, update the local state
-            const isNewVoteAction = true; // Assume a new vote action occurred for simplicity
-            if (!IS_ADMIN_ACCOUNT && isNewVoteAction) {
-                 currentUserProfile.dailyVotes.count++;
+            
+            if (isNewVoteAction) {
+                await incrementUserActionCount('dailyVotes');
             }
             
             fetchAndDisplayRequests();
-            if (detailsModal.classList.contains('show')) {
+            if (detailsModal.classList.contains('show')) { 
                 openDetailsModal(requestId);
             }
-
         } catch (error) { 
-            console.error("Vote transaction failed: ", error); 
+            console.error("Vote failed: ", error);
+            alert(`Could not cast vote: ${error.message}`);
         }
     }
 
-    // MODIFIED: handleDeleteRequest now checks and increments the user's action count in Firestore
     async function handleDeleteRequest(requestId) {
-        if (!IS_ADMIN_ACCOUNT && currentUserProfile.dailyRequestActions.count >= MAX_REQUESTS_PER_DAY) {
+        if (!IS_ADMIN_ACCOUNT && (currentUserProfile.dailyRequestActions?.count || 0) >= MAX_REQUESTS_PER_DAY) {
             alert(`You have reached your daily limit of ${MAX_REQUESTS_PER_DAY} request actions (create/delete).`);
             openLimitsModal();
             return;
@@ -942,32 +897,23 @@
         try {
             const doc = await requestRef.get();
             if (!doc.exists) return;
-
             const isCreator = currentUser && doc.data().userId === currentUser.uid;
+            
             if (!IS_ADMIN_ACCOUNT && !isCreator) {
                 alert("You do not have permission to delete this request.");
                 return;
             }
-
             if (confirm("Are you sure you want to PERMANENTLY delete this request? This action cannot be undone and will count towards your daily action limit.")) {
-                // Perform the deletion
-                await requestRef.delete();
-                
-                // Increment the action counter in Firestore if the user is not an admin
                 if (!IS_ADMIN_ACCOUNT) {
-                    const userRef = db.collection('users').doc(currentUser.uid);
-                    await userRef.update({
-                        'dailyRequestActions.count': firebase.firestore.FieldValue.increment(1)
-                    });
-                    currentUserProfile.dailyRequestActions.count++; // Update local state
+                    await incrementUserActionCount('dailyRequestActions');
                 }
-
+                await requestRef.delete();
                 closeAdminMenu();
                 fetchAndDisplayRequests();
             }
-        } catch (error) {
-            console.error("Error deleting request:", error);
-            alert("An error occurred while deleting the request.");
+        } catch (error) { 
+            console.error("Error deleting request:", error); 
+            alert(`An error occurred while deleting the request: ${error.message}`); 
         }
     }
 
@@ -980,20 +926,11 @@
         form.dataset.userId = userId;
         form.dataset.username = username;
         form.dataset.duration = duration;
-
         const banModalTitle = document.getElementById('banModalTitle');
         const banReasonLabel = banReasonModal.querySelector('label[for="banReasonInput"]');
-        
-        let durationText;
-        if (duration === 'indefinite') {
-            durationText = 'Indefinite';
-        } else {
-            const numDuration = parseInt(duration, 10);
-            durationText = `${numDuration} Day` + (numDuration > 1 ? 's' : '');
-        }
+        let durationText = (duration === 'indefinite') ? 'Indefinite' : `${parseInt(duration, 10)} Day` + (parseInt(duration, 10) > 1 ? 's' : '');
         banModalTitle.textContent = `Ban ${username}`;
         banReasonLabel.textContent = `Reason for ${durationText} Ban (Required)`;
-
         banReasonModal.classList.add('show');
     }
 
@@ -1002,17 +939,10 @@
         const db = firebase.firestore();
         const userRef = db.collection('users').doc(userId);
         try {
-            await userRef.update({
-                isRequestsBanned: false,
-                requestsBannedUntil: null,
-                requestsBanReason: null
-            });
+            await userRef.update({ isRequestsBanned: false, requestsBannedUntil: null, requestsBanReason: null });
             alert('User has been unbanned.');
             openBanManagementModal();
-        } catch (error) {
-            console.error("Error unbanning user:", error);
-            alert("Could not unban user.");
-        }
+        } catch (error) { console.error("Error unbanning user:", error); alert("Could not unban user."); }
     }
 
     async function openBanManagementModal() {
@@ -1020,34 +950,20 @@
         const listEl = document.getElementById('bannedUsersList');
         listEl.innerHTML = '<li><i class="fas fa-spinner fa-spin"></i> Loading banned users...</li>';
         banManagementModal.classList.add('show');
-        
         const db = firebase.firestore();
         try {
             const snapshot = await db.collection('users').where('isRequestsBanned', '==', true).get();
-            if (snapshot.empty) {
-                listEl.innerHTML = '<li>No users are currently banned.</li>';
-                return;
-            }
+            if (snapshot.empty) { listEl.innerHTML = '<li>No users are currently banned.</li>'; return; }
             listEl.innerHTML = '';
             snapshot.forEach(doc => {
                 const user = doc.data();
                 const li = document.createElement('li');
                 li.className = 'banned-user-item';
                 const expiryDate = user.requestsBannedUntil?.toDate().toLocaleString() || 'Indefinite';
-                li.innerHTML = `
-                    <div class="banned-user-info">
-                        <strong>${escapeHTML(user.username || 'Unknown User')}</strong>
-                        <small>${escapeHTML(user.email)} | Expires: ${expiryDate}</small>
-                        <div class="banned-user-reason">Reason: ${escapeHTML(user.requestsBanReason || 'No reason provided.')}</div>
-                    </div>
-                    <button class="btn unban-btn" data-user-id="${doc.id}">Unban</button>
-                `;
+                li.innerHTML = `<div class="banned-user-info"><strong>${escapeHTML(user.username || 'Unknown User')}</strong><small>${escapeHTML(user.email)} | Expires: ${expiryDate}</small><div class="banned-user-reason">Reason: ${escapeHTML(user.requestsBanReason || 'No reason provided.')}</div></div><button class="btn unban-btn" data-user-id="${doc.id}">Unban</button>`;
                 listEl.appendChild(li);
             });
-        } catch (error) {
-            console.error("Error fetching banned users:", error);
-            listEl.innerHTML = '<li>Error loading list.</li>';
-        }
+        } catch (error) { console.error("Error fetching banned users:", error); listEl.innerHTML = '<li>Error loading list.</li>'; }
     }
 
     // --- Page Setup & Authentication ---
@@ -1055,8 +971,9 @@
         firebase.auth().onAuthStateChanged(async user => {
             if (user) {
                 currentUser = user;
-                
                 const db = firebase.firestore();
+                const userRef = db.collection('users').doc(user.uid);
+                
                 const headerUserInfo = document.getElementById('headerUserInfo');
                 const sidebarUserNameEl = document.getElementById('userName');
                 const sidebarUserEmailEl = document.getElementById('userEmail');
@@ -1074,28 +991,34 @@
                 sidebarUserEmailEl.textContent = user.email;
                 
                 try {
-                    const doc = await db.collection('users').doc(user.uid).get();
+                    const doc = await userRef.get();
+                    const todayStr = new Date().toISOString().split('T')[0];
+
                     if (doc.exists) {
                        const data = doc.data();
-                       currentUserProfile.username = data.username || 'User';
+                       currentUserProfile.username = data.username || null;
                        currentUserProfile.requestsBannedUntil = data.requestsBannedUntil || null;
                        currentUserProfile.requestsBanReason = data.requestsBanReason || null;
-                       // MODIFIED: Load daily limits from Firestore
-                       currentUserProfile.dailyVotes = data.dailyVotes || { date: '', count: 0 };
-                       currentUserProfile.dailyRequestActions = data.dailyRequestActions || { date: '', count: 0 };
+                       currentUserProfile.dailyVotes = (data.dailyVotes && data.dailyVotes.date === todayStr) ? data.dailyVotes : { date: todayStr, count: 0 };
+                       currentUserProfile.dailyRequestActions = (data.dailyRequestActions && data.dailyRequestActions.date === todayStr) ? data.dailyRequestActions : { date: todayStr, count: 0 };
                     } else {
-                       currentUserProfile.username = 'User';
+                       const initialProfileData = {
+                           email: user.email,
+                           username: user.displayName || null,
+                           dailyVotes: { date: todayStr, count: 0 },
+                           dailyRequestActions: { date: todayStr, count: 0 },
+                           isRequestsBanned: false,
+                           requestsBannedUntil: null,
+                           requestsBanReason: null
+                       };
+                       await userRef.set(initialProfileData, { merge: true });
+                       Object.assign(currentUserProfile, initialProfileData);
                     }
-                    headerUserInfo.querySelector('.username').textContent = currentUserProfile.username;
-                    sidebarUserNameEl.textContent = currentUserProfile.username;
-
-                    // NEW: Check and potentially reset the user's daily limits
-                    await checkAndResetDailyLimits();
-
+                    headerUserInfo.querySelector('.username').textContent = currentUserProfile.username || 'User';
+                    sidebarUserNameEl.textContent = currentUserProfile.username || 'User';
                 } catch (e) {
-                    console.error("Error fetching user profile:", e);
-                    currentUserProfile.username = null; 
-                    headerUserInfo.querySelector('.username').textContent = 'No Username Set'; 
+                    console.error("Failed to load or create user profile:", e);
+                    headerUserInfo.querySelector('.username').textContent = 'Error Loading Profile'; 
                     sidebarUserNameEl.textContent = 'User';
                 }
                 
@@ -1117,10 +1040,8 @@
         function setupDropdown(wrapperId) { const wrapper = document.getElementById(wrapperId); if (!wrapper) return; const trigger = wrapper.querySelector('.custom-select-trigger'); const options = wrapper.querySelector('.custom-select-options'); const triggerText = trigger.querySelector('span'); const attributeName = (wrapperId === 'sortWrapper') ? 'value' : 'status'; trigger.addEventListener('click', (e) => { e.stopPropagation(); const isOpen = wrapper.classList.toggle('open'); options.classList.toggle('show', isOpen); trigger.classList.toggle('open', isOpen); }); options.addEventListener('click', (e) => { if (e.target.tagName === 'LI') { options.querySelectorAll('li').forEach(li => li.classList.remove('selected')); e.target.classList.add('selected'); wrapper.dataset[attributeName] = e.target.dataset[attributeName]; const baseText = (wrapperId === 'sortWrapper') ? 'Sort by: ' : 'Filter: '; triggerText.textContent = baseText + e.target.textContent; wrapper.classList.remove('open'); options.classList.remove('show'); trigger.classList.remove('open'); fetchAndDisplayRequests(); } }); }
         setupDropdown('sortWrapper');
         setupDropdown('adminFilterWrapper');
-
         window.addEventListener('click', () => { document.querySelectorAll('.custom-select-wrapper.open').forEach(wrapper => { wrapper.classList.remove('open'); wrapper.querySelector('.custom-select-options').classList.remove('show'); wrapper.querySelector('.custom-select-trigger').classList.remove('open'); }); });
         document.querySelectorAll('.modal-overlay').forEach(modal => { modal.querySelectorAll('.modal-close-btn-redesigned').forEach(btn => btn.addEventListener('click', () => modal.classList.remove('show'))); modal.addEventListener('click', (e) => { if (e.target === modal) { modal.classList.remove('show'); } }); });
-        
         document.getElementById('toggleSidebar')?.addEventListener('click', () => sidebar.classList.toggle('collapsed'));
         document.getElementById('refreshRequestsBtn')?.addEventListener('click', fetchAndDisplayRequests);
         document.getElementById('scheduleBtn')?.addEventListener('click', () => scheduleModal.classList.add('show'));
@@ -1129,7 +1050,6 @@
         document.getElementById('logoutBtn')?.addEventListener('click', () => firebase.auth().signOut());
         document.getElementById('signOutLink')?.addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut(); });
         document.getElementById('searchBar').addEventListener('input', () => filterRequests());
-
         const titleInput = document.getElementById('requestTitleForm');
         const descInput = document.getElementById('requestDescriptionForm');
         const titleCounter = document.getElementById('titleCharCounter');
@@ -1144,47 +1064,23 @@
             const username = form.dataset.username;
             const duration = form.dataset.duration;
             const reason = document.getElementById('banReasonInput').value;
-
-            if (!reason.trim()) {
-                alert("A reason is required to ban a user.");
-                return;
-            }
-
+            if (!reason.trim()) { alert("A reason is required to ban a user."); return; }
             const db = firebase.firestore();
             const userRef = db.collection('users').doc(userId);
-            
-            let banExpiryDate;
-            if (duration === 'indefinite') {
-                banExpiryDate = new Date('2999-12-31T23:59:59Z');
-            } else {
-                banExpiryDate = new Date();
-                banExpiryDate.setDate(banExpiryDate.getDate() + parseInt(duration, 10));
-            }
+            let banExpiryDate = (duration === 'indefinite') ? new Date('2999-12-31T23:59:59Z') : new Date();
+            if (duration !== 'indefinite') { banExpiryDate.setDate(banExpiryDate.getDate() + parseInt(duration, 10)); }
             const banExpiryTimestamp = firebase.firestore.Timestamp.fromDate(banExpiryDate);
-
             try {
-                await userRef.update({
-                    isRequestsBanned: true,
-                    requestsBannedUntil: banExpiryTimestamp,
-                    requestsBanReason: reason
-                });
-                
+                await userRef.update({ isRequestsBanned: true, requestsBannedUntil: banExpiryTimestamp, requestsBanReason: reason });
                 const durationText = duration === 'indefinite' ? 'indefinitely' : `for ${duration} day(s)`;
                 alert(`User "${username}" has been banned ${durationText}.`);
                 banReasonModal.classList.remove('show');
-            } catch (error) {
-                console.error("Error banning user:", error);
-                alert("Failed to ban user. They may not have a user profile document, or another error occurred.");
-            }
+            } catch (error) { console.error("Error banning user:", error); alert("Failed to ban user. They may not have a user profile document, or another error occurred."); }
         });
 
         document.getElementById('bannedUsersList').addEventListener('click', (e) => {
-            if (e.target.matches('.unban-btn')) {
-                const userIdToUnban = e.target.dataset.userId;
-                handleUnbanUser(userIdToUnban);
-            }
+            if (e.target.matches('.unban-btn')) { handleUnbanUser(e.target.dataset.userId); }
         });
-
         setInterval(handleSubmissionSchedule, 60000);
     });
     
@@ -1195,17 +1091,14 @@
         const createRequestBtn = document.getElementById('createRequestBtn');
         const statusEl = document.getElementById('scheduleStatus');
         const countdownEl = document.getElementById('countdownTimer');
-        
         if (currentUserProfile.requestsBannedUntil && currentUserProfile.requestsBannedUntil.toDate() > new Date()) {
              createRequestBtn.disabled = true;
-             const banExpiryString = currentUserProfile.requestsBannedUntil.toDate().toLocaleDateString();
-             createRequestBtn.title = `You are banned from making requests until ${banExpiryString}.`;
+             createRequestBtn.title = `You are banned from making requests until ${currentUserProfile.requestsBannedUntil.toDate().toLocaleDateString()}.`;
              statusEl.textContent = 'BANNED';
              statusEl.className = 'closed';
              countdownEl.textContent = `Reason: ${currentUserProfile.requestsBanReason || 'Violation of community guidelines.'}`;
              return;
         }
-
         if (IS_ADMIN_ACCOUNT) { createRequestBtn.disabled = false; statusEl.textContent = 'ALWAYS OPEN (Admin)'; statusEl.className = 'open'; countdownEl.textContent = 'Your account is not affected by the schedule.'; return; } 
         const now = new Date(); const day = now.getDay(); const hour = now.getHours(); const isClosed = (day === 6 || day === 0) || (day === 5 && hour >= 15) || (day === 1 && hour < 6); 
         createRequestBtn.disabled = isClosed; 
@@ -1221,15 +1114,14 @@
     document.getElementById('createRequestBtn').addEventListener('click', () => { if (!currentUser) { return; } if (document.getElementById('createRequestBtn').disabled) { alert(document.getElementById('createRequestBtn').title); return; } document.getElementById('requestForm').reset(); document.getElementById('soundOptionsContainer').style.display = 'none'; document.getElementById('formStatus').style.display = 'none'; document.getElementById('titleCharCounter').textContent = '0/40'; document.getElementById('descCharCounter').textContent = '0/200'; const anonymousCheckbox = document.getElementById('anonymousCheckbox'); if (currentUserProfile.username) { anonymousCheckbox.checked = false; anonymousCheckbox.disabled = false; document.getElementById('anonymousNote').style.display = 'none'; } else { anonymousCheckbox.checked = true; anonymousCheckbox.disabled = true; document.getElementById('anonymousNote').style.display = 'block'; } formModal.classList.add('show'); });
     document.getElementById('requestType').addEventListener('change', (e) => { document.getElementById('soundOptionsContainer').style.display = e.target.value === 'sound' ? 'flex' : 'none'; });
     
-    // MODIFIED: Form submission now checks and increments the account's request action limit in Firestore
     document.getElementById('requestForm').addEventListener('submit', async (e) => {
         e.preventDefault();
         const submitBtn = document.getElementById('submitRequestBtn');
         const formStatusEl = document.getElementById('formStatus');
         if (!currentUser) return;
 
-        if (!IS_ADMIN_ACCOUNT && currentUserProfile.dailyRequestActions.count >= MAX_REQUESTS_PER_DAY) {
-            formStatusEl.textContent = `Error: Daily account request action limit of ${MAX_REQUESTS_PER_DAY} reached.`;
+        if (!IS_ADMIN_ACCOUNT && (currentUserProfile.dailyRequestActions?.count || 0) >= MAX_REQUESTS_PER_DAY) {
+            formStatusEl.textContent = `Error: Daily request action limit of ${MAX_REQUESTS_PER_DAY} reached.`;
             formStatusEl.className = 'status-msg status-error';
             formStatusEl.style.display = 'block';
             openLimitsModal();
@@ -1238,58 +1130,38 @@
 
         submitBtn.disabled = true;
         formStatusEl.style.display = 'none';
-        
         const db = firebase.firestore();
         try {
+            if (!IS_ADMIN_ACCOUNT) {
+                await incrementUserActionCount('dailyRequestActions');
+            }
+            
             const recyclableSnapshot = await db.collection('requests').where('status', '==', 'recyclable').orderBy('timestamp', 'asc').limit(1).get();
             const isRecycling = !recyclableSnapshot.empty;
-            
             const originalTitle = document.getElementById('requestTitleForm').value;
             const originalDescription = document.getElementById('requestDescriptionForm').value;
-            
             const censoredTitle = await censorTextWithAPI(originalTitle);
             const censoredDescription = await censorTextWithAPI(originalDescription);
-            
             const isPotentiallyExplicit = checkPotentiallyExplicit(originalTitle) || checkPotentiallyExplicit(originalDescription);
-
             const submissionData = {
                 userId: currentUser.uid, 
-                username: currentUserProfile.username || 'Anonymous', 
+                username: currentUserProfile.username || 'Anonymous',
                 email: currentUser.email,
                 type: document.getElementById('requestType').value, 
                 title: censoredTitle, 
                 description: censoredDescription,
                 isAnonymous: document.getElementById('anonymousCheckbox').checked, 
                 timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                upvotes: 0, 
-                downvotes: 0, 
-                upvotedBy: [], 
-                downvotedBy: [],
-                status: 'active', 
-                adminStatus: null, 
-                adminStatusUpdatedAt: null,
-                isPotentiallyExplicit: isPotentiallyExplicit,
-                soundCategory: null,
-                soundUrl: null
+                upvotes: 0, downvotes: 0, upvotedBy: [], downvotedBy: [],
+                status: 'active', adminStatus: null, adminStatusUpdatedAt: null,
+                isPotentiallyExplicit: isPotentiallyExplicit, soundCategory: null, soundUrl: null
             };
-
             if (submissionData.type === 'sound') {
                 submissionData.soundCategory = document.getElementById('soundCategory').value;
                 submissionData.soundUrl = document.getElementById('soundUrl').value || null;
             }
-
-            // Perform the request creation/recycling
             if (isRecycling) { await recyclableSnapshot.docs[0].ref.set(submissionData); } 
             else { await db.collection('requests').add(submissionData); }
-            
-            // On success, increment the action counter in Firestore
-            if (!IS_ADMIN_ACCOUNT) {
-                const userRef = db.collection('users').doc(currentUser.uid);
-                await userRef.update({
-                    'dailyRequestActions.count': firebase.firestore.FieldValue.increment(1)
-                });
-                currentUserProfile.dailyRequestActions.count++; // Update local state
-            }
             
             formModal.classList.remove('show');
             fetchAndDisplayRequests();
