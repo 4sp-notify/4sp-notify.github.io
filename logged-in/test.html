@@ -481,7 +481,7 @@
     let actionLimiter = null;
     let countdownInterval = null;
 
-    // --- NEW: Time Zone-Aware, Firestore-Backed Action Limiter ---
+    // --- Time Zone-Aware, Firestore-Backed Action Limiter ---
     class ActionLimiter {
         constructor(timeZone, firestoreTimestamps) {
             this.timeZone = timeZone || 'UTC';
@@ -492,7 +492,6 @@
 
         recalculateLimits(firestoreTimestamps) {
             const now = new Date();
-            // Get the start of today in the user's specific time zone
             const today = new Date(now.toLocaleString('en-US', { timeZone: this.timeZone }));
             today.setHours(0, 0, 0, 0);
             const startOfTodayTimestamp = today.getTime();
@@ -519,17 +518,17 @@
         }
 
         saveToLocalStorage() {
+            if (!currentUser) return;
             const dataToStore = {
                 timeZone: this.timeZone,
                 limits: this.limits,
-                date: new Date().toLocaleDateString('en-CA', { timeZone: this.timeZone }) // YYYY-MM-DD format
+                date: new Date().toLocaleDateString('en-CA', { timeZone: this.timeZone })
             };
             localStorage.setItem(`actionLimits_${currentUser.uid}`, JSON.stringify(dataToStore));
         }
 
         getResetTime() {
             const now = new Date();
-            // Get tomorrow's date in the user's time zone
             const tomorrow = new Date(now.toLocaleString('en-US', { timeZone: this.timeZone }));
             tomorrow.setDate(tomorrow.getDate() + 1);
             tomorrow.setHours(0, 0, 0, 0);
@@ -550,12 +549,10 @@
             const actionsRef = userRef.collection('actions').doc('timestamps');
 
             try {
-                // Get user profile and action data in parallel
                 const [userDoc, actionsDoc] = await Promise.all([userRef.get(), actionsRef.get()]);
                 let userProfileData = userDoc.exists ? userDoc.data() : {};
                 let actionsData = actionsDoc.exists ? actionsDoc.data() : {};
 
-                // Determine and set user's time zone if not present
                 let timeZone = userProfileData.timeZone;
                 if (!timeZone) {
                     timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
@@ -563,7 +560,6 @@
                 }
                 currentUserProfile = { ...currentUserProfile, ...userProfileData, timeZone };
 
-                // Check local storage for cached data from today
                 const cachedData = JSON.parse(localStorage.getItem(`actionLimits_${currentUser.uid}`));
                 const todayString = new Date().toLocaleDateString('en-CA', { timeZone });
                 
@@ -573,12 +569,10 @@
                     return limiter;
                 }
 
-                // If no valid cache, create from Firestore data
                 return new ActionLimiter(timeZone, actionsData);
 
             } catch (error) {
                 console.error("Error initializing ActionLimiter:", error);
-                // Fallback to a default limiter if Firestore fails
                 return new ActionLimiter(Intl.DateTimeFormat().resolvedOptions().timeZone, {});
             }
         }
@@ -649,9 +643,8 @@
                 const voteStats = calculateVoteStats(request.upvotes, request.downvotes);
                 
                 const hasVoted = (request.upvotedBy?.includes(currentUser.uid) || request.downvotedBy?.includes(currentUser.uid));
-                const canVote = actionLimiter?.canPerform('votes') || hasVoted; // Can always un-vote
+                const canVote = actionLimiter?.canPerform('votes') || hasVoted;
                 const voteTitle = actionLimiter?.canPerform('votes') ? 'Upvote/Downvote' : `Daily vote limit reached. Resets in ${actionLimiter?.getResetTime()}`;
-
                 const voteSectionHTML = `<div class="vote-section-redesigned ${isRecyclable ? 'hidden' : ''}"><div class="vote-bar"><div class="vote-progress" style="width: ${voteStats.rawPercentage}%;"></div><button class="vote-button-redesigned up ${request.upvotedBy?.includes(currentUser?.uid) ? 'voted' : ''}" title="${voteTitle}" ${!canVote && !IS_ADMIN_ACCOUNT ? 'disabled' : ''}><i class="fas fa-thumbs-up"></i></button><span class="vote-score">${voteStats.score}</span><button class="vote-button-redesigned down ${request.downvotedBy?.includes(currentUser?.uid) ? 'voted' : ''}" title="${voteTitle}" ${!canVote && !IS_ADMIN_ACCOUNT ? 'disabled' : ''}><i class="fas fa-thumbs-down"></i></button></div></div>`;
 
                 let actionButtonsHTML = '';
@@ -692,6 +685,64 @@
                 requestsListEl.appendChild(li);
             });
         } catch (error) { console.error("Firestore fetch failed:", error); requestsListEl.innerHTML = `<li>Error loading requests: ${error.message}</li>`; }
+    }
+    
+    // --- UI Interaction & Event Listeners ---
+    async function openAdminMenu(button, requestId) {
+        adminStatusMenu.querySelectorAll('li').forEach(li => { li.className = ''; });
+        try {
+            const requestDoc = await firebase.firestore().collection('requests').doc(requestId).get();
+            if (requestDoc.exists) {
+                const currentStatus = requestDoc.data().adminStatus;
+                if (currentStatus) { const selectedLi = adminStatusMenu.querySelector(`li[data-status="${currentStatus}"]`); if (selectedLi) { selectedLi.classList.add(`selected-${currentStatus}`); } }
+            }
+        } catch (error) { console.error("Could not fetch request status for menu:", error); }
+        const rect = button.getBoundingClientRect();
+        adminStatusMenu.style.top = `${rect.bottom + 8}px`;
+        adminStatusMenu.style.left = `${rect.right - adminStatusMenu.offsetWidth}px`;
+        adminStatusMenu.dataset.requestId = requestId;
+        menuOverlay.classList.add('show');
+        adminStatusMenu.classList.add('show');
+    }
+
+    function closeAdminMenu() { menuOverlay.classList.remove('show'); adminStatusMenu.classList.remove('show'); }
+
+    function openAdminBanMenu(button, userId, username) {
+        const rect = button.getBoundingClientRect();
+        adminBanMenu.style.top = `${rect.bottom + 8}px`;
+        adminBanMenu.style.left = `${rect.right - adminBanMenu.offsetWidth}px`;
+        adminBanMenu.dataset.userId = userId;
+        adminBanMenu.dataset.username = username;
+        menuOverlay.classList.add('show');
+        adminBanMenu.classList.add('show');
+    }
+
+    function closeAdminBanMenu() {
+        menuOverlay.classList.remove('show');
+        adminBanMenu.classList.remove('show');
+    }
+    
+    function openDetailsModal(requestId) {
+        const modal = detailsModal;
+        firebase.firestore().collection('requests').doc(requestId).get().then(doc => {
+            if (!doc.exists) return;
+            const data = doc.data();
+            const isRecyclable = data.status === 'recyclable';
+            modal.dataset.requestId = requestId;
+            modal.querySelector('#modalTitle').textContent = data.title;
+            modal.querySelector('#modalDescription').innerHTML = escapeHTML(data.description).replace(/\n/g, '<br>');
+            const urlContainer = modal.querySelector('#modalUrlContainer');
+            if (data.type === 'sound' && data.soundUrl) { const link = urlContainer.querySelector('a'); let fullUrl = data.soundUrl; if (fullUrl && !fullUrl.startsWith('http')) fullUrl = 'https://' + fullUrl; link.href = fullUrl; link.textContent = data.soundUrl; urlContainer.style.display = 'block'; } else { urlContainer.style.display = 'none'; }
+            const voteSection = modal.querySelector('#modalVoteSection');
+            if (isRecyclable) { voteSection.innerHTML = ''; voteSection.style.display = 'none'; }
+            else { const voteStats = calculateVoteStats(data.upvotes, data.downvotes); voteSection.style.display = 'flex'; voteSection.innerHTML = `<div class="vote-bar"><div class="vote-progress" style="width: ${voteStats.rawPercentage}%;"></div><button class="vote-button-redesigned up ${data.upvotedBy?.includes(currentUser?.uid) ? 'voted' : ''}" title="Upvote"><i class="fas fa-thumbs-up"></i></button><span class="vote-score">${voteStats.score}</span><button class="vote-button-redesigned down ${data.downvotedBy?.includes(currentUser?.uid) ? 'voted' : ''}" title="Downvote"><i class="fas fa-thumbs-down"></i></button></div>`; }
+            const showUsername = !data.isAnonymous || IS_ADMIN_ACCOUNT;
+            const usernameText = showUsername ? escapeHTML(data.username) : 'Anonymous';
+            modal.querySelector('#modalUsername').innerHTML = `Posted by <strong>${usernameText}</strong>`;
+            const submittedDate = data.timestamp ? data.timestamp.toDate().toLocaleString() : 'N/A';
+            modal.querySelector('#modalTimestamp').textContent = `on ${submittedDate}`;
+            modal.classList.add('show');
+        }).catch(err => console.error("Error opening details:", err));
     }
 
     async function handleVote(requestId, isUpvote) {
@@ -744,6 +795,8 @@
             if (wasNewVote && !IS_ADMIN_ACCOUNT) {
                  actionLimiter.increment('votes');
             }
+            fetchAndDisplayRequests();
+
         } catch (error) {
             console.error("Vote transaction failed:", error);
             alert("An error occurred while voting. Please try again.");
@@ -793,168 +846,20 @@
         }
     }
     
-    // --- Page Setup & Authentication ---
-    document.addEventListener('DOMContentLoaded', () => {
-        firebase.auth().onAuthStateChanged(async user => {
-            if (user) {
-                currentUser = user;
-                IS_ADMIN_ACCOUNT = ADMIN_EMAILS.includes(user.email);
-                
-                // Initialize the time zone-aware limiter
-                actionLimiter = await ActionLimiter.initialize();
-                
-                const headerUserInfo = document.getElementById('headerUserInfo');
-                headerUserInfo.querySelector('.username').textContent = currentUserProfile.username || 'User';
-                headerUserInfo.querySelector('.email').textContent = user.email;
-                document.getElementById('userName').textContent = currentUserProfile.username || 'User';
-                document.getElementById('userEmail').textContent = user.email;
-
-                if(IS_ADMIN_ACCOUNT) {
-                    document.getElementById('adminFilterWrapper').style.display = 'block';
-                    document.getElementById('manageBansBtn').style.display = 'block';
-                }
-                
-                fetchAndDisplayRequests();
-                handleSubmissionSchedule();
-                updateButtonStates(); // Initial check
-                if (countdownInterval) clearInterval(countdownInterval);
-                countdownInterval = setInterval(updateButtonStates, 1000);
-
-            } else {
-                if (countdownInterval) clearInterval(countdownInterval);
-                window.location.href = '../login.html';
-            }
-        });
-        
-        // --- Event Listeners and other setup functions remain below ---
-        
-    });
-    
-    function updateButtonStates() {
-        if (!currentUser || IS_ADMIN_ACCOUNT || !actionLimiter) return;
-
-        const createBtn = document.getElementById('createRequestBtn');
-        if (!actionLimiter.canPerform('creations')) {
-            if (createBtn.disabled === false) createBtn.disabled = true;
-            createBtn.title = `Daily creation limit reached. Resets in ${actionLimiter.getResetTime()}.`;
-        } else {
-            // Re-evaluate based on schedule only if it was previously disabled by limit
-            if (createBtn.title.startsWith('Daily')) {
-                 handleSubmissionSchedule();
-            }
-        }
-        
-        // Refresh display to update delete/vote button states on items
-        fetchAndDisplayRequests();
-    }
-
-    function handleSubmissionSchedule() {
-        if (!currentUser) return;
-        const createRequestBtn = document.getElementById('createRequestBtn');
-        const statusEl = document.getElementById('scheduleStatus');
-        
-        if (currentUserProfile.requestsBannedUntil && currentUserProfile.requestsBannedUntil.toDate() > new Date()) {
-             createRequestBtn.disabled = true;
-             createRequestBtn.title = `You are banned from making requests.`;
-             statusEl.textContent = 'BANNED';
-             return;
-        }
-
-        if (IS_ADMIN_ACCOUNT) {
-             createRequestBtn.disabled = false;
-             createRequestBtn.title = 'Create Request';
-             statusEl.textContent = 'ALWAYS OPEN (Admin)';
-             return;
-        }
-        
-        if (actionLimiter && !actionLimiter.canPerform('creations')) {
-            updateButtonStates(); // This will set the disabled state and countdown title
-            return;
-        }
-
-        const now = new Date(); const day = now.getDay(); const hour = now.getHours(); const isClosed = (day === 6 || day === 0) || (day === 5 && hour >= 15) || (day === 1 && hour < 6); 
-        createRequestBtn.disabled = isClosed; 
-        if (!isClosed) { createRequestBtn.title = 'Submissions are currently open.'; statusEl.textContent = 'ACTIVE'; } else { createRequestBtn.title = 'Submissions are currently closed.'; statusEl.textContent = 'INACTIVE'; } 
+    async function updateAdminStatus(requestId, status) { 
+        if (!IS_ADMIN_ACCOUNT) return; 
+        const db = firebase.firestore(); 
+        const requestRef = db.collection('requests').doc(requestId); 
+        try { 
+            await requestRef.update({ adminStatus: status, adminStatusUpdatedAt: firebase.firestore.FieldValue.serverTimestamp() }); 
+            fetchAndDisplayRequests(); 
+        } catch (error) { 
+            console.error("Error updating admin status:", error); 
+            alert("Failed to update status."); 
+        } 
     }
     
-    document.getElementById('requestForm').addEventListener('submit', async (e) => {
-        e.preventDefault();
-        if (!currentUser || !actionLimiter) return;
-        
-        if (!actionLimiter.canPerform('creations')) {
-            alert(`Daily creation limit reached. Resets in ${actionLimiter.getResetTime()}.`);
-            return;
-        }
-
-        const submitBtn = document.getElementById('submitRequestBtn');
-        submitBtn.disabled = true;
-        const formStatusEl = document.getElementById('formStatus');
-        formStatusEl.style.display = 'none';
-
-        const db = firebase.firestore();
-        try {
-            await db.runTransaction(async (transaction) => {
-                const isRecyclingSnapshot = await db.collection('requests').where('status', '==', 'recyclable').orderBy('timestamp', 'asc').limit(1).get();
-                const isRecycling = !isRecyclingSnapshot.empty;
-                const actionsRef = db.collection('users').doc(currentUser.uid).collection('actions').doc('timestamps');
-                
-                const originalTitle = document.getElementById('requestTitleForm').value;
-                const originalDescription = document.getElementById('requestDescriptionForm').value;
-                
-                const submissionData = {
-                    userId: currentUser.uid, 
-                    username: currentUserProfile.username || 'Anonymous', 
-                    email: currentUser.email,
-                    type: document.getElementById('requestType').value, 
-                    title: await censorTextWithAPI(originalTitle), 
-                    description: await censorTextWithAPI(originalDescription),
-                    isAnonymous: document.getElementById('anonymousCheckbox').checked, 
-                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                    upvotes: 0, downvotes: 0, upvotedBy: [], downvotedBy: [],
-                    status: 'active', adminStatus: null, adminStatusUpdatedAt: null,
-                    isPotentiallyExplicit: checkPotentiallyExplicit(originalTitle) || checkPotentiallyExplicit(originalDescription),
-                    soundCategory: null, soundUrl: null
-                };
-
-                if (submissionData.type === 'sound') {
-                    submissionData.soundCategory = document.getElementById('soundCategory').value;
-                    submissionData.soundUrl = document.getElementById('soundUrl').value || null;
-                }
-                
-                if (isRecycling) {
-                    const recyclableRef = isRecyclingSnapshot.docs[0].ref;
-                    transaction.set(recyclableRef, submissionData);
-                } else {
-                    const newRequestRef = db.collection('requests').doc();
-                    transaction.set(newRequestRef, submissionData);
-                }
-
-                if (!IS_ADMIN_ACCOUNT) {
-                    transaction.set(actionsRef, { 
-                        creations: firebase.firestore.FieldValue.arrayUnion(firebase.firestore.FieldValue.serverTimestamp())
-                    }, { merge: true });
-                }
-            });
-
-            if (!IS_ADMIN_ACCOUNT) {
-                actionLimiter.increment('creations');
-            }
-            
-            formModal.classList.remove('show');
-            fetchAndDisplayRequests();
-        } catch (error) {
-            formStatusEl.textContent = `Error: ${error.message}`;
-            formStatusEl.className = 'status-msg status-error';
-            formStatusEl.style.display = 'block';
-        } finally {
-            submitBtn.disabled = false;
-        }
-    });
-
-    // --- Other functions and event listeners (unchanged) ---
-    function filterRequests() { const query = document.getElementById('searchBar').value.toLowerCase(); document.querySelectorAll('#requestsList .request-item').forEach(item => { item.style.display = item.textContent.toLowerCase().includes(query) ? 'flex' : 'none'; }); }
-    async function updateAdminStatus(requestId, status) { if (!IS_ADMIN_ACCOUNT) return; const db = firebase.firestore(); const requestRef = db.collection('requests').doc(requestId); try { await requestRef.update({ adminStatus: status, adminStatusUpdatedAt: firebase.firestore.FieldValue.serverTimestamp() }); fetchAndDisplayRequests(); } catch (error) { console.error("Error updating admin status:", error); alert("Failed to update status."); } }
-        function handleBanUser(userId, username, duration) {
+    function handleBanUser(userId, username, duration) {
         if (!IS_ADMIN_ACCOUNT) return;
         const form = document.getElementById('banReasonForm');
         form.reset();
@@ -1036,47 +941,30 @@
         firebase.auth().onAuthStateChanged(async user => {
             if (user) {
                 currentUser = user;
-                const headerUserInfo = document.getElementById('headerUserInfo');
-                const sidebarUserNameEl = document.getElementById('userName');
-                const sidebarUserEmailEl = document.getElementById('userEmail');
-                const createRequestBtn = document.getElementById('createRequestBtn');
-                const adminFilterWrapper = document.getElementById('adminFilterWrapper');
-                const manageBansBtn = document.getElementById('manageBansBtn');
-
                 IS_ADMIN_ACCOUNT = ADMIN_EMAILS.includes(user.email);
+                
+                actionLimiter = await ActionLimiter.initialize();
+                
+                const headerUserInfo = document.getElementById('headerUserInfo');
+                headerUserInfo.querySelector('.username').textContent = currentUserProfile.username || 'User';
+                headerUserInfo.querySelector('.email').textContent = user.email;
+                document.getElementById('userName').textContent = currentUserProfile.username || 'User';
+                document.getElementById('userEmail').textContent = user.email;
+
                 if(IS_ADMIN_ACCOUNT) {
                     markOldRequestsForRecycling();
-                    adminFilterWrapper.style.display = 'block';
-                    manageBansBtn.style.display = 'block';
-                }
-                
-                headerUserInfo.querySelector('.email').textContent = user.email;
-                sidebarUserEmailEl.textContent = user.email;
-                
-                try {
-                    const doc = await firebase.firestore().collection('users').doc(user.uid).get();
-                    if (doc.exists) {
-                       const data = doc.data();
-                       currentUserProfile.username = data.username || 'User';
-                       currentUserProfile.requestsBannedUntil = data.requestsBannedUntil || null;
-                       currentUserProfile.requestsBanReason = data.requestsBanReason || null;
-                    } else {
-                       currentUserProfile.username = 'User';
-                       currentUserProfile.requestsBannedUntil = null;
-                       currentUserProfile.requestsBanReason = null;
-                    }
-                    headerUserInfo.querySelector('.username').textContent = currentUserProfile.username;
-                    sidebarUserNameEl.textContent = currentUserProfile.username;
-                } catch (e) {
-                    currentUserProfile.username = null; 
-                    headerUserInfo.querySelector('.username').textContent = 'No Username Set'; 
-                    sidebarUserNameEl.textContent = 'User';
+                    document.getElementById('adminFilterWrapper').style.display = 'block';
+                    document.getElementById('manageBansBtn').style.display = 'block';
                 }
                 
                 fetchAndDisplayRequests();
                 handleSubmissionSchedule();
+                updateButtonStates();
+                if (countdownInterval) clearInterval(countdownInterval);
+                countdownInterval = setInterval(updateButtonStates, 1000);
 
             } else {
+                if (countdownInterval) clearInterval(countdownInterval);
                 window.location.href = '../login.html';
             }
         });
@@ -1102,6 +990,77 @@
         document.getElementById('logoutBtn')?.addEventListener('click', () => firebase.auth().signOut());
         document.getElementById('signOutLink')?.addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut(); });
         document.getElementById('searchBar').addEventListener('input', () => filterRequests());
+
+        requestsListEl.addEventListener('click', (e) => {
+            const target = e.target;
+            const requestItem = target.closest('.request-item');
+            if (!requestItem) return;
+            const button = target.closest('button');
+            const requestId = requestItem.dataset.id;
+            if (button) {
+                e.stopPropagation();
+                if (button.matches('.vote-button-redesigned')) {
+                    handleVote(requestId, button.classList.contains('up'));
+                } else if (button.matches('.status-menu-btn')) {
+                    openAdminMenu(button, requestId);
+                } else if (button.matches('.delete-btn-card')) {
+                    handleDeleteRequest(requestId);
+                } else if (button.matches('.ban-menu-btn')) {
+                    const userIdToBan = requestItem.dataset.userId;
+                    const usernameToBan = requestItem.dataset.username;
+                    openAdminBanMenu(button, userIdToBan, usernameToBan);
+                }
+            } else if (!requestItem.classList.contains('recyclable-item')) {
+                openDetailsModal(requestId);
+            }
+        });
+
+        detailsModal.addEventListener('click', e => {
+            const button = e.target.closest('button.vote-button-redesigned');
+            if (button) { 
+                const requestId = detailsModal.dataset.requestId; 
+                if (requestId) { 
+                    handleVote(requestId, button.classList.contains('up')).then(() => { 
+                        openDetailsModal(requestId); 
+                        fetchAndDisplayRequests(); 
+                    }); 
+                } 
+            }
+        });
+
+        adminStatusMenu.addEventListener('click', (e) => {
+            if (e.target.tagName === 'LI') { 
+                const requestId = adminStatusMenu.dataset.requestId; 
+                let newStatus = e.target.dataset.status; 
+                const isAlreadySelected = Array.from(e.target.classList).some(c => c.startsWith('selected-')); 
+                if (isAlreadySelected) { newStatus = null; } 
+                if (requestId) { 
+                    if (newStatus) { 
+                        const colors = { accepted: '#28a745', working: '#ffc107', acknowledged: '#007bff', denied: '#dc3545' }; 
+                        createParticleEffect(e, colors[newStatus]); 
+                    } 
+                    updateAdminStatus(requestId, newStatus); 
+                } 
+                closeAdminMenu(); 
+            }
+        });
+        
+        adminBanMenu.addEventListener('click', (e) => {
+            if (e.target.tagName === 'LI') {
+                const userId = adminBanMenu.dataset.userId;
+                const username = adminBanMenu.dataset.username;
+                const duration = e.target.dataset.duration;
+                if (userId && username && duration) {
+                    handleBanUser(userId, username, duration);
+                }
+                closeAdminBanMenu();
+            }
+        });
+
+        menuOverlay.addEventListener('click', () => {
+            closeAdminMenu();
+            closeAdminBanMenu();
+        });
 
         const titleInput = document.getElementById('requestTitleForm');
         const descInput = document.getElementById('requestDescriptionForm');
@@ -1163,26 +1122,49 @@
     
     function filterRequests() { const query = document.getElementById('searchBar').value.toLowerCase(); document.querySelectorAll('#requestsList .request-item').forEach(item => { item.style.display = item.textContent.toLowerCase().includes(query) ? 'flex' : 'none'; }); }
     
+    function updateButtonStates() {
+        if (!currentUser || IS_ADMIN_ACCOUNT || !actionLimiter) return;
+
+        const createBtn = document.getElementById('createRequestBtn');
+        if (!actionLimiter.canPerform('creations')) {
+            if (createBtn.disabled === false) createBtn.disabled = true;
+            createBtn.title = `Daily creation limit reached. Resets in ${actionLimiter.getResetTime()}.`;
+        } else {
+            if (createBtn.title.startsWith('Daily')) {
+                 handleSubmissionSchedule();
+            }
+        }
+        
+        fetchAndDisplayRequests();
+    }
+
     function handleSubmissionSchedule() {
         if (!currentUser) return;
         const createRequestBtn = document.getElementById('createRequestBtn');
         const statusEl = document.getElementById('scheduleStatus');
-        const countdownEl = document.getElementById('countdownTimer');
         
         if (currentUserProfile.requestsBannedUntil && currentUserProfile.requestsBannedUntil.toDate() > new Date()) {
              createRequestBtn.disabled = true;
-             const banExpiryString = currentUserProfile.requestsBannedUntil.toDate().toLocaleDateString();
-             createRequestBtn.title = `You are banned from making requests until ${banExpiryString}.`;
+             createRequestBtn.title = `You are banned from making requests.`;
              statusEl.textContent = 'BANNED';
-             statusEl.className = 'closed';
-             countdownEl.textContent = `Reason: ${currentUserProfile.requestsBanReason || 'Violation of community guidelines.'}`;
              return;
         }
 
-        if (IS_ADMIN_ACCOUNT) { createRequestBtn.disabled = false; statusEl.textContent = 'ALWAYS OPEN (Admin)'; statusEl.className = 'open'; countdownEl.textContent = 'Your account is not affected by the schedule.'; return; } 
+        if (IS_ADMIN_ACCOUNT) {
+             createRequestBtn.disabled = false;
+             createRequestBtn.title = 'Create Request';
+             statusEl.textContent = 'ALWAYS OPEN (Admin)';
+             return;
+        }
+        
+        if (actionLimiter && !actionLimiter.canPerform('creations')) {
+            updateButtonStates();
+            return;
+        }
+
         const now = new Date(); const day = now.getDay(); const hour = now.getHours(); const isClosed = (day === 6 || day === 0) || (day === 5 && hour >= 15) || (day === 1 && hour < 6); 
         createRequestBtn.disabled = isClosed; 
-        if (!isClosed) { createRequestBtn.title = 'Submissions are currently open.'; statusEl.textContent = 'ACTIVE'; statusEl.className = 'open'; } else { createRequestBtn.title = 'Submissions are currently closed.'; statusEl.textContent = 'INACTIVE'; statusEl.className = 'closed'; } 
+        if (!isClosed) { createRequestBtn.title = 'Submissions are currently open.'; statusEl.textContent = 'ACTIVE'; } else { createRequestBtn.title = 'Submissions are currently closed.'; statusEl.textContent = 'INACTIVE'; } 
     }
     
     const POTENTIALLY_EXPLICIT_WORDS = ['damnit', 'bitch', 'slut'];
@@ -1194,69 +1176,72 @@
     document.getElementById('createRequestBtn').addEventListener('click', () => { if (!currentUser) { return; } if (document.getElementById('createRequestBtn').disabled) { alert(document.getElementById('createRequestBtn').title); return; } document.getElementById('requestForm').reset(); document.getElementById('soundOptionsContainer').style.display = 'none'; document.getElementById('formStatus').style.display = 'none'; document.getElementById('titleCharCounter').textContent = '0/40'; document.getElementById('descCharCounter').textContent = '0/450'; const anonymousCheckbox = document.getElementById('anonymousCheckbox'); if (currentUserProfile.username) { anonymousCheckbox.checked = false; anonymousCheckbox.disabled = false; document.getElementById('anonymousNote').style.display = 'none'; } else { anonymousCheckbox.checked = true; anonymousCheckbox.disabled = true; document.getElementById('anonymousNote').style.display = 'block'; } formModal.classList.add('show'); });
     document.getElementById('requestType').addEventListener('change', (e) => { document.getElementById('soundOptionsContainer').style.display = e.target.value === 'sound' ? 'flex' : 'none'; });
     
-    // ** THE FIX IS IN THIS FUNCTION **
     document.getElementById('requestForm').addEventListener('submit', async (e) => {
         e.preventDefault();
+        if (!currentUser || !actionLimiter) return;
+        
+        if (!actionLimiter.canPerform('creations')) {
+            alert(`Daily creation limit reached. Resets in ${actionLimiter.getResetTime()}.`);
+            return;
+        }
+
         const submitBtn = document.getElementById('submitRequestBtn');
-        if (!currentUser) return;
         submitBtn.disabled = true;
-        document.getElementById('formStatus').style.display = 'none';
+        const formStatusEl = document.getElementById('formStatus');
+        formStatusEl.style.display = 'none';
+
         const db = firebase.firestore();
-        const today = new Date();
-        today.setHours(0, 0, 0, 0);
-        const tomorrow = new Date(today);
-        tomorrow.setDate(tomorrow.getDate() + 1);
         try {
+            await db.runTransaction(async (transaction) => {
+                const isRecyclingSnapshot = await db.collection('requests').where('status', '==', 'recyclable').orderBy('timestamp', 'asc').limit(1).get();
+                const isRecycling = !isRecyclingSnapshot.empty;
+                const actionsRef = db.collection('users').doc(currentUser.uid).collection('actions').doc('timestamps');
+                
+                const originalTitle = document.getElementById('requestTitleForm').value;
+                const originalDescription = document.getElementById('requestDescriptionForm').value;
+                
+                const submissionData = {
+                    userId: currentUser.uid, 
+                    username: currentUserProfile.username || 'Anonymous', 
+                    email: currentUser.email,
+                    type: document.getElementById('requestType').value, 
+                    title: await censorTextWithAPI(originalTitle), 
+                    description: await censorTextWithAPI(originalDescription),
+                    isAnonymous: document.getElementById('anonymousCheckbox').checked, 
+                    timestamp: firebase.firestore.FieldValue.serverTimestamp(),
+                    upvotes: 0, downvotes: 0, upvotedBy: [], downvotedBy: [],
+                    status: 'active', adminStatus: null, adminStatusUpdatedAt: null,
+                    isPotentiallyExplicit: checkPotentiallyExplicit(originalTitle) || checkPotentiallyExplicit(originalDescription),
+                    soundCategory: null, soundUrl: null
+                };
+
+                if (submissionData.type === 'sound') {
+                    submissionData.soundCategory = document.getElementById('soundCategory').value;
+                    submissionData.soundUrl = document.getElementById('soundUrl').value || null;
+                }
+                
+                if (isRecycling) {
+                    const recyclableRef = isRecyclingSnapshot.docs[0].ref;
+                    transaction.set(recyclableRef, submissionData);
+                } else {
+                    const newRequestRef = db.collection('requests').doc();
+                    transaction.set(newRequestRef, submissionData);
+                }
+
+                if (!IS_ADMIN_ACCOUNT) {
+                    transaction.set(actionsRef, { 
+                        creations: firebase.firestore.FieldValue.arrayUnion(firebase.firestore.FieldValue.serverTimestamp())
+                    }, { merge: true });
+                }
+            });
+
             if (!IS_ADMIN_ACCOUNT) {
-                const userRequestsToday = await db.collection('requests').where('userId', '==', currentUser.uid).where('timestamp', '>=', today).where('timestamp', '<', tomorrow).get();
-                if (userRequestsToday.size >= MAX_REQUESTS_PER_DAY) throw new Error(`Daily request limit of ${MAX_REQUESTS_PER_DAY} reached.`);
+                actionLimiter.increment('creations');
             }
-            const recyclableSnapshot = await db.collection('requests').where('status', '==', 'recyclable').orderBy('timestamp', 'asc').limit(1).get();
-            const isRecycling = !recyclableSnapshot.empty;
-            
-            const originalTitle = document.getElementById('requestTitleForm').value;
-            const originalDescription = document.getElementById('requestDescriptionForm').value;
-            
-            const censoredTitle = await censorTextWithAPI(originalTitle);
-            const censoredDescription = await censorTextWithAPI(originalDescription);
-            
-            const isPotentiallyExplicit = checkPotentiallyExplicit(originalTitle) || checkPotentiallyExplicit(originalDescription);
-
-            // MODIFIED: 'soundCategory' and 'soundUrl' are now always included
-            // to match the security rule requirements for all request types.
-            const submissionData = {
-                userId: currentUser.uid, 
-                username: currentUserProfile.username || 'Anonymous', 
-                email: currentUser.email,
-                type: document.getElementById('requestType').value, 
-                title: censoredTitle, 
-                description: censoredDescription,
-                isAnonymous: document.getElementById('anonymousCheckbox').checked, 
-                timestamp: firebase.firestore.FieldValue.serverTimestamp(),
-                upvotes: 0, 
-                downvotes: 0, 
-                upvotedBy: [], 
-                downvotedBy: [],
-                status: 'active', 
-                adminStatus: null, 
-                adminStatusUpdatedAt: null,
-                isPotentiallyExplicit: isPotentiallyExplicit,
-                soundCategory: null, // Always include with a default value
-                soundUrl: null       // Always include with a default value
-            };
-
-            if (submissionData.type === 'sound') {
-                submissionData.soundCategory = document.getElementById('soundCategory').value;
-                submissionData.soundUrl = document.getElementById('soundUrl').value || null;
-            }
-
-            if (isRecycling) { await recyclableSnapshot.docs[0].ref.set(submissionData); } 
-            else { await db.collection('requests').add(submissionData); }
             
             formModal.classList.remove('show');
             fetchAndDisplayRequests();
         } catch (error) {
-            const formStatusEl = document.getElementById('formStatus');
             formStatusEl.textContent = `Error: ${error.message}`;
             formStatusEl.className = 'status-msg status-error';
             formStatusEl.style.display = 'block';
