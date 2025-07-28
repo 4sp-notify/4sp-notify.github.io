@@ -18,7 +18,7 @@ Accounts are required for all features — because this version is made for peop
   - Timer  
   - Stopwatch  
   - Weather (auto-fetched)  
-  - Shortcut Launcher *(editable mode launching soon)*
+  - Shortcut Launcher *(with shortcut editting)*
 - All pages are deeply linked — no more dead ends
 
 ### 🎮 Games
@@ -46,7 +46,7 @@ Accounts are required for all features — because this version is made for peop
 - Save everything **locally**
 
 ### 🧠 Smart Requests (Recycling System)
-- The **Requests** page now includes **smart recycling**
+- The **Requests** page now includes **smart recycling** for requests 14 days or older
 - Suggestions from past users rotate back in to reduce clutter
 - Prioritized by frequency and freshness
 - Saves bandwidth *and* brainpower
