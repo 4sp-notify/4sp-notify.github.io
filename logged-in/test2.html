@@ -527,8 +527,7 @@
     <li data-duration="indefinite">Indefinite</li>
   </ul>
 
-
-  <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
   <script src="../firebase-config.js"></script>
@@ -568,12 +567,34 @@
 
     // --- Firestore-based Limit Functions ---
     /**
-     * **REVISED AND CORRECTED**
-     * Increments a specific action counter in the user's Firestore document.
-     * This version reads the document *before* the transaction to ensure the update payload
-     * is correctly structured to pass security rules.
-     * @param {string} actionType - The field name to increment ('dailyVotes' or 'dailyRequestActions').
+     * **REVISED: Contains the logic to update the modal's content.**
      */
+    function updateLimitsModalContent() {
+        if (!currentUser) return;
+        
+        // Votes
+        const votesCount = currentUserProfile.dailyVotes?.count || 0;
+        const votesProgress = (votesCount / MAX_VOTES_PER_DAY) * 100;
+        limitsModal.querySelector('#votesUsed').textContent = votesCount;
+        limitsModal.querySelector('#votesTotal').textContent = MAX_VOTES_PER_DAY;
+        limitsModal.querySelector('#limitProgressBarVotes').style.width = `${votesProgress}%`;
+
+        // Request Actions
+        const requestActionsCount = currentUserProfile.dailyRequestActions?.count || 0;
+        const requestActionsProgress = (requestActionsCount / MAX_REQUESTS_PER_DAY) * 100;
+        limitsModal.querySelector('#requestActionsUsed').textContent = requestActionsCount;
+        limitsModal.querySelector('#requestActionsTotal').textContent = MAX_REQUESTS_PER_DAY;
+        limitsModal.querySelector('#limitProgressBarRequestActions').style.width = `${requestActionsProgress}%`;
+    }
+
+    /**
+     * **REVISED: Opens the modal and ensures its content is up-to-date.**
+     */
+    function openLimitsModal() {
+        updateLimitsModalContent();
+        limitsModal.classList.add('show');
+    }
+
     async function incrementUserActionCount(actionType) {
         if (!currentUser || IS_ADMIN_ACCOUNT) return;
 
@@ -582,54 +603,33 @@
         const todayStr = new Date().toISOString().split('T')[0];
 
         try {
+            console.log(`Attempting to increment ${actionType}. Current local count:`, (currentUserProfile[actionType]?.count || 0));
+
             const userDoc = await userRef.get();
-            if (!userDoc.exists) {
-                throw new Error("User profile does not exist. Please refresh the page.");
-            }
+            if (!userDoc.exists) throw new Error("User profile does not exist.");
 
             const userData = userDoc.data();
             const currentAction = userData[actionType];
-            let newCount;
-
-            // Determine the new count based on existing data
-            if (currentAction && currentAction.date === todayStr) {
-                newCount = currentAction.count + 1;
-            } else {
-                // It's a new day or the counter doesn't exist, so start at 1.
-                newCount = 1;
-            }
-
+            const newCount = (currentAction && currentAction.date === todayStr) ? currentAction.count + 1 : 1;
             const newCounter = { date: todayStr, count: newCount };
 
-            // Perform a minimal update with the pre-calculated data
             await userRef.update({ [actionType]: newCounter });
-
-            // Update local cache for immediate UI feedback
+            
+            console.log(`${actionType} successfully updated in Firestore. New count: ${newCount}`);
+            
+            // Update local cache
             currentUserProfile[actionType] = newCounter;
+            
+            // **FIXED: Refresh the modal content if it's currently open**
+            if (limitsModal.classList.contains('show')) {
+                console.log("Limits modal is open, refreshing content...");
+                updateLimitsModalContent();
+            }
 
         } catch (error) {
             console.error(`Failed to increment ${actionType}:`, error);
-            // This is a critical failure, alert the user.
             alert(`A critical error occurred while saving your action count: ${error.message}. Please refresh.`);
         }
-    }
-
-
-    function openLimitsModal() {
-        if (!currentUser) return;
-        const votesCount = currentUserProfile.dailyVotes?.count || 0;
-        const votesProgress = (votesCount / MAX_VOTES_PER_DAY) * 100;
-        limitsModal.querySelector('#votesUsed').textContent = votesCount;
-        limitsModal.querySelector('#votesTotal').textContent = MAX_VOTES_PER_DAY;
-        limitsModal.querySelector('#limitProgressBarVotes').style.width = `${votesProgress}%`;
-
-        const requestActionsCount = currentUserProfile.dailyRequestActions?.count || 0;
-        const requestActionsProgress = (requestActionsCount / MAX_REQUESTS_PER_DAY) * 100;
-        limitsModal.querySelector('#requestActionsUsed').textContent = requestActionsCount;
-        limitsModal.querySelector('#requestActionsTotal').textContent = MAX_REQUESTS_PER_DAY;
-        limitsModal.querySelector('#limitProgressBarRequestActions').style.width = `${requestActionsProgress}%`;
-        
-        limitsModal.classList.add('show');
     }
 
     function initializeMarquees() {
@@ -976,7 +976,7 @@
 
                     if (doc.exists) {
                        const data = doc.data();
-                       currentUserProfile.username = data.username || null; // Use null if not set
+                       currentUserProfile.username = data.username || null;
                        currentUserProfile.requestsBannedUntil = data.requestsBannedUntil || null;
                        currentUserProfile.requestsBanReason = data.requestsBanReason || null;
                        currentUserProfile.dailyVotes = (data.dailyVotes && data.dailyVotes.date === todayStr) ? data.dailyVotes : { date: todayStr, count: 0 };
@@ -984,7 +984,7 @@
                     } else {
                        const initialProfileData = {
                            email: user.email,
-                           username: user.displayName || null, // Use displayName from provider or null
+                           username: user.displayName || null,
                            dailyVotes: { date: todayStr, count: 0 },
                            dailyRequestActions: { date: todayStr, count: 0 },
                            isRequestsBanned: false,
@@ -994,7 +994,7 @@
                        await userRef.set(initialProfileData);
                        Object.assign(currentUserProfile, initialProfileData);
                     }
-                    headerUserInfo.querySelector('.username').textContent = currentUserProfile.username || 'User'; // Display 'User' if no username
+                    headerUserInfo.querySelector('.username').textContent = currentUserProfile.username || 'User';
                     sidebarUserNameEl.textContent = currentUserProfile.username || 'User';
                 } catch (e) {
                     console.error("Failed to load or create user profile:", e);
@@ -1119,11 +1119,9 @@
             const censoredTitle = await censorTextWithAPI(originalTitle);
             const censoredDescription = await censorTextWithAPI(originalDescription);
             const isPotentiallyExplicit = checkPotentiallyExplicit(originalTitle) || checkPotentiallyExplicit(originalDescription);
-            
-            // **FIXED: Ensure username is always a string**
             const submissionData = {
                 userId: currentUser.uid, 
-                username: currentUserProfile.username || 'Anonymous', // Default to 'Anonymous' if null
+                username: currentUserProfile.username || 'Anonymous',
                 email: currentUser.email,
                 type: document.getElementById('requestType').value, 
                 title: censoredTitle, 
@@ -1154,7 +1152,5 @@
         }
     });
   </script>
-</body>
-</html>
 </body>
 </html>
