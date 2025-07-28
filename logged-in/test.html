@@ -148,30 +148,34 @@
     .badge-feature { background: linear-gradient(135deg, #38ef7d 0%, #11998e 100%); }
     .badge-issue { background: linear-gradient(135deg, #f5515f 0%, #a1051d 100%); }
     .request-title { font-size: 1.15em; font-weight: 600; color: #2c3e50; margin: 5px 0 8px 0; line-height: 1.3; font-family: PrimaryFont, sans-serif; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    .request-description { font-size: 0.85em; color: #555; max-height: 4.25em; overflow: hidden; line-height: 1.7; font-family: SecondaryFont, sans-serif; }
+
+    /* --- UPDATED: Dynamic Marquee for Long Descriptions --- */
+    .request-description-container {
+        overflow: hidden;
+        white-space: nowrap;
+        width: 100%;
+        font-size: 0.85em;
+        color: #555;
+        line-height: 1.7;
+        font-family: SecondaryFont, sans-serif;
+    }
     
-    /* NEW: Custom Marquee for long descriptions */
-.request-description-container {
-    overflow: hidden;
-    white-space: nowrap;
-    position: relative;
-    width: 100%;
-    /* Inherit styles from .request-description for consistency */
-    font-size: 0.85em;
-    color: #555;
-    line-height: 1.7;
-    font-family: SecondaryFont, sans-serif;
-}
-.request-description-marquee {
-    display: inline-block;
-    animation: scroll-left-description 40s linear infinite;
-    padding: 0 0 0 200%; /* Increased padding for more spacing */
-    margin: 0; /* Override default <p> margin */
-}
-@keyframes scroll-left-description {
-    0% { transform: translateX(0); }
-    100% { transform: translateX(-50%); } /* Animates by half since we have two copies of text */
-}
+    .request-description {
+        display: inline-block;
+        margin: 0;
+        padding: 0;
+        /* Default state: No animation */
+    }
+    
+    .request-description.marquee {
+        /* This class is added via JS to activate the animation */
+        animation: scroll-left-description 25s linear infinite;
+    }
+    
+    @keyframes scroll-left-description {
+        0%   { transform: translateX(0); }
+        100% { transform: translateX(-50%); } /* Animates one half, for duplicated text */
+    }
 
     .admin-status-info { font-size: 0.85em; margin-top: 10px; padding: 6px 10px; border-radius: 8px; font-family: PrimaryFont, sans-serif; font-weight: 500; border-left-width: 4px; border-left-style: solid; }
     .admin-status-info small { color: #555; font-size: 0.9em; }
@@ -624,19 +628,13 @@
                 if (fullUrl && !fullUrl.startsWith('http')) fullUrl = 'https://' + fullUrl;
                 const urlHTML = (request.type === 'sound' && request.soundUrl) ? `<span class="request-url"><a href="${fullUrl}" target="_blank" rel="noopener noreferrer" title="${escapeHTML(request.soundUrl)}"><i class="fas fa-link"></i> Source URL</a></span>` : '';
                 
-                // --- UPDATED: Conditional description rendering ---
+                // --- UPDATED: Simplified description rendering for dynamic marquee ---
                 const description = escapeHTML(request.description);
-                let descriptionHTML;
-                if (description.length > 100) {
-                    // Using two copies with a small gap for the marquee effect.
-                    descriptionHTML = `
-                        <div class="request-description-container" title="${description}">
-                            <p class="request-description-marquee">${description}&nbsp;&nbsp;&nbsp;&nbsp;${description}</p>
-                        </div>
-                    `;
-                } else {
-                    descriptionHTML = `<p class="request-description">${description}</p>`;
-                }
+                const descriptionHTML = `
+                    <div class="request-description-container">
+                        <p class="request-description" title="${description}">${description}</p>
+                    </div>
+                `;
 
                 li.innerHTML = voteSectionHTML + 
                     `<div class="request-content">
@@ -657,10 +655,38 @@
                 
                 requestsListEl.appendChild(li);
             });
+            
+            // --- NEW: Activate marquees for overflowing descriptions after rendering ---
+            initializeDescriptionMarquees();
+
         } catch (error) { console.error("Firestore fetch failed:", error); requestsListEl.innerHTML = `<li>Error loading requests: ${error.message}</li>`; }
     }
     
     // --- UI Interaction & Event Listeners ---
+
+    // --- NEW: Function to check for overflowing text and activate marquee ---
+    function initializeDescriptionMarquees() {
+        // Wait for the next animation frame to ensure the browser has calculated element widths
+        requestAnimationFrame(() => {
+            const containers = document.querySelectorAll('.request-description-container');
+            
+            containers.forEach(container => {
+                const p = container.querySelector('.request-description');
+                if (!p) return;
+
+                // Compare the actual width of the text content to the visible width of its container
+                if (p.scrollWidth > container.clientWidth) {
+                    // If the text is wider than the container, activate the marquee
+                    const originalText = p.innerHTML; // Use innerHTML to preserve any formatting
+                    // Duplicate the text content with a gap for a seamless loop
+                    p.innerHTML = `${originalText}&nbsp;&nbsp;&nbsp;&nbsp;${originalText}`;
+                    // Add the 'marquee' class which has the animation property in CSS
+                    p.classList.add('marquee');
+                }
+            });
+        });
+    }
+
     async function openAdminMenu(button, requestId) {
         adminStatusMenu.querySelectorAll('li').forEach(li => { li.className = ''; });
         try {
@@ -978,14 +1004,14 @@
                 try {
                     const doc = await firebase.firestore().collection('users').doc(user.uid).get();
                     if (doc.exists) {
-                       const data = doc.data();
-                       currentUserProfile.username = data.username || 'User';
-                       currentUserProfile.requestsBannedUntil = data.requestsBannedUntil || null;
-                       currentUserProfile.requestsBanReason = data.requestsBanReason || null;
+                      const data = doc.data();
+                      currentUserProfile.username = data.username || 'User';
+                      currentUserProfile.requestsBannedUntil = data.requestsBannedUntil || null;
+                      currentUserProfile.requestsBanReason = data.requestsBanReason || null;
                     } else {
-                       currentUserProfile.username = 'User';
-                       currentUserProfile.requestsBannedUntil = null;
-                       currentUserProfile.requestsBanReason = null;
+                      currentUserProfile.username = 'User';
+                      currentUserProfile.requestsBannedUntil = null;
+                      currentUserProfile.requestsBanReason = null;
                     }
                     headerUserInfo.querySelector('.username').textContent = currentUserProfile.username;
                     sidebarUserNameEl.textContent = currentUserProfile.username;
