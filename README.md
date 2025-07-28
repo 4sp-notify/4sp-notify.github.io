@@ -7,7 +7,7 @@
 
 Everything is optimized for **desktop-first** use. Most things still *work* on mobile, but you’ll get the best experience with a proper screen.
 
-Accounts are required for most features — because this version is made for people who are actually here to use it. No more just pulling up a page and leaving.
+Accounts are required for all features — because this version is made for people who are actually here to use it. No more just pulling up a page and leaving. Anything helps, and just coming and leaving without leaving your trace as a user on firebase means I'd be sad having no users :(
 
 ---
 
