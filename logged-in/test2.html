@@ -75,8 +75,8 @@
         .btn-cancel { background: #6c757d; color: white; border: none; padding: 14px 24px; border-radius: 10px; font-family: var(--v4-font-primary); text-transform: uppercase; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
         .btn-cancel:hover { background: #5a6268; transform: translateY(-3px); box-shadow: 0 6px 20px rgba(108, 117, 125, 0.4); }
         
-        .note-card { background: var(--v4-card-bg); border-radius: 15px; margin-bottom: 20px; padding: 20px 25px; box-shadow: 0 6px 30px rgba(0,0,0,0.08); transition: all 0.2s ease-in-out; position: relative; cursor: pointer; }
-        .note-card.editing { border: 2px solid var(--v4-purple-accent); }
+        .note-card { background: var(--v4-card-bg); border: 2px solid transparent; border-radius: 15px; margin-bottom: 20px; padding: 20px 25px; box-shadow: 0 6px 30px rgba(0,0,0,0.08); transition: all 0.2s ease-in-out; position: relative; cursor: pointer; }
+        .note-card.editing { border-color: var(--v4-purple-accent); }
         .note-card:hover { transform: translateY(-5px); box-shadow: 0 8px 35px rgba(0,0,0,0.12); }
         .note-card-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 15px; position: relative; z-index: 2; }
         .note-info { flex-grow: 1; min-width: 0; }
@@ -558,7 +558,7 @@
         function toggleExportDetails() {
             const format = document.querySelector('input[name="exportFormat"]:checked').value;
             document.getElementById('exportDetails4sp').style.display = format === '4sp' ? 'block' : 'none';
-            document.getElementById('exportDetailsTxt').style.display = format === 'txt' ? 'block' : 'none';
+            document.getElementById('exportDetailsTxt').style.display = format === 'txt' ? 'none' : 'block';
         }
 
         function confirmExport() {
@@ -599,8 +599,118 @@
             showStatus('Note exported as 4SP Package!', 'success');
             closeExportModal();
         }
+
+        function processFile(file) {
+            originalFileForImport = file;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                const content = e.target.result;
+                try {
+                    const importObject = JSON.parse(content);
+                    if (importObject.dataType === '4sp_note_v1' && importObject.data) {
+                        handle4spImport(importObject);
+                        return;
+                    }
+                } catch (err) {}
+                handleTxtImport(file.name, content);
+            };
+            reader.readAsText(file);
+        }
+
+        function handleTxtImport(filename, content) {
+            validatedNoteData = {
+                title: filename.replace(/\.txt$/i, '').replace(/\s+/g, '-'),
+                content: content,
+                description: '',
+                color: null,
+                createdAt: Date.now(),
+                updatedAt: Date.now()
+            };
+            displayImportPreview(validatedNoteData);
+        }
+
+        function handle4spImport(importObject) {
+            if (importObject.encrypted) {
+                document.getElementById('importDropZone').classList.add('hidden');
+                document.getElementById('passwordPromptContainer').classList.remove('hidden');
+            } else {
+                try {
+                    const decodedJson = base64ToUtf8(importObject.data);
+                    const noteData = JSON.parse(decodedJson);
+                    noteData.content = base64ToUtf8(noteData.content);
+                    validatedNoteData = noteData;
+                    displayImportPreview(validatedNoteData);
+                } catch(e) {
+                    showStatus('Failed to parse unencrypted 4SP note.', 'error');
+                    resetImportModal();
+                }
+            }
+        }
+        
+        function displayImportPreview(data) {
+            document.getElementById('importDropZone').classList.add('hidden');
+            document.getElementById('passwordPromptContainer').classList.add('hidden');
+            document.getElementById('importPreviewContainer').classList.remove('hidden');
+            document.getElementById('confirmImportBtn').classList.remove('hidden');
+            document.getElementById('cancelImportBtn').classList.remove('hidden');
+            
+            const previewCard = document.getElementById('importPreviewCard');
+            previewCard.style.backgroundColor = data.color || 'var(--v4-card-bg)';
+            const textColor = data.color ? '#fff' : 'var(--v4-text-primary)';
+            const metaColor = data.color ? '#eee' : 'var(--v4-text-secondary)';
+
+            document.getElementById('importPreviewTitle').textContent = data.title;
+            document.getElementById('importPreviewTitle').style.color = textColor;
+            const dateString = data.createdAt ? new Date(data.createdAt).toLocaleString() : 'Date unknown';
+            document.getElementById('importPreviewMeta').textContent = `Created: ${dateString}`;
+            document.getElementById('importPreviewMeta').style.color = metaColor;
+            document.getElementById('importPreviewContent').textContent = data.description || data.content;
+        }
+
+        function resetImportModal() {
+            document.getElementById('importDropZone').classList.remove('hidden');
+            document.getElementById('passwordPromptContainer').classList.add('hidden');
+            document.getElementById('importPreviewContainer').classList.add('hidden');
+            document.getElementById('confirmImportBtn').classList.add('hidden');
+            document.getElementById('cancelImportBtn').classList.add('hidden');
+            document.getElementById('importPasswordInput').value = '';
+            validatedNoteData = null;
+            originalFileForImport = null;
+        }
         
         function initializeApp() {
+            const selectFileBtn = document.getElementById('selectFileBtn');
+            const importFileInput = document.createElement('input');
+            importFileInput.type = 'file';
+            importFileInput.accept = '.json,.txt';
+            importFileInput.style.display = 'none';
+            document.body.appendChild(importFileInput);
+
+            selectFileBtn.addEventListener('click', () => importFileInput.click());
+            importFileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    processFile(file);
+                    e.target.value = null; // Allow re-selecting the same file
+                }
+            });
+
+            const dropZone = document.getElementById('importDropZone');
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); }, false);
+            });
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, () => dropZone.classList.add('dragover'), false);
+            });
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, () => dropZone.classList.remove('dragover'), false);
+            });
+            dropZone.addEventListener('drop', (e) => {
+                if (e.dataTransfer.files[0]) {
+                    processFile(e.dataTransfer.files[0]);
+                }
+            }, false);
+
             document.getElementById('saveNewNoteBtn').addEventListener('click', () => {
                 if (mainEditor.value.trim() === '') {
                     showStatus('Cannot save an empty note.', 'error'); return;
@@ -612,8 +722,43 @@
             document.getElementById('saveNoteDetailsBtn').addEventListener('click', saveNoteDetails);
             document.getElementById('closeCreateModalBtn').addEventListener('click', closeDetailsModal);
             document.getElementById('cancelModalBtn').addEventListener('click', closeDetailsModal);
-            document.getElementById('openImportModalBtn').addEventListener('click', () => importModal.classList.add('visible'));
+            document.getElementById('openImportModalBtn').addEventListener('click', () => {
+                resetImportModal();
+                importModal.classList.add('visible');
+            });
             document.getElementById('closeImportModalBtn').addEventListener('click', () => importModal.classList.remove('visible'));
+            document.getElementById('cancelImportBtn').addEventListener('click', () => importModal.classList.remove('visible'));
+            document.getElementById('confirmImportBtn').addEventListener('click', () => {
+                if (!validatedNoteData) return;
+                const notes = getNotes();
+                validatedNoteData.id = Date.now().toString();
+                validatedNoteData.updatedAt = Date.now();
+                notes.push(validatedNoteData);
+                saveNotes(notes);
+                renderNotesList();
+                showStatus(`Note "${validatedNoteData.title}" imported successfully!`, 'success');
+                importModal.classList.remove('visible');
+            });
+             document.getElementById('submitPasswordBtn').addEventListener('click', () => {
+                const password = document.getElementById('importPasswordInput').value;
+                if (!password) { alert('Password is required.'); return; }
+                const reader = new FileReader();
+                reader.onload = e => {
+                    try {
+                        const importObject = JSON.parse(e.target.result);
+                        const decodedData = base64ToUtf8(importObject.data);
+                        const decryptedJson = xorCipher(decodedData, password);
+                        const noteData = JSON.parse(decryptedJson);
+                        noteData.content = base64ToUtf8(noteData.content);
+                        validatedNoteData = noteData;
+                        displayImportPreview(validatedNoteData);
+                    } catch (err) {
+                        alert('Incorrect password or corrupted file.');
+                        document.getElementById('importPasswordInput').value = '';
+                    }
+                };
+                reader.readAsText(originalFileForImport);
+            });
             document.getElementById('closeExportModalBtn').addEventListener('click', closeExportModal);
             document.querySelectorAll('input[name="exportFormat"]').forEach(radio => radio.addEventListener('change', toggleExportDetails));
             document.getElementById('confirmExportBtn').addEventListener('click', confirmExport);
