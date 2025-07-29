@@ -76,7 +76,7 @@
     .header-user-info .username { font-family: PrimaryFont, sans-serif; font-size: 1.2em; font-weight: bold; color: #333; }
     .header-user-info .email { font-family: SecondaryFont, sans-serif; font-size: 0.9em; color: #777; }
     
-    .header-actions { display: flex; gap: 10px; }
+    .header-actions { display: flex; gap: 10px; flex-wrap: wrap; }
     #createRequestBtn, #scheduleBtn, #manageBansBtn, #viewLimitsBtn {
         border: none; color: #fff; padding: 12px 20px;
         border-radius: 8px; font-family: PrimaryFont, sans-serif; cursor: pointer; transition: all 0.3s ease;
@@ -295,7 +295,7 @@
     #limitsModal .progress-bar-text { text-align: center; margin-top: 5px; font-size: 0.9em; color: #555; }
 
     /* --- Loading Animation --- */
-    #loadingIndicator { text-align: center; padding: 40px; font-size: 1.2em; color: #555; }
+    #loadingIndicator { text-align: center; padding: 40px; font-size: 1.2em; color: #555; display: none; }
     .dot-flashing { position: relative; width: 10px; height: 10px; border-radius: 5px; background-color: #8a2be2; color: #8a2be2; animation: dot-flashing 1s infinite linear alternate; animation-delay: .5s; }
     .dot-flashing::before, .dot-flashing::after { content: ''; display: inline-block; position: absolute; top: 0; }
     .dot-flashing::before { left: -15px; width: 10px; height: 10px; border-radius: 5px; background-color: #8a2be2; color: #8a2be2; animation: dot-flashing 1s infinite alternate; animation-delay: 0s; }
@@ -614,8 +614,6 @@
 
             if (sortBy === 'newest') query = query.orderBy('timestamp', 'desc');
             else if (sortBy === 'oldest') query = query.orderBy('timestamp', 'asc');
-            // Note: 'top' sort is handled client-side after fetching all data for simplicity.
-            // For large datasets, a server-side solution (like a separate sorted field) would be better.
             
             if (sortBy !== 'top') {
                 if(lastVisibleRequest && loadMore) {
@@ -630,13 +628,14 @@
             if (snapshot.docs.length > 0) {
                 lastVisibleRequest = snapshot.docs[snapshot.docs.length - 1];
             } else {
-                lastVisibleRequest = null; // No more documents
+                lastVisibleRequest = null; 
             }
 
-            if (sortBy === 'top') { 
-                // This is inefficient for pagination. For a real app, this should be a server-side sort.
-                // Here, we'll just sort the current batch.
-                requests.sort((a, b) => ((b.upvotes || 0) - (b.downvotes || 0)) - ((a.upvotes || 0) - (a.downvotes || 0))); 
+            if (sortBy === 'top' && !loadMore) { 
+                const allDocsSnapshot = await db.collection('requests').where('status', 'in', validStatuses).get();
+                requests = allDocsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                requests.sort((a, b) => ((b.upvotes || 0) - (b.downvotes || 0)) - ((a.upvotes || 0) - (a.downvotes || 0)));
+                lastVisibleRequest = null; // Disable infinite scroll for 'top' sort
             }
 
             if (requests.length === 0 && !loadMore) { 
@@ -809,7 +808,15 @@
 
     detailsModal.addEventListener('click', e => {
         const button = e.target.closest('button.vote-button-redesigned');
-        if (button) { const requestId = detailsModal.dataset.requestId; if (requestId) { handleVote(requestId, button.classList.contains('up')).then(() => { openDetailsModal(requestId); fetchAndDisplayRequests(); }); } }
+        if (button) { 
+            const requestId = detailsModal.dataset.requestId; 
+            if (requestId) { 
+                handleVote(requestId, button.classList.contains('up')).then(() => {
+                    openDetailsModal(requestId); // Refresh modal content
+                    fetchAndDisplayRequests(); // Refresh the main list
+                }); 
+            } 
+        }
     });
 
     adminStatusMenu.addEventListener('click', (e) => {
@@ -845,47 +852,41 @@
         const userRef = db.collection('users').doc(currentUser.uid);
 
         try {
-            let voteChanged = false;
             await db.runTransaction(async (transaction) => {
-                const doc = await transaction.get(requestRef);
-                if (!doc.exists) throw "Document not found.";
-                const data = doc.data();
-                if (data.userId === currentUser.uid) { alert("You cannot vote on your own request."); return; }
-                if (data.status === 'recyclable') return;
+                const requestDoc = await transaction.get(requestRef);
+                if (!requestDoc.exists) throw "Document not found.";
+                const requestData = requestDoc.data();
+                if (requestData.userId === currentUser.uid) { alert("You cannot vote on your own request."); return; }
+                if (requestData.status === 'recyclable') return;
 
-                let { upvotedBy = [], downvotedBy = [] } = data;
+                const userDoc = await transaction.get(userRef);
+                const userData = userDoc.data() || {};
+                const currentVoteCount = userData.dailyVoteCount || 0;
+
+                let { upvotedBy = [], downvotedBy = [] } = requestData;
                 const upvoteIndex = upvotedBy.indexOf(currentUser.uid);
                 const downvoteIndex = downvotedBy.indexOf(currentUser.uid);
                 
-                let isNewVote = true;
+                let isNewVote = (isUpvote && upvoteIndex === -1) || (!isUpvote && downvoteIndex === -1);
 
                 if (isUpvote) {
-                    if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); isNewVote = false; }
-                    else { upvotedBy.push(currentUser.uid); }
+                    if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); } else { upvotedBy.push(currentUser.uid); }
                     if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); }
                 } else {
-                    if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); isNewVote = false; }
-                    else { downvotedBy.push(currentUser.uid); }
+                    if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); } else { downvotedBy.push(currentUser.uid); }
                     if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); }
                 }
 
-                if (!IS_ADMIN_ACCOUNT) {
-                    if (isNewVote) {
-                        if (currentUserProfile.dailyVoteCount >= VOTE_LIMIT) {
-                            throw new Error("Vote limit reached.");
-                        }
-                        transaction.update(userRef, { dailyVoteCount: firebase.firestore.FieldValue.increment(1) });
-                    }
+                if (!IS_ADMIN_ACCOUNT && isNewVote) {
+                    if (currentVoteCount >= VOTE_LIMIT) throw new Error("Vote limit reached.");
+                    transaction.update(userRef, { dailyVoteCount: firebase.firestore.FieldValue.increment(1), lastActionDate: new Date().toISOString() });
                 }
                 
                 transaction.update(requestRef, { upvotedBy, downvotedBy, upvotes: upvotedBy.length, downvotes: downvotedBy.length });
-                voteChanged = true;
             });
 
-            if (voteChanged && !IS_ADMIN_ACCOUNT) {
-                 currentUserProfile.dailyVoteCount++;
-            }
-            fetchAndDisplayRequests(); // Refresh list after voting
+            await checkAndResetDailyLimits(currentUser); // Re-sync local profile after transaction
+            fetchAndDisplayRequests();
         } catch (error) {
             console.error("Vote failed: ", error);
             if (error.message === "Vote limit reached.") {
@@ -903,8 +904,7 @@
 
         const db = firebase.firestore();
         const requestRef = db.collection('requests').doc(requestId);
-        const userRef = db.collection('users').doc(currentUser.uid);
-
+        
         try {
             const doc = await requestRef.get();
             if (!doc.exists) return;
@@ -916,7 +916,11 @@
             if (confirm("Are you sure you want to PERMANENTLY delete this request? This cannot be undone.")) {
                 await requestRef.delete();
                 if (!IS_ADMIN_ACCOUNT) {
-                    await userRef.update({ dailyRequestCount: firebase.firestore.FieldValue.increment(1) });
+                    const userRef = db.collection('users').doc(currentUser.uid);
+                    await userRef.update({ 
+                        dailyRequestCount: firebase.firestore.FieldValue.increment(1),
+                        lastActionDate: new Date().toISOString()
+                    });
                     currentUserProfile.dailyRequestCount++;
                 }
                 closeAdminMenu();
@@ -1009,28 +1013,40 @@
     // --- Daily Limit Functions ---
     async function checkAndResetDailyLimits(user) {
         const userRef = firebase.firestore().collection('users').doc(user.uid);
-        const doc = await userRef.get();
-        if (!doc.exists) return; // Should not happen for logged-in users
+        try {
+            const doc = await userRef.get();
+            if (!doc.exists) {
+                // If user profile doesn't exist, create it with default limits
+                await userRef.set({
+                    email: user.email,
+                    username: 'User',
+                    dailyRequestCount: 0,
+                    dailyVoteCount: 0,
+                    lastActionDate: new Date().toISOString()
+                }, { merge: true });
+                return;
+            }
 
-        const data = doc.data();
-        const today = new Date().toLocaleDateString();
-        const lastActionDate = data.lastActionDate ? new Date(data.lastActionDate).toLocaleDateString() : null;
+            const data = doc.data();
+            const today = new Date().toLocaleDateString();
+            const lastActionDate = data.lastActionDate ? new Date(data.lastActionDate).toLocaleDateString() : null;
 
-        if (today !== lastActionDate) {
-            // It's a new day, reset the limits
-            await userRef.update({
-                dailyRequestCount: 0,
-                dailyVoteCount: 0,
-                lastActionDate: new Date().toISOString()
-            });
-            currentUserProfile.dailyRequestCount = 0;
-            currentUserProfile.dailyVoteCount = 0;
+            if (today !== lastActionDate) {
+                await userRef.update({
+                    dailyRequestCount: 0,
+                    dailyVoteCount: 0,
+                    lastActionDate: new Date().toISOString()
+                });
+                currentUserProfile.dailyRequestCount = 0;
+                currentUserProfile.dailyVoteCount = 0;
+            } else {
+                currentUserProfile.dailyRequestCount = data.dailyRequestCount || 0;
+                currentUserProfile.dailyVoteCount = data.dailyVoteCount || 0;
+            }
             currentUserProfile.lastActionDate = new Date().toISOString();
-        } else {
-            // It's the same day, load the current counts
-            currentUserProfile.dailyRequestCount = data.dailyRequestCount || 0;
-            currentUserProfile.dailyVoteCount = data.dailyVoteCount || 0;
-            currentUserProfile.lastActionDate = data.lastActionDate;
+
+        } catch (error) {
+            console.error("Error checking or resetting daily limits:", error);
         }
     }
 
@@ -1075,7 +1091,8 @@
                 sidebarUserEmailEl.textContent = user.email;
                 
                 try {
-                    const doc = await firebase.firestore().collection('users').doc(user.uid).get();
+                    const userRef = firebase.firestore().collection('users').doc(user.uid);
+                    const doc = await userRef.get();
                     if (doc.exists) {
                        const data = doc.data();
                        currentUserProfile.username = data.username || 'User';
@@ -1092,9 +1109,10 @@
                     }
 
                 } catch (e) {
-                    currentUserProfile.username = null; 
-                    headerUserInfo.querySelector('.username').textContent = 'No Username Set'; 
-                    sidebarUserNameEl.textContent = 'User';
+                    console.error("Error loading user profile:", e);
+                    currentUserProfile.username = 'Error'; 
+                    headerUserInfo.querySelector('.username').textContent = 'Could not load profile'; 
+                    sidebarUserNameEl.textContent = 'Error';
                 }
                 
                 fetchAndDisplayRequests();
@@ -1240,8 +1258,7 @@
         submitBtn.disabled = true;
         document.getElementById('formStatus').style.display = 'none';
         const db = firebase.firestore();
-        const userRef = db.collection('users').doc(currentUser.uid);
-
+        
         try {
             const recyclableSnapshot = await db.collection('requests').where('status', '==', 'recyclable').orderBy('timestamp', 'asc').limit(1).get();
             const isRecycling = !recyclableSnapshot.empty;
@@ -1284,6 +1301,7 @@
             else { await db.collection('requests').add(submissionData); }
             
             if (!IS_ADMIN_ACCOUNT) {
+                const userRef = db.collection('users').doc(currentUser.uid);
                 await userRef.update({ 
                     dailyRequestCount: firebase.firestore.FieldValue.increment(1),
                     lastActionDate: new Date().toISOString()
