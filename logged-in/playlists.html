@@ -29,6 +29,7 @@
             --v4-font-primary: 'PrimaryFont', sans-serif;
             --v4-font-secondary: 'SecondaryFont', sans-serif;
         }
+        .hidden { display: none !important; }
         body { display: flex; flex-direction: column; min-height: 100vh; margin: 0; font-family: var(--v4-font-primary); background: var(--v4-bg-gradient); color: var(--v4-text-primary); line-height: 1.6; }
         .soundboard-container-wrapper { display: flex; flex: 1; overflow: hidden; }
         .sidebar { width: 200px; background: linear-gradient(180deg, #333 0%, #2a2a2a 100%); color: #fff; padding: 20px 10px; display: flex; flex-direction: column; border-right: 1px solid #444; transition: width 0.5s ease-in-out; position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
@@ -194,7 +195,7 @@
         .modal-body { flex-grow: 1; overflow-y: auto; padding: 25px; }
         .modal-body .form-group { margin-bottom: 20px; }
         .modal-body label { font-weight: bold; color: var(--v4-text-secondary); margin-bottom: 8px; display: block; }
-        .modal-body input[type="text"], .modal-body textarea, .modal-body select { width: 100%; padding: 12px; border: 1px solid var(--v4-input-border); border-radius: 8px; background: var(--v4-input-bg); font-family: var(--v4-font-secondary); font-size: 1em; box-sizing: border-box; }
+        .modal-body input[type="text"], .modal-body input[type="password"], .modal-body textarea, .modal-body select { width: 100%; padding: 12px; border: 1px solid var(--v4-input-border); border-radius: 8px; background: var(--v4-input-bg); font-family: var(--v4-font-secondary); font-size: 1em; box-sizing: border-box; }
         .modal-body textarea { resize: vertical; min-height: 80px; }
         .modal-footer { padding: 15px 25px; border-top: 1px solid var(--v4-border-softer); display: flex; justify-content: flex-end; align-items: center; gap: 10px; overflow: hidden; }
         .sound-selection-grid { max-height: 300px; overflow-y: auto; padding: 10px; border: 1px solid var(--v4-border-light); border-radius: 8px; }
@@ -425,6 +426,29 @@
         </div>
     </div>
 
+    <div id="exportPlaylistModal" class="modal-backdrop">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Export Playlist</h2>
+                <button id="closeExportPlaylistModalBtn" class="close-btn"><img src="../images/cross-white.png" alt="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="exportPlaylistIdInput">
+                <div class="form-group">
+                    <label for="exportPlaylistFilename">File Name (no extension)</label>
+                    <input type="text" id="exportPlaylistFilename" placeholder="my-awesome-playlist">
+                </div>
+                <div class="form-group">
+                    <label for="exportPlaylistPassword">Password (optional, 4-48 characters)</label>
+                    <input type="password" id="exportPlaylistPassword" minlength="4" maxlength="48" placeholder="Leave blank for no password">
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button id="confirmPlaylistExportBtn" class="btn-primary">Export</button>
+            </div>
+        </div>
+    </div>
+
     <div id="mute-indicator-container"> <span id="muteIndicator" class="mute-status">Muted</span> </div>
 
     <script>
@@ -476,14 +500,64 @@
     window.addEventListener('resize', initializeMarquees);
 
     document.addEventListener('DOMContentLoaded', () => {
+        let db;
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
         const SETTINGS_KEY = 'playlistsSettings_v1';
-        const PLAYLIST_STORAGE_KEY = 'userPlaylists_v2';
         
         let allSoundsData = {}; let activeSounds = new Map();
         const soundCache = new Map();
         let isMuted = false; let lastVolumeBeforeMute = 1;
         let validatedPlaylist = null;
+
+        // --- IndexedDB Functions ---
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open("PlaylistsDB", 1);
+                request.onerror = event => reject("Database error: " + event.target.errorCode);
+                request.onsuccess = event => { db = event.target.result; resolve(); };
+                request.onupgradeneeded = event => { event.target.result.createObjectStore("playlists", { keyPath: "id" }); };
+            });
+        }
+        function getPlaylistsDB() {
+            return new Promise((resolve, reject) => {
+                const request = db.transaction(["playlists"], "readonly").objectStore("playlists").getAll();
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = (event) => reject("Error fetching playlists: " + event.target.errorCode);
+            });
+        }
+        function getPlaylistDB(id) {
+            return new Promise((resolve, reject) => {
+                const request = db.transaction(["playlists"], "readonly").objectStore("playlists").get(id);
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = (event) => reject("Error fetching playlist: " + event.target.errorCode);
+            });
+        }
+        function savePlaylistDB(playlist) {
+             return new Promise((resolve, reject) => {
+                const request = db.transaction(["playlists"], "readwrite").objectStore("playlists").put(playlist);
+                request.onsuccess = () => resolve();
+                request.onerror = (event) => reject("Error saving playlist: " + event.target.errorCode);
+            });
+        }
+        async function saveMultiplePlaylistsDB(playlists) {
+            const transaction = db.transaction(["playlists"], "readwrite");
+            const store = transaction.objectStore("playlists");
+            for (const playlist of playlists) {
+                store.put(playlist);
+            }
+            return new Promise((resolve, reject) => {
+                transaction.oncomplete = () => resolve();
+                transaction.onerror = (event) => reject("Error saving multiple playlists: " + event.target.errorCode);
+            });
+        }
+        function deletePlaylistDB(id) {
+            return new Promise((resolve, reject) => {
+                const request = db.transaction(["playlists"], "readwrite").objectStore("playlists").delete(id);
+                request.onsuccess = () => resolve();
+                request.onerror = (event) => reject("Error deleting playlist: " + event.target.errorCode);
+            });
+        }
+
 
         const unlockAudioContext = () => { if (audioContext.state === 'suspended') { audioContext.resume(); } document.body.removeEventListener('click', unlockAudioContext); };
         document.body.addEventListener('click', unlockAudioContext);
@@ -517,8 +591,6 @@
         
         function updateButtonVisuals() { requestAnimationFrame(updateButtonVisuals); document.querySelectorAll('.sound-button-v4[data-sound-file]').forEach(button => { const fileName = button.dataset.soundFile; const isPlaying = activeSounds.has(fileName) && activeSounds.get(fileName).length > 0; button.classList.toggle('playing', isPlaying); }); }
         
-        const getPlaylists = () => JSON.parse(localStorage.getItem(PLAYLIST_STORAGE_KEY)) || [];
-        const savePlaylists = (playlists) => localStorage.setItem(PLAYLIST_STORAGE_KEY, JSON.stringify(playlists));
         const settingsContainer = document.querySelector('.settings-tab-container');
 
         const xorCipher = (str, key) => {
@@ -535,11 +607,12 @@
             return category.replace(/([A-Z])/g, ' $1').trim();
         }
 
-        function renderPlaylistsList(activePlaylistId = null) {
+        async function renderPlaylistsList(activePlaylistId = null) {
             settingsContainer.classList.remove('visible');
             document.getElementById('createNewPlaylistBtn').style.display = 'inline-block';
             document.getElementById('openImportModalBtn').style.display = 'inline-block';
-            const playlists = getPlaylists();
+            const playlists = await getPlaylistsDB();
+            playlists.sort((a, b) => (a.order || 0) - (b.order || 0));
             const container = document.getElementById('playlistsView');
             container.innerHTML = '';
 
@@ -549,7 +622,7 @@
                 return;
             }
 
-            playlists.forEach((playlist, index) => { 
+            playlists.forEach(playlist => { 
                 const card = document.createElement('div'); 
                 card.className = 'playlist-card'; 
                 card.dataset.playlistId = playlist.id;
@@ -586,7 +659,7 @@
                 }
                 
                 card.querySelector('.playlist-info').addEventListener('click', () => renderPlaylistSoundboard(playlist.id));
-                card.querySelector('.action-btn.share').addEventListener('click', (e) => { e.stopPropagation(); exportPlaylist(playlist.id); }); 
+                card.querySelector('.action-btn.share').addEventListener('click', (e) => { e.stopPropagation(); openExportModal(playlist.id); }); 
                 card.querySelector('.action-btn.edit').addEventListener('click', (e) => { e.stopPropagation(); openCreateModal(playlist.id); }); 
                 card.querySelector('.action-btn.delete').addEventListener('click', (e) => { e.stopPropagation(); deletePlaylist(playlist.id); });
                 
@@ -594,8 +667,8 @@
                 if (playlist.id === activePlaylistId) {
                     reorderGroup.classList.add('visible');
                 }
-                card.querySelector('.half-btn.up').addEventListener('click', e => { e.stopPropagation(); movePlaylist(index, 'up', card); });
-                card.querySelector('.half-btn.down').addEventListener('click', e => { e.stopPropagation(); movePlaylist(index, 'down', card); });
+                card.querySelector('.half-btn.up').addEventListener('click', e => { e.stopPropagation(); movePlaylist(playlist.id, 'up'); });
+                card.querySelector('.half-btn.down').addEventListener('click', e => { e.stopPropagation(); movePlaylist(playlist.id, 'down'); });
 
                 card.addEventListener('contextmenu', e => {
                     if (e.target.closest('.action-btn') || e.target.closest('.reorder-btn-group')) return;
@@ -625,36 +698,39 @@
             initializeMarquees();
         }
 
-        function movePlaylist(index, direction, cardElement) {
-            let playlists = getPlaylists();
-            const activeId = playlists[index].id;
+        async function movePlaylist(playlistId, direction) {
+            let playlists = await getPlaylistsDB();
+            playlists.sort((a, b) => (a.order || 0) - (b.order || 0));
+            const index = playlists.findIndex(p => p.id === playlistId);
+            const cardElement = document.querySelector(`.playlist-card[data-playlist-id="${playlistId}"]`);
+
             const canMoveUp = direction === 'up' && index > 0;
             const canMoveDown = direction === 'down' && index < playlists.length - 1;
 
             if (canMoveUp || canMoveDown) {
                 const swapIndex = direction === 'up' ? index - 1 : index + 1;
-                const allCards = Array.from(document.querySelectorAll('.playlist-card'));
-                const swapCardElement = allCards[swapIndex];
-
+                const swapCardElement = document.querySelector(`.playlist-card[data-playlist-id="${playlists[swapIndex].id}"]`);
+                
                 if (cardElement) cardElement.classList.add('swapping');
                 if (swapCardElement) swapCardElement.classList.add('swapping');
 
-                setTimeout(() => {
-                    [playlists[index], playlists[swapIndex]] = [playlists[swapIndex], playlists[index]];
-                    savePlaylists(playlists);
-                    renderPlaylistsList(activeId);
+                setTimeout(async () => {
+                    [playlists[index].order, playlists[swapIndex].order] = [playlists[swapIndex].order, playlists[index].order];
+                    await saveMultiplePlaylistsDB([playlists[index], playlists[swapIndex]]);
+                    await renderPlaylistsList(playlistId);
                 }, 200);
+
             } else {
                 const nudgeClass = direction === 'up' ? 'nudge-up' : 'nudge-down';
-                cardElement.classList.add(nudgeClass);
-                setTimeout(() => {
-                    cardElement.classList.remove(nudgeClass);
-                }, 300);
+                if(cardElement) {
+                    cardElement.classList.add(nudgeClass);
+                    setTimeout(() => cardElement.classList.remove(nudgeClass), 300);
+                }
             }
         }
 
-        function renderPlaylistSoundboard(playlistId) {
-            const playlist = getPlaylists().find(p => p.id === playlistId);
+        async function renderPlaylistSoundboard(playlistId) {
+            const playlist = await getPlaylistDB(playlistId);
             if (!playlist) { showStatus('Playlist not found.', 'error'); renderPlaylistsList(); return; }
             settingsContainer.classList.add('visible');
             document.getElementById('createNewPlaylistBtn').style.display = 'none';
@@ -678,7 +754,7 @@
             document.getElementById('backToPlaylistsBtn').addEventListener('click', renderPlaylistsList);
         }
 
-        function deletePlaylist(playlistId) { if (!confirm('Are you sure you want to delete this playlist? This cannot be undone.')) return; let playlists = getPlaylists(); playlists = playlists.filter(p => p.id !== playlistId); savePlaylists(playlists); showStatus('Playlist deleted.', 'success'); renderPlaylistsList(); }
+        async function deletePlaylist(playlistId) { if (!confirm('Are you sure you want to delete this playlist? This cannot be undone.')) return; await deletePlaylistDB(playlistId); showStatus('Playlist deleted.', 'success'); renderPlaylistsList(); }
         
         function playSound(fileName, button) {
             const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); };
@@ -713,7 +789,7 @@
             initializeMarquees();
         }
 
-        function openCreateModal(playlistId = null) {
+        async function openCreateModal(playlistId = null) {
             const isEditing = playlistId !== null;
             createModal.classList.add('visible');
             const title = document.getElementById('modalTitle');
@@ -745,7 +821,7 @@
             selectedSounds.clear();
             
             if (isEditing) { 
-                const playlist = getPlaylists().find(p => p.id === playlistId); 
+                const playlist = await getPlaylistDB(playlistId); 
                 nameInput.value = playlist.name; 
                 descInput.value = playlist.description; 
                 playlist.sounds.forEach(s => selectedSounds.add(s));
@@ -788,57 +864,98 @@
 
         function closeCreateModal() { createModal.classList.remove('visible'); }
 
-        function savePlaylist() { 
+        async function savePlaylist() { 
             const name = document.getElementById('playlistNameInput').value.trim(); 
             if (!name) { alert('Playlist name is required.'); return; } 
-            const playlistData = { 
-                id: document.getElementById('playlistIdInput').value || Date.now().toString(), 
-                name: name, 
-                description: document.getElementById('playlistDescriptionInput').value.trim(),
-                color: selectedColor,
-                sounds: Array.from(selectedSounds) 
-            }; 
-            let playlists = getPlaylists(); 
-            const existingIndex = playlists.findIndex(p => p.id === playlistData.id); 
-            if (existingIndex > -1) { playlists[existingIndex] = playlistData; } else { playlists.push(playlistData); } 
-            savePlaylists(playlists); 
+            
+            const id = document.getElementById('playlistIdInput').value;
+            const isEditing = !!id;
+            let playlistData;
+
+            if (isEditing) {
+                const originalPlaylist = await getPlaylistDB(id);
+                playlistData = { 
+                    ...originalPlaylist,
+                    name: name, 
+                    description: document.getElementById('playlistDescriptionInput').value.trim(),
+                    color: selectedColor,
+                    sounds: Array.from(selectedSounds) 
+                };
+            } else {
+                const playlists = await getPlaylistsDB();
+                playlistData = {
+                    id: Date.now().toString(), 
+                    name: name, 
+                    description: document.getElementById('playlistDescriptionInput').value.trim(),
+                    color: selectedColor,
+                    sounds: Array.from(selectedSounds),
+                    order: (playlists.length > 0) ? Math.max(...playlists.map(p => p.order || 0)) + 1 : 1
+                };
+            }
+            
+            await savePlaylistDB(playlistData);
             showStatus(`Playlist "${name}" saved!`, 'success'); 
             closeCreateModal(); 
             renderPlaylistsList(); 
         }
-        
-        function exportPlaylist(playlistId) {
-            const playlist = getPlaylists().find(p => p.id === playlistId);
-            if (!playlist) return;
-            const defaultFilename = playlist.name.replace(/[^a-z0-9]/gi, '_').toLowerCase() || "playlist";
-            let userFilename = prompt("Please enter a name for the playlist file:", defaultFilename);
-            if (userFilename === null) { showStatus("Export cancelled.", "info"); return; }
-            userFilename = userFilename.trim() || defaultFilename;
-            if (!userFilename.toLowerCase().endsWith('.json')) { userFilename += '.json'; }
 
-            let password = prompt("Enter an optional password to encrypt the playlist. Leave blank for no password.");
-            if (password === null) {
-                showStatus("Export cancelled.", "info");
+        const exportModal = document.getElementById('exportPlaylistModal');
+        function closeExportModal() { exportModal.classList.remove('visible'); }
+
+        async function openExportModal(playlistId) {
+            const playlist = await getPlaylistDB(playlistId);
+            if (!playlist) return;
+            document.getElementById('exportPlaylistIdInput').value = playlistId;
+            const safeFilename = playlist.name.replace(/\s+/g, '-').toLowerCase() || "playlist";
+            document.getElementById('exportPlaylistFilename').value = safeFilename;
+            document.getElementById('exportPlaylistPassword').value = '';
+            exportModal.classList.add('visible');
+        }
+
+        async function confirmPlaylistExport() {
+            const playlistId = document.getElementById('exportPlaylistIdInput').value;
+            const playlist = await getPlaylistDB(playlistId);
+            if (!playlist) {
+                showStatus('Error: Playlist not found for export.', 'error');
                 return;
             }
-            let jsonString = JSON.stringify(playlist);
-            let isEncrypted = false;
 
-            if (password) {
+            let filename = document.getElementById('exportPlaylistFilename').value.trim().replace(/\s+/g, '-');
+            if (!filename || filename.includes('.')) {
+                alert('A valid filename (without an extension) is required.');
+                return;
+            }
+            
+            let password = document.getElementById('exportPlaylistPassword').value;
+            if (password && (password.length < 4 || password.length > 48)) {
+                alert('Password must be between 4 and 48 characters.');
+                return;
+            }
+            
+            let playlistToExport = { ...playlist };
+            delete playlistToExport.order; // Don't export the order property
+
+            let jsonString = JSON.stringify(playlistToExport);
+            const isEncrypted = !!password;
+
+            if (isEncrypted) {
                 jsonString = xorCipher(jsonString, password);
-                isEncrypted = true;
-                showStatus("Playlist will be exported with password protection.", "info");
             }
 
             const base64Data = utf8ToBase64(jsonString);
             const exportObject = { dataType: "4sp_playlist_v2", encrypted: isEncrypted, data: base64Data };
+            
             const blob = new Blob([JSON.stringify(exportObject, null, 2)], { type: 'application/json' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
-            a.href = url; a.download = userFilename;
-            document.body.appendChild(a); a.click(); document.body.removeChild(a);
+            a.href = url;
+            a.download = filename + '.json';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
             URL.revokeObjectURL(url);
-            showStatus("Playlist exported!", "success");
+            showStatus('Playlist exported!', 'success');
+            closeExportModal();
         }
 
         const importModal = document.getElementById('importModal');
@@ -933,12 +1050,13 @@
         dropZone.addEventListener('dragover', (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.add('dragover'); });
         dropZone.addEventListener('dragleave', (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('dragover'); });
         dropZone.addEventListener('drop', (e) => { e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('dragover'); const file = e.dataTransfer.files[0]; processPlaylistFile(file); });
-        addPlaylistBtn.addEventListener('click', () => {
+        
+        addPlaylistBtn.addEventListener('click', async () => {
             if (!validatedPlaylist) return;
-            let playlists = getPlaylists();
+            const playlists = await getPlaylistsDB();
             validatedPlaylist.id = Date.now().toString();
-            playlists.push(validatedPlaylist);
-            savePlaylists(playlists);
+            validatedPlaylist.order = (playlists.length > 0) ? Math.max(...playlists.map(p => p.order || 0)) + 1 : 1;
+            await savePlaylistDB(validatedPlaylist);
             renderPlaylistsList();
             showStatus(`Playlist "${validatedPlaylist.name}" imported successfully!`, 'success');
             closeImportModal();
@@ -946,10 +1064,13 @@
 
 
         async function initializeApp() {
+            await initDB();
             try { const response = await fetch('../SoundboardNames.json'); allSoundsData = await response.json(); } catch (error) { showStatus('Failed to load sound list.', 'error'); }
             
             createModal.addEventListener('click', (e) => { if(e.target === createModal) closeCreateModal(); });
             importModal.addEventListener('click', (e) => { if(e.target === importModal) closeImportModal(); });
+            exportModal.addEventListener('click', (e) => { if(e.target === exportModal) closeExportModal(); });
+
             document.addEventListener('click', (e) => {
                 if (!e.target.closest('.playlist-card')) {
                     document.querySelectorAll('.reorder-btn-group').forEach(el => el.classList.remove('visible'));
@@ -963,7 +1084,9 @@
             
             document.getElementById('closeCreateModalBtn').addEventListener('click', closeCreateModal);
             document.getElementById('closeImportModalBtn').addEventListener('click', closeImportModal);
+            document.getElementById('closeExportPlaylistModalBtn').addEventListener('click', closeExportModal);
             document.getElementById('savePlaylistBtn').addEventListener('click', savePlaylist);
+            document.getElementById('confirmPlaylistExportBtn').addEventListener('click', confirmPlaylistExport);
             
             ['playlistNameInput', 'playlistDescriptionInput'].forEach(id => {
                 document.getElementById(id).addEventListener('input', updatePreview);
