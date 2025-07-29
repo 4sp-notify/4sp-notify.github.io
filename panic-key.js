@@ -1,65 +1,65 @@
 /**
  * panic-key.js
- * * This script provides a user-configurable panic key functionality for a website using Firebase.
- * When activated, it redirects the user to a pre-configured URL.
+ * This script provides a user-configurable panic key functionality for a website using IndexedDB.
+ * When activated, it redirects the user to a pre-configured URL stored locally in the browser.
  * The key press must be a single key without any modifiers (Shift, Ctrl, Alt, etc.).
  *
- * Final version as of: July 23, 2025
+ * This version uses IndexedDB for local storage, ensuring privacy and instantaneous redirection.
  */
 
 // This message helps confirm that the script file itself is being loaded by the browser.
 console.log("Debug: panic-key.js script has started.");
 
-// We wrap the main logic in a 'DOMContentLoaded' listener to ensure the HTML page
-// is fully loaded before the script tries to interact with it.
-document.addEventListener('DOMContentLoaded', () => {
-    console.log("Debug: DOMContentLoaded event fired. The page is ready.");
-    
-    // First, we check if the Firebase library has been loaded. This is a critical dependency.
-    // If it's missing, we log a fatal error and stop execution.
-    if (typeof firebase === 'undefined') {
-        console.error("FATAL ERROR: Firebase is not loaded. Check the script order in your HTML file. 'firebase-app-compat.js' and other SDKs must come before 'panic-key.js'.");
-        return;
-    }
+// --- IndexedDB Configuration ---
+const DB_NAME = 'userLocalSettingsDB';
+const STORE_NAME = 'panicKeyStore';
+const SETTINGS_ID = 'currentPanicSettings'; // A fixed ID for our settings object
 
-    // firebase.auth().onAuthStateChanged() is the entry point. It automatically
-    // determines if a user is logged in or not.
-    firebase.auth().onAuthStateChanged(user => {
-        if (user) {
-            // If a user object exists, they are logged in.
-            console.log("Debug: User is logged in. UID:", user.uid);
-            
-            const db = firebase.firestore();
-            const userRef = db.collection('users').doc(user.uid);
+/**
+ * Opens the IndexedDB and creates the object store if needed.
+ * @returns {Promise<IDBDatabase>} A promise that resolves with the database object.
+ */
+function openDB() {
+    return new Promise((resolve, reject) => {
+        // Version 1 of our database.
+        const request = indexedDB.open(DB_NAME, 1);
 
-            // We attempt to get the user's specific document from the 'users' collection.
-            userRef.get().then(doc => {
-                console.log("Debug: Attempting to get user settings from Firestore.");
-                if (doc.exists) {
-                    const userData = doc.data();
-                    console.log("Debug: Firestore document found.", userData);
-                    
-                    // We check if the 'panicKeySettings' object exists within the user's document.
-                    if (userData.panicKeySettings) {
-                        const panicSettings = userData.panicKeySettings;
-                        console.log("Debug: Panic key settings FOUND.", panicSettings);
-                        // If settings exist, we call the function to activate the key listener.
-                        addPanicKeyListener(panicSettings);
-                    } else {
-                        console.warn("Debug: User has a document, but no 'panicKeySettings' object was found inside it. The user needs to save their settings first.");
-                    }
-                } else {
-                    console.warn("Debug: User is logged in, but no document was found for them in Firestore.");
-                }
-            }).catch(error => {
-                console.error("Debug: An error occurred while fetching the user document from Firestore:", error);
-            });
-        } else {
-            // If the user object is null, no one is logged in.
-            console.log("Debug: No user is logged in. The panic key will not be active on this page.");
-        }
+        // This event handles the creation and updating of the database schema.
+        request.onupgradeneeded = event => {
+            const db = event.target.result;
+            // Create the 'panicKeyStore' object store if it doesn't already exist.
+            // We use 'id' as the keyPath, which will store our settings object.
+            if (!db.objectStoreNames.contains(STORE_NAME)) {
+                db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+                console.log("Debug: IndexedDB object store 'panicKeyStore' created.");
+            }
+        };
+
+        // These events handle the outcome of the connection request.
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
     });
-});
+}
+
+/**
+ * Fetches the panic key settings from the IndexedDB.
+ * @param {IDBDatabase} db - The database instance.
+ * @returns {Promise<object|null>} A promise that resolves with the settings object or null if not found.
+ */
+function getSettings(db) {
+    return new Promise((resolve, reject) => {
+        // Create a read-only transaction to get data.
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        // Request the settings object using its fixed ID.
+        const request = store.get(SETTINGS_ID);
+
+        // Resolve the promise with the result on success.
+        request.onsuccess = () => resolve(request.result || null);
+        // Reject the promise on error.
+        request.onerror = () => reject(request.error);
+    });
+}
 
 /**
  * Attaches the 'keydown' event listener to the document with the user's specific settings.
@@ -75,14 +75,13 @@ function addPanicKeyListener(settings) {
     console.log("Debug: Attaching keydown listener to the document with these settings:", settings);
 
     document.addEventListener('keydown', (event) => {
-        // This check prevents the panic key from firing while a user is typing in a form.
+        // This check prevents the panic key from firing while a user is typing in a form field.
         const activeElement = document.activeElement.tagName.toLowerCase();
         if (['input', 'select', 'textarea'].includes(activeElement)) {
             return;
         }
 
-        // --- MODIFIED LOGIC ---
-        // The new logic is simpler: check for the correct key and ensure NO modifiers are pressed.
+        // Check if the pressed key matches the setting and that no modifier keys are active.
         const keyIsCorrect = event.key.toLowerCase() === settings.key;
         const noModifiersPressed = !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
 
@@ -98,3 +97,27 @@ function addPanicKeyListener(settings) {
         }
     });
 }
+
+// --- Main Execution Logic ---
+// We wrap the main logic in a 'DOMContentLoaded' listener to ensure the HTML page
+// is fully loaded before the script tries to interact with it.
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log("Debug: DOMContentLoaded event fired. The page is ready.");
+    try {
+        // Open the database and then get the settings.
+        const db = await openDB();
+        const settings = await getSettings(db);
+
+        // If settings are found, activate the panic key listener.
+        if (settings) {
+            console.log("Debug: Panic key settings FOUND in IndexedDB.", settings);
+            addPanicKeyListener(settings);
+        } else {
+            console.log("Debug: No panic key settings found in IndexedDB.");
+        }
+        // It's good practice to close the database connection when done.
+        db.close();
+    } catch (error) {
+        console.error("FATAL ERROR: Could not initialize panic key from IndexedDB:", error);
+    }
+});
