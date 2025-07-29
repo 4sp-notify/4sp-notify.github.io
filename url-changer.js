@@ -2,7 +2,8 @@
  * url-changer.js
  * This script manages the dynamic changing of the website's title and favicon
  * based on user-selected presets. The user's choice is saved to localStorage
- * to persist across sessions. It properly scales favicons to prevent clipping.
+ * to persist across sessions. It properly scales favicons and disables image
+ * smoothing to ensure low-resolution icons remain sharp and not blurry.
  *
  * To add more options, simply add a new object to the 'presets' array.
  * Each object needs:
@@ -10,7 +11,7 @@
  * - title: The text that will appear as the page title.
  * - favicon: The relative path to the favicon image (supports .png, .ico, .jpg, .jpeg).
  *
- * Final version as of: July 27, 2025
+ * Final version as of: July 29, 2025
  */
 
 const urlChanger = {
@@ -141,6 +142,15 @@ const urlChanger = {
             canvas.width = size;
             canvas.height = size;
             const ctx = canvas.getContext('2d');
+
+            // --- ✨ NEW CODE START ✨ ---
+            // Disable image smoothing to prevent blurriness on scaled-down favicons.
+            // This provides a sharp, pixelated look which is ideal for low-res icons.
+            ctx.imageSmoothingEnabled = false;
+            ctx.mozImageSmoothingEnabled = false;
+            ctx.webkitImageSmoothingEnabled = false;
+            ctx.msImageSmoothingEnabled = false;
+            // --- ✨ NEW CODE END ✨ ---
 
             // Calculate dimensions to fit the image within the canvas while maintaining aspect ratio.
             const scale = Math.min(size / img.width, size / img.height);
