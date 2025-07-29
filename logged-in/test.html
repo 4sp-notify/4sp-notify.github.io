@@ -463,22 +463,28 @@
         }
         
         async function enterViewMode(noteId) {
-            exitEditMode();
+            if (viewingNoteId === noteId) return; // Already viewing, do nothing
             const noteToView = await getNoteDB(noteId);
             if (!noteToView) return;
+
+            editingNoteId = null; // Exit edit mode if active
             viewingNoteId = noteId;
+
             mainEditor.value = noteToView.content;
             mainEditor.readOnly = true;
+
             noteActionsBar.classList.add('hidden');
             editActionsBar.classList.add('hidden');
             viewActionsBar.classList.remove('hidden');
             renderNotesList();
         }
 
-        function exitViewMode() {
+        function exitAllModes() {
             viewingNoteId = null;
+            editingNoteId = null;
             mainEditor.value = '';
             mainEditor.readOnly = false;
+
             noteActionsBar.classList.remove('hidden');
             editActionsBar.classList.add('hidden');
             viewActionsBar.classList.add('hidden');
@@ -486,31 +492,23 @@
         }
 
         async function enterEditMode(noteId) {
-            exitViewMode();
+            if (editingNoteId === noteId) return; // Already editing, do nothing
             const noteToEdit = await getNoteDB(noteId);
             if (!noteToEdit) return;
+
+            viewingNoteId = null; // Exit view mode if active
             editingNoteId = noteId;
+
             mainEditor.value = noteToEdit.content;
             mainEditor.readOnly = false;
             mainEditor.focus();
+            
             noteActionsBar.classList.add('hidden');
             editActionsBar.classList.remove('hidden');
             viewActionsBar.classList.add('hidden');
             renderNotesList();
         }
-
-        function exitEditMode(isSwitching = false) {
-            editingNoteId = null;
-            if (!isSwitching) {
-                mainEditor.value = '';
-                mainEditor.readOnly = false;
-                noteActionsBar.classList.remove('hidden');
-                editActionsBar.classList.add('hidden');
-                viewActionsBar.classList.add('hidden');
-                renderNotesList();
-            }
-        }
-
+        
         async function handleSaveEdit() {
             if (!editingNoteId) return;
             const note = await getNoteDB(editingNoteId);
@@ -529,10 +527,10 @@
             const note = await getNoteDB(editingNoteId);
             if(note && mainEditor.value !== note.content) {
                 if(confirm("You have unsaved changes. Are you sure you want to cancel?")) {
-                    exitEditMode();
+                    exitAllModes();
                 }
             } else {
-                exitEditMode();
+                exitAllModes();
             }
         }
         
@@ -610,7 +608,7 @@
             await saveNoteDB(noteToSave);
             showStatus(`Note "${title}" details saved!`, 'success');
             closeDetailsModal();
-            exitEditMode();
+            exitAllModes();
         }
         
         function updatePreview() {
@@ -639,9 +637,11 @@
             if (!confirm('Are you sure you want to delete this note? This cannot be undone.')) return;
             await deleteNoteDB(noteId);
             showStatus('Note deleted.', 'success');
-            if(noteId === editingNoteId) { exitEditMode(); }
-            else if(noteId === viewingNoteId) { exitViewMode(); }
-            else { renderNotesList(); }
+            if(noteId === editingNoteId || noteId === viewingNoteId) {
+                exitAllModes();
+            } else {
+                renderNotesList();
+            }
         }
         
         async function openExportModal(noteId) {
@@ -828,7 +828,7 @@
             dropZone.addEventListener('drop', (e) => { if (e.dataTransfer.files[0]) { processFile(e.dataTransfer.files[0]); } }, false);
             
             document.addEventListener('contextmenu', (e) => { e.preventDefault(); toggleArrangers(!arrangersVisible, true); });
-            document.getElementById('closeViewBtn').addEventListener('click', exitViewMode);
+            document.getElementById('closeViewBtn').addEventListener('click', exitAllModes);
 
             document.getElementById('saveNewNoteBtn').addEventListener('click', () => { if (mainEditor.value.trim() === '') { showStatus('Cannot save an empty note.', 'error'); return; } openDetailsModal(); });
             document.getElementById('saveEditBtn').addEventListener('click', handleSaveEdit);
