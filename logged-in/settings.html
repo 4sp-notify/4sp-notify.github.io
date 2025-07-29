@@ -812,7 +812,7 @@
 
             <section class="settings-section" id="panic-key-section">
                 <h3>Set Panic Key</h3>
-                <p>Configure a single key that will instantly redirect you to a specified URL. This setting is stored on your account and works across devices.</p>
+                <p>Configure a single key that will instantly redirect you to a specified URL. This setting is stored locally in this browser for privacy and speed.</p>
                 
                 <form class="settings-form" id="panic-key-form">
                     <div class="form-group">
@@ -823,7 +823,7 @@
                         <label for="panicUrl">Redirect URL (domain name only)</label>
                         <input type="text" id="panicUrl" placeholder="example.com" required />
                     </div>
-                    <button type="button" onclick="savePanicKeySettings()">Save Panic Key</button>
+                    <button type="button" onclick="savePanicKeySettingsLocal()">Save Panic Key</button>
                 </form>
             </section>
             
@@ -927,37 +927,15 @@
         // Global variables
         let isGoogleAccount = false;
         let isReauthenticated = false;
-        let currentPanicSettings = null;
+        let currentPanicSettings = null; // This will be populated from IndexedDB
         let isAdmin = false; // Admin status flag
         let tabCooldownInterval = null; // Holds the interval for the tab disguise cooldown
         
         const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
         const marqueeEls = document.querySelectorAll('.marquee-content');
 
-        function checkPanicKeyCooldown(userData, userEmail) {
-            const isExemptUser = userEmail === '4simpleproblems@gmail.com';
-            if (isExemptUser) return;
-
-            const panicSection = document.getElementById('panic-key-section');
-            const lastChange = userData.lastPanicKeyChange;
-
-            if (lastChange && lastChange.toDate) {
-                const cooldown = 24 * 60 * 60 * 1000; // 24 hours
-                const timeSinceChange = Date.now() - lastChange.toDate().getTime();
-
-                if (timeSinceChange < cooldown) {
-                    const hoursRemaining = Math.ceil((cooldown - timeSinceChange) / (1000 * 60 * 60));
-                    panicSection.classList.add('disabled');
-                    panicSection.setAttribute('data-disabled-message', `YOU CAN UPDATE YOUR PANIC KEY AGAIN IN ${hoursRemaining} HOUR(S)`);
-                } else {
-                    panicSection.classList.remove('disabled');
-                    panicSection.removeAttribute('data-disabled-message');
-                }
-            } else {
-                panicSection.classList.remove('disabled');
-                panicSection.removeAttribute('data-disabled-message');
-            }
-        }
+        // This function is no longer needed as limits are removed.
+        // function checkPanicKeyCooldown() { ... }
 
         function checkAndUpdateCooldowns(userData, userEmail) {
             const isExemptUser = userEmail === '4simpleproblems@gmail.com';
@@ -994,7 +972,6 @@
                 return location.href = '../login.html';
             }
             
-            // Check for admin status
             if (user.email === '4simpleproblems@gmail.com') {
                 isAdmin = true;
                 initializeAdminFeatures();
@@ -1015,12 +992,8 @@
                 document.getElementById('newUsername').value = userData.username;
             }
 
-            if (userData.panicKeySettings) {
-                currentPanicSettings = userData.panicKeySettings;
-                document.getElementById('panicKey').value = currentPanicSettings.key || '';
-                const displayUrl = (currentPanicSettings.url || '').replace(/^https?:\/\//, '');
-                document.getElementById('panicUrl').value = displayUrl;
-            }
+            // **MODIFIED**: Load panic key settings from IndexedDB instead of Firestore
+            loadPanicKeySettingsLocal();
             
             isGoogleAccount = user.providerData.some(p => p.providerId === 'google.com');
             document.getElementById('displayAccountType').textContent = isGoogleAccount ? 'Google Account' : 'Email/Password Account';
@@ -1030,14 +1003,106 @@
             passwordSection.classList.toggle('disabled', isGoogleAccount);
             changePasswordBtn.style.display = isGoogleAccount ? 'none' : 'flex';
             
-            // Run all cooldown checks on page load
             checkAndUpdateCooldowns(userData, user.email);
-            checkPanicKeyCooldown(userData, user.email);
+            // **REMOVED**: checkPanicKeyCooldown() call is gone.
 
             setupDeleteAccountSection();
-            initializeTabDisguise(); // Initialize the new tab disguise feature
+            initializeTabDisguise();
             updateMarquees();
         });
+        
+        // --- NEW: IndexedDB Logic for Panic Key ---
+        const LOCAL_DB_NAME = 'userLocalSettingsDB';
+        const LOCAL_STORE_NAME = 'panicKeyStore';
+        const LOCAL_SETTINGS_ID = 'currentPanicSettings';
+
+        function openLocalDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open(LOCAL_DB_NAME, 1);
+                request.onupgradeneeded = event => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains(LOCAL_STORE_NAME)) {
+                        db.createObjectStore(LOCAL_STORE_NAME, { keyPath: 'id' });
+                    }
+                };
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+        }
+
+        async function loadPanicKeySettingsLocal() {
+            try {
+                const db = await openLocalDB();
+                const transaction = db.transaction(LOCAL_STORE_NAME, 'readonly');
+                const store = transaction.objectStore(LOCAL_STORE_NAME);
+                const request = store.get(LOCAL_SETTINGS_ID);
+
+                request.onsuccess = () => {
+                    const settings = request.result;
+                    if (settings) {
+                        // This global variable is used by the panic-key.js script if it's active on this page
+                        currentPanicSettings = settings; 
+                        document.getElementById('panicKey').value = settings.key || '';
+                        // Display URL without the protocol for a cleaner look
+                        const displayUrl = (settings.url || '').replace(/^https?:\/\//, '');
+                        document.getElementById('panicUrl').value = displayUrl;
+                    }
+                    db.close();
+                };
+                request.onerror = () => {
+                    console.error("Error loading panic key from local DB", request.error);
+                    db.close();
+                }
+            } catch (error) {
+                console.error("Could not open local DB for loading", error);
+            }
+        }
+
+        async function savePanicKeySettingsLocal() {
+            const key = document.getElementById('panicKey').value;
+            let url = document.getElementById('panicUrl').value.trim();
+
+            // --- Validation Logic (retained from original) ---
+            if (!key || key.length !== 1) {
+                return showMessage('error', 'Please enter a single character for the panic key.');
+            }
+            if (/[!@#$%^&*()_+~{}|:"<>?]/.test(key) || key !== key.toLowerCase()) {
+                return showMessage('error', 'Panic key cannot be a capital letter or a special character.');
+            }
+            if (!url) {
+                return showMessage('error', 'Please enter a URL for redirection.');
+            }
+            if (url.includes('/')) {
+                return showMessage('error', 'Panic URL cannot include a path (e.g., "/page.html"). Please enter a domain name only.');
+            }
+            // Automatically add https:// if no protocol is specified
+            if (!/^https?:\/\//i.test(url)) {
+                url = 'https://' + url;
+            }
+
+            const newSettings = { id: LOCAL_SETTINGS_ID, key, url };
+
+            try {
+                const db = await openLocalDB();
+                const transaction = db.transaction(LOCAL_STORE_NAME, 'readwrite');
+                const store = transaction.objectStore(LOCAL_STORE_NAME);
+                const request = store.put(newSettings); // 'put' will add or update the record
+
+                request.onsuccess = () => {
+                    currentPanicSettings = newSettings; // Update global variable for immediate use
+                    showMessage('success', 'Panic key settings saved successfully to this browser!');
+                };
+                request.onerror = () => {
+                    showMessage('error', 'Could not save settings locally: ' + request.error);
+                };
+                transaction.oncomplete = () => {
+                    db.close();
+                };
+            } catch (error) {
+                showMessage('error', 'Could not open local DB for saving: ' + error.message);
+            }
+        }
+        // --- END: IndexedDB Logic ---
 
         // --- NEW TAB DISGUISE LOGIC ---
         function initializeTabDisguise() {
@@ -1301,69 +1366,6 @@
             });
         }
         window.addEventListener('resize', updateMarquees);
-
-        async function savePanicKeySettings() {
-            if (document.getElementById('panic-key-section').classList.contains('disabled')) return;
-
-            const key = document.getElementById('panicKey').value;
-            let url = document.getElementById('panicUrl').value.trim();
-            const user = firebase.auth().currentUser;
-            const isExemptUser = user.email === '4simpleproblems@gmail.com';
-
-            if (!key || key.length !== 1) {
-                return showMessage('error', 'Please enter a single character for the panic key.');
-            }
-            if (/[!@#$%^&*()_+~{}|:"<>?]/.test(key) || key !== key.toLowerCase()) {
-                return showMessage('error', 'Panic key cannot be a capital letter or a special character.');
-            }
-            if (!url) {
-                return showMessage('error', 'Please enter a URL for redirection.');
-            }
-            if (url.includes('/')) {
-                return showMessage('error', 'Panic URL cannot include a path (e.g., "/page.html"). Please enter a domain name only.');
-            }
-            if (!/^https?:\/\//i.test(url)) {
-                url = 'https://' + url;
-            }
-
-            // UPDATED: Added confirmation dialog for non-admin users
-            if (!isExemptUser) {
-                const proceed = confirm("Are you sure you want to save these settings? You will not be able to change your panic key again for 24 hours.");
-                if (!proceed) {
-                    return; // Abort if the user clicks "Cancel"
-                }
-            }
-
-            try {
-                const updatePayload = {
-                    panicKeySettings: { key, url }
-                };
-                if (!isExemptUser) {
-                    updatePayload.lastPanicKeyChange = firebase.firestore.FieldValue.serverTimestamp();
-                }
-
-                await dbRef().update(updatePayload);
-
-                currentPanicSettings = { key, url };
-                showMessage('success', 'Panic key settings saved successfully!');
-
-                if (!isExemptUser) {
-                    const updatedDoc = await dbRef().get();
-                    checkPanicKeyCooldown(updatedDoc.data(), user.email);
-                }
-            } catch (error) { 
-                showMessage('error', 'Could not save settings: ' + error.message); 
-            }
-        }
-        
-        document.addEventListener('keydown', (event) => {
-            if (!currentPanicSettings || !currentPanicSettings.key || !currentPanicSettings.url) return;
-            if (['input', 'select', 'textarea'].includes(document.activeElement.tagName.toLowerCase())) return;
-            if (event.key.toLowerCase() === currentPanicSettings.key && !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey) {
-                event.preventDefault();
-                window.location.replace(currentPanicSettings.url);
-            }
-        });
 
         async function updateUsername() {
             const newNameRaw = document.getElementById('newUsername').value.trim();
