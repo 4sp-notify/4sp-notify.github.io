@@ -1,12 +1,12 @@
 /**
- * ban-enforcer.js (v2 - Enhanced Persistence)
+ * ban-enforcer.js (v2.1 - Enhanced Persistence with Home Button)
  *
  * This script is the primary enforcement mechanism for website bans. It has been updated
- * for more aggressive and persistent enforcement.
+ * for more aggressive and persistent enforcement and includes a home button on the ban screen.
  *
  * It immediately injects a transparent "shield" and disables page scrolling to block all interaction.
  * It then checks if the user's ID exists in the 'bans' collection in Firestore.
- * - If BANNED, the shield becomes a visible, persistent overlay with the ban reason.
+ * - If BANNED, the shield becomes a visible, persistent overlay with the ban reason and a home button.
  * A new interval guard prevents tampering via developer tools.
  * - If NOT BANNED, the shield is removed and scrolling is re-enabled, allowing normal interaction.
  *
@@ -112,6 +112,8 @@ document.addEventListener('DOMContentLoaded', () => {
 function showBanScreen(banData) {
     const shieldId = 'ban-enforcer-shield';
     const messageId = 'ban-enforcer-message';
+    // **NEW**: ID for the home button
+    const homeButtonId = 'ban-enforcer-home-button';
 
     // This function contains the logic to create/update all visual ban elements.
     // It is called once and then used by the interval guard.
@@ -145,9 +147,8 @@ function showBanScreen(banData) {
 
             // --- Sanitize data to prevent potential HTML injection ---
             const reason = banData.reason ? String(banData.reason).replace(/</g, "&lt;").replace(/>/g, "&gt;") : 'No reason provided.';
-            const banDate = banData.bannedAt && banData.bannedAt.toDate ? `on ${banData.bannedAt.toDate().toLocaleDateString()}`: '';
+            const banDate = banData.bannedAt && banData.bannedAt.toDate ? `on ${banData.bannedAt.toDate().toLocaleDateString()}` : '';
 
-            // **MODIFICATION**: The "Access Denied" color is now straight red (#ff0000).
             messageBox.innerHTML = `
                 <h1 style="font-size: 2.3em; color: #fc0324; margin: 0 0 10px 0; font-weight: bold;">Access Denied</h1>
                 <p style="font-size: 1.1em; margin: 0 0 15px 0; line-height: 1.4; color: #e0e0e0;">Your account has been suspended from this service.</p>
@@ -174,9 +175,58 @@ function showBanScreen(banData) {
             console.warn("Debug [Guard]: User tried to re-enable scrolling. Re-locking.");
         }
         if (document.body.style.overflow !== 'hidden') {
-             document.body.style.overflow = 'hidden';
+            document.body.style.overflow = 'hidden';
+        }
+
+        // --- 6. **NEW**: Find or create the Home button ---
+        let homeButton = document.getElementById(homeButtonId);
+        if (!homeButton) {
+            console.warn("Debug [Guard]: Home button was removed. Re-creating...");
+            homeButton = document.createElement('a'); // Use an anchor tag for navigation
+            homeButton.id = homeButtonId;
+            homeButton.href = '../index.html'; // Set the redirection target
+
+            // Add the Font Awesome icon
+            homeButton.innerHTML = `<i class="fa-solid fa-house"></i>`;
+
+            // Apply styles
+            homeButton.style.position = 'fixed';
+            homeButton.style.top = '25px';
+            homeButton.style.right = '25px';
+            homeButton.style.zIndex = '2147483647';
+            homeButton.style.width = '50px';
+            homeButton.style.height = '50px';
+            homeButton.style.display = 'flex';
+            homeButton.style.alignItems = 'center';
+            homeButton.style.justifyContent = 'center';
+            homeButton.style.fontSize = '24px';
+            homeButton.style.color = 'white';
+            homeButton.style.textDecoration = 'none';
+            
+            // Frosted glass effect
+            homeButton.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
+            homeButton.style.backdropFilter = 'blur(10px)';
+            homeButton.style.webkitBackdropFilter = 'blur(10px)'; // For Safari
+            homeButton.style.borderRadius = '8px';
+            homeButton.style.border = '1px solid rgba(255, 255, 255, 0.2)';
+            homeButton.style.transition = 'background-color 0.3s ease';
+
+            // Hover effect for better UX
+            homeButton.onmouseover = () => { homeButton.style.backgroundColor = 'rgba(255, 255, 255, 0.3)'; };
+            homeButton.onmouseout = () => { homeButton.style.backgroundColor = 'rgba(255, 255, 255, 0.15)'; };
+
+            document.body.appendChild(homeButton);
         }
     };
+
+    // --- **NEW**: Inject Font Awesome for the home button icon ---
+    // This is safe to run multiple times; the browser won't load the same stylesheet twice.
+    if (!document.querySelector('link[href*="font-awesome"]')) {
+         const faLink = document.createElement('link');
+         faLink.rel = 'stylesheet';
+         faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css';
+         document.head.appendChild(faLink);
+    }
 
     // Inject the custom font (if not already loaded globally)
     // This is safe to run multiple times if the guard needs to reconstruct the page.
