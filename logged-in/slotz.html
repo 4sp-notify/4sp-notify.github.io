@@ -180,14 +180,13 @@
     <script>
     document.addEventListener('DOMContentLoaded', () => {
         // --- Globals & DOM Elements ---
-        let currentUser, balance = 100, isSpinning = false, correctAnswer = 0;
+        let currentUser, balance = 100n, isSpinning = false, correctAnswer = 0;
+        const WIN_TARGET = 1_000_000_000_000_000_000n; // 1 Quintillion
         const sidebar = document.getElementById('sidebar'), toggleSidebarBtn = document.getElementById('toggleSidebar'), sidebarUserNameEl = document.getElementById('userName'), sidebarUserEmailEl = document.getElementById('userEmail'), mainLogoutBtn = document.getElementById('logoutBtn'), sidebarLogoutBtn = document.getElementById('signOutLink');
         const reelsEls = document.querySelectorAll('.reel .number'), spinBtn = document.getElementById('spin'), balEl = document.getElementById('balance'), betEl = document.getElementById('bet'), msgEl = document.getElementById('message'), allInBtn = document.getElementById('allInBtn'), scoreboardListEl = document.getElementById('scoreboardList'), refreshBtn = document.getElementById('refreshBtn');
         const resetModal = document.getElementById('resetModal'), mathQuestionLabel = document.getElementById('mathQuestionLabel'), mathAnswerInput = document.getElementById('mathAnswerInput'), resetErrorEl = document.getElementById('resetError'), submitResetBtn = document.getElementById('submitResetBtn'), cancelResetBtn = document.getElementById('cancelResetBtn');
 
-        // --- Rigging & Game Data ---
-        const riggedToLoseEmails = ['enemy1@example.com', 'jace.toot@icloud.com', 'tootja30@minerva.sparcc.org'];
-        const riggedToWinEmails = ['ludwza30@minerva.sparcc.org', '4simpleproblems@gmail.com', 'belkwy30@minerva.sparcc.org'];
+        // --- Game Data ---
         const strip = [...Array(15).fill(1), ...Array(15).fill(2), ...Array(15).fill(3), ...Array(10).fill(4), ...Array(5).fill(5), ...Array(3).fill(6), ...Array(2).fill(7)];
         
         // --- Sidebar & Auth ---
@@ -207,38 +206,101 @@
             } else { window.location.href = '../index.html'; }
         });
         
-        // --- Local Storage & Scoreboard ---
+        // --- Local Storage & Scoreboard (using BigInt) ---
         const getStorageKey = (key) => currentUser ? `4sp_${key}_${currentUser.uid}` : null;
-        const loadBalance = () => { balance = parseInt(localStorage.getItem(getStorageKey('slotz_balance')) || 100, 10); };
-        const saveBalance = () => localStorage.setItem(getStorageKey('slotz_balance'), balance);
+        const loadBalance = () => { balance = BigInt(localStorage.getItem(getStorageKey('slotz_balance')) || '100'); };
+        const saveBalance = () => localStorage.setItem(getStorageKey('slotz_balance'), balance.toString());
         const loadScores = () => JSON.parse(localStorage.getItem(getStorageKey('slotz_scores')) || '[]');
         const saveScores = (scores) => localStorage.setItem(getStorageKey('slotz_scores'), JSON.stringify(scores));
-        const addScore = (newScore) => { let scores = loadScores(); if (scores.length < 10 || newScore > scores[scores.length - 1]) if (!scores.includes(newScore)) { scores.push(newScore); scores.sort((a, b) => b - a); saveScores(scores.slice(0, 10)); renderScoreboard(); } };
-        const renderScoreboard = () => { const scores = loadScores(); scoreboardListEl.innerHTML = scores.length === 0 ? '<li class="no-scores">No high scores yet. Get spinning!</li>' : scores.map((score, i) => `<li><span class="rank">#${i + 1}</span> <span class="score">${score.toLocaleString()}</span></li>`).join(''); };
+        
+        const addScore = (newScore) => { // newScore is a BigInt
+            let scores = loadScores(); // returns array of strings
+            if (!scores.includes(newScore.toString())) {
+                scores.push(newScore.toString());
+                scores.sort((a, b) => {
+                    const bigB = BigInt(b);
+                    const bigA = BigInt(a);
+                    if (bigB > bigA) return 1;
+                    if (bigA > bigB) return -1;
+                    return 0;
+                });
+                saveScores(scores.slice(0, 10));
+                renderScoreboard();
+            }
+        };
+
+        const renderScoreboard = () => {
+            const scores = loadScores(); // returns strings
+            scoreboardListEl.innerHTML = scores.length === 0 
+                ? '<li class="no-scores">No high scores yet. Get spinning!</li>' 
+                : scores.map((score, i) => `<li><span class="rank">#${i + 1}</span> <span class="score">${BigInt(score).toLocaleString()}</span></li>`).join('');
+        };
 
         // --- Game Logic & State ---
         const shuffle = (arr) => { const a = arr.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1));[a[i], a[j]] = [a[j], a[i]]; } return a; };
-        const updateBalanceUI = () => { balEl.textContent = balance.toLocaleString(); betEl.max = balance; };
+        const updateBalanceUI = () => { balEl.textContent = balance.toLocaleString(); betEl.max = balance.toString(); };
         const setControlsState = (enabled) => { spinBtn.disabled = !enabled; betEl.disabled = !enabled; allInBtn.disabled = !enabled; };
         const showMessage = (text, type = '', duration = 3000) => { msgEl.textContent = text; msgEl.className = type; if (duration) setTimeout(() => { if (msgEl.textContent === text) msgEl.textContent = ''; }, duration); };
         const animateReel = (el, duration, final) => { const p = el.parentElement; p?.classList.add('spinning'); return new Promise(res => setTimeout(() => { p?.classList.remove('spinning'); el.textContent = final; res(final); }, duration)); };
-        const updateUIForGameState = () => { updateBalanceUI(); if (balance <= 0) { setControlsState(false); refreshBtn.classList.remove('hidden'); } else { setControlsState(true); refreshBtn.classList.add('hidden'); } };
+        
+        const updateUIForGameState = () => {
+            updateBalanceUI();
+            if (balance <= 0n) {
+                setControlsState(false);
+                refreshBtn.classList.remove('hidden');
+            } else if (balance < WIN_TARGET) {
+                setControlsState(true);
+                refreshBtn.classList.add('hidden');
+            } else { // Handle re-loading a page where the user has already won
+                showMessage('🎉🎉🎉 YOU WON! You reached 1 Quintillion! 🎉🎉🎉', 'win x3', 0);
+                setControlsState(false);
+            }
+        };
+
         const spin = async () => {
             if (isSpinning) return;
-            const betAmount = parseInt(betEl.value, 10);
-            if (!betAmount || betAmount < 1 || betAmount > balance) { showMessage('Please enter a valid bet.', 'lose'); return; }
+            let betAmount;
+            try {
+                betAmount = BigInt(betEl.value);
+            } catch (e) {
+                showMessage('Please enter a valid bet amount.', 'lose'); return;
+            }
+            if (!betAmount || betAmount < 1n || betAmount > balance) { showMessage('Please enter a valid bet.', 'lose'); return; }
+            
             isSpinning = true; setControlsState(false); balance -= betAmount; updateBalanceUI(); showMessage('');
-            const reelsData = [shuffle(strip), shuffle(strip), shuffle(strip)]; let finals = riggedToWinEmails.includes(currentUser.email) ? (s => [s,s,s])(strip[Math.floor(Math.random()*strip.length)]) : riggedToLoseEmails.includes(currentUser.email) ? (() => { let s1,s2,s3; do {s1=shuffle(strip)[0];s2=shuffle(strip)[0];s3=shuffle(strip)[0];} while(s1===s2||s2===s3||s1===s3); return [s1,s2,s3]; })() : reelsData.map(s => s[Math.floor(Math.random()*s.length)]);
-            const results = await Promise.all(finals.map((val, i) => animateReel(reelsEls[i], [1200, 1400, 1600][i] + Math.random()*300, val)));
+            
+            const reelsData = [shuffle(strip), shuffle(strip), shuffle(strip)];
+            let finals = reelsData.map(s => s[Math.floor(Math.random() * s.length)]);
+            
+            const results = await Promise.all(finals.map((val, i) => animateReel(reelsEls[i], [1200, 1400, 1600][i] + Math.random() * 300, val)));
+            
             const counts = results.reduce((acc, val) => { acc[val] = (acc[val] || 0) + 1; return acc; }, {});
-            let payout = 0;
-            if (Object.values(counts).includes(3)) { payout = betAmount * 3; showMessage('🎉 JACKPOT! 3× WIN!', 'win x3', 5000); } 
-            else if (Object.values(counts).includes(2)) { payout = betAmount * 2; showMessage('✨ NICE! 2× WIN!', 'win x2', 5000); } 
-            else { showMessage(riggedToLoseEmails.includes(currentUser.email) ? '😂 ANOTHER LOSS! KEEP TRYING!' : '😢 YOU LOSE', 'lose', 5000); }
-            if (payout > 0) { balance += payout; addScore(balance); }
-            if (balance <= 0) balance = 0;
+            let payout = 0n;
+            
+            if (Object.values(counts).includes(3)) {
+                payout = betAmount * 3n; showMessage('🎉 JACKPOT! 3× WIN!', 'win x3', 5000);
+            } else if (Object.values(counts).includes(2)) {
+                payout = betAmount * 2n; showMessage('✨ NICE! 2× WIN!', 'win x2', 5000);
+            } else {
+                showMessage('😢 YOU LOSE', 'lose', 5000);
+            }
+            
+            if (payout > 0n) {
+                balance += payout;
+                addScore(balance);
+                
+                if (balance >= WIN_TARGET) {
+                    showMessage('🎉🎉🎉 YOU WON! You reached 1 Quintillion! 🎉🎉🎉', 'win x3', 0);
+                    isSpinning = true; // Permanently lock spinning
+                    saveBalance();
+                    updateUIForGameState();
+                    return; // End spin logic here
+                }
+            }
+            
+            if (balance <= 0n) balance = 0n;
             saveBalance(); isSpinning = false; updateUIForGameState();
-            if (balance <= 0) showMessage('💸 YOU ARE OUT OF MONEY! HIT REFRESH TO RESTART.', 'lose', 0);
+            if (balance <= 0n) showMessage('💸 YOU ARE OUT OF MONEY! HIT REFRESH TO RESTART.', 'lose', 0);
         };
 
         // --- Modal Logic ---
@@ -256,7 +318,7 @@
         const handleResetSubmit = () => {
             const userAnswer = parseInt(mathAnswerInput.value, 10);
             if (userAnswer === correctAnswer) {
-                balance = 100; saveBalance();
+                balance = 100n; saveBalance();
                 showMessage('Correct! Here are some funds. Good luck!', 'win x2', 3000);
                 updateUIForGameState(); closeResetModal();
             } else {
@@ -272,7 +334,7 @@
 
         // --- Event Listeners ---
         spinBtn.addEventListener('click', spin);
-        allInBtn.addEventListener('click', () => { if (balance > 0) { betEl.value = balance; spin(); } else { showMessage('You have no money to go all in!', 'lose'); } });
+        allInBtn.addEventListener('click', () => { if (balance > 0n) { betEl.value = balance.toString(); spin(); } else { showMessage('You have no money to go all in!', 'lose'); } });
         refreshBtn.addEventListener('click', openResetModal);
         submitResetBtn.addEventListener('click', handleResetSubmit);
         cancelResetBtn.addEventListener('click', closeResetModal);
