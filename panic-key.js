@@ -21,10 +21,12 @@ const SETTINGS_ID = 'currentPanicSettings'; // A fixed ID for our settings objec
  */
 function openDB() {
     return new Promise((resolve, reject) => {
-        // Version 1 of our database.
-        const request = indexedDB.open(DB_NAME, 1);
+        // **FIXED**: Removed the hardcoded version '1'. This will now open the latest version of the database.
+        const request = indexedDB.open(DB_NAME);
 
         // This event handles the creation and updating of the database schema.
+        // It will only run if a new, higher version number is ever provided in the future,
+        // or if the database doesn't exist at all.
         request.onupgradeneeded = event => {
             const db = event.target.result;
             // Create the 'panicKeyStore' object store if it doesn't already exist.
