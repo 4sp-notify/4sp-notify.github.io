@@ -191,15 +191,15 @@ function showBanScreen(banData) {
 
             // Apply styles
             homeButton.style.position = 'fixed';
-            homeButton.style.top = '15px';
-            homeButton.style.right = '15px';
+            homeButton.style.top = '10px';
+            homeButton.style.right = '10px';
             homeButton.style.zIndex = '2147483647';
-            homeButton.style.width = '30px';
-            homeButton.style.height = '30px';
+            homeButton.style.width = '45px';
+            homeButton.style.height = '45px';
             homeButton.style.display = 'flex';
             homeButton.style.alignItems = 'center';
             homeButton.style.justifyContent = 'center';
-            homeButton.style.fontSize = '25px';
+            homeButton.style.fontSize = '22.5px';
             homeButton.style.color = 'white';
             homeButton.style.textDecoration = 'none';
             
@@ -207,7 +207,7 @@ function showBanScreen(banData) {
             homeButton.style.backgroundColor = 'rgba(255, 255, 255, 0.15)';
             homeButton.style.backdropFilter = 'blur(10px)';
             homeButton.style.webkitBackdropFilter = 'blur(10px)'; // For Safari
-            homeButton.style.borderRadius = '12px';
+            homeButton.style.borderRadius = '10px';
             homeButton.style.border = '1px solid rgba(255, 255, 255, 0.2)';
             homeButton.style.transition = 'background-color 0.3s ease';
 
