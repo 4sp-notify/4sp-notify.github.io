@@ -37,7 +37,6 @@
                     db.close();
                 } catch (e) {
                     console.warn("Could not read theme setting on initial load.", e);
-                    // This can happen if the object store doesn't exist yet, which is fine.
                     db.close();
                 }
             };
@@ -51,7 +50,18 @@
     <script src="../panic-key.js"></script>
     <script src="../url-changer.js"></script>
     <style>
-        
+    /* --- Logo Theming --- */
+    .logo img {
+        height: 45px; /* Adjust as needed */
+        vertical-align: middle;
+    }
+    .logo-dark-theme { display: none; }
+    .logo-light-theme { display: block; }
+
+    .dark-mode .logo-dark-theme { display: block; }
+    .dark-mode .logo-light-theme { display: none; }
+
+
     /* --- Settings Layout (matching dashboard structure) --- */
     body.settings-page {
         display: flex;
@@ -920,16 +930,16 @@
         color: #666 !important;
     }
 
-    /* ** NEW ** Style for header buttons in dark mode */
+    /* ** REVISED ** Style for header buttons in dark mode */
     .dark-mode .main-header .btn-login {
         background: transparent;
-        border: 1px solid #999;
-        color: #999;
+        border: 1px solid #ccc; /* Lighter grey for better contrast */
+        color: #ccc;           /* Lighter grey for better contrast */
         transition: background-color 0.3s, color 0.3s;
     }
 
     .dark-mode .main-header .btn-login:hover {
-        background-color: #999;
+        background-color: #ccc;
         color: #1e1e1e;
     }
     /* ===================== END OF DARK MODE STYLES =================== */
@@ -1016,7 +1026,8 @@
         <div class="container">
             <div class="logo">
                 <a href="../index.html">
-                    <img id="headerLogo" src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer"/>
+                    <img class="logo-light-theme" src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer" />
+                    <img class="logo-dark-theme" src="../images/logo.png" alt="4SP Logo" style="cursor:pointer" />
                 </a>
             </div>
             <div class="auth-buttons">
@@ -1242,9 +1253,6 @@
         const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
         const marqueeEls = document.querySelectorAll('.marquee-content');
 
-        // This function is no longer needed as limits are removed.
-        // function checkPanicKeyCooldown() { ... }
-
         function checkAndUpdateCooldowns(userData, userEmail) {
             const isExemptUser = userEmail === '4simpleproblems@gmail.com';
             const passwordSection = document.getElementById('password-section');
@@ -1300,7 +1308,6 @@
                 document.getElementById('newUsername').value = userData.username;
             }
 
-            // **MODIFIED**: Load panic key settings from IndexedDB instead of Firestore
             loadPanicKeySettingsLocal();
             
             isGoogleAccount = user.providerData.some(p => p.providerId === 'google.com');
@@ -1312,22 +1319,20 @@
             changePasswordBtn.style.display = isGoogleAccount ? 'none' : 'flex';
             
             checkAndUpdateCooldowns(userData, user.email);
-            // **REMOVED**: checkPanicKeyCooldown() call is gone.
 
             setupDeleteAccountSection();
             initializeTabDisguise();
-            initializeThemeSwitcher(); // **NEW**: Initialize the theme switcher logic
-            updateLogoForTheme();      // **NEW**: Set initial logo based on theme
+            initializeThemeSwitcher();
             updateMarquees();
         });
         
-        // --- MODIFIED: IndexedDB Logic for Panic Key and Theme ---
+        // --- IndexedDB Logic for Panic Key and Theme ---
         const LOCAL_DB_NAME = 'userLocalSettingsDB';
-        const LOCAL_DB_VERSION = 2; // **MODIFIED**: Incremented version for schema change
+        const LOCAL_DB_VERSION = 2;
         const PANIC_STORE_NAME = 'panicKeyStore';
         const PANIC_SETTINGS_ID = 'currentPanicSettings';
-        const THEME_STORE_NAME = 'appSettings'; // **NEW**: New object store for theme
-        const THEME_SETTINGS_ID = 'theme';     // **NEW**: Key for the theme object
+        const THEME_STORE_NAME = 'appSettings';
+        const THEME_SETTINGS_ID = 'theme';
 
         function openLocalDB() {
             return new Promise((resolve, reject) => {
@@ -1337,7 +1342,6 @@
                     if (!db.objectStoreNames.contains(PANIC_STORE_NAME)) {
                         db.createObjectStore(PANIC_STORE_NAME, { keyPath: 'id' });
                     }
-                    // **NEW**: Create the new object store for the theme
                     if (!db.objectStoreNames.contains(THEME_STORE_NAME)) {
                         db.createObjectStore(THEME_STORE_NAME, { keyPath: 'id' });
                     }
@@ -1401,39 +1405,21 @@
                 showMessage('error', 'Could not open local DB for saving: ' + error.message);
             }
         }
-        // --- END: IndexedDB Logic ---
 
         // =================================================================== //
-        // ====================== NEW: THEME SWITCHER LOGIC ================== //
+        // ====================== THEME SWITCHER LOGIC ======================= //
         // =================================================================== //
-        
-        /**
-         * ** NEW **
-         * Updates the header logo based on the current theme (dark/light).
-         */
-        function updateLogoForTheme() {
-            const logo = document.getElementById('headerLogo');
-            if (!logo) return; // Safety check in case the element isn't found
-            const isDarkMode = document.documentElement.classList.contains('dark-mode');
-            
-            // Set the appropriate logo source
-            logo.src = isDarkMode ? '../images/logo.png' : '../images/logo-dark.png';
-        }
-
         function initializeThemeSwitcher() {
             const themeToggle = document.getElementById('theme-toggle');
 
-            // 1. Load the current setting and set the toggle's state
             loadThemeSetting().then(theme => {
                 themeToggle.checked = (theme === 'dark');
             });
 
-            // 2. Add event listener to handle changes
             themeToggle.addEventListener('change', () => {
                 const newTheme = themeToggle.checked ? 'dark' : 'light';
                 document.documentElement.classList.toggle('dark-mode', themeToggle.checked);
                 saveThemeSetting(newTheme);
-                updateLogoForTheme(); // Update the logo whenever the theme is toggled
             });
         }
 
@@ -1446,14 +1432,14 @@
                     const request = store.get(THEME_SETTINGS_ID);
 
                     request.onsuccess = () => {
-                        resolve(request.result ? request.result.value : 'light'); // Default to light
+                        resolve(request.result ? request.result.value : 'light');
                     };
                     request.onerror = () => reject(request.error);
                     transaction.oncomplete = () => db.close();
                 });
             } catch (error) {
                 console.error("Could not open local DB for loading theme", error);
-                return 'light'; // Default to light on error
+                return 'light';
             }
         }
 
@@ -1473,7 +1459,7 @@
         }
         // ==================== END OF THEME SWITCHER LOGIC ================== //
 
-        // --- NEW TAB DISGUISE LOGIC ---
+        // --- TAB DISGUISE LOGIC ---
         function initializeTabDisguise() {
             if (typeof urlChanger === 'undefined') {
                 console.error("urlChanger script not loaded or initialized before settings script.");
