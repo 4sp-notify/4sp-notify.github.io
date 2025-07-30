@@ -117,7 +117,7 @@ function showBanScreen(shield, banData) {
     messageBox.style.position = 'fixed';
     messageBox.style.bottom = '40px';
     messageBox.style.right = '40px';
-    messageBox.style.maxWidth = '450px';
+    messageBox.style.maxWidth = '600px';
     messageBox.style.textAlign = 'right';
     messageBox.style.color = '#ffffff';
     messageBox.style.fontFamily = "'PrimaryFont', Arial, sans-serif";
@@ -129,7 +129,7 @@ function showBanScreen(shield, banData) {
         <h1 style="font-size: 2.2em; color: #ff1744; margin: 0 0 10px 0; font-weight: bold;">Access Denied</h1>
         <p style="font-size: 1.1em; margin: 0 0 15px 0; line-height: 1.4; color: #e0e0e0;">Your account has been suspended from this service.</p>
         <p style="font-size: 1em; margin: 0 0 20px 0; color: #bdbdbd;"><strong>Reason:</strong> ${reason}</p>
-        <p style="font-size: 0.8em; color: #9e9e9e;">This action was taken ${banDate}. If you believe this is an error, please contact support.</p>
+        <p style="font-size: 0.8em; color: #9e9e9e;">This action was taken ${banDate}. If you believe this is an error, please contact 4simpleproblems+support@gmail.com</p>
     `;
 
     // --- 5. Append message to the body and lock the page scroll ---
