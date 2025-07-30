@@ -132,9 +132,9 @@ function showBanScreen(banData) {
         }
 
         // --- 2. Apply visible styles to the shield ---
-        shield.style.backgroundColor = 'rgba(10, 10, 10, 0.85)';
-        shield.style.backdropFilter = 'blur(12px)';
-        shield.style.webkitBackdropFilter = 'blur(12px)';
+        shield.style.backgroundColor = 'rgba(10, 10, 10, 0.75)';
+        shield.style.backdropFilter = 'blur(14px)';
+        shield.style.webkitBackdropFilter = 'blur(14px)';
 
         // --- 3. Find or create the message box ---
         let messageBox = document.getElementById(messageId);
@@ -149,7 +149,7 @@ function showBanScreen(banData) {
 
             // **MODIFICATION**: The "Access Denied" color is now straight red (#ff0000).
             messageBox.innerHTML = `
-                <h1 style="font-size: 2.2em; color: #ff0000; margin: 0 0 10px 0; font-weight: bold;">Access Denied</h1>
+                <h1 style="font-size: 2.3em; color: #fc0324; margin: 0 0 10px 0; font-weight: bold;">Access Denied</h1>
                 <p style="font-size: 1.1em; margin: 0 0 15px 0; line-height: 1.4; color: #e0e0e0;">Your account has been suspended from this service.</p>
                 <p style="font-size: 1em; margin: 0 0 20px 0; color: #bdbdbd;"><strong>Reason:</strong> ${reason}</p>
                 <p style="font-size: 0.8em; color: #9e9e9e;">This action was taken ${banDate}. If you believe this is an error, please contact 4simpleproblems+support@gmail.com</p>
