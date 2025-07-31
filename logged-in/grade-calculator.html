@@ -51,7 +51,8 @@
         .sidebar nav a .label { margin-left: 10px; white-space: nowrap; }
         .sidebar.collapsed nav a .label { display: none; }
         
-        .main-content { flex: 1; padding: 30px; background: var(--v4-bg-gradient); overflow-y: auto; display: flex; flex-direction: column; padding-bottom: 120px; }
+        .main-content { flex: 1; padding: 30px; background: var(--v4-bg-gradient); overflow-y: auto; display: flex; flex-direction: column; padding-bottom: 120px; position: relative; }
+        .page-view { transition: opacity 0.3s ease-in-out; }
         .page-header-v4 { margin-bottom: 25px; background: var(--v4-card-bg); padding: 20px 30px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
         .page-title-v4 { font-size: 2.2em; font-weight: bold; background: var(--v4-purple-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
         .status-message-v4 { display: none; padding: 15px 25px; margin: 0 auto 20px auto; border-radius: 12px; text-align: center; max-width: 600px; text-transform: uppercase; box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1); color: white; }
@@ -76,7 +77,7 @@
         .action-btn { background: none; border: 1px solid var(--v4-border-light); padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; }
         .action-btn.delete:hover { border-color: #dc3545; background: #f8d7da; }
         
-        #assignmentsView { background: var(--v4-card-bg); border-radius: 15px; padding: 25px; box-shadow: 0 6px 30px rgba(0,0,0,0.08); }
+        #assignmentsViewContainer { background: var(--v4-card-bg); border-radius: 15px; padding: 25px; box-shadow: 0 6px 30px rgba(0,0,0,0.08); }
         .assignments-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--v4-border-softer); padding-bottom: 15px; margin-bottom: 20px; }
         .assignments-header h3 { margin: 0; font-size: 1.8em; }
         #assignmentsList { list-style: none; padding: 0; }
@@ -110,12 +111,6 @@
         .weight-category-row input[type="number"] { width: 80px; }
         #addWeightBtn { font-size: 0.9em; padding: 8px 12px; }
         #weightTotal { text-align: right; font-weight: bold; margin-top: 10px; }
-
-        .forecasting-card { background-color: var(--v4-input-bg); border: 1px solid var(--v4-border-softer); border-radius: 12px; padding: 20px; margin-top: 25px; }
-        .forecasting-card h4 { margin-top: 0; margin-bottom: 15px; color: var(--v4-text-primary); }
-        .forecasting-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; align-items: end; }
-        #forecastResult { margin-top: 20px; padding: 15px; background: #e8eaf0; border-radius: 8px; text-align: center; font-size: 1.1em; }
-        #forecastResult .grade-needed { font-weight: bold; color: var(--v4-purple-accent); font-size: 1.2em; }
     </style>
 </head>
 <body class="grades-page">
@@ -150,7 +145,7 @@
         </aside>
 
         <main class="main-content">
-            <div id="foldersContainer">
+            <div id="foldersContainer" class="page-view">
                 <div class="page-header-v4"> <h2 class="page-title-v4">Grade Calculator 📈</h2> </div>
                 <div class="status-message-v4" id="statusMessageV4"></div>
                 <div class="actions-bar">
@@ -159,8 +154,8 @@
                 <div id="foldersView"></div>
             </div>
 
-            <div id="assignmentsContainer" class="hidden">
-                <div id="assignmentsView"></div>
+            <div id="assignmentsContainer" class="page-view hidden" style="opacity: 0;">
+                <div id="assignmentsViewContainer"></div>
             </div>
         </main>
     </div>
@@ -261,18 +256,16 @@
 
     document.addEventListener('DOMContentLoaded', () => {
         let db;
-        let currentFolderForForecast = null;
+        let currentFolder = null;
         
         const foldersContainer = document.getElementById('foldersContainer');
         const assignmentsContainer = document.getElementById('assignmentsContainer');
         const foldersView = document.getElementById('foldersView');
-        const assignmentsView = document.getElementById('assignmentsView');
+        const assignmentsViewContainer = document.getElementById('assignmentsViewContainer');
 
-        // Modals
         const folderModal = document.getElementById('folderModal');
         const assignmentModal = document.getElementById('assignmentModal');
 
-        // Inputs
         const pointsEarnedInput = document.getElementById('pointsEarnedInput');
         const pointsPossibleInput = document.getElementById('pointsPossibleInput');
         const percentageInput = document.getElementById('percentageInput');
@@ -297,7 +290,7 @@
         // --- Database Functions ---
         function initDB() {
             return new Promise((resolve, reject) => {
-                const request = indexedDB.open("GradesDB_v2", 1); // Version up for new structure
+                const request = indexedDB.open("GradesDB_v2", 1);
                 request.onerror = event => reject("Database error: " + event.target.errorCode);
                 request.onsuccess = event => { db = event.target.result; resolve(); };
                 request.onupgradeneeded = event => {
@@ -323,7 +316,7 @@
         const getPercentFromLetter = (letter) => gradingScale.find(s => s.grade === letter)?.mid ?? null;
         
         function calculateFolderGrade(folder) {
-            if (!folder.weighting || folder.weighting.length === 0) { // Unweighted calculation
+            if (!folder.weighting || folder.weighting.length === 0) { // Unweighted
                 if (!folder.assignments || folder.assignments.length === 0) return { overallPercentage: 'N/A', letterGrade: 'N/A' };
                 const totalEarned = folder.assignments.reduce((sum, a) => sum + a.pointsEarned, 0);
                 const totalPossible = folder.assignments.reduce((sum, a) => sum + a.pointsPossible, 0);
@@ -332,7 +325,7 @@
                 return { overallPercentage: percentage.toFixed(2) + '%', letterGrade: getLetterGrade(percentage) };
             }
 
-            // Weighted calculation
+            // Weighted
             let totalWeightedScore = 0;
             let totalWeightUsed = 0;
             folder.weighting.forEach(cat => {
@@ -351,16 +344,22 @@
             return { overallPercentage: finalPercentage.toFixed(2) + '%', letterGrade: getLetterGrade(finalPercentage) };
         }
 
-        // --- UI Rendering ---
-        function showView(viewName) {
-            foldersContainer.classList.add('hidden');
-            assignmentsContainer.classList.add('hidden');
-            if (viewName === 'folders') foldersContainer.classList.remove('hidden');
-            else if (viewName === 'assignments') assignmentsContainer.classList.remove('hidden');
+        // --- UI Rendering & Animations ---
+        function showView(viewIdToShow) {
+            const views = document.querySelectorAll('.page-view');
+            views.forEach(view => {
+                if (view.id === viewIdToShow) {
+                    view.classList.remove('hidden');
+                    setTimeout(() => { view.style.opacity = 1; }, 10);
+                } else {
+                    view.style.opacity = 0;
+                    setTimeout(() => { view.classList.add('hidden'); }, 300);
+                }
+            });
         }
 
         async function renderFolders() {
-            showView('folders');
+            showView('foldersContainer');
             const folders = await getFoldersDB();
             foldersView.innerHTML = '';
             if (folders.length === 0) {
@@ -395,25 +394,14 @@
         async function renderAssignments(folderId) {
             const folder = await getFolderDB(folderId);
             if (!folder) return;
-            currentFolderForForecast = folder;
-            showView('assignments');
+            currentFolder = folder;
+            showView('assignmentsContainer');
 
-            const categoryOptions = folder.weighting?.map(c => `<option value="${c.name}">${c.name}</option>`).join('') || '';
-
-            assignmentsView.innerHTML = `
+            assignmentsViewContainer.innerHTML = `
                 <div class="assignments-header"><h3>${folder.name}</h3><button id="backToFoldersBtn" class="btn-primary">&larr; Back</button></div>
                 <ul id="assignmentsList"></ul>
                 <div class="actions-bar" style="justify-content: center; margin-top: 20px;"><button class="btn-primary open-assignment-modal-btn" data-folder-id="${folder.id}">+ Add New Assignment</button></div>
-                <div class="forecasting-card">
-                    <h4>🎯 Grade Forecasting</h4>
-                    <div class="forecasting-grid">
-                        <div class="form-group"><label for="forecastTargetGrade">Target Grade</label><select id="forecastTargetGrade">${gradingScale.map(g => `<option value="${g.grade}">${g.grade}</option>`).join('')}</select></div>
-                        <div class="form-group"><label for="forecastPointsPossible">Next Assignment Points</label><input type="number" id="forecastPointsPossible" placeholder="e.g., 100"></div>
-                        <div class="form-group"><label for="forecastCategory">Category</label><select id="forecastCategory">${categoryOptions}</select></div>
-                        <button id="calculateForecastBtn" class="btn-primary">Calculate</button>
-                    </div>
-                    <div id="forecastResult" class="hidden"></div>
-                </div>`;
+            `;
             
             const list = document.getElementById('assignmentsList');
             if (!folder.assignments || folder.assignments.length === 0) {
@@ -475,7 +463,7 @@
             const total = [...document.querySelectorAll('.weight-value')].reduce((sum, el) => sum + (parseFloat(el.value) || 0), 0);
             const totalEl = document.getElementById('weightTotal');
             totalEl.textContent = `Total Weight: ${total}%`;
-            totalEl.style.color = total === 100 ? 'green' : 'red';
+            totalEl.style.color = total === 100 ? 'green' : 'var(--v4-text-primary)';
         }
 
         async function openAssignmentModal(folderId, assignment = null) {
@@ -528,7 +516,7 @@
         document.querySelectorAll('.close-btn, .btn-cancel').forEach(btn => btn.addEventListener('click', (e) => closeModal(document.getElementById(e.currentTarget.dataset.modalId))));
         document.getElementById('addWeightBtn').addEventListener('click', () => addWeightCategoryRow());
         document.getElementById('folderModal').addEventListener('input', e => { if (e.target.classList.contains('weight-value')) updateWeightTotal(); });
-        document.getElementById('folderModal').addEventListener('click', e => { if (e.target.classList.contains('delete-weight')) e.target.closest('.weight-category-row').remove(); updateWeightTotal(); });
+        document.getElementById('folderModal').addEventListener('click', e => { if (e.target.classList.contains('delete-weight')) { e.target.closest('.weight-category-row').remove(); updateWeightTotal(); }});
 
         document.getElementById('saveFolderBtn').addEventListener('click', async () => {
             const name = document.getElementById('folderNameInput').value.trim();
@@ -578,25 +566,34 @@
         });
 
         document.body.addEventListener('click', async (e) => {
-            if (e.target.closest('.folder-card') && !e.target.closest('.folder-actions')) renderAssignments(parseInt(e.target.closest('.folder-card').dataset.folderId));
-            if (e.target.id === 'backToFoldersBtn') renderFolders();
-            if (e.target.matches('.edit-folder')) openFolderModal(await getFolderDB(parseInt(e.target.closest('.folder-card').dataset.folderId)));
-            if (e.target.matches('.delete-folder') && confirm('Delete class?')) { await deleteFolderDB(parseInt(e.target.closest('.folder-card').dataset.folderId)); renderFolders(); }
-            if (e.target.matches('.add-assignment-btn') || e.target.matches('.open-assignment-modal-btn')) openAssignmentModal(parseInt(e.target.closest('[data-folder-id]').dataset.folderId));
+            if (e.target.closest('.folder-card') && !e.target.closest('.folder-actions')) {
+                renderAssignments(parseInt(e.target.closest('.folder-card').dataset.folderId));
+            }
+            if (e.target.id === 'backToFoldersBtn') {
+                renderFolders();
+            }
+            if (e.target.matches('.edit-folder')) {
+                openFolderModal(await getFolderDB(parseInt(e.target.closest('.folder-card').dataset.folderId)));
+            }
+            if (e.target.matches('.delete-folder') && confirm('Delete class?')) {
+                await deleteFolderDB(parseInt(e.target.closest('.folder-card').dataset.folderId));
+                renderFolders();
+            }
+            if (e.target.matches('.add-assignment-btn') || e.target.matches('.open-assignment-modal-btn')) {
+                openAssignmentModal(parseInt(e.target.closest('[data-folder-id]').dataset.folderId));
+            }
             if (e.target.matches('.edit-assignment')) {
                 const assId = parseInt(e.target.closest('.assignment-item').dataset.assignmentId);
-                const assignment = currentFolderForForecast.assignments.find(a => a.id === assId);
-                openAssignmentModal(currentFolderForForecast.id, assignment);
+                const assignment = currentFolder.assignments.find(a => a.id === assId);
+                openAssignmentModal(currentFolder.id, assignment);
             }
             if (e.target.matches('.delete-assignment') && confirm('Delete assignment?')) {
                 const assId = parseInt(e.target.closest('.assignment-item').dataset.assignmentId);
-                currentFolderForForecast.assignments = currentFolderForForecast.assignments.filter(a => a.id !== assId);
-                await saveFolderDB(currentFolderForForecast);
-                renderAssignments(currentFolderForForecast.id);
+                currentFolder.assignments = currentFolder.assignments.filter(a => a.id !== assId);
+                await saveFolderDB(currentFolder);
+                renderAssignments(currentFolder.id);
                 renderFolders();
             }
-            if (e.target.id === 'calculateForecastBtn') handleForecastCalculation();
-            if (e.target.id === 'convertForecastBtn') convertForecastToActual();
         });
 
         pointsEarnedInput.addEventListener('input', () => updateAllGradeInputs('fraction', { earned: pointsEarnedInput.value, possible: pointsPossibleInput.value }));
@@ -604,81 +601,6 @@
         percentageInput.addEventListener('input', () => updateAllGradeInputs('percentage', { percentage: percentageInput.value }));
         letterGradeInput.addEventListener('change', () => updateAllGradeInputs('letter', { letter: letterGradeInput.value }));
 
-        // --- Forecasting Logic ---
-        function handleForecastCalculation() {
-            const targetGrade = document.getElementById('forecastTargetGrade').value;
-            const futurePointsPossible = parseFloat(document.getElementById('forecastPointsPossible').value);
-            const futureCategoryName = document.getElementById('forecastCategory').value;
-            
-            if (isNaN(futurePointsPossible) || futurePointsPossible <= 0) return alert("Please enter a valid point value for the future assignment.");
-
-            const folder = currentFolderForForecast;
-            const targetPercent = getPercentFromLetter(targetGrade);
-            const futureCategoryWeight = folder.weighting.find(c => c.name === futureCategoryName)?.weight || 0;
-
-            let currentWeightedScore = 0;
-            let totalWeightWithAssignments = 0;
-
-            folder.weighting.forEach(cat => {
-                const assignments = folder.assignments?.filter(a => a.category === cat.name) || [];
-                if (assignments.length > 0) {
-                    const totalEarned = assignments.reduce((s, a) => s + a.pointsEarned, 0);
-                    const totalPossible = assignments.reduce((s, a) => s + a.pointsPossible, 0);
-                    currentWeightedScore += (totalEarned / totalPossible) * cat.weight;
-                    totalWeightWithAssignments += cat.weight;
-                }
-            });
-
-            // Calculate needed percentage on the future assignment
-            let neededPercent;
-            const categoryAssignments = folder.assignments?.filter(a => a.category === futureCategoryName) || [];
-            if (categoryAssignments.length === 0) { // First assignment in this category
-                const otherCatsWeightedScore = currentWeightedScore;
-                const otherCatsWeight = totalWeightWithAssignments;
-                neededPercent = (targetPercent * (otherCatsWeight + futureCategoryWeight) - otherCatsWeightedScore) / futureCategoryWeight;
-            } else { // Category already has assignments
-                const currentCatTotalEarned = categoryAssignments.reduce((s, a) => s + a.pointsEarned, 0);
-                const currentCatTotalPossible = categoryAssignments.reduce((s, a) => s + a.pointsPossible, 0);
-                
-                const otherCatsWeightedScore = currentWeightedScore - ((currentCatTotalEarned / currentCatTotalPossible) * futureCategoryWeight);
-                
-                const neededTotalEarned = (( (targetPercent * totalWeightWithAssignments) - otherCatsWeightedScore) / futureCategoryWeight) * (currentCatTotalPossible + futurePointsPossible);
-                const neededPointsEarned = neededTotalEarned - currentCatTotalEarned;
-                neededPercent = (neededPointsEarned / futurePointsPossible) * 100;
-            }
-            
-            const neededPoints = (neededPercent / 100) * futurePointsPossible;
-            displayForecastResult(neededPoints, futurePointsPossible, neededPercent);
-        }
-        
-        let lastForecast = null;
-        function displayForecastResult(needed, possible, percent) {
-            const resultEl = document.getElementById('forecastResult');
-            resultEl.classList.remove('hidden');
-            let resultHTML;
-            if (percent > 100) {
-                resultHTML = `It's not possible to reach your target grade. You would need <span class="grade-needed">${percent.toFixed(2)}%</span>.`;
-            } else if (percent < 0) {
-                 resultHTML = `You've already achieved your target grade! You need <span class="grade-needed">${percent.toFixed(2)}%</span>.`;
-            } else {
-                resultHTML = `To reach your goal, you need at least <span class="grade-needed">${needed.toFixed(2)} / ${possible} (${percent.toFixed(2)}%)</span>. <button id="convertForecastBtn" class="btn-primary" style="font-size: 0.8em; padding: 5px 10px; margin-left: 10px;">Convert</button>`;
-                lastForecast = { earned: needed, possible: possible, category: document.getElementById('forecastCategory').value };
-            }
-            resultEl.innerHTML = resultHTML;
-        }
-
-        function convertForecastToActual() {
-            if (!lastForecast) return;
-            openAssignmentModal(currentFolderForForecast.id);
-            // Wait a tick for modal to open, then populate
-            setTimeout(() => {
-                document.getElementById('assignmentNameInput').value = 'Forecasted Assignment';
-                document.getElementById('assignmentCategorySelect').value = lastForecast.category;
-                updateAllGradeInputs('fraction', { earned: lastForecast.earned, possible: lastForecast.possible });
-            }, 100);
-        }
-        
-        // --- Initialization ---
         function populateLetterGradeSelect() {
             letterGradeInput.innerHTML = `<option value="" disabled selected>Select</option>`;
             gradingScale.forEach(s => letterGradeInput.innerHTML += `<option value="${s.grade}">${s.grade}</option>`);
