@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>4SP - Grade Calculator</title>
+    <link rel="stylesheet" href="../css/style.css">
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="../firebase-config.js"></script>
+    <script src="../ban-enforcer.js"></script>
+    <script src="../panic-key.js"></script>
+    <script src="../url-changer.js"></script>
+
+    <style>
+        :root {
+            --v4-bg-gradient: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
+            --v4-card-bg: #fff;
+            --v4-text-primary: #333;
+            --v4-text-secondary: #555;
+            --v4-purple-accent: #6720bd;
+            --v4-purple-accent-darker: #5a1aa8;
+            --v4-purple-gradient: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+            --v4-border-light: #ddd;
+            --v4-border-softer: #eee;
+            --v4-input-bg: #f8f9fa;
+            --v4-input-border: #ccc;
+            --v4-font-primary: 'PrimaryFont', sans-serif;
+            --v4-font-secondary: 'SecondaryFont', sans-serif;
+        }
+        .hidden { display: none !important; }
+        body { display: flex; flex-direction: column; min-height: 100vh; margin: 0; font-family: var(--v4-font-primary); background: var(--v4-bg-gradient); color: var(--v4-text-primary); line-height: 1.6; }
+        .content-container-wrapper { display: flex; flex: 1; overflow: hidden; }
+        .sidebar { width: 200px; background: linear-gradient(180deg, #333 0%, #2a2a2a 100%); color: #fff; padding: 20px 10px; display: flex; flex-direction: column; border-right: 1px solid #444; transition: width 0.5s ease-in-out; position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
+        .sidebar.collapsed { width: 85px; }
+        #toggleSidebar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: none; border: none; color: #fff; font-size: 1.2em; cursor: pointer; padding: 4px; transition: transform 0.5s ease-in-out; }
+        .sidebar.collapsed #toggleSidebar { transform: translateX(-50%) rotate(180deg); }
+        .user-info { text-align: center; margin: 60px 0 30px; border-bottom: 1px solid #555; padding-bottom: 20px; overflow: visible; }
+        .marquee-container { overflow: hidden; white-space: nowrap; position: relative; width: 100%; height: 1.8em; line-height: 1.8em; }
+        .marquee-content { display: inline-block; padding-left: 100%; transform: translateX(0); animation: none; line-height: 1.8em; }
+        .marquee-active { animation: scroll-left-grades 12s linear infinite; }
+        @keyframes scroll-left-grades { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+        .user-info .username { font-family: var(--v4-font-primary); font-size: 1.3em; margin-bottom: 8px; line-height: 0.2em; font-weight: bold;}
+        .user-info .email { font-family: var(--v4-font-secondary); font-size: 0.9em; color: #bbb; }
+        .sidebar nav ul { list-style: none; padding: 0; margin: 60px 0 0; }
+        .sidebar nav li { margin-bottom: 10px; }
+        .sidebar nav a { display: flex; align-items: center; padding: 12px 15px; color: #fff; text-decoration: none; border-radius: 8px; transition: all 0.3s ease; font-family: var(--v4-font-primary); text-transform: uppercase; position: relative; overflow: hidden; font-size: 1em; }
+        .sidebar nav a:hover, .sidebar nav a.active { background: var(--v4-purple-gradient); transform: translateX(5px); color: #fff; }
+        .sidebar nav a .icon { font-size: 1.2em; width: 24px; text-align: center; }
+        .sidebar nav a .label { margin-left: 10px; white-space: nowrap; }
+        .sidebar.collapsed nav a .label { display: none; }
+        
+        .main-content { flex: 1; padding: 30px; background: var(--v4-bg-gradient); overflow-y: auto; display: flex; flex-direction: column; padding-bottom: 120px; }
+        .page-header-v4 { margin-bottom: 25px; background: var(--v4-card-bg); padding: 20px 30px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        .page-title-v4 { font-size: 2.2em; font-weight: bold; background: var(--v4-purple-gradient); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text; }
+        .status-message-v4 { display: none; padding: 15px 25px; margin: 0 auto 20px auto; border-radius: 12px; text-align: center; max-width: 600px; text-transform: uppercase; box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1); color: white; }
+        .status-message-v4.success { background: linear-gradient(135deg, #1c7430, #155724); }
+        .status-message-v4.error { background: linear-gradient(135deg, #8f262a, #721c24); }
+        
+        .actions-bar { display: flex; justify-content: flex-end; align-items: center; gap: 10px; margin-bottom: 25px; }
+        .btn-primary { background: var(--v4-purple-gradient); color: white; border: none; padding: 14px 24px; border-radius: 10px; font-family: var(--v4-font-primary); text-transform: uppercase; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .btn-primary:hover { transform: translateY(-3px); box-shadow: 0 6px 20px rgba(103, 32, 189, 0.4); }
+        .btn-cancel { background: #6c757d; color: white; border: none; padding: 14px 24px; border-radius: 10px; font-family: var(--v4-font-primary); text-transform: uppercase; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .btn-cancel:hover { background: #5a6268; transform: translateY(-3px); }
+
+        #foldersView { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
+        .folder-card { background: var(--v4-card-bg); border-radius: 15px; padding: 20px; box-shadow: 0 6px 30px rgba(0,0,0,0.08); cursor: pointer; transition: all 0.2s ease-in-out; display: flex; flex-direction: column; justify-content: space-between; }
+        .folder-card:hover { transform: translateY(-5px) scale(1.02); box-shadow: 0 8px 35px rgba(0,0,0,0.12); }
+        .folder-info { display: flex; justify-content: space-between; align-items: flex-start; }
+        .folder-name { font-size: 1.5em; font-weight: bold; color: var(--v4-text-primary); margin-bottom: 10px; }
+        .folder-grade-display { text-align: right; }
+        .folder-percentage { font-size: 2em; font-weight: bold; color: var(--v4-purple-accent); }
+        .folder-letter-grade { font-size: 1.1em; color: var(--v4-text-secondary); }
+        .folder-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; border-top: 1px solid var(--v4-border-softer); padding-top: 15px; }
+        .action-btn { background: none; border: 1px solid var(--v4-border-light); padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; }
+        .action-btn.delete:hover { border-color: #dc3545; background: #f8d7da; }
+        
+        #assignmentsView { background: var(--v4-card-bg); border-radius: 15px; padding: 25px; box-shadow: 0 6px 30px rgba(0,0,0,0.08); }
+        .assignments-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--v4-border-softer); padding-bottom: 15px; margin-bottom: 20px; }
+        .assignments-header h3 { margin: 0; font-size: 1.8em; }
+        #assignmentsList { list-style: none; padding: 0; }
+        .assignment-item { display: flex; justify-content: space-between; align-items: center; padding: 15px; border-radius: 10px; margin-bottom: 10px; background-color: var(--v4-input-bg); }
+        .assignment-details { flex-grow: 1; }
+        .assignment-name { font-weight: bold; }
+        .assignment-category { font-size: 0.85em; color: var(--v4-text-secondary); font-style: italic; }
+        .assignment-grade { font-family: var(--v4-font-secondary); color: var(--v4-text-secondary); text-align: right; }
+        .assignment-actions button { margin-left: 8px; }
+
+        .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); z-index: 2000; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; display: flex; align-items: center; justify-content: center; }
+        .modal-backdrop.visible { opacity: 1; pointer-events: auto; }
+        .modal-content { background: var(--v4-card-bg); width: 90%; max-width: 550px; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); display: flex; flex-direction: column; max-height: 90vh; transform: scale(0.95); transition: transform 0.3s ease; }
+        .modal-backdrop.visible .modal-content { transform: scale(1); }
+        .modal-header { padding: 20px 25px; border-bottom: 1px solid var(--v4-border-softer); position: relative; }
+        .modal-header h2 { margin: 0; font-size: 1.5em; color: var(--v4-text-primary); }
+        .modal-body { flex-grow: 1; overflow-y: auto; padding: 25px; }
+        .form-group { margin-bottom: 20px; }
+        label { font-weight: bold; color: var(--v4-text-secondary); margin-bottom: 8px; display: block; }
+        input[type="text"], input[type="number"], select { width: 100%; padding: 12px; border: 1px solid var(--v4-input-border); border-radius: 8px; background: var(--v4-input-bg); font-family: var(--v4-font-secondary); font-size: 1em; box-sizing: border-box; }
+        .modal-footer { padding: 15px 25px; border-top: 1px solid var(--v4-border-softer); display: flex; justify-content: flex-end; align-items: center; gap: 10px; }
+        .close-btn { position: absolute; top: 15px; right: 15px; background: none; border: none; cursor: pointer; padding: 5px; line-height: 0; }
+        .close-btn img { width: 20px; height: 20px; filter: invert(80%) sepia(0%) saturate(0%) hue-rotate(0deg) brightness(100%) contrast(100%); transition: filter 0.3s ease; }
+        .close-btn:hover img { filter: invert(10%) sepia(10%) saturate(0%) hue-rotate(240deg) brightness(100%) contrast(100%); }
+
+        .grade-inputs { display: grid; grid-template-columns: 1fr auto 1fr; gap: 10px; align-items: center; }
+        .grade-inputs span { text-align: center; font-size: 1.2em; }
+        
+        .weight-category-row { display: flex; gap: 10px; align-items: center; margin-bottom: 10px; }
+        .weight-category-row input[type="text"] { flex-grow: 1; }
+        .weight-category-row input[type="number"] { width: 80px; }
+        #addWeightBtn { font-size: 0.9em; padding: 8px 12px; }
+        #weightTotal { text-align: right; font-weight: bold; margin-top: 10px; }
+
+        .forecasting-card { background-color: var(--v4-input-bg); border: 1px solid var(--v4-border-softer); border-radius: 12px; padding: 20px; margin-top: 25px; }
+        .forecasting-card h4 { margin-top: 0; margin-bottom: 15px; color: var(--v4-text-primary); }
+        .forecasting-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; align-items: end; }
+        #forecastResult { margin-top: 20px; padding: 15px; background: #e8eaf0; border-radius: 8px; text-align: center; font-size: 1.1em; }
+        #forecastResult .grade-needed { font-weight: bold; color: var(--v4-purple-accent); font-size: 1.2em; }
+    </style>
+</head>
+<body class="grades-page">
+
+    <header class="main-header light-bg">
+        <div class="container">
+            <div class="logo"><a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer;"/></a></div>
+            <div class="auth-buttons">
+                <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="content-container-wrapper">
+        <aside class="sidebar slide-in" id="sidebar">
+            <button id="toggleSidebar">☰</button>
+            <div class="user-info">
+                <div class="marquee-container"> <span id="userName" class="marquee-content username">Loading…</span> </div>
+                <div class="marquee-container"> <span id="userEmail" class="marquee-content email">Loading…</span> </div>
+            </div>
+            <nav>
+                <ul>
+                    <li><a href="dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
+                    <li><a href="soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
+                    <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
+                    <li><a href="others.html" class="active"><span class="icon">✨</span><span class="label">Others</span></a></li>
+                    <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                    <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <div id="foldersContainer">
+                <div class="page-header-v4"> <h2 class="page-title-v4">Grade Calculator 📈</h2> </div>
+                <div class="status-message-v4" id="statusMessageV4"></div>
+                <div class="actions-bar">
+                    <button id="openFolderModalBtn" class="btn-primary">📚 Add New Class</button>
+                </div>
+                <div id="foldersView"></div>
+            </div>
+
+            <div id="assignmentsContainer" class="hidden">
+                <div id="assignmentsView"></div>
+            </div>
+        </main>
+    </div>
+
+    <div id="folderModal" class="modal-backdrop">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="folderModalTitle">Add New Class</h2>
+                <button class="close-btn" data-modal-id="folderModal"><img src="../images/cross-white.png" alt="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="folderIdInput">
+                <div class="form-group">
+                    <label for="folderNameInput">Class Name</label>
+                    <input type="text" id="folderNameInput" placeholder="e.g., Biology 101">
+                </div>
+                <div class="form-group">
+                    <label>Weighting Categories</label>
+                    <div id="weightCategoriesContainer"></div>
+                    <button id="addWeightBtn" type="button" class="btn-primary" style="margin-top: 10px;">+ Add Category</button>
+                    <div id="weightTotal">Total Weight: 0%</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" data-modal-id="folderModal">Cancel</button>
+                <button id="saveFolderBtn" class="btn-primary">Save Class</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="assignmentModal" class="modal-backdrop">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2 id="assignmentModalTitle">Add Assignment</h2>
+                <button class="close-btn" data-modal-id="assignmentModal"><img src="../images/cross-white.png" alt="Close"></button>
+            </div>
+            <div class="modal-body">
+                <input type="hidden" id="assignmentFolderIdInput">
+                <input type="hidden" id="assignmentIdInput">
+                <div class="form-group">
+                    <label for="assignmentNameInput">Assignment Name</label>
+                    <input type="text" id="assignmentNameInput" placeholder="e.g., Midterm Essay">
+                </div>
+                <div class="form-group">
+                    <label for="assignmentCategorySelect">Category</label>
+                    <select id="assignmentCategorySelect"></select>
+                </div>
+                <div class="form-group">
+                    <label>Grade</label>
+                    <div class="grade-inputs">
+                        <input type="number" id="pointsEarnedInput" placeholder="Points">
+                        <span>/</span>
+                        <input type="number" id="pointsPossibleInput" placeholder="Total">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="percentageInput">Percentage</label>
+                    <div class="grade-inputs" style="grid-template-columns: 1fr auto;">
+                        <input type="number" id="percentageInput" min="0" step="0.01">
+                        <span>%</span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="letterGradeInput">Letter Grade</label>
+                    <select id="letterGradeInput">
+                        </select>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-cancel" data-modal-id="assignmentModal">Cancel</button>
+                <button id="saveAssignmentBtn" class="btn-primary">Save Assignment</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    // --- AUTH & BASIC UI ---
+    const dbRef_ = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
+    firebase.auth().onAuthStateChanged(async user => { if (!user) { window.location.href = '../login.html'; } else { const userEmailEl = document.getElementById('userEmail'); const userNameEl = document.getElementById('userName'); if (userEmailEl) userEmailEl.textContent = user.email; if (userNameEl) { try { const doc = await dbRef_().get(); userNameEl.textContent = (doc.exists && doc.data().username) ? doc.data().username : (user.displayName || 'User'); } catch (error) { userNameEl.textContent = 'User'; } } initializeMarquees(); } });
+    document.getElementById('logoutBtn')?.addEventListener('click', () => { firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
+    document.getElementById('signOutLink')?.addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut().then(() => { window.location.href = '../login.html'; }); });
+    const sidebar_ = document.getElementById('sidebar');
+    const toggleSidebarBtn_ = document.getElementById('toggleSidebar');
+    if (toggleSidebarBtn_ && sidebar_) { toggleSidebarBtn_.addEventListener('click', () => { sidebar_.classList.toggle('collapsed'); setTimeout(initializeMarquees, 550); }); }
+    
+    function initializeMarquees() {
+        document.querySelectorAll('.user-info .marquee-content').forEach(el => {
+            const parent = el.closest('.marquee-container');
+            if (!el || !parent) return;
+            const overflow = el.scrollWidth > parent.clientWidth;
+            const shouldScroll = sidebar_.classList.contains('collapsed') || (overflow && !sidebar_.classList.contains('collapsed'));
+            el.classList.toggle('marquee-active', shouldScroll);
+            if (!overflow && !sidebar_.classList.contains('collapsed')) {
+                el.classList.remove('marquee-active');
+            }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        let db;
+        let currentFolderForForecast = null;
+        
+        const foldersContainer = document.getElementById('foldersContainer');
+        const assignmentsContainer = document.getElementById('assignmentsContainer');
+        const foldersView = document.getElementById('foldersView');
+        const assignmentsView = document.getElementById('assignmentsView');
+
+        // Modals
+        const folderModal = document.getElementById('folderModal');
+        const assignmentModal = document.getElementById('assignmentModal');
+
+        // Inputs
+        const pointsEarnedInput = document.getElementById('pointsEarnedInput');
+        const pointsPossibleInput = document.getElementById('pointsPossibleInput');
+        const percentageInput = document.getElementById('percentageInput');
+        const letterGradeInput = document.getElementById('letterGradeInput');
+
+        const gradingScale = [
+            { grade: 'A+', min: 97, mid: 98.5 },
+            { grade: 'A', min: 93, mid: 95 },
+            { grade: 'A-', min: 90, mid: 91.5 },
+            { grade: 'B+', min: 87, mid: 88.5 },
+            { grade: 'B', min: 83, mid: 85 },
+            { grade: 'B-', min: 80, mid: 81.5 },
+            { grade: 'C+', min: 77, mid: 78.5 },
+            { grade: 'C', min: 73, mid: 75 },
+            { grade: 'C-', min: 70, mid: 71.5 },
+            { grade: 'D+', min: 67, mid: 68.5 },
+            { grade: 'D', min: 63, mid: 65 },
+            { grade: 'D-', min: 60, mid: 61.5 },
+            { grade: 'F', min: 0, mid: 30 }
+        ];
+
+        // --- Database Functions ---
+        function initDB() {
+            return new Promise((resolve, reject) => {
+                const request = indexedDB.open("GradesDB_v2", 1); // Version up for new structure
+                request.onerror = event => reject("Database error: " + event.target.errorCode);
+                request.onsuccess = event => { db = event.target.result; resolve(); };
+                request.onupgradeneeded = event => {
+                    const db = event.target.result;
+                    if (!db.objectStoreNames.contains('folders')) {
+                        db.createObjectStore("folders", { keyPath: "id", autoIncrement: true });
+                    }
+                };
+            });
+        }
+        
+        function getFoldersDB() { return new Promise((resolve, reject) => { const r = db.transaction(["folders"],"readonly").objectStore("folders").getAll(); r.onsuccess = ()=>resolve(r.result); r.onerror = e=>reject(e.target.errorCode); }); }
+        function getFolderDB(id) { return new Promise((resolve, reject) => { const r = db.transaction(["folders"],"readonly").objectStore("folders").get(id); r.onsuccess = ()=>resolve(r.result); r.onerror = e=>reject(e.target.errorCode); }); }
+        function saveFolderDB(folder) { return new Promise((resolve, reject) => { const r = db.transaction(["folders"],"readwrite").objectStore("folders").put(folder); r.onsuccess = ()=>resolve(r.result); r.onerror = e=>reject(e.target.errorCode); }); }
+        function deleteFolderDB(id) { return new Promise((resolve, reject) => { const r = db.transaction(["folders"],"readwrite").objectStore("folders").delete(id); r.onsuccess = ()=>resolve(); r.onerror = e=>reject(e.target.errorCode); }); }
+
+        // --- Grade Calculation Logic ---
+        const getLetterGrade = (percentage) => {
+            if (percentage === null || isNaN(percentage)) return 'N/A';
+            for (const scale of gradingScale) { if (percentage >= scale.min) return scale.grade; }
+            return 'F';
+        };
+        const getPercentFromLetter = (letter) => gradingScale.find(s => s.grade === letter)?.mid ?? null;
+        
+        function calculateFolderGrade(folder) {
+            if (!folder.weighting || folder.weighting.length === 0) { // Unweighted calculation
+                if (!folder.assignments || folder.assignments.length === 0) return { overallPercentage: 'N/A', letterGrade: 'N/A' };
+                const totalEarned = folder.assignments.reduce((sum, a) => sum + a.pointsEarned, 0);
+                const totalPossible = folder.assignments.reduce((sum, a) => sum + a.pointsPossible, 0);
+                if (totalPossible === 0) return { overallPercentage: 'N/A', letterGrade: 'N/A' };
+                const percentage = (totalEarned / totalPossible) * 100;
+                return { overallPercentage: percentage.toFixed(2) + '%', letterGrade: getLetterGrade(percentage) };
+            }
+
+            // Weighted calculation
+            let totalWeightedScore = 0;
+            let totalWeightUsed = 0;
+            folder.weighting.forEach(cat => {
+                const categoryAssignments = folder.assignments?.filter(a => a.category === cat.name) || [];
+                if (categoryAssignments.length > 0) {
+                    const totalEarned = categoryAssignments.reduce((sum, a) => sum + a.pointsEarned, 0);
+                    const totalPossible = categoryAssignments.reduce((sum, a) => sum + a.pointsPossible, 0);
+                    const categoryPercentage = totalPossible > 0 ? (totalEarned / totalPossible) * 100 : 0;
+                    totalWeightedScore += categoryPercentage * (cat.weight / 100);
+                    totalWeightUsed += cat.weight;
+                }
+            });
+
+            if (totalWeightUsed === 0) return { overallPercentage: 'N/A', letterGrade: 'N/A' };
+            const finalPercentage = (totalWeightedScore / totalWeightUsed) * 100;
+            return { overallPercentage: finalPercentage.toFixed(2) + '%', letterGrade: getLetterGrade(finalPercentage) };
+        }
+
+        // --- UI Rendering ---
+        function showView(viewName) {
+            foldersContainer.classList.add('hidden');
+            assignmentsContainer.classList.add('hidden');
+            if (viewName === 'folders') foldersContainer.classList.remove('hidden');
+            else if (viewName === 'assignments') assignmentsContainer.classList.remove('hidden');
+        }
+
+        async function renderFolders() {
+            showView('folders');
+            const folders = await getFoldersDB();
+            foldersView.innerHTML = '';
+            if (folders.length === 0) {
+                foldersView.innerHTML = `<p style="text-align:center; color: var(--v4-text-secondary); grid-column: 1 / -1;">No classes added. Click 'Add New Class' to start!</p>`;
+                return;
+            }
+
+            folders.forEach(folder => {
+                const { overallPercentage, letterGrade } = calculateFolderGrade(folder);
+                const card = document.createElement('div');
+                card.className = 'folder-card';
+                card.dataset.folderId = folder.id;
+                card.innerHTML = `
+                    <div>
+                        <div class="folder-info">
+                            <h3 class="folder-name">${folder.name}</h3>
+                            <div class="folder-grade-display">
+                                <div class="folder-percentage">${overallPercentage}</div>
+                                <div class="folder-letter-grade">${letterGrade}</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="folder-actions">
+                        <button class="action-btn edit-folder" title="Edit Class">✏️</button>
+                        <button class="action-btn delete-folder" title="Delete Class">🗑️</button>
+                        <button class="btn-primary add-assignment-btn" style="padding: 8px 12px; font-size: 0.9em;">+ Assignment</button>
+                    </div>`;
+                foldersView.appendChild(card);
+            });
+        }
+
+        async function renderAssignments(folderId) {
+            const folder = await getFolderDB(folderId);
+            if (!folder) return;
+            currentFolderForForecast = folder;
+            showView('assignments');
+
+            const categoryOptions = folder.weighting?.map(c => `<option value="${c.name}">${c.name}</option>`).join('') || '';
+
+            assignmentsView.innerHTML = `
+                <div class="assignments-header"><h3>${folder.name}</h3><button id="backToFoldersBtn" class="btn-primary">&larr; Back</button></div>
+                <ul id="assignmentsList"></ul>
+                <div class="actions-bar" style="justify-content: center; margin-top: 20px;"><button class="btn-primary open-assignment-modal-btn" data-folder-id="${folder.id}">+ Add New Assignment</button></div>
+                <div class="forecasting-card">
+                    <h4>🎯 Grade Forecasting</h4>
+                    <div class="forecasting-grid">
+                        <div class="form-group"><label for="forecastTargetGrade">Target Grade</label><select id="forecastTargetGrade">${gradingScale.map(g => `<option value="${g.grade}">${g.grade}</option>`).join('')}</select></div>
+                        <div class="form-group"><label for="forecastPointsPossible">Next Assignment Points</label><input type="number" id="forecastPointsPossible" placeholder="e.g., 100"></div>
+                        <div class="form-group"><label for="forecastCategory">Category</label><select id="forecastCategory">${categoryOptions}</select></div>
+                        <button id="calculateForecastBtn" class="btn-primary">Calculate</button>
+                    </div>
+                    <div id="forecastResult" class="hidden"></div>
+                </div>`;
+            
+            const list = document.getElementById('assignmentsList');
+            if (!folder.assignments || folder.assignments.length === 0) {
+                list.innerHTML = `<p style="text-align:center; color: var(--v4-text-secondary);">No assignments yet for this class.</p>`;
+            } else {
+                folder.assignments.forEach(ass => {
+                    const item = document.createElement('li');
+                    item.className = 'assignment-item';
+                    item.dataset.assignmentId = ass.id;
+                    item.innerHTML = `
+                        <div class="assignment-details">
+                            <div class="assignment-name">${ass.name}</div>
+                            <div class="assignment-category">${ass.category || 'Uncategorized'}</div>
+                        </div>
+                        <div class="assignment-grade">
+                            <div>${ass.pointsEarned} / ${ass.pointsPossible}</div>
+                            <div>${ass.percentage.toFixed(2)}% - ${ass.letter}</div>
+                        </div>
+                        <div class="assignment-actions">
+                            <button class="action-btn edit-assignment" title="Edit">✏️</button>
+                            <button class="action-btn delete-assignment" title="Delete">🗑️</button>
+                        </div>`;
+                    list.appendChild(item);
+                });
+            }
+        }
+
+        // --- Modal & Weighting UI ---
+        function openModal(modal) { modal.classList.add('visible'); }
+        function closeModal(modal) { modal.classList.remove('visible'); }
+        
+        function openFolderModal(folder = null) {
+            document.getElementById('folderIdInput').value = folder?.id || '';
+            document.getElementById('folderNameInput').value = folder?.name || '';
+            document.getElementById('folderModalTitle').textContent = folder ? 'Edit Class' : 'Add New Class';
+            renderWeightCategories(folder?.weighting || []);
+            openModal(folderModal);
+        }
+
+        function renderWeightCategories(categories) {
+            const container = document.getElementById('weightCategoriesContainer');
+            container.innerHTML = '';
+            categories.forEach(cat => addWeightCategoryRow(cat.name, cat.weight));
+            updateWeightTotal();
+        }
+
+        function addWeightCategoryRow(name = '', weight = '') {
+            const container = document.getElementById('weightCategoriesContainer');
+            const row = document.createElement('div');
+            row.className = 'weight-category-row';
+            row.innerHTML = `
+                <input type="text" class="weight-name" placeholder="Category Name (e.g., Homework)" value="${name}">
+                <input type="number" class="weight-value" placeholder="%" min="0" max="100" value="${weight}">
+                <button type="button" class="action-btn delete-weight">🗑️</button>`;
+            container.appendChild(row);
+        }
+
+        function updateWeightTotal() {
+            const total = [...document.querySelectorAll('.weight-value')].reduce((sum, el) => sum + (parseFloat(el.value) || 0), 0);
+            const totalEl = document.getElementById('weightTotal');
+            totalEl.textContent = `Total Weight: ${total}%`;
+            totalEl.style.color = total === 100 ? 'green' : 'red';
+        }
+
+        async function openAssignmentModal(folderId, assignment = null) {
+            const folder = await getFolderDB(folderId);
+            document.getElementById('assignmentFolderIdInput').value = folderId;
+            document.getElementById('assignmentIdInput').value = assignment?.id || '';
+            document.getElementById('assignmentNameInput').value = assignment?.name || '';
+            document.getElementById('assignmentModalTitle').textContent = assignment ? 'Edit Assignment' : 'Add Assignment';
+            
+            const categorySelect = document.getElementById('assignmentCategorySelect');
+            categorySelect.innerHTML = folder.weighting?.map(c => `<option value="${c.name}" ${assignment?.category === c.name ? 'selected' : ''}>${c.name}</option>`).join('') || '<option>No Categories</option>';
+
+            if (assignment) { updateAllGradeInputs('fraction', { earned: assignment.pointsEarned, possible: assignment.pointsPossible }); } 
+            else { clearAssignmentInputs(); }
+            openModal(assignmentModal);
+        }
+
+        function clearAssignmentInputs() {
+            pointsEarnedInput.value = ''; pointsPossibleInput.value = ''; percentageInput.value = '';
+            letterGradeInput.selectedIndex = -1;
+            document.getElementById('assignmentNameInput').value = '';
+            document.getElementById('assignmentCategorySelect').selectedIndex = 0;
+        }
+
+        // --- Grade Input Sync ---
+        let isUpdating = false;
+        function updateAllGradeInputs(sourceType, values) {
+            if (isUpdating) return;
+            isUpdating = true;
+            let earned, possible, percentage, letter;
+            if (sourceType === 'fraction') {
+                earned = parseFloat(values.earned); possible = parseFloat(values.possible);
+                if (!isNaN(earned) && !isNaN(possible) && possible > 0) { percentage = (earned / possible) * 100; letter = getLetterGrade(percentage); }
+            } else if (sourceType === 'percentage') {
+                percentage = parseFloat(values.percentage);
+                if (!isNaN(percentage)) { earned = percentage; possible = 100; letter = getLetterGrade(percentage); }
+            } else if (sourceType === 'letter') {
+                letter = values.letter; percentage = getPercentFromLetter(letter);
+                if (percentage !== null) { earned = percentage; possible = 100; }
+            }
+            pointsEarnedInput.value = (earned !== undefined && !isNaN(earned)) ? earned.toFixed(2) : '';
+            pointsPossibleInput.value = (possible !== undefined && !isNaN(possible)) ? possible.toFixed(2) : '';
+            percentageInput.value = (percentage !== undefined && !isNaN(percentage)) ? percentage.toFixed(2) : '';
+            letterGradeInput.value = letter || '';
+            isUpdating = false;
+        }
+
+        // --- Event Listeners ---
+        document.getElementById('openFolderModalBtn').addEventListener('click', () => openFolderModal());
+        document.querySelectorAll('.close-btn, .btn-cancel').forEach(btn => btn.addEventListener('click', (e) => closeModal(document.getElementById(e.currentTarget.dataset.modalId))));
+        document.getElementById('addWeightBtn').addEventListener('click', () => addWeightCategoryRow());
+        document.getElementById('folderModal').addEventListener('input', e => { if (e.target.classList.contains('weight-value')) updateWeightTotal(); });
+        document.getElementById('folderModal').addEventListener('click', e => { if (e.target.classList.contains('delete-weight')) e.target.closest('.weight-category-row').remove(); updateWeightTotal(); });
+
+        document.getElementById('saveFolderBtn').addEventListener('click', async () => {
+            const name = document.getElementById('folderNameInput').value.trim();
+            if (!name) return alert('Class name is required.');
+            
+            const weightRows = document.querySelectorAll('.weight-category-row');
+            const weighting = [...weightRows].map(row => ({ name: row.querySelector('.weight-name').value.trim(), weight: parseFloat(row.querySelector('.weight-value').value) || 0 }));
+            const totalWeight = weighting.reduce((sum, cat) => sum + cat.weight, 0);
+
+            if (weighting.length > 0 && totalWeight !== 100) return alert('Total weight of categories must be exactly 100%.');
+            if (weighting.some(c => !c.name)) return alert('All weight categories must have a name.');
+
+            const id = document.getElementById('folderIdInput').value;
+            let folder;
+            if (id) {
+                folder = await getFolderDB(parseInt(id));
+                folder.name = name;
+                folder.weighting = weighting;
+            } else {
+                folder = { name, weighting, assignments: [] };
+            }
+            await saveFolderDB(folder);
+            closeModal(folderModal);
+            renderFolders();
+        });
+
+        document.getElementById('saveAssignmentBtn').addEventListener('click', async () => {
+            const folderId = parseInt(document.getElementById('assignmentFolderIdInput').value);
+            const assignmentId = document.getElementById('assignmentIdInput').value;
+            const name = document.getElementById('assignmentNameInput').value.trim();
+            const category = document.getElementById('assignmentCategorySelect').value;
+            const earned = parseFloat(pointsEarnedInput.value);
+            const possible = parseFloat(pointsPossibleInput.value);
+
+            if (!name || isNaN(earned) || isNaN(possible) || possible <= 0) return alert('Please fill out all fields correctly.');
+            
+            const folder = await getFolderDB(folderId);
+            const newAss = { id: Date.now(), name, category, pointsEarned: earned, pointsPossible: possible, percentage: (earned/possible)*100, letter: getLetterGrade((earned/possible)*100) };
+            
+            if (assignmentId) { newAss.id = parseInt(assignmentId); const index = folder.assignments.findIndex(a => a.id == assignmentId); folder.assignments[index] = newAss; } 
+            else { folder.assignments = folder.assignments || []; folder.assignments.push(newAss); }
+
+            await saveFolderDB(folder);
+            closeModal(assignmentModal);
+            renderAssignments(folderId);
+            renderFolders();
+        });
+
+        document.body.addEventListener('click', async (e) => {
+            if (e.target.closest('.folder-card') && !e.target.closest('.folder-actions')) renderAssignments(parseInt(e.target.closest('.folder-card').dataset.folderId));
+            if (e.target.id === 'backToFoldersBtn') renderFolders();
+            if (e.target.matches('.edit-folder')) openFolderModal(await getFolderDB(parseInt(e.target.closest('.folder-card').dataset.folderId)));
+            if (e.target.matches('.delete-folder') && confirm('Delete class?')) { await deleteFolderDB(parseInt(e.target.closest('.folder-card').dataset.folderId)); renderFolders(); }
+            if (e.target.matches('.add-assignment-btn') || e.target.matches('.open-assignment-modal-btn')) openAssignmentModal(parseInt(e.target.closest('[data-folder-id]').dataset.folderId));
+            if (e.target.matches('.edit-assignment')) {
+                const assId = parseInt(e.target.closest('.assignment-item').dataset.assignmentId);
+                const assignment = currentFolderForForecast.assignments.find(a => a.id === assId);
+                openAssignmentModal(currentFolderForForecast.id, assignment);
+            }
+            if (e.target.matches('.delete-assignment') && confirm('Delete assignment?')) {
+                const assId = parseInt(e.target.closest('.assignment-item').dataset.assignmentId);
+                currentFolderForForecast.assignments = currentFolderForForecast.assignments.filter(a => a.id !== assId);
+                await saveFolderDB(currentFolderForForecast);
+                renderAssignments(currentFolderForForecast.id);
+                renderFolders();
+            }
+            if (e.target.id === 'calculateForecastBtn') handleForecastCalculation();
+            if (e.target.id === 'convertForecastBtn') convertForecastToActual();
+        });
+
+        pointsEarnedInput.addEventListener('input', () => updateAllGradeInputs('fraction', { earned: pointsEarnedInput.value, possible: pointsPossibleInput.value }));
+        pointsPossibleInput.addEventListener('input', () => updateAllGradeInputs('fraction', { earned: pointsEarnedInput.value, possible: pointsPossibleInput.value }));
+        percentageInput.addEventListener('input', () => updateAllGradeInputs('percentage', { percentage: percentageInput.value }));
+        letterGradeInput.addEventListener('change', () => updateAllGradeInputs('letter', { letter: letterGradeInput.value }));
+
+        // --- Forecasting Logic ---
+        function handleForecastCalculation() {
+            const targetGrade = document.getElementById('forecastTargetGrade').value;
+            const futurePointsPossible = parseFloat(document.getElementById('forecastPointsPossible').value);
+            const futureCategoryName = document.getElementById('forecastCategory').value;
+            
+            if (isNaN(futurePointsPossible) || futurePointsPossible <= 0) return alert("Please enter a valid point value for the future assignment.");
+
+            const folder = currentFolderForForecast;
+            const targetPercent = getPercentFromLetter(targetGrade);
+            const futureCategoryWeight = folder.weighting.find(c => c.name === futureCategoryName)?.weight || 0;
+
+            let currentWeightedScore = 0;
+            let totalWeightWithAssignments = 0;
+
+            folder.weighting.forEach(cat => {
+                const assignments = folder.assignments?.filter(a => a.category === cat.name) || [];
+                if (assignments.length > 0) {
+                    const totalEarned = assignments.reduce((s, a) => s + a.pointsEarned, 0);
+                    const totalPossible = assignments.reduce((s, a) => s + a.pointsPossible, 0);
+                    currentWeightedScore += (totalEarned / totalPossible) * cat.weight;
+                    totalWeightWithAssignments += cat.weight;
+                }
+            });
+
+            // Calculate needed percentage on the future assignment
+            let neededPercent;
+            const categoryAssignments = folder.assignments?.filter(a => a.category === futureCategoryName) || [];
+            if (categoryAssignments.length === 0) { // First assignment in this category
+                const otherCatsWeightedScore = currentWeightedScore;
+                const otherCatsWeight = totalWeightWithAssignments;
+                neededPercent = (targetPercent * (otherCatsWeight + futureCategoryWeight) - otherCatsWeightedScore) / futureCategoryWeight;
+            } else { // Category already has assignments
+                const currentCatTotalEarned = categoryAssignments.reduce((s, a) => s + a.pointsEarned, 0);
+                const currentCatTotalPossible = categoryAssignments.reduce((s, a) => s + a.pointsPossible, 0);
+                
+                const otherCatsWeightedScore = currentWeightedScore - ((currentCatTotalEarned / currentCatTotalPossible) * futureCategoryWeight);
+                
+                const neededTotalEarned = (( (targetPercent * totalWeightWithAssignments) - otherCatsWeightedScore) / futureCategoryWeight) * (currentCatTotalPossible + futurePointsPossible);
+                const neededPointsEarned = neededTotalEarned - currentCatTotalEarned;
+                neededPercent = (neededPointsEarned / futurePointsPossible) * 100;
+            }
+            
+            const neededPoints = (neededPercent / 100) * futurePointsPossible;
+            displayForecastResult(neededPoints, futurePointsPossible, neededPercent);
+        }
+        
+        let lastForecast = null;
+        function displayForecastResult(needed, possible, percent) {
+            const resultEl = document.getElementById('forecastResult');
+            resultEl.classList.remove('hidden');
+            let resultHTML;
+            if (percent > 100) {
+                resultHTML = `It's not possible to reach your target grade. You would need <span class="grade-needed">${percent.toFixed(2)}%</span>.`;
+            } else if (percent < 0) {
+                 resultHTML = `You've already achieved your target grade! You need <span class="grade-needed">${percent.toFixed(2)}%</span>.`;
+            } else {
+                resultHTML = `To reach your goal, you need at least <span class="grade-needed">${needed.toFixed(2)} / ${possible} (${percent.toFixed(2)}%)</span>. <button id="convertForecastBtn" class="btn-primary" style="font-size: 0.8em; padding: 5px 10px; margin-left: 10px;">Convert</button>`;
+                lastForecast = { earned: needed, possible: possible, category: document.getElementById('forecastCategory').value };
+            }
+            resultEl.innerHTML = resultHTML;
+        }
+
+        function convertForecastToActual() {
+            if (!lastForecast) return;
+            openAssignmentModal(currentFolderForForecast.id);
+            // Wait a tick for modal to open, then populate
+            setTimeout(() => {
+                document.getElementById('assignmentNameInput').value = 'Forecasted Assignment';
+                document.getElementById('assignmentCategorySelect').value = lastForecast.category;
+                updateAllGradeInputs('fraction', { earned: lastForecast.earned, possible: lastForecast.possible });
+            }, 100);
+        }
+        
+        // --- Initialization ---
+        function populateLetterGradeSelect() {
+            letterGradeInput.innerHTML = `<option value="" disabled selected>Select</option>`;
+            gradingScale.forEach(s => letterGradeInput.innerHTML += `<option value="${s.grade}">${s.grade}</option>`);
+        }
+        
+        async function initializeApp() {
+            await initDB();
+            populateLetterGradeSelect();
+            renderFolders();
+            initializeMarquees();
+        }
+
+        initializeApp();
+    });
+    </script>
+</body>
+</html>
