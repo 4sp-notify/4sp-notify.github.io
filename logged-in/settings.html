@@ -349,6 +349,33 @@
         line-height: 1.5;
     }
 
+    /* --- NEW --- Style for Limit Info Box */
+    .limit-info {
+        padding: 10px 15px;
+        margin-bottom: 20px;
+        border-radius: 8px;
+        background-color: #f8f9fa;
+        border: 1px solid #e9ecef;
+        font-family: 'SecondaryFont', sans-serif;
+        color: #495057;
+        font-size: 0.95em;
+        text-align: center;
+        transition: all 0.3s ease;
+    }
+    .limit-info.on-cooldown {
+        background-color: #fff8e1; /* Light yellow for warning */
+        border-color: #ffecb3;
+        color: #856404;
+    }
+    .limit-info strong {
+        color: #6720bd; /* Primary theme color */
+        font-weight: 600;
+    }
+    .limit-info.on-cooldown strong {
+        color: #856404;
+    }
+    /* --- END NEW --- */
+
     .settings-form {
         display: flex;
         flex-direction: column;
@@ -378,8 +405,14 @@
         border-radius: 12px !important;
         font-size: 1em;
         font-family: 'SecondaryFont', sans-serif;
-        transition: border-color 0.3s, box-shadow 0.3s;
+        transition: border-color 0.3s, box-shadow 0.3s, background-color 0.3s;
         background: #fff;
+    }
+    
+    .settings-form input:disabled,
+    .settings-form select:disabled {
+        background-color: #e9ecef;
+        cursor: not-allowed;
     }
 
     .settings-form input:focus,
@@ -800,6 +833,10 @@
                 <h3>Edit Username</h3>
                 <p>Update your display name. You can change your username up to 5 times per month (every 30 days).</p>
                 
+                <div class="limit-info" id="usernameChangeInfo">
+                    <span>Loading limit information...</span>
+                </div>
+                
                 <form class="settings-form" id="username-form">
                     <div class="form-group">
                         <label for="newUsername">New Username (4-16 characters)</label>
@@ -841,6 +878,10 @@
             <section class="settings-section" id="password-section" data-disabled-message="PASSWORD CHANGES AREN'T AVAILABLE FOR GOOGLE ACCOUNTS">
                 <h3>Change Password</h3>
                 <p>Update your account password for enhanced security. Your new password must be at least 6 characters long and different from your current password.</p>
+                
+                <div class="limit-info" id="passwordChangeInfo">
+                    <span>Loading limit information...</span>
+                </div>
                 
                 <form class="settings-form" id="password-form">
                     <div class="form-group">
@@ -932,38 +973,102 @@
         const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
         const marqueeEls = document.querySelectorAll('.marquee-content');
 
-        // This function is no longer needed as limits are removed.
-        // function checkPanicKeyCooldown() { ... }
+        /**
+         * --- NEW ---
+         * This function updates the UI elements that display limits for username and password changes.
+         * It checks Firestore data for cooldowns and counts, then updates the text and enables/disables forms accordingly.
+         */
+        async function updateLimitDisplays() {
+            const user = firebase.auth().currentUser;
+            if (!user) return;
 
-        function checkAndUpdateCooldowns(userData, userEmail) {
-            const isExemptUser = userEmail === '4simpleproblems@gmail.com';
-            const passwordSection = document.getElementById('password-section');
+            const userDoc = await dbRef().get();
+            const userData = userDoc.exists ? userDoc.data() : {};
+            const isExemptUser = user.email === '4simpleproblems@gmail.com';
+
+            // --- 1. Update Username Limit Display ---
+            const usernameInfoEl = document.getElementById('usernameChangeInfo');
+            const usernameForm = document.getElementById('username-form');
+            const usernameButton = usernameForm.querySelector('button');
+            const usernameInput = usernameForm.querySelector('input');
 
             if (isExemptUser) {
-                if (!isGoogleAccount) {
-                    passwordSection.classList.remove('disabled');
-                }
-                return;
-            }
+                usernameInfoEl.innerHTML = "✨ You have <strong>unlimited</strong> username changes.";
+                usernameButton.disabled = false;
+                usernameInput.disabled = false;
+                usernameInfoEl.classList.remove('on-cooldown');
+            } else {
+                const USERNAME_CHANGE_LIMIT = 5;
+                const PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
+                const { usernameChangeCount = 0, usernameChangePeriodStart = null } = userData;
 
-            if (!isGoogleAccount) {
-                const lastPasswordChange = userData.lastPasswordChange;
-                if (lastPasswordChange && lastPasswordChange.toDate) {
-                    const passwordCooldown = 14 * 24 * 60 * 60 * 1000;
-                    const timeSinceChange = Date.now() - lastPasswordChange.toDate().getTime();
-                    
-                    if (timeSinceChange < passwordCooldown) {
-                        const daysRemaining = Math.ceil((passwordCooldown - timeSinceChange) / (1000 * 60 * 60 * 24));
-                        passwordSection.classList.add('disabled');
-                        passwordSection.setAttribute('data-disabled-message', `YOU CAN CHANGE YOUR PASSWORD AGAIN IN ${daysRemaining} DAY(S)`);
+                let inCurrentPeriod = false;
+                if (usernameChangePeriodStart && usernameChangePeriodStart.toDate) {
+                    if ((Date.now() - usernameChangePeriodStart.toDate().getTime()) < PERIOD_MS) {
+                        inCurrentPeriod = true;
+                    }
+                }
+
+                if (inCurrentPeriod) {
+                    const remainingChanges = USERNAME_CHANGE_LIMIT - usernameChangeCount;
+                    const resetTime = usernameChangePeriodStart.toDate().getTime() + PERIOD_MS;
+                    const daysRemaining = Math.ceil((resetTime - Date.now()) / (1000 * 60 * 60 * 24));
+
+                    if (remainingChanges > 0) {
+                        usernameInfoEl.innerHTML = `You have <strong>${remainingChanges} of ${USERNAME_CHANGE_LIMIT}</strong> changes remaining. Your limit resets in <strong>${daysRemaining} day(s)</strong>.`;
+                        usernameButton.disabled = false;
+                        usernameInput.disabled = false;
+                        usernameInfoEl.classList.remove('on-cooldown');
                     } else {
-                        passwordSection.classList.remove('disabled');
+                        usernameInfoEl.innerHTML = `You have used all your username changes. Your limit resets in <strong>${daysRemaining} day(s)</strong>.`;
+                        usernameButton.disabled = true;
+                        usernameInput.disabled = true;
+                        usernameInfoEl.classList.add('on-cooldown');
                     }
                 } else {
-                    passwordSection.classList.remove('disabled');
+                    usernameInfoEl.innerHTML = `You have <strong>${USERNAME_CHANGE_LIMIT} of ${USERNAME_CHANGE_LIMIT}</strong> changes remaining this period.`;
+                    usernameButton.disabled = false;
+                    usernameInput.disabled = false;
+                    usernameInfoEl.classList.remove('on-cooldown');
                 }
             }
+
+            // --- 2. Update Password Limit Display ---
+            const passwordInfoEl = document.getElementById('passwordChangeInfo');
+            const passwordSection = document.getElementById('password-section');
+            const passwordFormInputs = document.querySelectorAll('#password-form input, #password-form button');
+
+            if (isGoogleAccount) {
+                passwordSection.classList.add('disabled');
+                passwordInfoEl.style.display = 'none';
+                return; 
+            }
+
+            passwordSection.classList.remove('disabled');
+            passwordInfoEl.style.display = 'block';
+
+            const PASSWORD_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
+            const { lastPasswordChange } = userData;
+            let onCooldown = false;
+
+            if (lastPasswordChange && lastPasswordChange.toDate) {
+                const timeSinceChange = Date.now() - lastPasswordChange.toDate().getTime();
+                if (timeSinceChange < PASSWORD_COOLDOWN_MS) {
+                    onCooldown = true;
+                    const daysRemaining = Math.ceil((PASSWORD_COOLDOWN_MS - timeSinceChange) / (1000 * 60 * 60 * 24));
+                    passwordInfoEl.innerHTML = `You can change your password again in <strong>${daysRemaining} day(s)</strong>.`;
+                    passwordInfoEl.classList.add('on-cooldown');
+                }
+            }
+
+            if (!onCooldown) {
+                passwordInfoEl.innerHTML = `You can change your password once every <strong>14 days</strong> for security.`;
+                passwordInfoEl.classList.remove('on-cooldown');
+            }
+            
+            passwordFormInputs.forEach(input => input.disabled = onCooldown);
         }
+
 
         firebase.auth().onAuthStateChanged(async user => {
             if (!user) {
@@ -990,19 +1095,16 @@
                 document.getElementById('newUsername').value = userData.username;
             }
 
-            // **MODIFIED**: Load panic key settings from IndexedDB instead of Firestore
             loadPanicKeySettingsLocal();
             
             isGoogleAccount = user.providerData.some(p => p.providerId === 'google.com');
             document.getElementById('displayAccountType').textContent = isGoogleAccount ? 'Google Account' : 'Email/Password Account';
             
-            const passwordSection = document.getElementById('password-section');
             const changePasswordBtn = document.getElementById('changePasswordBtn');
-            passwordSection.classList.toggle('disabled', isGoogleAccount);
             changePasswordBtn.style.display = isGoogleAccount ? 'none' : 'flex';
             
-            checkAndUpdateCooldowns(userData, user.email);
-            // **REMOVED**: checkPanicKeyCooldown() call is gone.
+            // This single function now handles all limit displays and form states
+            await updateLimitDisplays();
 
             setupDeleteAccountSection();
             initializeTabDisguise();
@@ -1016,7 +1118,6 @@
 
         function openLocalDB() {
             return new Promise((resolve, reject) => {
-                // **FIXED**: Removed the hardcoded version '1'. This will now open the latest version of the database.
                 const request = indexedDB.open(LOCAL_DB_NAME);
                 request.onupgradeneeded = event => {
                     const db = event.target.result;
@@ -1039,10 +1140,8 @@
                 request.onsuccess = () => {
                     const settings = request.result;
                     if (settings) {
-                        // This global variable is used by the panic-key.js script if it's active on this page
                         currentPanicSettings = settings; 
                         document.getElementById('panicKey').value = settings.key || '';
-                        // Display URL without the protocol for a cleaner look
                         const displayUrl = (settings.url || '').replace(/^https?:\/\//, '');
                         document.getElementById('panicUrl').value = displayUrl;
                     }
@@ -1061,23 +1160,11 @@
             const key = document.getElementById('panicKey').value;
             let url = document.getElementById('panicUrl').value.trim();
 
-            // --- Validation Logic (retained from original) ---
-            if (!key || key.length !== 1) {
-                return showMessage('error', 'Please enter a single character for the panic key.');
-            }
-            if (/[!@#$%^&*()_+~{}|:"<>?]/.test(key) || key !== key.toLowerCase()) {
-                return showMessage('error', 'Panic key cannot be a capital letter or a special character.');
-            }
-            if (!url) {
-                return showMessage('error', 'Please enter a URL for redirection.');
-            }
-            if (url.includes('/')) {
-                return showMessage('error', 'Panic URL cannot include a path (e.g., "/page.html"). Please enter a domain name only.');
-            }
-            // Automatically add https:// if no protocol is specified
-            if (!/^https?:\/\//i.test(url)) {
-                url = 'https://' + url;
-            }
+            if (!key || key.length !== 1) return showMessage('error', 'Please enter a single character for the panic key.');
+            if (/[!@#$%^&*()_+~{}|:"<>?]/.test(key) || key !== key.toLowerCase()) return showMessage('error', 'Panic key cannot be a capital letter or a special character.');
+            if (!url) return showMessage('error', 'Please enter a URL for redirection.');
+            if (url.includes('/')) return showMessage('error', 'Panic URL cannot include a path (e.g., "/page.html"). Please enter a domain name only.');
+            if (!/^https?:\/\//i.test(url)) url = 'https://' + url;
 
             const newSettings = { id: LOCAL_SETTINGS_ID, key, url };
 
@@ -1085,18 +1172,14 @@
                 const db = await openLocalDB();
                 const transaction = db.transaction(LOCAL_STORE_NAME, 'readwrite');
                 const store = transaction.objectStore(LOCAL_STORE_NAME);
-                const request = store.put(newSettings); // 'put' will add or update the record
+                const request = store.put(newSettings);
 
                 request.onsuccess = () => {
-                    currentPanicSettings = newSettings; // Update global variable for immediate use
+                    currentPanicSettings = newSettings;
                     showMessage('success', 'Panic key settings saved successfully to this browser!');
                 };
-                request.onerror = () => {
-                    showMessage('error', 'Could not save settings locally: ' + request.error);
-                };
-                transaction.oncomplete = () => {
-                    db.close();
-                };
+                request.onerror = () => showMessage('error', 'Could not save settings locally: ' + request.error);
+                transaction.oncomplete = () => db.close();
             } catch (error) {
                 showMessage('error', 'Could not open local DB for saving: ' + error.message);
             }
@@ -1105,7 +1188,6 @@
 
         // --- NEW TAB DISGUISE LOGIC ---
         function initializeTabDisguise() {
-            // Check if the urlChanger object is available from the other script
             if (typeof urlChanger === 'undefined') {
                 console.error("urlChanger script not loaded or initialized before settings script.");
                 return;
@@ -1115,8 +1197,6 @@
             const saveBtn = document.getElementById('saveTabPresetBtn');
             const COOLDOWN_MINUTES = 1;
 
-            // 1. Populate the dropdown with presets from url-changer.js
-            // Clear any existing options first
             select.innerHTML = ''; 
             urlChanger.presets.forEach(preset => {
                 const option = document.createElement('option');
@@ -1125,13 +1205,11 @@
                 select.appendChild(option);
             });
 
-            // 2. Set the dropdown's current value based on localStorage
             const savedPreset = localStorage.getItem('selectedUrlPreset') || 'None';
             select.value = savedPreset;
 
-            // 3. Cooldown logic handler
             function handleCooldown() {
-                if (tabCooldownInterval) clearInterval(tabCooldownInterval); // Clear any existing timer
+                if (tabCooldownInterval) clearInterval(tabCooldownInterval);
 
                 const lastSave = parseInt(localStorage.getItem('tabPresetLastSave') || '0');
                 const now = Date.now();
@@ -1152,15 +1230,14 @@
                         }
                     };
                     
-                    updateTimer(); // Initial call
-                    tabCooldownInterval = setInterval(updateTimer, 1000); // Update every second
+                    updateTimer();
+                    tabCooldownInterval = setInterval(updateTimer, 1000);
                 } else {
                     saveBtn.disabled = false;
                     saveBtn.textContent = 'Save Preset';
                 }
             }
 
-            // 4. Save button click handler
             saveBtn.addEventListener('click', () => {
                 const selectedValue = select.value;
                 urlChanger.savePreset(selectedValue);
@@ -1168,8 +1245,7 @@
                 showMessage('success', `Tab preset saved as "${selectedValue}".`);
                 handleCooldown();
             });
-
-            // 5. Initial cooldown check on page load
+            
             handleCooldown();
         }
         // --- END OF TAB DISGUISE LOGIC ---
@@ -1271,7 +1347,6 @@
             const emailReauthForm = document.getElementById('email-reauth-form');
             const googleReauthBtn = document.getElementById('reauthBtn');
 
-            // Reset state
             isReauthenticated = false;
             deleteForm.style.display = 'none';
             emailReauthForm.style.display = 'none';
@@ -1289,9 +1364,7 @@
 
         async function reauthenticateWithPassword() {
             const password = document.getElementById('reauthPassword').value;
-            if (!password) {
-                return showMessage('error', 'Please enter your password to confirm.');
-            }
+            if (!password) return showMessage('error', 'Please enter your password to confirm.');
 
             const user = firebase.auth().currentUser;
             const credential = firebase.auth.EmailAuthProvider.credential(user.email, password);
@@ -1367,6 +1440,11 @@
         window.addEventListener('resize', updateMarquees);
 
         async function updateUsername() {
+            // Re-check if form is disabled as a safeguard
+            if (document.getElementById('newUsername').disabled) {
+                return showMessage('error', 'You have reached your username change limit for this period.');
+            }
+            
             const newNameRaw = document.getElementById('newUsername').value.trim();
             const isExemptUser = firebase.auth().currentUser.email === '4simpleproblems@gmail.com';
 
@@ -1374,6 +1452,7 @@
             if (!/^[a-zA-Z0-9.\?\!@#$%&*-]+$/.test(newNameRaw)) return showMessage('error', 'Username contains invalid characters.');
 
             try {
+                // The limit check from the original function is still useful as a final client-side check.
                 if (!isExemptUser) {
                     const userDoc = await dbRef().get();
                     const userData = userDoc.data() || {};
@@ -1408,13 +1487,16 @@
                 document.getElementById('displayUsername').textContent = filteredName;
                 updateMarquees();
                 showMessage('success', 'Username updated successfully!');
+                await updateLimitDisplays(); // Refresh the display after the update
             } catch (error) {
                 showMessage('error', `Failed to update username: ${error.message}`);
             }
         }
 
         async function changePassword() {
-            if (document.getElementById('password-section').classList.contains('disabled')) return;
+            // Check if the form is disabled directly.
+            if (document.getElementById('newPassword').disabled) return;
+            
             const user = firebase.auth().currentUser;
             const oldPassword = document.getElementById('oldPassword').value;
             const newPassword = document.getElementById('newPassword').value;
@@ -1431,7 +1513,7 @@
                 document.getElementById('oldPassword').value = '';
                 document.getElementById('newPassword').value = '';
                 showMessage('success', 'Password changed successfully!');
-                checkAndUpdateCooldowns((await dbRef().get()).data(), user.email);
+                await updateLimitDisplays(); // Refresh the display after the update
             } catch (error) {
                 showMessage('error', `Failed to change password: ${error.code === 'auth/wrong-password' ? 'Current password is incorrect.' : error.message}`);
             }
@@ -1455,7 +1537,7 @@
                 let msg = 'Failed to delete account: ';
                 if (error.code === 'auth/requires-recent-login') {
                     msg += 'Your session has expired. Please re-authenticate and try again.';
-                    setupDeleteAccountSection(); // Resets the UI for re-authentication
+                    setupDeleteAccountSection(); 
                 } else {
                     msg += error.message;
                 }
