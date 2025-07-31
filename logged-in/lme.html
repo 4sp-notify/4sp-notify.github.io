@@ -1,0 +1,546 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LME - Learning Portal</title>
+    
+    <!-- Note: These Firebase scripts are required for the authentication to work. -->
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="../firebase-config.js"></script>
+
+    <style>
+        /* --- Base Styles & Early 2000s Theme --- */
+        :root {
+            --background-color: #f0f0f0;
+            --header-blue: #003366;
+            --text-color: #000000;
+            --container-bg: #ffffff;
+            --border-color: #999999;
+            --button-bg: #cccccc;
+        }
+
+        body {
+            background-color: var(--background-color);
+            color: var(--text-color);
+            font-family: 'Times New Roman', Times, serif;
+            margin: 0;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        /* --- Top Bar --- */
+        .top-bar {
+            background: var(--header-blue);
+            padding: 10px 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 2px solid #000000;
+            flex-shrink: 0;
+            color: var(--container-bg);
+        }
+
+        .top-bar .logo {
+            font-size: 1.8em;
+            font-weight: bold;
+        }
+
+        .top-bar .user-controls {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+
+        #user-email {
+            font-size: 1em;
+            background-color: #004488;
+            padding: 5px 10px;
+            border: 1px solid #ffffff;
+        }
+
+        .action-button {
+            text-decoration: none;
+            background-color: var(--button-bg);
+            color: var(--text-color);
+            padding: 5px 15px;
+            border: 2px outset #dddddd;
+            cursor: pointer;
+            font-family: 'Times New Roman', Times, serif;
+            font-size: 1em;
+        }
+
+        .action-button:active {
+            border-style: inset;
+        }
+        
+        /* --- Main Content Area --- */
+        .main-container {
+            flex-grow: 1;
+            padding: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+        }
+        
+        .page {
+            width: 100%;
+            max-width: 750px;
+            display: none; /* Hide all pages by default */
+        }
+        
+        .page.active {
+            display: block; /* Show only the active page */
+        }
+
+        h1, h2, h3 {
+            text-align: center;
+            font-weight: bold;
+            color: var(--text-color);
+        }
+        
+        h1 {
+            font-size: 2em;
+        }
+        
+        h2 {
+            font-size: 1.5em;
+            font-weight: normal;
+        }
+        
+        /* --- Dashboard Page --- */
+        #dashboard-page .selection-container {
+            display: flex;
+            justify-content: center;
+            gap: 30px;
+            margin-top: 40px;
+        }
+
+        .subject-button {
+            width: 200px;
+            height: 120px;
+            font-size: 2em;
+            font-weight: bold;
+            cursor: pointer;
+            border: 2px outset #dddddd;
+            background-color: var(--button-bg);
+            color: var(--text-color);
+        }
+
+        .subject-button:hover {
+            background-color: #d8d8d8;
+        }
+        
+        .subject-button:active {
+            border-style: inset;
+        }
+
+        /* --- Quiz Pages (Math & English) --- */
+        #quiz-container {
+            background-color: var(--container-bg);
+            padding: 20px;
+            border: 1px solid var(--border-color);
+        }
+
+        #english-paragraph {
+            background-color: #ffffed;
+            border: 1px solid #e3e3d2;
+            padding: 10px;
+            margin-bottom: 20px;
+            font-size: 1.1em;
+            line-height: 1.5;
+        }
+        
+        #question-text {
+            font-size: 1.4em;
+            margin-bottom: 25px;
+            text-align: center;
+            font-weight: bold;
+        }
+        
+        .options-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        .option-btn {
+            padding: 15px;
+            font-size: 1.1em;
+            background-color: var(--button-bg);
+            border: 2px outset #dddddd;
+            cursor: pointer;
+            text-align: center;
+            font-family: 'Times New Roman', Times, serif;
+        }
+        
+        .option-btn:active {
+            border-style: inset;
+        }
+
+        /* The magical hint on hover */
+        .option-btn.correct-hover:hover {
+            background-color: #90ee90; /* LightGreen */
+        }
+        
+        #feedback-area {
+            margin-top: 25px;
+            height: 30px;
+            font-size: 1.2em;
+            font-weight: bold;
+            text-align: center;
+        }
+        
+        .feedback-correct {
+            color: #006400; /* DarkGreen */
+        }
+        
+        .feedback-incorrect {
+            color: #8B0000; /* DarkRed */
+        }
+    </style>
+</head>
+<body>
+
+    <header class="top-bar">
+        <div class="logo">LME Portal</div>
+        <div class="user-controls">
+            <a href="#" onclick="window.location.reload()" class="action-button">Dashboard</a>
+            <span id="user-email">loading...</span>
+            <button id="logout-btn" class="action-button">Logout</button>
+        </div>
+    </header>
+
+    <main class="main-container">
+
+        <!-- Page 1: Dashboard -->
+        <div id="dashboard-page" class="page active">
+            <h1>Welcome to the Learning Management Environment</h1>
+            <h2>Select a subject to begin.</h2>
+            <div class="selection-container">
+                <button id="start-math-btn" class="subject-button">Math</button>
+                <button id="start-english-btn" class="subject-button">English</button>
+            </div>
+        </div>
+
+        <!-- Page 2: Math Quiz -->
+        <div id="math-page" class="page">
+            <div id="math-quiz-container">
+                <!-- Math problems will be injected here by JS -->
+            </div>
+        </div>
+        
+        <!-- Page 3: English Quiz -->
+        <div id="english-page" class="page">
+            <div id="english-quiz-container">
+                <!-- English problems will be injected here by JS -->
+            </div>
+        </div>
+
+    </main>
+    
+    <!-- This is a template for the quiz layout, used by both Math and English -->
+    <template id="quiz-template">
+        <div id="quiz-container">
+            <div id="english-paragraph" style="display: none;"></div>
+            <h3 id="question-text"></h3>
+            <div class="options-grid">
+                <button class="option-btn"></button>
+                <button class="option-btn"></button>
+                <button class="option-btn"></button>
+                <button class="option-btn"></button>
+            </div>
+            <div id="feedback-area"></div>
+        </div>
+    </template>
+
+
+    <script>
+    document.addEventListener('DOMContentLoaded', () => {
+
+        // --- DOM Elements ---
+        const pages = {
+            dashboard: document.getElementById('dashboard-page'),
+            math: document.getElementById('math-page'),
+            english: document.getElementById('english-page')
+        };
+        const userEmailEl = document.getElementById('user-email');
+        const logoutBtn = document.getElementById('logout-btn');
+        const startMathBtn = document.getElementById('start-math-btn');
+        const startEnglishBtn = document.getElementById('start-english-btn');
+        const quizTemplate = document.getElementById('quiz-template');
+
+        // --- State Management ---
+        let currentSubject = null;
+        let questionCounter = 0;
+        let forceWrongAfter = Math.floor(Math.random() * 7) + 4; // Random number between 4 and 10
+
+        // --- Firebase Authentication ---
+        // Check if firebase is initialized to avoid errors if config is missing
+        if (typeof firebase !== 'undefined' && firebase.app) {
+            firebase.auth().onAuthStateChanged(user => {
+                if (user) {
+                    userEmailEl.textContent = user.email;
+                } else {
+                    userEmailEl.textContent = 'student@school.edu';
+                    console.warn("Firebase: No user signed in. Using placeholder data.");
+                }
+            });
+
+            logoutBtn.addEventListener('click', () => {
+                firebase.auth().signOut().then(() => {
+                    alert("You have been logged out.");
+                    userEmailEl.textContent = 'student@school.edu';
+                }).catch(error => {
+                    console.error("Logout Error:", error);
+                    alert("Could not log out. See console for details.");
+                });
+            });
+        } else {
+            console.error("Firebase is not initialized. Please check your firebase-config.js file.");
+            userEmailEl.textContent = 'config_error';
+        }
+
+
+        // --- Page Navigation Logic ---
+        const showPage = (pageName) => {
+            Object.values(pages).forEach(page => page.classList.remove('active'));
+            if (pages[pageName]) {
+                pages[pageName].classList.add('active');
+            }
+        };
+
+        startMathBtn.addEventListener('click', () => {
+            currentSubject = 'math';
+            showPage('math');
+            generateNewQuestion();
+        });
+
+        startEnglishBtn.addEventListener('click', () => {
+            currentSubject = 'english';
+            showPage('english');
+            generateNewQuestion();
+        });
+
+
+        // --- English Content Database ---
+        const englishData = [
+            {
+                paragraph: "The ubiquitous nature of smartphones has engendered a paradigm shift in social interactions. Previously quotidian activities, like conversing in person, are often superseded by digital communication, leading some sociologists to prognosticate a future characterized by attenuated interpersonal skills.",
+                questions: [
+                    { q: "What does the word 'ubiquitous' mean?", a: "Present everywhere", i: ["Rare and unusual", "Technologically advanced", "Very expensive"] },
+                    { q: "What does 'attenuated' mean in this context?", a: "Weakened or reduced", i: ["Strengthened", "Complicated", "Digitized"] },
+                    { q: "What future development does the author 'prognosticate'?", a: "A decline in social skills", i: ["An increase in phone sales", "A new type of technology", "Stronger family bonds"] }
+                ]
+            },
+            {
+                paragraph: "The politician's speech was a masterclass in equivocation. He managed to address the contentious issue for ten minutes without adopting a definitive stance, leaving both his supporters and detractors to parse his ambiguous statements for a semblance of commitment.",
+                questions: [
+                    { q: "What does 'equivocation' mean?", a: "Using ambiguous language to conceal the truth", i: ["Speaking with great passion", "Telling a compelling story", "Making a firm promise"] },
+                    { q: "What was the primary characteristic of the politician's statements?", a: "They were ambiguous", i: ["They were factual", "They were short", "They were dishonest"] },
+                    { q: "What is a 'semblance' of commitment?", a: "An appearance or trace", i: ["A written guarantee", "A loud declaration", "A total lack"] }
+                ]
+            },
+            {
+                paragraph: "Despite his ostensibly convivial demeanor, the CEO was a martinet in the boardroom. He demanded punctiliousness from his subordinates and would excoriate anyone who failed to meet his exacting standards, believing that such rigor was essential for corporate hegemony.",
+                questions: [
+                    { q: "What does the word 'convivial' suggest?", a: "Friendly and sociable", i: ["Strict and severe", "Sad and lonely", "Business-focused"] },
+                    { q: "A 'martinet' is a...", a: "Strict disciplinarian", i: ["Cheerful person", "Successful leader", "Financial expert"] },
+                    { q: "To 'excoriate' someone is to...", a: "Criticize them severely", i: ["Praise them highly", "Give them a promotion", "Ignore them completely"] }
+                ]
+            },
+            {
+                paragraph: "The nascent environmental movement gained significant traction after incontrovertible evidence of climate change was published. The data, once considered esoteric, became a clarion call for legislative action, despite vociferous opposition from entrenched industrial interests.",
+                questions: [
+                    { q: "A 'nascent' movement is one that is...", a: "Just beginning to develop", i: ["Globally recognized", "Losing support", "Politically powerful"] },
+                    { q: "'Incontrovertible' evidence is...", a: "Undeniable", i: ["Confusing", "Secretive", "Limited"] },
+                    { q: "What does 'vociferous' mean?", a: "Loud and forceful", i: ["Quiet and thoughtful", "Secretly planned", "Based on logic"] }
+                ]
+            },
+            {
+                paragraph: "Her predilection for rococo art was evident in her home's decor. Every room was replete with ornate furniture, intricate tapestries, and gilded mirrors, creating an atmosphere that some found opulent but others considered ostentatious.",
+                questions: [
+                    { q: "What is a 'predilection'?", a: "A preference or special liking", i: ["A dislike or hatred", "A casual interest", "A professional knowledge"] },
+                    { q: "If a room is 'replete' with something, it is...", a: "Filled or well-supplied", i: ["Lacking in", "Famous for", "Painted with"] },
+                    { q: "What does 'ostentatious' mean?", a: "Designed to impress or attract notice, often vulgarly", i: ["Comfortable and cozy", "Historically accurate", "Minimalist and simple"] }
+                ]
+            },
+            {
+                paragraph: "The philosopher's work was intentionally recondite, written for a small cadre of academics. He eschewed simple language, preferring abstruse terminology that he felt more accurately captured the nuances of his metaphysical theories.",
+                questions: [
+                    { q: "What does 'recondite' mean?", a: "Little known; obscure", i: ["Widely popular", "Easy to read", "Visually illustrated"] },
+                    { q: "To 'eschew' something is to...", a: "Deliberately avoid using it", i: ["Use it frequently", "Explain it simply", "Invent it"] },
+                    { q: "An 'abstruse' terminology is...", a: "Difficult to understand", i: ["Common and everyday", "Foreign and exotic", "Technical and precise"] }
+                ]
+            },
+            {
+                paragraph: "The general's pyrrhic victory was celebrated in the capital, but on the battlefield, the mood was somber. The catastrophic loss of life had vitiated any sense of triumph, leaving the soldiers to ponder the true cost of their success.",
+                questions: [
+                    { q: "A 'pyrrhic' victory is one that...", a: "Comes at too great a cost", i: ["Is achieved easily", "Is a complete surprise", "Leads to total peace"] },
+                    { q: "To 'vitiate' a sense of triumph means to...", a: "Spoil or impair its quality", i: ["Enhance or increase it", "Announce it publicly", "Celebrate it"] },
+                    { q: "The mood on the battlefield was 'somber', which means...", a: "Gloomy and serious", i: ["Joyful and celebratory", "Tense and nervous", "Calm and peaceful"] }
+                ]
+            },
+            {
+                paragraph: "The mendacious salesman was a paragon of duplicity. He could sell superfluous gadgets to even the most parsimonious customers, using a combination of flattery and outright falsehoods to close a deal.",
+                questions: [
+                    { q: "A 'mendacious' person is...", a: "Not telling the truth; lying", i: ["Highly successful", "Very persuasive", "Generous and kind"] },
+                    { q: "What does 'superfluous' mean?", a: "Unnecessary", i: ["Expensive", "Technologically advanced", "Essential"] },
+                    { q: "A 'parsimonious' customer is...", a: "Very unwilling to spend money", i: ["Easy to fool", "Wealthy and influential", "Looking for luxury goods"] }
+                ]
+            },
+            {
+                paragraph: "His laconic responses during the interview were a source of frustration for the reporter. He would answer complex questions with a single, often sardonic, word, refusing to elaborate on his motivations or future plans.",
+                questions: [
+                    { q: "A 'laconic' response is...", a: "Using very few words", i: ["Long and detailed", "Angry and emotional", "Confusing and vague"] },
+                    { q: "What does 'sardonic' mean?", a: "Grimly mocking or cynical", i: ["Cheerful and optimistic", "Honest and direct", "Polite and respectful"] },
+                    { q: "To 'elaborate' is to...", a: "Provide more detail", i: ["Change the subject", "Tell a lie", "Ask a question"] }
+                ]
+            },
+            {
+                paragraph: "The artist's oeuvre was eclectic, spanning from minimalist sculptures to sprawling, chaotic canvases. This refusal to adhere to a single style was initially seen as a weakness but was later lauded as a sign of his prodigious versatility.",
+                questions: [
+                    { q: "An 'eclectic' collection is one that is...", a: "Made up of a variety of styles or ideas", i: ["Focused on a single theme", "Arranged in chronological order", "Worth a lot of money"] },
+                    { q: "An artist's 'oeuvre' refers to...", a: "Their entire body of work", i: ["Their most famous painting", "Their art studio", "Their early life"] },
+                    { q: "What does 'prodigious' mean?", a: "Impressively great in extent, size, or degree", i: ["Lacking in skill", "Slowly developing", "Causing controversy"] }
+                ]
+            }
+        ];
+        
+        // --- Core Quiz Logic ---
+        const generateNewQuestion = () => {
+            let questionData;
+            if (currentSubject === 'math') {
+                questionData = generateMathProblem();
+            } else {
+                questionData = generateEnglishProblem();
+            }
+            renderQuestion(questionData);
+        };
+        
+        const generateMathProblem = () => {
+            const operators = ['+', '-', '×'];
+            const op = operators[Math.floor(Math.random() * operators.length)];
+            let n1, n2, answer;
+
+            if (op === '+') {
+                n1 = Math.floor(Math.random() * 50) + 1;
+                n2 = Math.floor(Math.random() * 50) + 1;
+                answer = n1 + n2;
+            } else if (op === '-') {
+                n1 = Math.floor(Math.random() * 50) + 20;
+                n2 = Math.floor(Math.random() * (n1 - 1)) + 1; // Ensure result is positive
+                answer = n1 - n2;
+            } else { // op === '×'
+                n1 = Math.floor(Math.random() * 12) + 1;
+                n2 = Math.floor(Math.random() * 12) + 1;
+                answer = n1 * n2;
+            }
+
+            const questionText = `What is ${n1} ${op} ${n2}?`;
+            const options = generateDistractors(answer);
+            
+            return { question: questionText, options: options, correctAnswer: answer };
+        };
+
+        const generateEnglishProblem = () => {
+            const paragraphData = englishData[Math.floor(Math.random() * englishData.length)];
+            const questionData = paragraphData.questions[Math.floor(Math.random() * paragraphData.questions.length)];
+            
+            const questionText = questionData.q;
+            const correctAnswer = questionData.a;
+            const options = [correctAnswer, ...questionData.i].sort(() => Math.random() - 0.5); // Shuffle
+
+            return { paragraph: paragraphData.paragraph, question: questionText, options: options, correctAnswer: correctAnswer };
+        };
+
+        const generateDistractors = (correctAnswer) => {
+            const distractors = new Set();
+            while (distractors.size < 3) {
+                const offset = Math.floor(Math.random() * 10) + 1;
+                const sign = Math.random() < 0.5 ? 1 : -1;
+                let distractor = correctAnswer + (offset * sign);
+                if (distractor !== correctAnswer && distractor >= 0) {
+                    distractors.add(distractor);
+                }
+            }
+            const options = [correctAnswer, ...distractors];
+            return options.sort(() => Math.random() - 0.5); // Shuffle the options
+        };
+
+        const renderQuestion = (data) => {
+            const targetContainer = pages[currentSubject];
+            targetContainer.innerHTML = ''; // Clear previous question
+            const clone = quizTemplate.content.cloneNode(true);
+            targetContainer.appendChild(clone);
+            
+            const questionTextEl = targetContainer.querySelector('#question-text');
+            const optionBtns = targetContainer.querySelectorAll('.option-btn');
+            const feedbackAreaEl = targetContainer.querySelector('#feedback-area');
+            const paragraphEl = targetContainer.querySelector('#english-paragraph');
+            
+            feedbackAreaEl.textContent = '';
+            questionTextEl.textContent = data.question;
+
+            if (data.paragraph) {
+                paragraphEl.textContent = data.paragraph;
+                paragraphEl.style.display = 'block';
+            }
+
+            optionBtns.forEach((btn, index) => {
+                const optionValue = data.options[index];
+                btn.textContent = optionValue;
+                btn.dataset.answer = optionValue; // Store answer in data attribute
+                btn.classList.remove('correct-hover'); // Reset hover class
+
+                if (String(optionValue) === String(data.correctAnswer)) {
+                    btn.classList.add('correct-hover');
+                }
+
+                btn.addEventListener('click', handleAnswerClick);
+            });
+        };
+
+        const handleAnswerClick = (event) => {
+            const selectedBtn = event.target;
+            const quizContainer = selectedBtn.closest('#quiz-container');
+            const feedbackAreaEl = quizContainer.querySelector('#feedback-area');
+            
+            questionCounter++;
+            
+            let isCorrect = selectedBtn.classList.contains('correct-hover');
+            
+            // The forced incorrect answer logic
+            if (questionCounter >= forceWrongAfter) {
+                isCorrect = false;
+                questionCounter = 0;
+                forceWrongAfter = Math.floor(Math.random() * 7) + 4; // Reset for the next cycle
+                console.log(`Forcing incorrect. Next forced wrong in ${forceWrongAfter} questions.`);
+            }
+            
+            if (isCorrect) {
+                feedbackAreaEl.textContent = 'Correct!';
+                feedbackAreaEl.className = 'feedback-correct';
+            } else {
+                feedbackAreaEl.textContent = 'Incorrect. Please try the next one.';
+                feedbackAreaEl.className = 'feedback-incorrect';
+            }
+            
+            // Disable buttons after selection
+            quizContainer.querySelectorAll('.option-btn').forEach(btn => {
+                btn.removeEventListener('click', handleAnswerClick);
+                btn.style.cursor = 'default';
+            });
+            
+            // Load the next question after a delay
+            setTimeout(() => {
+                generateNewQuestion();
+            }, 2000);
+        };
+
+    });
+    </script>
+</body>
+</html>
