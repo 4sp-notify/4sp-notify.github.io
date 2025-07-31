@@ -823,6 +823,40 @@
         font-size: 1.1em;
         color: #8a2be2;
     }
+    /* START: New Advice Styles */
+    #forecastDetailModal .modal-advice-section {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid rgba(103, 32, 189, 0.15);
+        text-align: left;
+    }
+    #forecastDetailModal .modal-advice-section h4 {
+        margin: 0 0 10px 0;
+        color: #333;
+        font-size: 1.1em;
+        font-weight: 600;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+    #forecastDetailModal .modal-advice-section p {
+        font-size: 0.95em;
+        line-height: 1.6;
+        color: #555;
+        margin: 0;
+    }
+    #forecastDetailModal .modal-advice-section ul {
+        list-style-type: '✓  ';
+        margin: 0 0 0 20px;
+        padding: 0;
+        font-size: 0.95em;
+        line-height: 1.6;
+        color: #555;
+    }
+    #forecastDetailModal .modal-advice-section li {
+        margin-bottom: 5px;
+    }
+    /* END: New Advice Styles */
 
     /* --- Weather Settings Modal --- */
     .weather-settings-modal .modal-content {
@@ -1260,6 +1294,11 @@
             <p><strong><span class="detail-icon">🌇</span>Sunset:</strong> <span id="modalSunsetTime">--:--</span></p>
             <p><strong><span class="detail-icon">💡</span>Daylight:</strong> <span id="modalDaylightDuration">--</span></p>
         </div>
+
+        <div class="modal-advice-section">
+            <h4><span class="detail-icon">💡</span> Daily Advice</h4>
+            <div id="modalDailyAdvice">Checking the forecast for tips...</div>
+        </div>
     </div>
   </div>
   
@@ -1466,6 +1505,69 @@
         }
     }
 
+    // --- START: New Weather Advice Function ---
+    function generateWeatherAdvice(dayData, units, humidity) {
+        const advice = [];
+        const { tempMax, weatherCode, precipSum, precipProb, windSpeedMax } = dayData;
+
+        // Convert temps and speeds for consistent logic
+        const tempMaxC = units === 'imperial' ? (tempMax - 32) * 5 / 9 : tempMax;
+        const windSpeedMph = units === 'metric' ? windSpeedMax * 0.621371 : windSpeedMax;
+
+        // Temperature-based advice
+        if (tempMaxC >= 30) {
+            advice.push("It's going to be very hot. Wear light clothes and use sunscreen.");
+        } else if (tempMaxC >= 22) {
+            advice.push("Expect warm weather, a good day for a t-shirt.");
+        } else if (tempMaxC <= 5) {
+            advice.push("It's quite cold. Bundle up with a thick coat, scarf, and gloves.");
+        }
+
+        // Precipitation advice (based on WMO codes and probability)
+        if (precipSum > 0.1 || precipProb > 40) {
+            if ([51, 53, 55, 61, 63, 65, 80, 81, 82].includes(weatherCode)) {
+                advice.push("Rain is likely. Don't forget an umbrella or a raincoat.");
+            } else if ([56, 57, 66, 67, 71, 73, 75, 77, 85, 86].includes(weatherCode)) {
+                advice.push("Snow is expected! Wear a warm, waterproof coat and snow boots.");
+            } else {
+                advice.push("There's a chance of precipitation, so it might be wise to bring an umbrella.");
+            }
+        }
+
+        // Humidity advice (using current day's humidity as a proxy for the forecast day)
+        if (humidity >= 75) {
+            advice.push("High humidity can make it feel muggy. Lightweight, breathable clothing is recommended.");
+        } else if (humidity <= 35 && precipProb < 20) {
+            advice.push("The air seems dry. Remember to drink plenty of water to stay hydrated.");
+        }
+
+        // Wind advice
+        if (windSpeedMph >= 15) {
+            advice.push("It could be quite windy. A windbreaker would be a good idea.");
+        }
+
+        // Fog advice
+        if ([45, 48].includes(weatherCode)) {
+            advice.push("Foggy conditions are expected. Be extra cautious if you're driving or walking.");
+        }
+
+        // Thunderstorm advice
+        if ([95, 96, 99].includes(weatherCode)) {
+            advice.push("Thunderstorms are possible. It's best to stay indoors if you hear thunder.");
+        }
+
+        // Default/Sunny day advice
+        if (advice.length === 0) {
+            if ([0, 1].includes(weatherCode)) {
+                return "<p>Looks like a beautiful, clear day. Perfect for outdoor activities!</p>";
+            }
+            return "<p>Enjoy your day! Check the details above for a full forecast.</p>";
+        }
+
+        return '<ul>' + advice.map(item => `<li>${item}</li>`).join('') + '</ul>';
+    }
+    // --- END: New Weather Advice Function ---
+
 
     function openForecastModal(dayData, dailyTimeZone, displayUnits, speedSuffixUnit, currentApparentTemp, currentHumidity) {
         if (!forecastModal) return;
@@ -1495,6 +1597,13 @@
         
         document.getElementById('modalFeelsLike').textContent = `${currentApparentTemp !== null ? Math.round(currentApparentTemp) : '--'}${tempSuffix}`;
         document.getElementById('modalHumidity').textContent = `${currentHumidity !== null ? currentHumidity : '--'}`;
+        
+        // --- START: Update to call advice function ---
+        const adviceEl = document.getElementById('modalDailyAdvice');
+        if (adviceEl) {
+            adviceEl.innerHTML = generateWeatherAdvice(dayData, displayUnits, currentHumidity);
+        }
+        // --- END: Update to call advice function ---
 
         forecastModal.classList.add('modal-open');
     }
