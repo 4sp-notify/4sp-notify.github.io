@@ -184,6 +184,27 @@
       -webkit-text-fill-color: transparent;
       background-clip: text;
     }
+    #reset-layout-btn {
+        width: 40px;
+        height: 40px;
+        background-color: #f0f2f5;
+        border: 1px solid #e0e0e0;
+        border-radius: 12px; /* Squircle shape */
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s ease-in-out;
+    }
+    #reset-layout-btn:hover {
+        background-color: #e0e0e0;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    #reset-layout-btn img {
+        width: 22px;
+        height: 22px;
+    }
 
     /* --- Grid System --- */
     .tiles-grid {
@@ -347,6 +368,19 @@
     .grid-item.is-flagged::before {
         background-color: rgba(255, 152, 0, 0.5);
     }
+    .grid-item.is-selected {
+        outline: 3px dotted #1982c4;
+    }
+    .grid-item.is-selected::before {
+        content: '';
+        position: absolute;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background-color: rgba(25, 130, 196, 0.4);
+        border-radius: 15px;
+        z-index: 1;
+        pointer-events: none;
+    }
+
 
     /* --- Edit Mode Hint Bar --- */
     #edit-mode-hint {
@@ -382,6 +416,75 @@
         width: 1px;
         height: 14px;
         background-color: #666;
+    }
+    
+    /* --- Custom Rename Modal --- */
+    .rename-modal-backdrop {
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background-color: rgba(0,0,0,0.6);
+        backdrop-filter: blur(5px);
+        z-index: 10002;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.3s ease, visibility 0.3s;
+    }
+    .rename-modal-backdrop.visible {
+        opacity: 1;
+        visibility: visible;
+    }
+    .rename-modal {
+        background: #fff;
+        padding: 25px;
+        border-radius: 15px;
+        box-shadow: 0 5px 20px rgba(0,0,0,0.2);
+        width: 90%;
+        max-width: 400px;
+        font-family: 'PrimaryFont', sans-serif;
+        transform: scale(0.95);
+        transition: transform 0.3s ease;
+    }
+    .rename-modal-backdrop.visible .rename-modal {
+        transform: scale(1);
+    }
+    .rename-modal h3 {
+        margin-top: 0;
+        margin-bottom: 15px;
+        font-size: 1.3em;
+    }
+    .rename-modal input {
+        width: 100%;
+        padding: 12px;
+        font-size: 1em;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        margin-bottom: 15px;
+        box-sizing: border-box;
+        font-family: 'PrimaryFont', sans-serif;
+    }
+    .rename-modal-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+    }
+    .rename-modal-actions button {
+        padding: 10px 20px;
+        border-radius: 8px;
+        border: none;
+        cursor: pointer;
+        font-family: 'PrimaryFont', sans-serif;
+        font-weight: bold;
+    }
+    #rename-save-btn {
+        background-color: #6720bd;
+        color: white;
+    }
+    #rename-cancel-btn {
+        background-color: #eee;
+        color: #333;
     }
 
     /* --- Responsive adjustments --- */
@@ -461,6 +564,9 @@
     <main class="main-content">
       <div class="dashboard-header fade-in">
         <h2 class="dashboard-title">OTHERS</h2>
+        <button id="reset-layout-btn" title="Reset Layout">
+            <img src="../images/refresh-dark.png" alt="Reset">
+        </button>
       </div>
 
       <div class="tiles-grid" id="tilesGrid">
@@ -469,6 +575,18 @@
   </div>
   
   <div id="edit-mode-hint"></div>
+  
+  <div id="rename-modal-backdrop" class="rename-modal-backdrop">
+    <div class="rename-modal">
+        <h3>Rename Folder</h3>
+        <input type="text" id="rename-input" placeholder="Enter new folder name...">
+        <div class="rename-modal-actions">
+            <button id="rename-cancel-btn">Cancel</button>
+            <button id="rename-save-btn">Save</button>
+        </div>
+    </div>
+  </div>
+
 
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
@@ -481,15 +599,21 @@
     const sidebarUserEmailEl = document.getElementById('userEmail');
     const tilesGrid = document.getElementById('tilesGrid');
     const editModeHint = document.getElementById('edit-mode-hint');
+    const renameModalBackdrop = document.getElementById('rename-modal-backdrop');
+    const renameInput = document.getElementById('rename-input');
 
     // --- Firebase Refs ---
     let currentUser = null;
     const userProfileDocRef = () => currentUser ? firebase.firestore().collection('users').doc(currentUser.uid) : null;
 
     // --- Data & State Management ---
-    const LAYOUT_STORAGE_KEY = '4sp_othersPageLayout_v9';
+    const LAYOUT_STORAGE_KEY = '4sp_othersPageLayout_v10';
     let layoutData = [];
-    let editModeState = { selectedId: null, flaggedId: null };
+    let editModeState = { 
+        selectedId: null, 
+        mode: 'normal', // 'normal', 'flagged-for-creation', 'adding-to-folder'
+        selectionGroup: [] 
+    };
 
     const defaultTiles = [
       { id: 'notes', type: 'tile', size: 'normal', href: 'notes.html', icon: '📝', title: 'NOTES', 
@@ -665,13 +789,19 @@
         event.preventDefault();
         event.stopPropagation();
 
-        if (editModeState.flaggedId && editModeState.flaggedId !== itemId) {
-            const flaggedItemInfo = findItem(editModeState.flaggedId);
-            const currentItemInfo = findItem(itemId);
-            if (flaggedItemInfo.data.type === 'tile' && currentItemInfo.data.type === 'tile') {
-                createFolderWithItems(editModeState.flaggedId, itemId);
-                return;
+        if (editModeState.mode === 'adding-to-folder' || editModeState.mode === 'flagged-for-creation') {
+            const itemInfo = findItem(itemId);
+            if (itemInfo && itemInfo.data.type === 'tile') {
+                const index = editModeState.selectionGroup.indexOf(itemId);
+                if (index > -1) {
+                    editModeState.selectionGroup.splice(index, 1);
+                    document.querySelector(`.grid-item[data-id="${itemId}"]`).classList.remove('is-selected');
+                } else {
+                    editModeState.selectionGroup.push(itemId);
+                    document.querySelector(`.grid-item[data-id="${itemId}"]`).classList.add('is-selected');
+                }
             }
+            return;
         }
 
         const currentlyEditing = editModeState.selectedId === itemId;
@@ -686,6 +816,7 @@
         if (!itemElement) return;
 
         editModeState.selectedId = itemId;
+        editModeState.mode = 'normal';
         itemElement.classList.add('is-editing');
         itemElement.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
         updateHint();
@@ -696,11 +827,15 @@
             const oldElement = document.querySelector(`.grid-item[data-id="${editModeState.selectedId}"]`);
             if (oldElement) oldElement.classList.remove('is-editing');
         }
+        editModeState.selectionGroup.forEach(id => {
+            const el = document.querySelector(`.grid-item[data-id="${id}"]`);
+            if(el) el.classList.remove('is-selected');
+        });
         if (editModeState.flaggedId) {
             const flaggedElement = document.querySelector(`.grid-item[data-id="${editModeState.flaggedId}"]`);
             if (flaggedElement) flaggedElement.classList.remove('is-flagged');
         }
-        editModeState = { selectedId: null, flaggedId: null };
+        editModeState = { selectedId: null, mode: 'normal', selectionGroup: [] };
         updateHint();
     }
 
@@ -711,15 +846,20 @@
         }
 
         const itemInfo = findItem(editModeState.selectedId);
-        let hintHTML = `Editing '<span style="color: #FFC107;">${itemInfo.data.title}</span>' <span class="hint-divider"></span> <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> Move <span class="hint-divider"></span> <kbd>Esc</kbd> Exit`;
-        
-        if (itemInfo.data.type === 'tile') {
-            hintHTML += ` <span class="hint-divider"></span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> Resize <span class="hint-divider"></span> <kbd>F</kbd> Folder`;
-            if (itemInfo.parent) { // Check if it has a parent (i.e., is in a folder)
-                 hintHTML += ` <span class="hint-divider"></span> <kbd>X</kbd> Remove from Folder`;
+        let hintHTML = ``;
+
+        if(editModeState.mode === 'adding-to-folder' || editModeState.mode === 'flagged-for-creation') {
+             hintHTML = `Selecting items... <span class="hint-divider"></span> <kbd>Enter</kbd> Confirm <span class="hint-divider"></span> <kbd>Esc</kbd> Cancel`;
+        } else {
+            hintHTML = `Editing '<span style="color: #FFC107;">${itemInfo.data.title}</span>' <span class="hint-divider"></span> <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> Move <span class="hint-divider"></span> <kbd>Esc</kbd> Exit`;
+            if (itemInfo.data.type === 'tile') {
+                hintHTML += ` <span class="hint-divider"></span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> Resize <span class="hint-divider"></span> <kbd>F</kbd> Folder`;
+                if (itemInfo.parent) { // Check if it has a parent (i.e., is in a folder)
+                     hintHTML += ` <span class="hint-divider"></span> <kbd>X</kbd> Remove from Folder`;
+                }
+            } else { // Folder
+                hintHTML += ` <span class="hint-divider"></span> <kbd>F</kbd> Add Items <span class="hint-divider"></span> <kbd>N</kbd> Rename <span class="hint-divider"></span> <kbd>D</kbd> Dissolve`;
             }
-        } else { // Folder
-            hintHTML += ` <span class="hint-divider"></span> <kbd>N</kbd> Rename <span class="hint-divider"></span> <kbd>D</kbd> Dissolve`;
         }
         
         editModeHint.innerHTML = hintHTML;
@@ -727,10 +867,10 @@
     }
 
     // --- Data Manipulation Functions ---
-    function findItem(itemId, fromArray = layoutData, parentArray = null) {
+    function findItem(itemId, fromArray = layoutData, parent = null) {
       for (let i = 0; i < fromArray.length; i++) {
         const item = fromArray[i];
-        if (item.id === itemId) return { data: item, index: i, array: fromArray, parent: parentArray };
+        if (item.id === itemId) return { data: item, index: i, array: fromArray, parent: parent };
         if (item.type === 'folder') {
           const foundInFolder = findItem(itemId, item.items, item);
           if (foundInFolder) return foundInFolder;
@@ -860,62 +1000,123 @@
 
     function handleFolderAction() {
         const selectedItemInfo = findItem(editModeState.selectedId);
-        if (!selectedItemInfo || selectedItemInfo.data.type !== 'tile') return;
-
-        if (!editModeState.flaggedId) {
-            editModeState.flaggedId = editModeState.selectedId;
-            document.querySelector(`.grid-item[data-id="${editModeState.flaggedId}"]`).classList.add('is-flagged');
-            showNotification(`'${selectedItemInfo.data.title}' flagged. Right-click another tile to create a folder.`);
-        } 
-        else if (editModeState.flaggedId === editModeState.selectedId) {
-            editModeState.flaggedId = null;
-            document.querySelector(`.grid-item[data-id="${selectedItemInfo.data.id}"]`).classList.remove('is-flagged');
+        if (!selectedItemInfo) return;
+        
+        if (selectedItemInfo.data.type === 'tile') {
+            if (editModeState.mode === 'normal') {
+                editModeState.mode = 'flagged-for-creation';
+                editModeState.selectionGroup = [editModeState.selectedId]; // The flagged item is part of the group
+                document.querySelector(`.grid-item[data-id="${editModeState.selectedId}"]`).classList.add('is-flagged');
+                showNotification(`'${selectedItemInfo.data.title}' flagged. Right-click other tiles to add them to selection, then press Enter.`);
+                updateHint();
+            }
+        } else if (selectedItemInfo.data.type === 'folder') {
+            if (editModeState.mode === 'normal') {
+                editModeState.mode = 'adding-to-folder';
+                showNotification(`Select tiles to add to '${selectedItemInfo.data.title}'. Press Enter to confirm.`);
+                updateHint();
+            }
         }
     }
     
-    function createFolderWithItems(itemId1, itemId2) {
-      let folderName = prompt("Enter a name for the new folder:", "New Folder");
-      if (!folderName || folderName.trim() === "") {
-          exitEditMode();
-          return;
-      };
+    function createFolderWithItems() {
+        const selectionGroup = editModeState.selectionGroup;
+        if (selectionGroup.length < 2) {
+            showNotification("You must select at least two tiles to create a folder.", "error");
+            return;
+        }
 
-      const itemInfo1 = findItem(itemId1);
-      const itemInfo2 = findItem(itemId2);
-      if (!itemInfo1 || !itemInfo2) return;
+        const folderName = prompt("Enter a name for the new folder:", "New Folder");
+        if (!folderName || folderName.trim() === "") return;
 
-      const [itemData1] = itemInfo1.array.splice(itemInfo1.index, 1);
-      const itemInfo2AfterSplice = findItem(itemId2);
-      const [itemData2] = itemInfo2AfterSplice.array.splice(itemInfo2AfterSplice.index, 1);
+        const itemsToMove = [];
+        let firstItemIndex = -1;
 
-      const newFolder = {
-        id: `folder-${Date.now()}`,
-        type: 'folder',
-        title: folderName.trim(),
-        collapsed: false,
-        items: [itemData1, itemData2]
-      };
+        // Find the index of the first selected item in the main layout to place the folder there
+        for(let i = 0; i < layoutData.length; i++) {
+            if(selectionGroup.includes(layoutData[i].id)) {
+                firstItemIndex = i;
+                break;
+            }
+        }
+        if (firstItemIndex === -1) firstItemIndex = layoutData.length; // Failsafe
 
-      layoutData.splice(itemInfo1.index, 0, newFolder);
-      
-      exitEditMode();
-      saveLayout();
-      renderLayout();
-      showNotification(`Folder "${folderName.trim()}" created successfully.`, 'success');
+        selectionGroup.forEach(id => {
+            const itemInfo = findItem(id);
+            if(itemInfo) {
+                itemsToMove.push(itemInfo.data);
+            }
+        });
+        
+        // Remove from original locations (must do this after collecting all data)
+        layoutData = layoutData.filter(item => !selectionGroup.includes(item.id));
+
+        const newFolder = {
+            id: `folder-${Date.now()}`,
+            type: 'folder',
+            title: folderName.trim(),
+            collapsed: false,
+            items: itemsToMove
+        };
+
+        layoutData.splice(firstItemIndex, 0, newFolder);
+        exitEditMode();
+        saveLayout();
+        renderLayout();
     }
-    
-    function renameFolder(folderId) {
+
+    function addSelectedItemsToFolder() {
+        const folderId = editModeState.selectedId;
+        const selectionGroup = editModeState.selectionGroup;
+        if (!folderId || selectionGroup.length === 0) return;
+
         const folderInfo = findItem(folderId);
         if (!folderInfo || folderInfo.data.type !== 'folder') return;
         
-        const newName = prompt("Enter new name for the folder:", folderInfo.data.title);
-        if (newName && newName.trim() !== "") {
-            folderInfo.data.title = newName.trim();
-            saveLayout();
-            renderLayout();
-            enterEditMode(folderId);
-            showNotification(`Folder renamed to "${newName.trim()}".`, 'success');
-        }
+        selectionGroup.forEach(id => {
+            const itemInfo = findItem(id);
+            if (itemInfo) {
+                const [itemData] = itemInfo.array.splice(itemInfo.index, 1);
+                folderInfo.data.items.push(itemData);
+            }
+        });
+        
+        exitEditMode();
+        saveLayout();
+        renderLayout();
+    }
+    
+    function showRenameModal(folderId) {
+        const folderInfo = findItem(folderId);
+        if (!folderInfo || folderInfo.data.type !== 'folder') return;
+        
+        renameInput.value = folderInfo.data.title;
+        document.body.classList.add('modal-open');
+        renameModalBackdrop.classList.add('visible');
+        renameInput.focus();
+
+        const saveHandler = () => {
+            const newName = renameInput.value;
+            if (newName && newName.trim() !== "") {
+                folderInfo.data.title = newName.trim();
+                saveLayout();
+                renderLayout();
+                enterEditMode(folderId);
+            }
+            closeModal();
+        };
+
+        const cancelHandler = () => closeModal();
+
+        const closeModal = () => {
+            document.body.classList.remove('modal-open');
+            renameModalBackdrop.classList.remove('visible');
+            document.getElementById('rename-save-btn').removeEventListener('click', saveHandler);
+            document.getElementById('rename-cancel-btn').removeEventListener('click', cancelHandler);
+        };
+
+        document.getElementById('rename-save-btn').addEventListener('click', saveHandler);
+        document.getElementById('rename-cancel-btn').addEventListener('click', cancelHandler);
     }
 
     function deleteFolder(folderId) {
@@ -935,6 +1136,12 @@
 
     // --- Keyboard & Global Listeners ---
     function handleKeyDown(event) {
+        if (renameModalBackdrop.classList.contains('visible')) {
+            if (event.key === 'Enter') document.getElementById('rename-save-btn').click();
+            if (event.key === 'Escape') document.getElementById('rename-cancel-btn').click();
+            return;
+        }
+
         if (!editModeState.selectedId) return;
 
         const selectedItemInfo = findItem(editModeState.selectedId);
@@ -944,39 +1151,50 @@
             case "Escape":
                 exitEditMode();
                 break;
+            case "Enter":
+                if (editModeState.mode === 'flagged-for-creation') createFolderWithItems();
+                if (editModeState.mode === 'adding-to-folder') addSelectedItemsToFolder();
+                break;
             case "ArrowLeft":
-                moveItem(editModeState.selectedId, 'left');
+                if (editModeState.mode === 'normal') moveItem(editModeState.selectedId, 'left');
                 break;
             case "ArrowRight":
-                moveItem(editModeState.selectedId, 'right');
+                if (editModeState.mode === 'normal') moveItem(editModeState.selectedId, 'right');
                 break;
             case "ArrowUp":
-                moveItemUpDown('up');
+                if (editModeState.mode === 'normal') moveItemUpDown('up');
                 break;
             case "ArrowDown":
-                moveItemUpDown('down');
+                if (editModeState.mode === 'normal') moveItemUpDown('down');
                 break;
             case "1":
-                if (selectedItemInfo.data.type === 'tile') resizeItem(editModeState.selectedId, 'normal');
+                if (selectedItemInfo.data.type === 'tile' && editModeState.mode === 'normal') resizeItem(editModeState.selectedId, 'normal');
                 break;
             case "2":
-                if (selectedItemInfo.data.type === 'tile') resizeItem(editModeState.selectedId, 'medium');
+                if (selectedItemInfo.data.type === 'tile' && editModeState.mode === 'normal') resizeItem(editModeState.selectedId, 'medium');
                 break;
             case "3":
-                if (selectedItemInfo.data.type === 'tile') resizeItem(editModeState.selectedId, 'wide');
+                if (selectedItemInfo.data.type === 'tile' && editModeState.mode === 'normal') resizeItem(editModeState.selectedId, 'wide');
                 break;
             case "f": case "F":
                 handleFolderAction();
                 break;
             case "n": case "N":
-                if (selectedItemInfo.data.type === 'folder') renameFolder(editModeState.selectedId);
+                if (selectedItemInfo.data.type === 'folder' && editModeState.mode === 'normal') showRenameModal(editModeState.selectedId);
                 break;
             case "d": case "D":
-                if (selectedItemInfo.data.type === 'folder') deleteFolder(editModeState.selectedId);
+                if (selectedItemInfo.data.type === 'folder' && editModeState.mode === 'normal') deleteFolder(editModeState.selectedId);
                 break;
             case "x": case "X":
                 if (selectedItemInfo.parent) removeItemFromFolder(editModeState.selectedId);
                 break;
+        }
+    }
+    
+    function resetLayout() {
+        if (confirm("Are you sure you want to reset your layout to the default? This cannot be undone.")) {
+            localStorage.removeItem(LAYOUT_STORAGE_KEY);
+            location.reload();
         }
     }
 
@@ -1025,6 +1243,8 @@
       
       document.getElementById('logoutBtn').onclick = handleLogout;
       document.getElementById('signOutLink').onclick = handleLogout;
+      document.getElementById('reset-layout-btn').addEventListener('click', resetLayout);
+
 
       document.addEventListener('keydown', handleKeyDown);
       document.addEventListener('click', (e) => {
