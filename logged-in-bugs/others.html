@@ -480,7 +480,7 @@
     const userProfileDocRef = () => currentUser ? firebase.firestore().collection('users').doc(currentUser.uid) : null;
 
     // --- Data & State Management ---
-    const LAYOUT_STORAGE_KEY = '4sp_othersPageLayout_v7';
+    const LAYOUT_STORAGE_KEY = '4sp_othersPageLayout_v8';
     let layoutData = [];
     let editModeState = { selectedId: null, flaggedId: null };
 
@@ -621,7 +621,7 @@
           <div class="tile-main-content">
             <div class="tile-icon">${tileData.icon}</div>
             <h3 class="tile-title">${tileData.title}</h3>
-            <p class="tile-description">${descriptionText}</p>
+            <p class="tile-description">${descriptionText || ''}</p>
           </div>
           <div class="tile-key-stats">${statsHTML}</div>
         </div>`;
@@ -658,13 +658,12 @@
         event.preventDefault();
         event.stopPropagation();
 
-        // New streamlined folder creation logic
         if (editModeState.flaggedId && editModeState.flaggedId !== itemId) {
             const flaggedItemInfo = findItem(editModeState.flaggedId);
             const currentItemInfo = findItem(itemId);
             if (flaggedItemInfo.data.type === 'tile' && currentItemInfo.data.type === 'tile') {
                 createFolderWithItems(editModeState.flaggedId, itemId);
-                return; // Stop further execution
+                return;
             }
         }
 
@@ -681,7 +680,7 @@
 
         editModeState.selectedId = itemId;
         itemElement.classList.add('is-editing');
-        itemElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        itemElement.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
         updateHint();
     }
 
@@ -710,7 +709,7 @@
         if (itemInfo.data.type === 'tile') {
             hintHTML += ` | <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> Resize | <kbd>F</kbd> Folder`;
         } else { // Folder
-            hintHTML += ` | <kbd>D</kbd> Dissolve`;
+            hintHTML += ` | <kbd>N</kbd> Rename | <kbd>D</kbd> Dissolve`;
         }
         
         editModeHint.innerHTML = hintHTML;
@@ -733,14 +732,24 @@
     function moveItem(itemId, direction) {
       const itemInfo = findItem(itemId);
       if (!itemInfo) return;
-      const { index, array } = itemInfo;
+      const { data, index, array } = itemInfo;
       const toIndex = direction === 'left' ? index - 1 : index + 1;
       
       if (toIndex >= 0 && toIndex < array.length) {
-        [array[index], array[toIndex]] = [array[toIndex], array[index]];
-        saveLayout();
-        renderLayout();
-        enterEditMode(itemId);
+        // This is where the core logic for intelligent swapping goes.
+        // We can swap with an adjacent item if it maintains grid integrity.
+        const neighbor = array[toIndex];
+        const sizeMap = { normal: 4, medium: 8, wide: 12 };
+        const currentSize = sizeMap[data.size] || (data.type === 'folder' ? 12 : 0);
+        const neighborSize = sizeMap[neighbor.size] || (neighbor.type === 'folder' ? 12 : 0);
+
+        // Allow swaps if they are of the same size, or if it's a medium(8) + normal(4) combo.
+        if (currentSize === neighborSize || (currentSize === 8 && neighborSize === 4) || (currentSize === 4 && neighborSize === 8)) {
+            [array[index], array[toIndex]] = [array[toIndex], array[index]]; // Swap
+            saveLayout();
+            renderLayout();
+            enterEditMode(itemId);
+        }
       }
     }
 
@@ -772,10 +781,9 @@
         if (!editModeState.flaggedId) {
             editModeState.flaggedId = editModeState.selectedId;
             document.querySelector(`.grid-item[data-id="${editModeState.flaggedId}"]`).classList.add('is-flagged');
-            showNotification(`'${selectedItemInfo.data.title}' flagged. Right-click another item to create a folder.`);
+            showNotification(`'${selectedItemInfo.data.title}' flagged. Right-click another tile to create a folder.`);
         } 
         else if (editModeState.flaggedId === editModeState.selectedId) {
-            // Unflag if 'F' is pressed again on the same item
             editModeState.flaggedId = null;
             document.querySelector(`.grid-item[data-id="${selectedItemInfo.data.id}"]`).classList.remove('is-flagged');
         }
@@ -812,6 +820,20 @@
       renderLayout();
       showNotification(`Folder "${folderName.trim()}" created successfully.`, 'success');
     }
+    
+    function renameFolder(folderId) {
+        const folderInfo = findItem(folderId);
+        if (!folderInfo || folderInfo.data.type !== 'folder') return;
+        
+        const newName = prompt("Enter new name for the folder:", folderInfo.data.title);
+        if (newName && newName.trim() !== "") {
+            folderInfo.data.title = newName.trim();
+            saveLayout();
+            renderLayout();
+            enterEditMode(folderId);
+            showNotification(`Folder renamed to "${newName.trim()}".`, 'success');
+        }
+    }
 
     function deleteFolder(folderId) {
         const folderInfo = findItem(folderId);
@@ -833,6 +855,7 @@
         if (!editModeState.selectedId) return;
 
         const selectedItemInfo = findItem(editModeState.selectedId);
+        if (!selectedItemInfo) return;
 
         switch(event.key) {
             case "Escape":
@@ -856,6 +879,10 @@
             case "f":
             case "F":
                 handleFolderAction();
+                break;
+            case "n":
+            case "N":
+                if (selectedItemInfo.data.type === 'folder') renameFolder(editModeState.selectedId);
                 break;
             case "d":
             case "D":
@@ -928,7 +955,7 @@
         const userProfRef = userProfileDocRef();
         if (userProfRef) {
           try {
-            const doc = await userProf-ref.get();
+            const doc = await userProfRef.get();
             if (doc.exists) {
               sidebarUserNameEl.textContent = doc.data().username || user.displayName || 'User';
             } else {
