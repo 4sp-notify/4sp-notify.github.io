@@ -18,9 +18,6 @@
       margin: 0;
       font-family: 'PrimaryFont', sans-serif;
     }
-    body.modal-open {
-      overflow: hidden;
-    }
     .dashboard-container {
       display: flex;
       flex: 1;
@@ -186,6 +183,27 @@
       -webkit-background-clip: text;
       -webkit-text-fill-color: transparent;
       background-clip: text;
+    }
+    #reset-layout-btn {
+        width: 40px;
+        height: 40px;
+        background-color: #f0f2f5;
+        border: 1px solid #e0e0e0;
+        border-radius: 12px; /* Squircle shape */
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s ease-in-out;
+    }
+    #reset-layout-btn:hover {
+        background-color: #e0e0e0;
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+    }
+    #reset-layout-btn img {
+        width: 22px;
+        height: 22px;
     }
 
     /* --- Grid System --- */
@@ -546,11 +564,13 @@
     <main class="main-content">
       <div class="dashboard-header fade-in">
         <h2 class="dashboard-title">OTHERS</h2>
+        <button id="reset-layout-btn" title="Reset Layout">
+            <img src="../images/refresh-dark.png" alt="Reset">
+        </button>
       </div>
 
       <div class="tiles-grid" id="tilesGrid">
-        <!-- Tiles and folders will be dynamically rendered here -->
-      </div>
+        </div>
     </main>
   </div>
   
@@ -834,7 +854,7 @@
             hintHTML = `Editing '<span style="color: #FFC107;">${itemInfo.data.title}</span>' <span class="hint-divider"></span> <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> Move <span class="hint-divider"></span> <kbd>Esc</kbd> Exit`;
             if (itemInfo.data.type === 'tile') {
                 hintHTML += ` <span class="hint-divider"></span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> Resize <span class="hint-divider"></span> <kbd>F</kbd> Folder`;
-                if (itemInfo.parent) {
+                if (itemInfo.parent) { // Check if it has a parent (i.e., is in a folder)
                      hintHTML += ` <span class="hint-divider"></span> <kbd>X</kbd> Remove from Folder`;
                 }
             } else { // Folder
@@ -985,8 +1005,9 @@
         if (selectedItemInfo.data.type === 'tile') {
             if (editModeState.mode === 'normal') {
                 editModeState.mode = 'flagged-for-creation';
+                editModeState.selectionGroup = [editModeState.selectedId]; // The flagged item is part of the group
                 document.querySelector(`.grid-item[data-id="${editModeState.selectedId}"]`).classList.add('is-flagged');
-                showNotification(`'${selectedItemInfo.data.title}' flagged. Right-click other tiles to select them, then press Enter to create a folder.`);
+                showNotification(`'${selectedItemInfo.data.title}' flagged. Right-click other tiles to add them to selection, then press Enter.`);
                 updateHint();
             }
         } else if (selectedItemInfo.data.type === 'folder') {
@@ -999,24 +1020,30 @@
     }
     
     function createFolderWithItems() {
-        const flaggedId = editModeState.selectedId;
         const selectionGroup = editModeState.selectionGroup;
-        if (!flaggedId || selectionGroup.length === 0) {
-            showNotification("You must select at least one other tile to create a folder.", "error");
+        if (selectionGroup.length < 2) {
+            showNotification("You must select at least two tiles to create a folder.", "error");
             return;
         }
 
-        let folderName = prompt("Enter a name for the new folder:", "New Folder");
+        const folderName = prompt("Enter a name for the new folder:", "New Folder");
         if (!folderName || folderName.trim() === "") return;
 
-        const allIds = [flaggedId, ...selectionGroup];
         const itemsToMove = [];
-        allIds.forEach(id => {
+        let firstItemIndex = -1;
+
+        selectionGroup.forEach(id => {
             const itemInfo = findItem(id);
             if(itemInfo) {
-                const [itemData] = itemInfo.array.splice(itemInfo.index, 1);
-                itemsToMove.push(itemData);
+                if(firstItemIndex === -1) firstItemIndex = itemInfo.index;
+                itemsToMove.push(itemInfo.data);
             }
+        });
+        
+        // Remove from original locations
+        selectionGroup.forEach(id => {
+            const itemInfo = findItem(id);
+            if(itemInfo) itemInfo.array.splice(itemInfo.index, 1);
         });
 
         const newFolder = {
@@ -1027,7 +1054,7 @@
             items: itemsToMove
         };
 
-        layoutData.unshift(newFolder); // Add folder to the beginning
+        layoutData.splice(firstItemIndex, 0, newFolder);
         exitEditMode();
         saveLayout();
         renderLayout();
@@ -1108,13 +1135,6 @@
             return;
         }
 
-        if (event.key.toLowerCase() === 'r' && !editModeState.selectedId) {
-            if (document.activeElement.tagName === 'INPUT' || document.activeElement.tagName === 'TEXTAREA') return;
-            event.preventDefault();
-            resetLayout();
-            return;
-        }
-
         if (!editModeState.selectedId) return;
 
         const selectedItemInfo = findItem(editModeState.selectedId);
@@ -1141,22 +1161,22 @@
                 if (editModeState.mode === 'normal') moveItemUpDown('down');
                 break;
             case "1":
-                if (selectedItemInfo.data.type === 'tile') resizeItem(editModeState.selectedId, 'normal');
+                if (selectedItemInfo.data.type === 'tile' && editModeState.mode === 'normal') resizeItem(editModeState.selectedId, 'normal');
                 break;
             case "2":
-                if (selectedItemInfo.data.type === 'tile') resizeItem(editModeState.selectedId, 'medium');
+                if (selectedItemInfo.data.type === 'tile' && editModeState.mode === 'normal') resizeItem(editModeState.selectedId, 'medium');
                 break;
             case "3":
-                if (selectedItemInfo.data.type === 'tile') resizeItem(editModeState.selectedId, 'wide');
+                if (selectedItemInfo.data.type === 'tile' && editModeState.mode === 'normal') resizeItem(editModeState.selectedId, 'wide');
                 break;
             case "f": case "F":
                 handleFolderAction();
                 break;
             case "n": case "N":
-                if (selectedItemInfo.data.type === 'folder') showRenameModal(editModeState.selectedId);
+                if (selectedItemInfo.data.type === 'folder' && editModeState.mode === 'normal') showRenameModal(editModeState.selectedId);
                 break;
             case "d": case "D":
-                if (selectedItemInfo.data.type === 'folder') deleteFolder(editModeState.selectedId);
+                if (selectedItemInfo.data.type === 'folder' && editModeState.mode === 'normal') deleteFolder(editModeState.selectedId);
                 break;
             case "x": case "X":
                 if (selectedItemInfo.parent) removeItemFromFolder(editModeState.selectedId);
@@ -1216,6 +1236,7 @@
       
       document.getElementById('logoutBtn').onclick = handleLogout;
       document.getElementById('signOutLink').onclick = handleLogout;
+      document.getElementById('reset-layout-btn').addEventListener('click', resetLayout);
 
       document.addEventListener('keydown', handleKeyDown);
       document.addEventListener('click', (e) => {
