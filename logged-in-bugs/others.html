@@ -188,23 +188,24 @@
     /* --- Grid System --- */
     .tiles-grid {
         display: grid;
-        grid-template-columns: repeat(6, 1fr);
+        grid-template-columns: repeat(12, 1fr);
         gap: 25px;
-        align-items: start;
+        align-items: stretch; /* Updated for uniform height */
     }
 
     /* --- Tile Styles (applies to both links and folders) --- */
     .grid-item {
         color: inherit;
         text-decoration: none;
-        display: block;
+        display: flex; /* Use flex to make children fill height */
         border-radius: 15px;
         transition: transform 0.3s ease, box-shadow 0.3s ease;
         position: relative;
     }
-    .grid-item[data-size="normal"] { grid-column: span 2; }
-    .grid-item[data-size="medium"] { grid-column: span 3; }
-    .grid-item[data-size="wide"] { grid-column: span 6; }
+    /* Updated Grid Spans for 12-column layout */
+    .grid-item[data-size="normal"] { grid-column: span 4; }
+    .grid-item[data-size="medium"] { grid-column: span 6; }
+    .grid-item[data-size="wide"] { grid-column: span 12; }
     
     .grid-item:hover {
         transform: translateY(-5px);
@@ -220,7 +221,7 @@
         display: flex;
         justify-content: space-between;
         overflow: hidden;
-        height: 100%;
+        width: 100%; /* Ensure it fills the parent grid-item */
         box-sizing: border-box;
     }
     .tile-main-content {
@@ -279,11 +280,12 @@
 
     /* --- Folder Styles --- */
     .folder-container {
-        grid-column: span 6; /* Folders are always full-width */
+        grid-column: span 12; /* Folders are always full-width */
         background-color: rgba(103, 32, 189, 0.05);
         padding: 15px;
         border-radius: 15px;
         border: 1px dashed rgba(103, 32, 189, 0.2);
+        display: block; /* Override flex from .grid-item */
     }
     .folder-header {
         display: flex;
@@ -313,8 +315,9 @@
     .folder-content {
         padding: 20px 0 5px 50px;
         display: grid;
-        grid-template-columns: repeat(6, 1fr);
+        grid-template-columns: repeat(12, 1fr);
         gap: 25px;
+        align-items: stretch; /* Uniform height for items in folder */
         max-height: 2000px;
         overflow: hidden;
         transition: max-height 0.5s ease-in-out, padding 0.5s ease-in-out;
@@ -387,9 +390,9 @@
     }
 
     /* --- Responsive adjustments --- */
-    @media (max-width: 992px) {
+    @media (max-width: 1200px) {
       .tiles-grid, .folder-content {
-        grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
       }
       .grid-item { grid-column: auto !important; }
     }
@@ -489,7 +492,7 @@
     const userProfileDocRef = () => currentUser ? firebase.firestore().collection('users').doc(currentUser.uid) : null;
 
     // --- Data & State Management ---
-    const LAYOUT_STORAGE_KEY = '4sp_othersPageLayout_v2';
+    const LAYOUT_STORAGE_KEY = '4sp_othersPageLayout_v3'; // Incremented version for new structure
     let layoutData = [];
 
     const defaultTiles = [
@@ -517,9 +520,41 @@
       }
     }
     
+    // --- Automatic Sorting Logic ---
+    function getSortedLayout(items) {
+        const tiles = items.filter(item => item.type === 'tile');
+        const mediumTilesCount = tiles.filter(tile => tile.size === 'medium').length;
+
+        // Condition to trigger sorting: even number of medium tiles (and at least one)
+        if (mediumTilesCount > 0 && mediumTilesCount % 2 === 0) {
+            const sizeOrder = { 'wide': 1, 'medium': 2, 'normal': 3 };
+            const sortedItems = [...items];
+
+            sortedItems.sort((a, b) => {
+                const isAFolder = a.type === 'folder';
+                const isBFolder = b.type === 'folder';
+
+                if (isAFolder && !isBFolder) return -1; // Folders come first
+                if (!isAFolder && isBFolder) return 1;
+                if (isAFolder && isBFolder) return 0; // Maintain original order between folders
+
+                // Sort tiles by size
+                const orderA = sizeOrder[a.size] || 99;
+                const orderB = sizeOrder[b.size] || 99;
+                return orderA - orderB;
+            });
+            return sortedItems;
+        }
+        return items; // Return original array if conditions aren't met
+    }
+    
     // --- Rendering Functions ---
     function renderLayout() {
       tilesGrid.innerHTML = '';
+      
+      // Apply automatic sorting before rendering
+      layoutData = getSortedLayout(layoutData);
+      
       layoutData.forEach(item => {
         let element;
         if (item.type === 'folder') {
@@ -529,7 +564,7 @@
         }
         tilesGrid.appendChild(element);
       });
-      // Add fade-in animation to all direct children of the grid
+      
       Array.from(tilesGrid.children).forEach((child, index) => {
         child.style.animation = `fadeInGeneral 0.5s ease-out ${index * 0.05}s forwards`;
       });
@@ -575,7 +610,8 @@
         <div class="folder-content"></div>`;
       
       const content = container.querySelector('.folder-content');
-      folderData.items.forEach(tileData => {
+      const sortedFolderItems = getSortedLayout(folderData.items); // Sort folder content
+      sortedFolderItems.forEach(tileData => {
         content.appendChild(createTileElement(tileData));
       });
       
@@ -621,9 +657,9 @@
           <div class="context-menu-submenu">
               <div class="context-menu-item">↔️ Change Size...</div>
               <div class="context-menu-submenu-content">
-                  <div class="context-menu-submenu-item" data-size="normal">Normal</div>
-                  <div class="context-menu-submenu-item" data-size="medium">Medium</div>
-                  <div class="context-menu-submenu-item" data-size="wide">Wide</div>
+                  <div class="context-menu-submenu-item" data-size="normal">Normal (1/3)</div>
+                  <div class="context-menu-submenu-item" data-size="medium">Medium (1/2)</div>
+                  <div class="context-menu-submenu-item" data-size="wide">Wide (Full)</div>
               </div>
           </div>
         `;
@@ -648,10 +684,22 @@
         document.getElementById('ctx-delete-folder').addEventListener('click', () => deleteFolder(itemId));
       }
 
-      // Show menu
+      // Show menu and handle viewport positioning
       contextMenu.style.display = 'flex';
-      contextMenu.style.top = `${event.pageY}px`;
-      contextMenu.style.left = `${event.pageX}px`;
+      const menuWidth = contextMenu.offsetWidth;
+      const menuHeight = contextMenu.offsetHeight;
+      let x = event.pageX;
+      let y = event.pageY;
+
+      if (x + menuWidth > window.innerWidth) {
+        x = window.innerWidth - menuWidth - 5;
+      }
+      if (y + menuHeight > window.innerHeight) {
+        y = window.innerHeight - menuHeight - 5;
+      }
+      
+      contextMenu.style.top = `${y}px`;
+      contextMenu.style.left = `${x}px`;
     }
     
     function hideContextMenu() {
@@ -726,7 +774,6 @@
       if (folderInfo && folderInfo.data.type === 'folder') {
         folderInfo.data.collapsed = !folderInfo.data.collapsed;
         saveLayout();
-        // Just toggle class instead of full re-render for smooth animation
         const folderElement = document.querySelector(`.folder-container[data-id="${folderId}"]`);
         if(folderElement) folderElement.classList.toggle('collapsed');
       }
@@ -739,7 +786,6 @@
       const itemInfo = findItem(itemId);
       if (!itemInfo || itemInfo.data.type !== 'tile') return;
 
-      // Remove item from its current array
       const [itemData] = itemInfo.array.splice(itemInfo.index, 1);
       
       const newFolder = {
@@ -750,7 +796,6 @@
         items: [itemData]
       };
 
-      // Add folder to the main layout array at the original item's position
       layoutData.splice(itemInfo.index, 0, newFolder);
       
       saveLayout();
@@ -764,10 +809,7 @@
 
       if (!itemInfo || !folderInfo || itemInfo.data.type !== 'tile' || folderInfo.data.type !== 'folder') return;
       
-      // Remove item from its current location
       const [itemData] = itemInfo.array.splice(itemInfo.index, 1);
-      
-      // Add it to the folder
       folderInfo.data.items.push(itemData);
       
       saveLayout();
@@ -781,10 +823,7 @@
         const folderIndex = folderInfo.index;
         const itemsToRelease = folderInfo.data.items;
 
-        // Remove the folder from the layout
         layoutData.splice(folderIndex, 1);
-
-        // Add the released items back to the layout at the folder's original position
         layoutData.splice(folderIndex, 0, ...itemsToRelease);
 
         saveLayout();
@@ -820,10 +859,8 @@
       document.getElementById('logoutBtn').onclick = handleLogout;
       document.getElementById('signOutLink').onclick = handleLogout;
 
-      // Close context menu when clicking elsewhere
       document.addEventListener('click', hideContextMenu);
       
-      // Initial load
       loadLayout();
       renderLayout();
     });
