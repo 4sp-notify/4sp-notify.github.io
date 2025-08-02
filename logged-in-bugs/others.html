@@ -366,6 +366,8 @@
         display: flex;
         align-items: center;
         gap: 15px;
+        flex-wrap: wrap;
+        justify-content: center;
     }
     #edit-mode-hint.visible {
         bottom: 20px;
@@ -375,6 +377,11 @@
         padding: 2px 6px;
         border-radius: 4px;
         font-size: 0.9em;
+    }
+    .hint-divider {
+        width: 1px;
+        height: 14px;
+        background-color: #666;
     }
 
     /* --- Responsive adjustments --- */
@@ -480,7 +487,7 @@
     const userProfileDocRef = () => currentUser ? firebase.firestore().collection('users').doc(currentUser.uid) : null;
 
     // --- Data & State Management ---
-    const LAYOUT_STORAGE_KEY = '4sp_othersPageLayout_v8';
+    const LAYOUT_STORAGE_KEY = '4sp_othersPageLayout_v9';
     let layoutData = [];
     let editModeState = { selectedId: null, flaggedId: null };
 
@@ -704,12 +711,15 @@
         }
 
         const itemInfo = findItem(editModeState.selectedId);
-        let hintHTML = `Editing '<span style="color: #FFC107;">${itemInfo.data.title}</span>' | <kbd>←</kbd><kbd>→</kbd> Move | <kbd>Esc</kbd> Exit`;
+        let hintHTML = `Editing '<span style="color: #FFC107;">${itemInfo.data.title}</span>' <span class="hint-divider"></span> <kbd>↑</kbd><kbd>↓</kbd><kbd>←</kbd><kbd>→</kbd> Move <span class="hint-divider"></span> <kbd>Esc</kbd> Exit`;
         
         if (itemInfo.data.type === 'tile') {
-            hintHTML += ` | <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> Resize | <kbd>F</kbd> Folder`;
+            hintHTML += ` <span class="hint-divider"></span> <kbd>1</kbd><kbd>2</kbd><kbd>3</kbd> Resize <span class="hint-divider"></span> <kbd>F</kbd> Folder`;
+            if(itemInfo.array !== layoutData) { // Check if it's in a folder
+                 hintHTML += ` <span class="hint-divider"></span> <kbd>X</kbd> Remove from Folder`;
+            }
         } else { // Folder
-            hintHTML += ` | <kbd>N</kbd> Rename | <kbd>D</kbd> Dissolve`;
+            hintHTML += ` <span class="hint-divider"></span> <kbd>N</kbd> Rename <span class="hint-divider"></span> <kbd>D</kbd> Dissolve`;
         }
         
         editModeHint.innerHTML = hintHTML;
@@ -717,40 +727,118 @@
     }
 
     // --- Data Manipulation Functions ---
-    function findItem(itemId, fromArray = layoutData) {
+    function findItem(itemId, fromArray = layoutData, parentArray = null) {
       for (let i = 0; i < fromArray.length; i++) {
         const item = fromArray[i];
-        if (item.id === itemId) return { data: item, index: i, array: fromArray };
+        if (item.id === itemId) return { data: item, index: i, array: fromArray, parent: parentArray };
         if (item.type === 'folder') {
-          const foundInFolder = findItem(itemId, item.items);
+          const foundInFolder = findItem(itemId, item.items, item);
           if (foundInFolder) return foundInFolder;
         }
       }
       return null;
     }
 
+    function mapLayoutToGrid(items) {
+        const grid = [];
+        let currentRow = [];
+        let currentSpan = 0;
+        const sizeMap = { normal: 4, medium: 8, wide: 12 };
+
+        items.forEach(item => {
+            const itemSpan = item.type === 'folder' ? 12 : sizeMap[item.size];
+            if (currentSpan + itemSpan > 12) {
+                grid.push(currentRow);
+                currentRow = [];
+                currentSpan = 0;
+            }
+            currentRow.push({ id: item.id, start: currentSpan, end: currentSpan + itemSpan - 1});
+            currentSpan += itemSpan;
+        });
+        if (currentRow.length > 0) grid.push(currentRow);
+        return grid;
+    }
+
     function moveItem(itemId, direction) {
       const itemInfo = findItem(itemId);
       if (!itemInfo) return;
-      const { data, index, array } = itemInfo;
+      const { index, array } = itemInfo;
       const toIndex = direction === 'left' ? index - 1 : index + 1;
       
       if (toIndex >= 0 && toIndex < array.length) {
-        // This is where the core logic for intelligent swapping goes.
-        // We can swap with an adjacent item if it maintains grid integrity.
-        const neighbor = array[toIndex];
-        const sizeMap = { normal: 4, medium: 8, wide: 12 };
-        const currentSize = sizeMap[data.size] || (data.type === 'folder' ? 12 : 0);
-        const neighborSize = sizeMap[neighbor.size] || (neighbor.type === 'folder' ? 12 : 0);
-
-        // Allow swaps if they are of the same size, or if it's a medium(8) + normal(4) combo.
-        if (currentSize === neighborSize || (currentSize === 8 && neighborSize === 4) || (currentSize === 4 && neighborSize === 8)) {
-            [array[index], array[toIndex]] = [array[toIndex], array[index]]; // Swap
-            saveLayout();
-            renderLayout();
-            enterEditMode(itemId);
-        }
+        [array[index], array[toIndex]] = [array[toIndex], array[index]];
+        saveLayout();
+        renderLayout();
+        enterEditMode(itemId);
       }
+    }
+
+    function moveItemUpDown(direction) {
+        const selectedId = editModeState.selectedId;
+        const itemInfo = findItem(selectedId);
+        if (!itemInfo) return;
+
+        const parentArray = itemInfo.parent ? itemInfo.parent.items : layoutData;
+        const grid = mapLayoutToGrid(parentArray);
+        
+        let currentPos = { row: -1, col: -1, start: -1, end: -1 };
+        grid.forEach((row, rIdx) => {
+            row.forEach((item, cIdx) => {
+                if(item.id === selectedId) {
+                    currentPos = { row: rIdx, col: cIdx, start: item.start, end: item.end };
+                }
+            });
+        });
+
+        if (currentPos.row === -1) return;
+
+        const targetRowIndex = direction === 'up' ? currentPos.row - 1 : currentPos.row + 1;
+        if (targetRowIndex < 0 || targetRowIndex >= grid.length) return;
+        
+        const targetRow = grid[targetRowIndex];
+        // Find best target in the other row (one that overlaps horizontally)
+        let bestTarget = targetRow.reduce((best, current) => {
+            const overlap = Math.max(0, Math.min(currentPos.end, current.end) - Math.max(currentPos.start, current.start));
+            if (overlap > best.overlap) {
+                return { id: current.id, overlap: overlap };
+            }
+            return best;
+        }, { id: targetRow[0].id, overlap: 0 }); // Default to first item
+
+        const targetId = bestTarget.id;
+        const targetInfo = findItem(targetId, parentArray);
+        if (!targetInfo) return;
+
+        // Swap in the original 1D array
+        const originalIndex = itemInfo.index;
+        const targetIndex = targetInfo.index;
+        [parentArray[originalIndex], parentArray[targetIndex]] = [parentArray[targetIndex], parentArray[originalIndex]];
+        
+        saveLayout();
+        renderLayout();
+        enterEditMode(selectedId);
+    }
+    
+    function removeItemFromFolder(itemId) {
+        const itemInfo = findItem(itemId);
+        // Ensure the item is actually in a folder
+        if (!itemInfo || !itemInfo.parent) return;
+
+        const folder = itemInfo.parent;
+        const [itemData] = itemInfo.array.splice(itemInfo.index, 1);
+        
+        layoutData.push(itemData); // Add to the end of the main grid
+
+        // If folder is now empty, dissolve it
+        if (folder.items.length === 0) {
+            const folderInfo = findItem(folder.id);
+            if(folderInfo) layoutData.splice(folderInfo.index, 1);
+        }
+
+        exitEditMode();
+        saveLayout();
+        renderLayout();
+        showNotification(`'${itemData.title}' removed from folder.`, 'success');
     }
 
     function resizeItem(itemId, newSize) {
@@ -867,6 +955,12 @@
             case "ArrowRight":
                 moveItem(editModeState.selectedId, 'right');
                 break;
+            case "ArrowUp":
+                moveItemUpDown('up');
+                break;
+            case "ArrowDown":
+                moveItemUpDown('down');
+                break;
             case "1":
                 if (selectedItemInfo.data.type === 'tile') resizeItem(editModeState.selectedId, 'normal');
                 break;
@@ -876,17 +970,17 @@
             case "3":
                 if (selectedItemInfo.data.type === 'tile') resizeItem(editModeState.selectedId, 'wide');
                 break;
-            case "f":
-            case "F":
+            case "f": case "F":
                 handleFolderAction();
                 break;
-            case "n":
-            case "N":
+            case "n": case "N":
                 if (selectedItemInfo.data.type === 'folder') renameFolder(editModeState.selectedId);
                 break;
-            case "d":
-            case "D":
+            case "d": case "D":
                 if (selectedItemInfo.data.type === 'folder') deleteFolder(editModeState.selectedId);
+                break;
+            case "x": case "X":
+                if (selectedItemInfo.parent) removeItemFromFolder(editModeState.selectedId);
                 break;
         }
     }
@@ -911,7 +1005,7 @@
         Object.assign(notification.style, {
             position: 'fixed', top: '20px', left: '50%', transform: 'translateX(-50%)',
             padding: '10px 20px', backgroundColor: 'rgba(0,0,0,0.8)', color: 'white',
-            borderRadius: '8px', zIndex: '10002', fontFamily: 'PrimaryFont, sans-serif',
+            borderRadius: '8px', zIndex: '10002', fontFamily: 'PrimaryFont', sans-serif',
             opacity: '0', transition: 'opacity 0.3s ease'
         });
         notification.textContent = message;
