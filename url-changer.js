@@ -21,7 +21,7 @@ const urlChanger = {
         {
             name: 'None',
             title: 'Default Title', // This will be replaced by the original page title
-            favicon: '../images/logo.png' // This will be replaced by the original favicon
+            favicon: '../favicon.ico' // This will be replaced by the original favicon
         },
         {
             name: 'HAC',
