@@ -411,7 +411,61 @@
         margin-left: auto;
         display: flex;
         gap: 6px;
+        align-items: center;
     }
+
+    /* --- START: Reorder Control Styles --- */
+    .reorder-btn-group {
+        display: flex;
+        flex-direction: row; /* Changed from column */
+        height: 37px;
+        width: 70px; /* Adjusted width for two buttons side-by-side */
+        border: 1px solid rgba(103, 32, 189, 0.2); /* Match card border */
+        border-radius: 12px; /* Match button radius */
+        overflow: hidden;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.2s ease-in-out;
+        background-color: rgba(255, 255, 255, 0.5);
+        backdrop-filter: blur(2px);
+    }
+    .reorder-btn-group.visible {
+        opacity: 1;
+        pointer-events: auto;
+    }
+    .half-btn {
+        flex: 1;
+        background: none;
+        border: none;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 1.1em; /* Made slightly larger */
+        color: #6720bd; /* Purple color for visibility */
+        transition: background-color 0.2s ease;
+    }
+    .half-btn.left {
+        border-right: 1px solid rgba(103, 32, 189, 0.2); /* Changed from border-bottom */
+    }
+    .half-btn:hover {
+        background-color: rgba(103, 32, 189, 0.1);
+    }
+    .half-btn:disabled {
+        color: #ccc;
+        cursor: not-allowed;
+    }
+    .dashboard-card.nudge-left { animation: nudge-left 0.3s ease-in-out; }
+    .dashboard-card.nudge-right { animation: nudge-right 0.3s ease-in-out; }
+    @keyframes nudge-left { 
+      0%, 100% { transform: translateY(-8px) translateX(0) scale(1.02); } 
+      50% { transform: translateY(-8px) translateX(-6px) scale(1.02); } 
+    }
+    @keyframes nudge-right { 
+      0%, 100% { transform: translateY(-8px) translateX(0) scale(1.02); } 
+      50% { transform: translateY(-8px) translateX(6px) scale(1.02); } 
+    }
+    /* --- END: Reorder Control Styles --- */
 
     .weather-action-btn {
         background: rgba(103, 32, 189, 0.08);
@@ -1187,7 +1241,7 @@
 
     /* --- Animation Classes --- */
     .fade-in {
-      animation: fadeIn 0.6s ease-out;
+      animation: fadeIn 0.6s ease-out forwards;
     }
     @keyframes fadeIn {
       from { opacity: 0; transform: translateY(20px); }
@@ -1350,6 +1404,17 @@
     const marqueeEls = document.querySelectorAll('.marquee-content');
     const dashboardGrid = document.getElementById('dashboardGrid');
     const userNameEl = document.getElementById('userName');
+
+    // --- START: Layout & Reordering Globals ---
+    const dashboardLayoutStorageKey = '4sp_dashboardLayout_v1';
+    const defaultDashboardLayout = [
+        'weather_large_widget', 
+        'clock_widget', 
+        'stopwatch_widget', 
+        'timer_widget', 
+        'quick_actions_widget'
+    ];
+    // --- END: Layout & Reordering Globals ---
     
     // --- START: Search Bar Suggestions Data (used by search bar and shortcuts modal) ---
     const pageSuggestions = [
@@ -2474,17 +2539,11 @@
         const doc = await userDocRef.get();
         const userData = doc.exists ? doc.data() : {};
         userNameEl.textContent = userData.username || user.displayName || 'Welcome User';
-        setupFixedDashboardLayout();
+        renderDashboardLayout();
         updateMarquees();
-        setTimeout(() => {
-          document.querySelectorAll('.dashboard-card').forEach((card, index) => {
-            card.style.animationDelay = `${index * 0.08}s`;
-            card.classList.add('fade-in');
-          });
-        }, 100);
       } catch (error) {
         console.error('Error loading user data:', error);
-        setupFixedDashboardLayout();
+        renderDashboardLayout();
       }
     });
 
@@ -2496,57 +2555,161 @@
       });
     }
 
+    // --- START: New Layout & Reordering Functions ---
+    function getDashboardLayout() {
+        const savedLayout = localStorage.getItem(dashboardLayoutStorageKey);
+        if (savedLayout) {
+            try {
+                const parsed = JSON.parse(savedLayout);
+                // Basic validation: ensure it's an array and contains the same elements as the default
+                if (Array.isArray(parsed) && parsed.length === defaultDashboardLayout.length && defaultDashboardLayout.every(id => parsed.includes(id))) {
+                    return parsed;
+                }
+            } catch (e) {
+                console.error("Error parsing saved dashboard layout", e);
+                // If parsing fails, we'll fall back to default
+            }
+        }
+        return [...defaultDashboardLayout]; // Return a copy of the default
+    }
+
+    function saveDashboardLayout(layout) {
+        localStorage.setItem(dashboardLayoutStorageKey, JSON.stringify(layout));
+    }
+
+    function moveWidget(widgetTemplateId, direction) {
+        let layout = getDashboardLayout();
+        const fromIndex = layout.findIndex(id => id === widgetTemplateId);
+
+        if (fromIndex === -1) return; // Should not happen
+
+        const toIndex = direction === 'left' ? fromIndex - 1 : fromIndex + 1;
+        const cardElement = document.querySelector(`.dashboard-card[data-template-id="${widgetTemplateId}"]`);
+
+        // Check bounds
+        if (toIndex < 0 || toIndex >= layout.length) {
+            if (cardElement) {
+                const nudgeClass = direction === 'left' ? 'nudge-left' : 'nudge-right';
+                cardElement.classList.add(nudgeClass);
+                setTimeout(() => cardElement.classList.remove(nudgeClass), 300);
+            }
+            return;
+        }
+
+        // Check if widgets are swappable (must have the same 'type' for grid compatibility)
+        const fromWidgetTemplate = availableCardTemplates.find(t => t.templateId === layout[fromIndex]);
+        const toWidgetTemplate = availableCardTemplates.find(t => t.templateId === layout[toIndex]);
+
+        if (fromWidgetTemplate.type !== toWidgetTemplate.type) {
+            if (cardElement) {
+                const nudgeClass = direction === 'left' ? 'nudge-left' : 'nudge-right';
+                cardElement.classList.add(nudgeClass);
+                setTimeout(() => cardElement.classList.remove(nudgeClass), 300);
+            }
+            showNotification("Cannot swap widgets of different sizes.", "error");
+            return;
+        }
+
+        // Perform swap, save the new layout, and re-render the entire dashboard
+        [layout[fromIndex], layout[toIndex]] = [layout[toIndex], layout[fromIndex]];
+        saveDashboardLayout(layout);
+        renderDashboardLayout(widgetTemplateId); // Pass the ID to keep its reorder controls visible
+    }
+
+    function addReorderEventListeners(activeWidgetId = null) {
+        document.querySelectorAll('.dashboard-card').forEach(card => {
+            const reorderGroup = card.querySelector('.reorder-btn-group');
+            if (!reorderGroup) return;
+
+            const templateId = card.dataset.templateId;
+
+            // If this was the widget that was just moved, keep its controls visible
+            if (templateId === activeWidgetId) {
+                reorderGroup.classList.add('visible');
+            }
+
+            card.addEventListener('contextmenu', e => {
+                e.preventDefault();
+                e.stopPropagation();
+
+                const wasVisible = reorderGroup.classList.contains('visible');
+                
+                // First, hide all other reorder groups to ensure only one is open
+                document.querySelectorAll('.reorder-btn-group').forEach(el => el.classList.remove('visible'));
+                
+                // Then, toggle the current one's visibility
+                if (!wasVisible) {
+                    reorderGroup.classList.add('visible');
+                }
+            });
+
+            card.querySelector('.half-btn.left').addEventListener('click', e => {
+                e.stopPropagation();
+                moveWidget(templateId, 'left');
+            });
+            card.querySelector('.half-btn.right').addEventListener('click', e => {
+                e.stopPropagation();
+                moveWidget(templateId, 'right');
+            });
+        });
+    }
+
     function createCardDOMElement(template) {
       const newCard = document.createElement('div');
       newCard.classList.add('dashboard-card');
       newCard.dataset.id = `${template.templateId}_${Date.now()}`;
       newCard.dataset.templateId = template.templateId;
       newCard.dataset.cardType = template.type || 'full';
+      
       const header = document.createElement('div');
       header.classList.add('card-header');
+      
       const iconEl = document.createElement('div');
       iconEl.classList.add('card-icon');
       iconEl.textContent = template.icon;
+      
       const titleEl = document.createElement('h4');
       titleEl.classList.add('card-title');
       titleEl.textContent = template.title;
+      
       header.appendChild(iconEl);
       header.appendChild(titleEl);
 
       const buttonContainer = document.createElement('div');
       buttonContainer.className = 'card-header-buttons';
 
+      // Add reorder buttons to all cards
+      const reorderGroup = document.createElement('div');
+      reorderGroup.className = 'reorder-btn-group';
+      reorderGroup.innerHTML = `
+          <button class="half-btn left" title="Move Left">◀</button>
+          <button class="half-btn right" title="Move Right">▶</button>
+      `;
+      buttonContainer.appendChild(reorderGroup);
+
+      // Add widget-specific buttons
       if (template.templateId === 'weather_large_widget') {
         const settingsButton = document.createElement('button');
         settingsButton.className = 'weather-action-btn weather-settings-btn';
         settingsButton.title = 'Weather Settings';
-        const settingsImg = document.createElement('img');
-        settingsImg.src = '../images/gear-dark.png';
-        settingsImg.alt = 'Settings';
-        settingsButton.appendChild(settingsImg);
+        settingsButton.innerHTML = `<img src="../images/gear-dark.png" alt="Settings">`;
         
         const refreshButton = document.createElement('button');
         refreshButton.className = 'weather-action-btn weather-refresh-btn';
         refreshButton.title = 'Refresh Weather';
-        const refreshImg = document.createElement('img');
-        refreshImg.src = '../images/refresh-dark.png';
-        refreshImg.alt = 'Refresh';
-        refreshButton.appendChild(refreshImg);
+        refreshButton.innerHTML = `<img src="../images/refresh-dark.png" alt="Refresh">`;
 
         buttonContainer.appendChild(settingsButton);
         buttonContainer.appendChild(refreshButton);
-        header.appendChild(buttonContainer);
       } else if (template.templateId === 'quick_actions_widget') {
           const settingsButton = document.createElement('button');
           settingsButton.className = 'weather-action-btn quick-actions-settings-btn';
           settingsButton.title = 'Edit Shortcuts';
-          const settingsImg = document.createElement('img');
-          settingsImg.src = '../images/gear-dark.png';
-          settingsImg.alt = 'Settings';
-          settingsButton.appendChild(settingsImg);
+          settingsButton.innerHTML = `<img src="../images/gear-dark.png" alt="Settings">`;
           buttonContainer.appendChild(settingsButton);
-          header.appendChild(buttonContainer);
       }
+      
+      header.appendChild(buttonContainer);
       
       const contentWrapper = document.createElement('div');
       contentWrapper.classList.add('card-content-inner');
@@ -2571,20 +2734,31 @@
       return newCard;
     }
 
-    function addCardToDashboard(templateId) {
-      const template = availableCardTemplates.find(t => t.templateId === templateId);
-      if (!template) {
-        console.warn(`Template ${templateId} not found.`);
-        return;
-      }
-      const cardDom = createCardDOMElement(template);
-      dashboardGrid.appendChild(cardDom);
-    }
+    function renderDashboardLayout(activeWidgetId = null) {
+        const layout = getDashboardLayout();
+        dashboardGrid.innerHTML = ''; // Clear the grid
 
-    function setupFixedDashboardLayout() {
-        dashboardGrid.innerHTML = '';
-        availableCardTemplates.forEach(template => addCardToDashboard(template.templateId));
+        // Render cards based on the current layout
+        layout.forEach(templateId => {
+            const template = availableCardTemplates.find(t => t.templateId === templateId);
+            if (template) {
+                const cardDom = createCardDOMElement(template);
+                dashboardGrid.appendChild(cardDom);
+            }
+        });
+        
+        // Attach all necessary event listeners for the newly rendered cards
+        addReorderEventListeners(activeWidgetId);
+
+        // Re-apply the fade-in animation for a smooth visual transition
+        document.querySelectorAll('.dashboard-card').forEach((card, index) => {
+            card.style.animation = 'none'; // Reset any existing animation
+            card.offsetHeight; // Force a browser reflow to make the new animation work
+            card.style.animation = `fadeIn 0.4s ease-out ${index * 0.05}s forwards`;
+        });
     }
+    // --- END: New Layout & Reordering Functions ---
+
 
     function showNotification(message, type = 'info', duration = 3000) {
       const notification = document.createElement('div');
@@ -2711,6 +2885,15 @@
         if (batteryStatusContainer) batteryStatusContainer.style.display = 'none';
       }
       // --- END: Battery Status Logic ---
+
+      // Global click listener to hide open reorder menus
+      document.addEventListener('click', function(event) {
+        if (!event.target.closest('.dashboard-card')) {
+          document.querySelectorAll('.reorder-btn-group.visible').forEach(el => {
+            el.classList.remove('visible');
+          });
+        }
+      });
 
       // Logout and Sidebar Logic
       document.getElementById('logoutBtn').addEventListener('click', () => {
