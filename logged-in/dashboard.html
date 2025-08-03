@@ -414,58 +414,26 @@
         align-items: center;
     }
 
-    /* --- START: Reorder Control Styles --- */
-    .reorder-btn-group {
-        display: flex;
-        flex-direction: row; /* Changed from column */
-        height: 37px;
-        width: 70px; /* Adjusted width for two buttons side-by-side */
-        border: 1px solid rgba(103, 32, 189, 0.2); /* Match card border */
-        border-radius: 12px; /* Match button radius */
-        overflow: hidden;
-        opacity: 0;
-        pointer-events: none;
-        transition: opacity 0.2s ease-in-out;
-        background-color: rgba(255, 255, 255, 0.5);
-        backdrop-filter: blur(2px);
+    /* --- START: Edit Mode Styles --- */
+    .dashboard-card.is-editing {
+        transform: translateY(-8px) scale(1.03);
+        box-shadow: 0 15px 40px rgba(103, 32, 189, 0.25);
+        z-index: 100;
+        outline: 3px solid #8a2be2;
+        outline-offset: 4px;
+        border-color: #8a2be2;
     }
-    .reorder-btn-group.visible {
-        opacity: 1;
-        pointer-events: auto;
+    .dashboard-card.invalid-move {
+        animation: shake-error 0.5s ease-in-out;
+        border-color: #e53935 !important;
+        outline-color: #e53935 !important;
     }
-    .half-btn {
-        flex: 1;
-        background: none;
-        border: none;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        font-size: 1.1em; /* Made slightly larger */
-        color: #6720bd; /* Purple color for visibility */
-        transition: background-color 0.2s ease;
+    @keyframes shake-error {
+        0%, 100% { transform: translateY(-8px) scale(1.03) translateX(0); }
+        10%, 30%, 50%, 70%, 90% { transform: translateY(-8px) scale(1.03) translateX(-8px); }
+        20%, 40%, 60%, 80% { transform: translateY(-8px) scale(1.03) translateX(8px); }
     }
-    .half-btn.left {
-        border-right: 1px solid rgba(103, 32, 189, 0.2); /* Changed from border-bottom */
-    }
-    .half-btn:hover {
-        background-color: rgba(103, 32, 189, 0.1);
-    }
-    .half-btn:disabled {
-        color: #ccc;
-        cursor: not-allowed;
-    }
-    .dashboard-card.nudge-left { animation: nudge-left 0.3s ease-in-out; }
-    .dashboard-card.nudge-right { animation: nudge-right 0.3s ease-in-out; }
-    @keyframes nudge-left { 
-      0%, 100% { transform: translateY(-8px) translateX(0) scale(1.02); } 
-      50% { transform: translateY(-8px) translateX(-6px) scale(1.02); } 
-    }
-    @keyframes nudge-right { 
-      0%, 100% { transform: translateY(-8px) translateX(0) scale(1.02); } 
-      50% { transform: translateY(-8px) translateX(6px) scale(1.02); } 
-    }
-    /* --- END: Reorder Control Styles --- */
+    /* --- END: Edit Mode Styles --- */
 
     .weather-action-btn {
         background: rgba(103, 32, 189, 0.08);
@@ -741,6 +709,42 @@
         color: #adb5bd;
     }
 
+    /* --- START: Edit Mode Hint Bar --- */
+    #edit-mode-hint {
+        position: fixed;
+        bottom: -100px;
+        left: 50%;
+        transform: translateX(-50%);
+        background-color: rgba(40, 40, 40, 0.9);
+        backdrop-filter: blur(5px);
+        color: white;
+        padding: 12px 25px;
+        border-radius: 12px;
+        z-index: 10001;
+        font-family: 'PrimaryFont', sans-serif;
+        font-size: 0.9em;
+        transition: bottom 0.4s ease-in-out;
+        display: flex;
+        align-items: center;
+        gap: 15px;
+        flex-wrap: wrap;
+        justify-content: center;
+    }
+    #edit-mode-hint.visible {
+        bottom: 20px;
+    }
+    #edit-mode-hint kbd {
+        background-color: #555;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-size: 0.9em;
+    }
+    .hint-divider {
+        width: 1px;
+        height: 14px;
+        background-color: #666;
+    }
+    /* --- END: Edit Mode Hint Bar --- */
 
     /* --- Modals (General) --- */
     .modal {
@@ -1318,6 +1322,8 @@
     </main>
   </div>
 
+  <div id="edit-mode-hint"></div>
+
   <div id="forecastDetailModal" class="modal">
     <div class="modal-content">
         <button class="modal-close-btn">&times;</button>
@@ -1404,9 +1410,12 @@
     const marqueeEls = document.querySelectorAll('.marquee-content');
     const dashboardGrid = document.getElementById('dashboardGrid');
     const userNameEl = document.getElementById('userName');
+    const editModeHint = document.getElementById('edit-mode-hint');
+
 
     // --- START: Layout & Reordering Globals ---
-    const dashboardLayoutStorageKey = '4sp_dashboardLayout_v1';
+    const dashboardLayoutStorageKey = '4sp_dashboardLayout_v2_simple'; // Updated key for new system
+    let selectedWidgetId = null; // To track the currently selected widget for editing
     const defaultDashboardLayout = [
         'weather_large_widget', 
         'clock_widget', 
@@ -2561,99 +2570,116 @@
         if (savedLayout) {
             try {
                 const parsed = JSON.parse(savedLayout);
-                // Basic validation: ensure it's an array and contains the same elements as the default
                 if (Array.isArray(parsed) && parsed.length === defaultDashboardLayout.length && defaultDashboardLayout.every(id => parsed.includes(id))) {
                     return parsed;
                 }
             } catch (e) {
                 console.error("Error parsing saved dashboard layout", e);
-                // If parsing fails, we'll fall back to default
             }
         }
-        return [...defaultDashboardLayout]; // Return a copy of the default
+        return [...defaultDashboardLayout]; 
     }
 
     function saveDashboardLayout(layout) {
         localStorage.setItem(dashboardLayoutStorageKey, JSON.stringify(layout));
     }
+    
+    function toggleEditMode(event, widgetId) {
+        event.preventDefault();
+        event.stopPropagation();
+        
+        const wasEditing = selectedWidgetId === widgetId;
+        exitEditMode(); 
+        if (!wasEditing) {
+            enterEditMode(widgetId);
+        }
+    }
 
-    function moveWidget(widgetTemplateId, direction) {
-        let layout = getDashboardLayout();
-        const fromIndex = layout.findIndex(id => id === widgetTemplateId);
+    function enterEditMode(widgetId) {
+        const widgetElement = document.querySelector(`.dashboard-card[data-template-id="${widgetId}"]`);
+        if (!widgetElement) return;
 
-        if (fromIndex === -1) return; // Should not happen
+        selectedWidgetId = widgetId;
+        widgetElement.classList.add('is-editing');
+        widgetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        updateHint();
+    }
 
-        const toIndex = direction === 'left' ? fromIndex - 1 : fromIndex + 1;
-        const cardElement = document.querySelector(`.dashboard-card[data-template-id="${widgetTemplateId}"]`);
+    function exitEditMode() {
+        if (selectedWidgetId) {
+            const oldElement = document.querySelector(`.dashboard-card[data-template-id="${selectedWidgetId}"]`);
+            if (oldElement) oldElement.classList.remove('is-editing');
+        }
+        selectedWidgetId = null;
+        updateHint();
+    }
 
-        // Check bounds
-        if (toIndex < 0 || toIndex >= layout.length) {
-            if (cardElement) {
-                const nudgeClass = direction === 'left' ? 'nudge-left' : 'nudge-right';
-                cardElement.classList.add(nudgeClass);
-                setTimeout(() => cardElement.classList.remove(nudgeClass), 300);
-            }
+    function updateHint() {
+        if (!selectedWidgetId) {
+            editModeHint.classList.remove('visible');
             return;
         }
 
-        // Check if widgets are swappable (must have the same 'type' for grid compatibility)
-        const fromWidgetTemplate = availableCardTemplates.find(t => t.templateId === layout[fromIndex]);
-        const toWidgetTemplate = availableCardTemplates.find(t => t.templateId === layout[toIndex]);
+        const widgetInfo = availableCardTemplates.find(item => item.templateId === selectedWidgetId);
+        let hintHTML = `Editing '<span style="color: #FFC107;">${widgetInfo.title}</span>' <span class="hint-divider"></span> <kbd>Arrows</kbd> Move <span class="hint-divider"></span> <kbd>Esc</kbd> Exit`;
+        
+        editModeHint.innerHTML = hintHTML;
+        editModeHint.classList.add('visible');
+    }
+    
+    function handleDashboardKeyDown(event) {
+        if (!selectedWidgetId) return;
 
-        if (fromWidgetTemplate.type !== toWidgetTemplate.type) {
-            if (cardElement) {
-                const nudgeClass = direction === 'left' ? 'nudge-left' : 'nudge-right';
-                cardElement.classList.add(nudgeClass);
-                setTimeout(() => cardElement.classList.remove(nudgeClass), 300);
-            }
-            showNotification("Cannot swap widgets of different sizes.", "error");
+        switch(event.key) {
+            case "Escape":
+                exitEditMode();
+                break;
+            case "ArrowLeft":
+                moveWidget('left');
+                break;
+            case "ArrowRight":
+                moveWidget('right');
+                break;
+        }
+    }
+    
+    function triggerInvalidMoveAnimation(widgetId) {
+        const cardElement = document.querySelector(`.dashboard-card[data-template-id="${widgetId}"]`);
+        if (cardElement) {
+            cardElement.classList.add('invalid-move');
+            cardElement.addEventListener('animationend', () => {
+                cardElement.classList.remove('invalid-move');
+            }, { once: true });
+        }
+    }
+
+    function moveWidget(direction) {
+        if (!selectedWidgetId) return;
+
+        const layout = getDashboardLayout();
+        const currentIndex = layout.findIndex(id => id === selectedWidgetId);
+        if (currentIndex === -1) return;
+
+        const targetIndex = direction === 'left' ? currentIndex - 1 : currentIndex + 1;
+
+        if (targetIndex < 0 || targetIndex >= layout.length) {
+            triggerInvalidMoveAnimation(selectedWidgetId);
             return;
         }
 
-        // Perform swap, save the new layout, and re-render the entire dashboard
-        [layout[fromIndex], layout[toIndex]] = [layout[toIndex], layout[fromIndex]];
+        const currentWidgetTemplate = availableCardTemplates.find(t => t.templateId === layout[currentIndex]);
+        const targetWidgetTemplate = availableCardTemplates.find(t => t.templateId === layout[targetIndex]);
+
+        if (!currentWidgetTemplate || !targetWidgetTemplate || currentWidgetTemplate.type !== targetWidgetTemplate.type) {
+            triggerInvalidMoveAnimation(selectedWidgetId);
+            return;
+        }
+
+        [layout[currentIndex], layout[targetIndex]] = [layout[targetIndex], layout[currentIndex]];
         saveDashboardLayout(layout);
-        renderDashboardLayout(widgetTemplateId); // Pass the ID to keep its reorder controls visible
+        renderDashboardLayout(selectedWidgetId);
     }
-
-    function addReorderEventListeners(activeWidgetId = null) {
-        document.querySelectorAll('.dashboard-card').forEach(card => {
-            const reorderGroup = card.querySelector('.reorder-btn-group');
-            if (!reorderGroup) return;
-
-            const templateId = card.dataset.templateId;
-
-            // If this was the widget that was just moved, keep its controls visible
-            if (templateId === activeWidgetId) {
-                reorderGroup.classList.add('visible');
-            }
-
-            card.addEventListener('contextmenu', e => {
-                e.preventDefault();
-                e.stopPropagation();
-
-                const wasVisible = reorderGroup.classList.contains('visible');
-                
-                // First, hide all other reorder groups to ensure only one is open
-                document.querySelectorAll('.reorder-btn-group').forEach(el => el.classList.remove('visible'));
-                
-                // Then, toggle the current one's visibility
-                if (!wasVisible) {
-                    reorderGroup.classList.add('visible');
-                }
-            });
-
-            card.querySelector('.half-btn.left').addEventListener('click', e => {
-                e.stopPropagation();
-                moveWidget(templateId, 'left');
-            });
-            card.querySelector('.half-btn.right').addEventListener('click', e => {
-                e.stopPropagation();
-                moveWidget(templateId, 'right');
-            });
-        });
-    }
-
+    
     function createCardDOMElement(template) {
       const newCard = document.createElement('div');
       newCard.classList.add('dashboard-card');
@@ -2678,16 +2704,6 @@
       const buttonContainer = document.createElement('div');
       buttonContainer.className = 'card-header-buttons';
 
-      // Add reorder buttons to all cards
-      const reorderGroup = document.createElement('div');
-      reorderGroup.className = 'reorder-btn-group';
-      reorderGroup.innerHTML = `
-          <button class="half-btn left" title="Move Left">◀</button>
-          <button class="half-btn right" title="Move Right">▶</button>
-      `;
-      buttonContainer.appendChild(reorderGroup);
-
-      // Add widget-specific buttons
       if (template.templateId === 'weather_large_widget') {
         const settingsButton = document.createElement('button');
         settingsButton.className = 'weather-action-btn weather-settings-btn';
@@ -2718,6 +2734,8 @@
       newCard.appendChild(header);
       newCard.appendChild(contentWrapper);
       
+      newCard.addEventListener('contextmenu', e => toggleEditMode(e, template.templateId));
+      
       if (template.onMount) {
         setTimeout(() => {
           try {
@@ -2736,9 +2754,9 @@
 
     function renderDashboardLayout(activeWidgetId = null) {
         const layout = getDashboardLayout();
-        dashboardGrid.innerHTML = ''; // Clear the grid
+        const currentScroll = { x: window.scrollX, y: window.scrollY };
+        dashboardGrid.innerHTML = ''; 
 
-        // Render cards based on the current layout
         layout.forEach(templateId => {
             const template = availableCardTemplates.find(t => t.templateId === templateId);
             if (template) {
@@ -2747,13 +2765,15 @@
             }
         });
         
-        // Attach all necessary event listeners for the newly rendered cards
-        addReorderEventListeners(activeWidgetId);
+        window.scrollTo(currentScroll.x, currentScroll.y);
 
-        // Re-apply the fade-in animation for a smooth visual transition
+        if (activeWidgetId) {
+            enterEditMode(activeWidgetId);
+        }
+
         document.querySelectorAll('.dashboard-card').forEach((card, index) => {
-            card.style.animation = 'none'; // Reset any existing animation
-            card.offsetHeight; // Force a browser reflow to make the new animation work
+            card.style.animation = 'none';
+            card.offsetHeight;
             card.style.animation = `fadeIn 0.4s ease-out ${index * 0.05}s forwards`;
         });
     }
@@ -2833,7 +2853,6 @@
           }
         });
 
-        // Hide suggestions when clicking anywhere else on the page
         document.addEventListener('click', function(event) {
           if (!searchContainer.contains(event.target)) {
             suggestionsContainer.style.display = 'none';
@@ -2886,14 +2905,14 @@
       }
       // --- END: Battery Status Logic ---
 
-      // Global click listener to hide open reorder menus
-      document.addEventListener('click', function(event) {
-        if (!event.target.closest('.dashboard-card')) {
-          document.querySelectorAll('.reorder-btn-group.visible').forEach(el => {
-            el.classList.remove('visible');
-          });
-        }
+      // --- START: New Edit Mode Global Listeners ---
+      document.addEventListener('keydown', handleDashboardKeyDown);
+      document.addEventListener('click', (e) => {
+          if (!e.target.closest('.dashboard-card.is-editing')) {
+              exitEditMode();
+          }
       });
+      // --- END: New Edit Mode Global Listeners ---
 
       // Logout and Sidebar Logic
       document.getElementById('logoutBtn').addEventListener('click', () => {
