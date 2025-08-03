@@ -6,103 +6,98 @@
  * smoothing to ensure low-resolution icons remain sharp and not blurry.
  *
  * It automatically detects if the loading HTML page is in a root directory or a
- * subdirectory and adjusts the favicon paths accordingly for scalability.
+ * subdirectory (e.g., 'logged-in') and adjusts the image paths accordingly.
  *
  * To add more options, simply add a new object to the 'presets' array.
  * Each object needs:
  * - name: The display name in the settings dropdown.
  * - title: The text that will appear as the page title.
- * - favicon: The path to the favicon image, relative from the root (e.g., 'favicons/icon.png').
+ * - favicon: The path to the icon from the root 'images' folder (e.g., 'images/icon.png').
  *
  * Final version as of: August 2, 2025
  */
 
 const urlChanger = {
     // --- Configuration ---
-    // Add your new tab presets here. Favicon paths should be relative to the root directory.
-    // The script will automatically add '../' if the page is in a subdirectory.
+    // Presets now point to the 'images' folder as requested.
     presets: [
         {
             name: 'None',
-            title: 'Default Title', // This will be replaced by the original page title
-            favicon: 'images/logo.png'    // This will be replaced by the original favicon
+            title: 'Default Title', // Will be replaced by the original page title
+            favicon: 'favicon.ico'    // Will be replaced by the original favicon
         },
         {
             name: 'HAC',
             title: 'Login',
-            favicon: 'favicons/hac.png' // Path from root
+            favicon: 'images/hac.png' // ✅ CORRECTED PATH
         },
         {
             name: 'Kahoot',
             title: 'Kahoot! | Learning games | Make learning awesome!',
-            favicon: 'favicons/kahoot.png' // Path from root
+            favicon: 'images/kahoot.png' // ✅ CORRECTED PATH
         },
         {
             name: 'Google Classroom',
             title: 'Home',
-            favicon: 'favicons/google-classroom.png' // Path from root
+            favicon: 'images/google-classroom.png' // ✅ CORRECTED PATH
         },
         {
             name: 'Google Docs',
             title: 'Google Docs',
-            favicon: 'favicons/google-docs.png' // Path from root
+            favicon: 'images/google-docs.png' // ✅ CORRECTED PATH
         },
         {
             name: 'Google Slides',
             title: 'Google Slides',
-            favicon: 'favicons/google-slides.png' // Path from root
+            favicon: 'images/google-slides.png' // ✅ CORRECTED PATH
         },
         {
             name: 'Google Drive',
             title: 'Home - Google Drive',
-            favicon: 'favicons/google-drive.png' // Path from root
+            favicon: 'images/google-drive.png' // ✅ CORRECTED PATH
         },
         {
             name: 'Wikipedia',
             title: 'Wikipedia',
-            favicon: 'favicons/wikipedia.png' // Path from root
+            favicon: 'images/wikipedia.png' // ✅ CORRECTED PATH
         },
         {
             name: 'Clever',
             title: 'Clever | Connect every student to a world of learning',
-            favicon: 'favicons/clever.png' // Path from root
+            favicon: 'images/clever.png' // ✅ CORRECTED PATH
         }
     ],
 
     // --- Internal Properties ---
     originalTitle: '',
     originalFavicon: '',
-    pathPrefix: '', // ✨ NEW: Will hold the path prefix, e.g., '' or '../'
+    pathPrefix: '', // This will hold the path prefix, e.g., '' or '../'
 
     /**
-     * Initializes the script. It captures the original page title and favicon,
-     * determines the correct pathing, and applies any saved preset from localStorage.
+     * Initializes the script.
      */
     init: function() {
         console.log("Debug: url-changer.js script has started.");
 
-        // --- ✨ NEW CODE START ✨ ---
-        // Determine the correct path prefix based on the current page's location.
-        // A path like '/index.html' has a depth of 1. A path like '/pages/game.html' has a depth of 2.
-        // If depth is greater than 1, we are in a subdirectory and need to go up one level.
+        // This logic determines if the page is in the root or a subdirectory.
+        // It correctly creates the '../' prefix for pages in folders like '/logged-in/'.
         const pathDepth = window.location.pathname.split('/').length - 1;
         this.pathPrefix = pathDepth > 1 ? '../' : '';
-        console.log(`Debug: Detected path depth of ${pathDepth}. Setting prefix to: "${this.pathPrefix}"`);
-        // --- ✨ NEW CODE END ✨ ---
+        console.log(`Debug: Page is in a ${this.pathPrefix ? 'subdirectory' : 'root directory'}. Path prefix set to: "${this.pathPrefix}"`);
 
-        // Capture the original page state before making any changes.
+        // Capture the original page state.
         this.originalTitle = document.title;
         const faviconElement = document.querySelector("link[rel*='icon']");
         this.originalFavicon = faviconElement ? faviconElement.href : '';
 
-        // Update the 'None' preset to use the captured original values.
+        // Update the 'None' preset with the actual original values.
         const nonePreset = this.presets.find(p => p.name === 'None');
         if (nonePreset) {
             nonePreset.title = this.originalTitle;
             nonePreset.favicon = this.originalFavicon;
         }
 
-        // Apply the saved preset, if one exists.
+        // Apply any saved preset.
         const savedPresetName = localStorage.getItem('selectedUrlPreset');
         if (savedPresetName) {
             this.applyPreset(savedPresetName);
@@ -110,8 +105,7 @@ const urlChanger = {
     },
 
     /**
-     * Applies a given preset by changing the document title and favicon.
-     * For custom presets, it scales the favicon image to fit correctly using a canvas.
+     * Applies a given preset by name.
      * @param {string} presetName - The name of the preset to apply.
      */
     applyPreset: function(presetName) {
@@ -122,10 +116,8 @@ const urlChanger = {
             return;
         }
 
-        // Change the document title.
         document.title = preset.title;
 
-        // Find the existing favicon link element, or create it if it doesn't exist.
         let favicon = document.querySelector("link[rel*='icon']");
         if (!favicon) {
             favicon = document.createElement('link');
@@ -133,20 +125,12 @@ const urlChanger = {
             document.head.appendChild(favicon);
         }
 
-        // Handle the 'None' preset to revert to the original state directly.
-        // This case does not need the path prefix because it uses the full original href.
+        // Revert to original for the 'None' preset.
         if (preset.name === 'None') {
-            if (preset.favicon) {
-                favicon.href = preset.favicon;
-                favicon.style.display = '';
-            } else {
-                favicon.href = '';
-                favicon.style.display = 'none';
-            }
-            return; // End execution for the 'None' case.
+            favicon.href = preset.favicon || '';
+            return;
         }
 
-        // For all other presets, load the image and draw it on a canvas to ensure proper scaling.
         const img = new Image();
         img.crossOrigin = "Anonymous";
 
@@ -157,48 +141,34 @@ const urlChanger = {
             canvas.height = size;
             const ctx = canvas.getContext('2d');
 
-            // Disable image smoothing to prevent blurriness on scaled-down favicons.
-            ctx.imageSmoothingEnabled = false;
-            ctx.mozImageSmoothingEnabled = false;
-            ctx.webkitImageSmoothingEnabled = false;
-            ctx.msImageSmoothingEnabled = false;
+            ctx.imageSmoothingEnabled = false; // For sharp, pixelated icons
             
-            // Calculate dimensions to fit the image within the canvas while maintaining aspect ratio.
             const scale = Math.min(size / img.width, size / img.height);
             const scaledWidth = img.width * scale;
             const scaledHeight = img.height * scale;
-
-            // Calculate coordinates to center the scaled image on the canvas.
             const x = (size - scaledWidth) / 2;
             const y = (size - scaledHeight) / 2;
             
-            // Draw the scaled image onto the canvas.
             ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
-
-            // Update the favicon link's href with the canvas data URL.
             favicon.href = canvas.toDataURL('image/png');
-            favicon.style.display = '';
         };
 
         img.onerror = () => {
-            // ✨ MODIFIED: Use the constructed path in the error message for clarity.
             const fullPath = this.pathPrefix + preset.favicon;
-            console.error(`URL Changer: Failed to load favicon image at "${fullPath}". Reverting to original.`);
+            console.error(`URL Changer: Failed to load image at "${fullPath}". Reverting to original.`);
             if (this.originalFavicon) {
                 favicon.href = this.originalFavicon;
-            } else {
-                favicon.href = '';
-                favicon.style.display = 'none';
             }
         };
 
-        // ✨ MODIFIED: Prepend the dynamic path prefix to the favicon source.
+        // This combines the prefix ('../') and the icon path ('images/icon.png')
+        // to create the correct full relative path.
         img.src = this.pathPrefix + preset.favicon;
     },
 
     /**
-     * Saves the user's preset choice to localStorage and applies it.
-     * @param {string} presetName - The name of the preset to save.
+     * Saves the user's choice to localStorage.
+     * @param {string} presetName - The name of the preset to save and apply.
      */
     savePreset: function(presetName) {
         localStorage.setItem('selectedUrlPreset', presetName);
@@ -207,7 +177,6 @@ const urlChanger = {
     }
 };
 
-// Add an event listener to run the init function once the DOM is fully loaded.
 document.addEventListener('DOMContentLoaded', () => {
     urlChanger.init();
 });
