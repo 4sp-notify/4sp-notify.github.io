@@ -818,7 +818,7 @@
         function makeDistortionCurve(amount) { const k = typeof amount === 'number' ? amount : 50; const n_samples = 44100; const curve = new Float32Array(n_samples); const deg = Math.PI / 180; for (let i = 0; i < n_samples; i++) { const x = i * 2 / n_samples - 1; curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x)); } return curve; }
         function makeVintageCurve(amount) { const n_samples = 44100; const curve = new Float32Array(n_samples); if (amount === 0) { for (let i = 0; i < n_samples; i++) { curve[i] = i * 2 / n_samples - 1; } } else { for (let i = 0; i < n_samples; i++) { const x = i * 2 / n_samples - 1; curve[i] = Math.tanh(x * amount); } } return curve; }
 
-        nodes.bassWaveShaper.curve = makeDistortionCurve(0); nodes.bassWaveShaper.oversample = '4x'; nodes.vintageWarmer.curve = makeVintageCurve(0); nodes.vintageWarmer.oversample = '4x'; nodes.reverb.gain.gain.value = 0;
+        nodes.bassWaveShaper.curve = makeDistortionCurve(0); nodes.bassWaveShaper.oversample = '4x'; nodes.vintageWarmer.curve = makeVintageCurve(0); nodes.reverb.gain.gain.value = 0;
         
         const controls = Object.fromEntries(Array.from(document.querySelectorAll('[data-setting]')).map(el => [el.type === 'radio' ? el.value : el.dataset.setting, el]));
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
@@ -858,7 +858,11 @@
                 this.sourceNode.detune.value = options.pitch;
                 this.sourceNode.playbackRate.value = options.speed;
                 this.sourceNode.connect(this.gainNode);
-                this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(1, audioContext.currentTime + options.fadeTime);
+                
+                // --- MODIFICATION: Use maxVolume from options if available, otherwise default to 1.0 ---
+                const targetVolume = options.maxVolume !== undefined ? options.maxVolume : 1.0;
+                this.gainNode.gain.setValueAtTime(0.0001, audioContext.currentTime).linearRampToValueAtTime(targetVolume, audioContext.currentTime + options.fadeTime);
+                
                 this.sourceNode.start(0);
                 this.sourceNode.onended = () => { if (this.gainNode.gain.value > 0.0001) { this.onEnd(this); } };
             }
@@ -872,7 +876,28 @@
             }
         }
         
-        async function loadSoundsAndCreateButtons() { try { const response = await fetch('../SoundboardNames.json'); const soundsData = await response.json(); const container = document.getElementById('soundCategoriesContainerV4'); container.innerHTML = ''; for (const categoryKey in soundsData) { const categoryDiv = document.createElement('div'); categoryDiv.className = 'sound-category-v4'; categoryDiv.innerHTML = `<h2>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`; const buttonsGrid = document.createElement('div'); buttonsGrid.className = 'sound-buttons-grid-v4'; soundsData[categoryKey].sort().forEach(fileName => { const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); const button = document.createElement('button'); button.className = 'sound-button-v4'; button.textContent = displayName; button.dataset.soundFile = fileName; button.addEventListener('click', async () => { if (!controls.allowMultiple.checked) clearSounds(); const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); }; const sound = new Sound(fileName, onEnd); sound.toggleSpatial(controls.modeSpatial.checked); activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]); await sound.play({ looping: controls.looping.checked, fadeTime: parseFloat(controls.fadeIn.value || 0.1), speed: parseFloat(controls.speed.value || 1), pitch: parseFloat(controls.pitch.value || 0) }); }); const startAutoclicker = (btn) => { if (btn.dataset.autoclickerIntervalId) return; const interval = parseInt(document.getElementById('clickInterval').value, 10); const intervalId = setInterval(() => btn.click(), interval); btn.dataset.autoclickerIntervalId = intervalId; }; const stopAutoclicker = (btn) => { if (btn.dataset.autoclickerIntervalId) { clearInterval(btn.dataset.autoclickerIntervalId); delete btn.dataset.autoclickerIntervalId; } }; button.addEventListener('mouseenter', (e) => { const method = document.querySelector('input[name="autoclickerActivation"]:checked').value; if (controls.autoclickerEnabled.checked && method === 'hover') { startAutoclicker(e.currentTarget); } }); button.addEventListener('mouseleave', (e) => { stopAutoclicker(e.currentTarget); }); button.addEventListener('mousedown', (e) => { const method = document.querySelector('input[name="autoclickerActivation"]:checked').value; if (controls.autoclickerEnabled.checked && method === 'hold') { e.currentTarget.click(); startAutoclicker(e.currentTarget); } }); button.addEventListener('mouseup', (e) => { stopAutoclicker(e.currentTarget); }); buttonsGrid.appendChild(button); }); categoryDiv.appendChild(buttonsGrid); container.appendChild(categoryDiv); } } catch (error) { console.error("Failed to load sounds:", error); } }
+        async function loadSoundsAndCreateButtons() { try { const response = await fetch('../SoundboardNames.json'); const soundsData = await response.json(); const container = document.getElementById('soundCategoriesContainerV4'); container.innerHTML = ''; for (const categoryKey in soundsData) { const categoryDiv = document.createElement('div'); categoryDiv.className = 'sound-category-v4'; categoryDiv.innerHTML = `<h2>${categoryKey.replace(/([A-Z])/g, ' $1').trim()}</h2>`; const buttonsGrid = document.createElement('div'); buttonsGrid.className = 'sound-buttons-grid-v4'; soundsData[categoryKey].sort().forEach(fileName => { const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); const button = document.createElement('button'); button.className = 'sound-button-v4'; button.textContent = displayName; button.dataset.soundFile = fileName; button.dataset.category = categoryKey; /* <-- MODIFICATION: Tag button with its category */ button.addEventListener('click', async () => { if (!controls.allowMultiple.checked) clearSounds(); 
+            
+            // --- MODIFICATION: Check if the sound is explicit and set a max volume ---
+            // NOTE: This assumes your explicit sound category in SoundboardNames.json is named 'Explicit'.
+            // If it's named something else, please change the string 'Explicit' below.
+            const isExplicit = button.dataset.category === 'Explicit';
+            const maxVolume = isExplicit ? 0.65 : 1.0;
+
+            const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); }; const sound = new Sound(fileName, onEnd); sound.toggleSpatial(controls.modeSpatial.checked); activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]); 
+            
+            await sound.play({ 
+                looping: controls.looping.checked, 
+                fadeTime: parseFloat(controls.fadeIn.value || 0.1), 
+                speed: parseFloat(controls.speed.value || 1), 
+                pitch: parseFloat(controls.pitch.value || 0),
+                maxVolume: maxVolume // Pass the calculated max volume to the play function
+            }); 
+
+            // --- MODIFICATION: Blur the button after click to ensure panic key priority ---
+            button.blur();
+
+        }); const startAutoclicker = (btn) => { if (btn.dataset.autoclickerIntervalId) return; const interval = parseInt(document.getElementById('clickInterval').value, 10); const intervalId = setInterval(() => btn.click(), interval); btn.dataset.autoclickerIntervalId = intervalId; }; const stopAutoclicker = (btn) => { if (btn.dataset.autoclickerIntervalId) { clearInterval(btn.dataset.autoclickerIntervalId); delete btn.dataset.autoclickerIntervalId; } }; button.addEventListener('mouseenter', (e) => { const method = document.querySelector('input[name="autoclickerActivation"]:checked').value; if (controls.autoclickerEnabled.checked && method === 'hover') { startAutoclicker(e.currentTarget); } }); button.addEventListener('mouseleave', (e) => { stopAutoclicker(e.currentTarget); }); button.addEventListener('mousedown', (e) => { const method = document.querySelector('input[name="autoclickerActivation"]:checked').value; if (controls.autoclickerEnabled.checked && method === 'hold') { e.currentTarget.click(); startAutoclicker(e.currentTarget); } }); button.addEventListener('mouseup', (e) => { stopAutoclicker(e.currentTarget); }); buttonsGrid.appendChild(button); }); categoryDiv.appendChild(buttonsGrid); container.appendChild(categoryDiv); } } catch (error) { console.error("Failed to load sounds:", error); } }
         
         const toggleMute = () => { isMuted = !isMuted; const muteIndicator = document.getElementById('muteIndicator'); if (isMuted) { lastVolumeBeforeMute = masterGain.gain.value; masterGain.gain.value = 0; muteIndicator.classList.add('visible'); } else { masterGain.gain.value = lastVolumeBeforeMute; muteIndicator.classList.remove('visible'); } controls.masterVolume.value = masterGain.gain.value; document.getElementById('masterVolumeValue').textContent = `${Math.round(masterGain.gain.value * 100)}%`; };
         
@@ -947,7 +972,45 @@
 
         async function initialize() {
             createEarlyReflectionsEngine(); await createReverbIR(audioContext); await loadSoundsAndCreateButtons(); requestAnimationFrame(updateButtonVisuals);
-            saveSettingsBtn.addEventListener('click', saveSettings); document.getElementById('resetSettingsBtn').addEventListener('click', () => { if (confirm('Are you sure you want to reset all settings on this page? This cannot be undone.')) { localStorage.removeItem(LOCAL_STORAGE_KEY); window.location.reload(); } }); document.getElementById('clearSoundsBtn').addEventListener('click', clearSounds); document.getElementById('settingsSearch').addEventListener('input', handleSettingsSearch); document.getElementById('soundSearchInput').addEventListener('input', debouncedSoundSearch); document.addEventListener('keydown', (event) => { if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA') { return; } if (event.shiftKey && (event.key === 'C' || event.key === 'c')) { event.preventDefault(); clearSounds(); } if (!event.shiftKey && (event.key === 'M' || event.key === 'm')) { event.preventDefault(); toggleMute(); } }); document.querySelector('.settings-tabs').addEventListener('click', e => { if (e.target.matches('.tab-link')) { document.querySelectorAll('.tab-link, .tab-content').forEach(el => el.classList.remove('active')); e.target.classList.add('active'); document.getElementById(e.target.dataset.tab).classList.add('active'); document.getElementById('settingsSearch').value = ''; document.getElementById('searchResultsContainer').style.display = 'none'; document.querySelector('.settings-tab-container').classList.remove('search-active'); } }); document.getElementById('resetEqBtn').addEventListener('click', () => { ['eqBass', 'eqMid', 'eqTreble'].forEach(key => { const slider = document.getElementById(key); if (slider) { slider.value = 0; slider.dispatchEvent(new Event('input', { bubbles: true })); } }); }); const recommendedTune = { eqBass: 4, eqMid: 2, eqTreble: 5 }; document.getElementById('applyEqTuneBtn').addEventListener('click', () => { Object.entries(recommendedTune).forEach(([key, value]) => { const slider = document.getElementById(key); if (slider) { slider.value = value; slider.dispatchEvent(new Event('input', { bubbles: true })); } }); });
+            
+            // --- MODIFICATION: Add .blur() to button clicks to ensure panic key priority ---
+            saveSettingsBtn.addEventListener('click', () => {
+                saveSettings();
+                saveSettingsBtn.blur();
+            });
+            document.getElementById('resetSettingsBtn').addEventListener('click', () => { 
+                if (confirm('Are you sure you want to reset all settings on this page? This cannot be undone.')) { 
+                    localStorage.removeItem(LOCAL_STORAGE_KEY); 
+                    window.location.reload(); 
+                }
+                document.getElementById('resetSettingsBtn').blur();
+            }); 
+            document.getElementById('clearSoundsBtn').addEventListener('click', () => {
+                clearSounds();
+                document.getElementById('clearSoundsBtn').blur();
+            }); 
+            document.getElementById('resetEqBtn').addEventListener('click', () => { 
+                ['eqBass', 'eqMid', 'eqTreble'].forEach(key => { 
+                    const slider = document.getElementById(key); 
+                    if (slider) { slider.value = 0; slider.dispatchEvent(new Event('input', { bubbles: true })); } 
+                }); 
+                document.getElementById('resetEqBtn').blur();
+            }); 
+            const recommendedTune = { eqBass: 4, eqMid: 2, eqTreble: 5 }; 
+            document.getElementById('applyEqTuneBtn').addEventListener('click', () => { 
+                Object.entries(recommendedTune).forEach(([key, value]) => { 
+                    const slider = document.getElementById(key); 
+                    if (slider) { slider.value = value; slider.dispatchEvent(new Event('input', { bubbles: true })); } 
+                });
+                document.getElementById('applyEqTuneBtn').blur();
+            });
+            // --- END MODIFICATION ---
+
+            document.getElementById('settingsSearch').addEventListener('input', handleSettingsSearch); 
+            document.getElementById('soundSearchInput').addEventListener('input', debouncedSoundSearch); 
+            document.addEventListener('keydown', (event) => { if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA') { return; } if (event.shiftKey && (event.key === 'C' || event.key === 'c')) { event.preventDefault(); clearSounds(); } if (!event.shiftKey && (event.key === 'M' || event.key === 'm')) { event.preventDefault(); toggleMute(); } }); 
+            document.querySelector('.settings-tabs').addEventListener('click', e => { if (e.target.matches('.tab-link')) { document.querySelectorAll('.tab-link, .tab-content').forEach(el => el.classList.remove('active')); e.target.classList.add('active'); document.getElementById(e.target.dataset.tab).classList.add('active'); document.getElementById('settingsSearch').value = ''; document.getElementById('searchResultsContainer').style.display = 'none'; document.querySelector('.settings-tab-container').classList.remove('search-active'); } }); 
+            
             document.querySelectorAll('[data-setting]').forEach(el => { const eventType = (el.type === 'checkbox' || el.type === 'radio') ? 'change' : 'input'; el.addEventListener(eventType, e => { const key = e.target.dataset.setting; const value = el.type === 'checkbox' ? e.target.checked : e.target.value; if(updateFunctions[key]) { updateFunctions[key](value); } }); }); document.querySelectorAll('.slider-value-input').forEach(numInput => { numInput.addEventListener('change', (e) => { const sliderId = e.target.dataset.sliderId; const slider = document.getElementById(sliderId); if (!slider) return; let value = parseFloat(e.target.value); const min = parseFloat(slider.min); const max = parseFloat(slider.max); if (slider.id === 'masterVolume') { value = value / 100; } if (value < min) value = min; if (value > max) value = max; slider.value = value; slider.dispatchEvent(new Event('input', { bubbles: true })); }); });
             spatialPad.addEventListener('mousedown', startDrag); document.addEventListener('mousemove', handleDrag); document.addEventListener('mouseup', stopDrag); spatialPad.addEventListener('touchstart', startDrag, { passive: false }); document.addEventListener('touchmove', handleDrag, { passive: false }); document.addEventListener('touchend', stopDrag);
             document.getElementById('resetSpatialBtn').addEventListener('click', () => { currentZ = 0; updateSpatialPuckAndAudio(0, 0, 0, spatialPad.offsetWidth / 2); });
