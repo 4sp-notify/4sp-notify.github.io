@@ -365,7 +365,7 @@ window.onload = () => {
             elements.profileModal.classList.remove('hidden');
         } else {
             setupUI();
-            setInterval(heartbeat, 20000); // Attempt to reconnect every 20 seconds
+            reconnectToFriends();
         }
         addEventListeners();
     }
@@ -461,33 +461,42 @@ window.onload = () => {
         } catch (error) { console.error("Failed to process token:", error); alert("Invalid connection token."); }
     }
 
-    async function generateOfferToken() {
+    async function generateOfferToken(isReconnect = false, friendId = null) {
         try {
-            const tempId = `pending-${Date.now()}`;
+            const tempId = friendId || `pending-${Date.now()}`;
             const pc = createPeerConnection(tempId);
             const dc = pc.createDataChannel('chat');
             pendingConnections[tempId] = { pc, dc };
             setupDataChannel(dc, tempId);
             pc.onicecandidate = e => {
                 if (e.candidate === null) {
-                    const tokenPayload = { type: 'offer', fromId: userProfile.id, tempId, profile: userProfile, offer: pc.localDescription };
-                    elements.connectionTokenTextarea.value = btoa(JSON.stringify(tokenPayload));
-                    elements.tokenModal.classList.remove('hidden');
+                    const tokenPayload = { type: 'offer', fromId: userProfile.id, tempId, profile: userProfile, offer: pc.localDescription, isReconnect };
+                    if (isReconnect) {
+                        // This is a "silent" offer for reconnecting, we don't show a modal
+                        // In a real app with a server, this would be sent directly.
+                        // Here, we can't do anything further without manual intervention.
+                        // The logic is here to show how it would work.
+                        console.log(`Generated reconnect offer for ${friendId}`);
+                    } else {
+                        elements.connectionTokenTextarea.value = btoa(JSON.stringify(tokenPayload));
+                        elements.tokenModal.classList.remove('hidden');
+                    }
                 }
             };
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-        } catch (error) { console.error("Error generating offer token:", error); alert("Could not generate token."); }
+        } catch (error) { console.error("Error generating offer token:", error); if(!isReconnect) alert("Could not generate token."); }
     }
 
     async function handleOfferToken(token) {
         try {
             const { fromId, tempId, profile: friendProfile, offer } = token;
-            if (fromId === userProfile.id || friends[fromId] || blockedUsers.includes(fromId)) {
+            if (fromId === userProfile.id || blockedUsers.includes(fromId)) {
                 alert("Cannot add this user."); return;
             }
             const pc = createPeerConnection(fromId);
-            friends[fromId] = { profile: friendProfile, peerConnection: pc, status: 'offline', messages: [], messageQueue: [] };
+            friends[fromId] = friends[fromId] || { messages: [], messageQueue: [] }; // Preserve messages if reconnecting
+            friends[fromId] = { ...friends[fromId], profile: friendProfile, peerConnection: pc, status: 'connecting' };
             saveData();
             renderContactList();
             pc.onicecandidate = e => {
@@ -509,7 +518,8 @@ window.onload = () => {
         if (!pending) { alert("This connection offer has expired."); return; }
         const { pc, dc } = pending;
         pc.friendId = fromId;
-        friends[fromId] = { profile: friendProfile, peerConnection: pc, dataChannel: dc, status: 'connecting', messages: [], messageQueue: [] };
+        friends[fromId] = friends[fromId] || { messages: [], messageQueue: [] };
+        friends[fromId] = { ...friends[fromId], profile: friendProfile, peerConnection: pc, dataChannel: dc, status: 'connecting' };
         delete pendingConnections[toTempId];
         setupDataChannel(dc, fromId);
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
@@ -523,14 +533,22 @@ window.onload = () => {
         pc.onconnectionstatechange = () => {
             const friend = friends[pc.friendId];
             if (!friend) return;
-            const isConnected = pc.connectionState === 'connected';
-            friend.status = isConnected ? 'online' : 'offline';
-            if (isConnected) {
-                sendData(pc.friendId, { type: 'status-sync', status: 'online' });
-                sendQueuedMessages(pc.friendId);
+            const state = pc.connectionState;
+            if (state === 'connected') {
+                if (friend.status !== 'online') {
+                    friend.status = 'online';
+                    sendData(pc.friendId, { type: 'hello' });
+                    sendQueuedMessages(pc.friendId);
+                    renderContactList();
+                    updateChatUI();
+                }
+            } else if (['disconnected', 'failed', 'closed'].includes(state)) {
+                if (friend.status !== 'offline') {
+                    friend.status = 'offline';
+                    renderContactList();
+                    updateChatUI();
+                }
             }
-            renderContactList();
-            updateChatUI();
         };
         pc.ondatachannel = e => {
             const friend = friends[pc.friendId];
@@ -544,7 +562,7 @@ window.onload = () => {
             const friend = friends[friendId];
             if (friend) {
                 friend.status = 'online';
-                sendData(friendId, { type: 'status-sync', status: 'online' });
+                sendData(friendId, { type: 'hello' });
                 sendQueuedMessages(friendId);
                 renderContactList();
                 updateChatUI();
@@ -576,9 +594,14 @@ window.onload = () => {
                 if (activeChat === fromId) updateMessageStatus(data.messageId, 'Delivered');
                 saveData();
                 break;
-            case 'status-sync':
-                friend.status = data.status;
-                if(data.status === 'online') sendQueuedMessages(fromId);
+            case 'hello':
+                friend.status = 'online';
+                renderContactList();
+                updateChatUI();
+                sendData(fromId, { type: 'hello-reply' });
+                break;
+            case 'hello-reply':
+                friend.status = 'online';
                 renderContactList();
                 updateChatUI();
                 break;
@@ -624,7 +647,7 @@ window.onload = () => {
         const messageData = {
             id: `msg-${Date.now()}`, type: 'chat', content,
             timestamp: new Date().toISOString(), senderId: userProfile.id,
-            replyingTo: replyingTo, status: 'Pending'
+            replyingTo: replyingTo, status: 'Sent'
         };
 
         friend.messages.push(messageData);
@@ -633,6 +656,8 @@ window.onload = () => {
         if (friend.status === 'online' && friend.dataChannel?.readyState === 'open') {
             sendData(activeChat, messageData);
         } else {
+            messageData.status = 'Queued';
+            updateMessageStatus(messageData.id, 'Queued');
             friend.messageQueue.push(messageData);
         }
         
@@ -646,6 +671,8 @@ window.onload = () => {
         if (!friend || friend.messageQueue.length === 0) return;
         friend.messageQueue.forEach(msg => {
             sendData(friendId, msg);
+            msg.status = 'Sent';
+            if (activeChat === friendId) updateMessageStatus(msg.id, 'Sent');
         });
         friend.messageQueue = [];
         saveData();
@@ -666,7 +693,6 @@ window.onload = () => {
         wrapper.className = `message-wrapper ${msgData.senderId === userProfile.id ? 'sent' : 'received'}`;
         wrapper.id = msgData.id;
 
-        const time = msgDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
         let replyHTML = msgData.replyingTo ? `<div class="reply-context"><p>${msgData.replyingTo.text}</p></div>` : '';
         let statusHTML = msgData.senderId === userProfile.id ? `<div class="message-status">${msgData.status || 'Sent'}</div>` : '';
 
@@ -716,22 +742,9 @@ window.onload = () => {
         if (activeChat === friendId) updateChatUI();
     }
 
-    function heartbeat() {
+    function reconnectToFriends() {
         Object.keys(friends).forEach(id => {
-            const friend = friends[id];
-            if (friend.status === 'offline' || !friend.peerConnection || friend.peerConnection.connectionState !== 'connected') {
-                // In a true serverless model, we can't magically reconnect.
-                // The best we can do is wait for the user to manually re-initiate.
-                // This heartbeat is more for ensuring existing connections are still valid.
-                if (friend.peerConnection) {
-                    // If there's a peer connection object, its state is the source of truth.
-                    const state = friend.peerConnection.connectionState;
-                    if (state === 'disconnected' || state === 'failed' || state === 'closed') {
-                       friend.status = 'offline';
-                       renderContactList();
-                    }
-                }
-            }
+            generateOfferToken(true, id);
         });
     }
 
