@@ -117,7 +117,7 @@
         }
         .contact-item:hover { background-color: var(--background-color); }
         .contact-item.active { background-color: var(--primary-color); color: #FFFFFF; }
-        .contact-item.active .contact-info p { color: rgba(255,255,255,0.8); }
+        .contact-item.active .contact-info p, .contact-item.active .contact-info .typing-indicator { color: rgba(255,255,255,0.8); }
         .contact-avatar {
             width: 45px; height: 45px; border-radius: 50%; background-color: var(--secondary-color);
             color: #FFFFFF; display: flex; align-items: center; justify-content: center;
@@ -131,6 +131,7 @@
         .contact-info { flex-grow: 1; }
         .contact-info h5 { margin: 0 0 4px 0; font-size: 1.05em; font-weight: 500; }
         .contact-info p { margin: 0; font-size: 13px; color: var(--text-secondary-color); }
+        .typing-indicator { font-style: italic; color: var(--primary-color); }
 
         /* --- Main Content Area --- */
         .main-content { flex-grow: 1; display: flex; flex-direction: column; background-color: var(--background-color); }
@@ -154,6 +155,7 @@
         .message-wrapper.received { margin-right: auto; }
         .message { display: flex; flex-direction: column; user-select: none; -webkit-user-select: none; width: fit-content; }
         .message-bubble { padding: 10px 15px; border-radius: 20px; word-wrap: break-word; position: relative; }
+        .message-bubble img { max-width: 100%; border-radius: 15px; margin-top: 5px; }
         .message.sent .message-bubble { background-color: var(--sent-bubble-color); color: var(--text-light); border-bottom-right-radius: 4px; }
         .message.received .message-bubble { background-color: var(--bubble-received-color); color: var(--text-primary-color); border-bottom-left-radius: 4px; }
         .message-status { font-size: 11px; color: var(--text-secondary-color); text-align: right; padding: 2px 5px 0 0; }
@@ -216,12 +218,13 @@
             background: var(--secondary-color); color: #FFFFFF; font-weight: bold; cursor: pointer;
         }
         .chat-input-row { display: flex; align-items: center; }
-        .chat-input-row input {
+        .chat-input-row input[type="text"] {
             flex-grow: 1; padding: 12px; border: none;
-            border-radius: 20px; margin-right: 10px; background-color: var(--input-bg-color);
+            border-radius: 20px; margin: 0 10px; background-color: var(--input-bg-color);
             color: var(--text-primary-color);
         }
-        .chat-input-row .btn { width: 40px; height: 40px; border-radius: 50%; padding: 0; font-size: 1.5em; }
+        .chat-input-row .btn { width: 40px; height: 40px; border-radius: 50%; padding: 0; font-size: 1.5em; flex-shrink: 0; }
+        #image-upload-btn { font-size: 1.2em; }
         .welcome-screen {
             display: flex; flex-direction: column; justify-content: center;
             align-items: center; text-align: center; height: 100%; padding: 20px;
@@ -295,6 +298,8 @@
                         <p id="reply-text-preview"></p>
                     </div>
                     <div class="chat-input-row">
+                        <input type="file" id="image-upload-input" accept="image/*" class="hidden">
+                        <button class="btn btn-secondary" id="image-upload-btn">+</button>
                         <input type="text" id="chat-input" placeholder="Message" disabled>
                         <button class="btn btn-primary" id="send-btn" disabled>↑</button>
                     </div>
@@ -336,6 +341,7 @@ window.onload = () => {
     let pendingConnections = {};
     let replyingTo = null;
     let longPressTimer = null;
+    let typingTimer = null;
 
     const elements = {
         appContainer: document.querySelector('.app-container'),
@@ -356,6 +362,8 @@ window.onload = () => {
         chatWindow: document.getElementById('chat-window'),
         chatInput: document.getElementById('chat-input'),
         sendBtn: document.getElementById('send-btn'),
+        imageUploadInput: document.getElementById('image-upload-input'),
+        imageUploadBtn: document.getElementById('image-upload-btn'),
         replyBanner: document.getElementById('reply-banner'),
         replyTextPreview: document.getElementById('reply-text-preview'),
         closeReplyBtn: document.getElementById('close-reply-btn'),
@@ -386,17 +394,17 @@ window.onload = () => {
 
     function addEventListeners() {
         elements.createProfileBtn.addEventListener('click', createProfile);
-        elements.getTokenBtn.addEventListener('click', () => generateOfferToken());
+        elements.getTokenBtn.addEventListener('click', showInviteToken);
         elements.closeTokenModalBtn.addEventListener('click', () => elements.tokenModal.classList.add('hidden'));
         elements.copyTokenBtn.addEventListener('click', copyToken);
         elements.addFriendBtn.addEventListener('click', processConnectionToken);
         elements.sendBtn.addEventListener('click', sendMessage);
         elements.chatInput.addEventListener('keyup', e => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                sendMessage();
-            }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
         });
+        elements.chatInput.addEventListener('input', handleTyping);
+        elements.imageUploadBtn.addEventListener('click', () => elements.imageUploadInput.click());
+        elements.imageUploadInput.addEventListener('change', handleImageUpload);
         elements.unfriendBtn.addEventListener('click', unfriendActiveContact);
         elements.backToContactsBtn.addEventListener('click', showContactsView);
         elements.closeReplyBtn.addEventListener('click', cancelReply);
@@ -453,7 +461,7 @@ window.onload = () => {
                 </div>
                 <div class="contact-info">
                     <h5>${friend.profile.firstName} ${friend.profile.lastName}</h5>
-                    <p>${friend.profile.id}</p>
+                    <p class="contact-status-text" data-userid="${friend.profile.id}">${friend.status === 'online' ? 'Online' : 'Offline'}</p>
                 </div>
             `;
             contactEl.addEventListener('click', () => activateChat(friend.profile.id));
@@ -461,11 +469,12 @@ window.onload = () => {
         });
     }
 
-    function createProfile() {
+    async function createProfile() {
         const firstName = elements.firstNameInput.value.trim();
         const lastName = elements.lastNameInput.value.trim();
         if (!firstName || !lastName) { alert('Please enter both first and last name.'); return; }
         userProfile = { firstName, lastName, id: `user-${Math.random().toString(36).substr(2, 6)}` };
+        await generateInitialInviteToken();
         localStorage.setItem(APP_PREFIX + 'userProfile', JSON.stringify(userProfile));
         elements.profileModal.classList.add('hidden');
         setupUI();
@@ -481,33 +490,39 @@ window.onload = () => {
             elements.addFriendInput.value = '';
         } catch (error) { console.error("Failed to process token:", error); alert("Invalid connection token."); }
     }
-
-    async function generateOfferToken(isReconnect = false, friendId = null) {
-        try {
-            const tempId = friendId || `pending-${Date.now()}`;
-            const pc = createPeerConnection(tempId);
-            const dc = pc.createDataChannel('chat', { reliable: true });
-            pendingConnections[tempId] = { pc, dc };
-            setupDataChannel(dc, tempId);
+    
+    async function generateInitialInviteToken() {
+        const pc = createPeerConnection('invite');
+        return new Promise(async (resolve, reject) => {
             pc.onicecandidate = e => {
                 if (e.candidate === null) {
-                    const tokenPayload = { type: 'offer', fromId: userProfile.id, tempId, profile: userProfile, offer: pc.localDescription };
-                    if (isReconnect) {
-                        console.log(`Generated reconnect offer for ${friendId}`);
-                    } else {
-                        elements.connectionTokenTextarea.value = btoa(JSON.stringify(tokenPayload));
-                        elements.tokenModal.classList.remove('hidden');
-                    }
+                    const tokenPayload = { type: 'offer', fromId: userProfile.id, profile: userProfile, offer: pc.localDescription };
+                    userProfile.inviteToken = btoa(JSON.stringify(tokenPayload));
+                    pc.close();
+                    resolve();
                 }
             };
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-        } catch (error) { console.error("Error generating offer token:", error); if(!isReconnect) alert("Could not generate token."); }
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+            } catch (error) {
+                reject(error);
+            }
+        });
+    }
+
+    function showInviteToken() {
+        if (userProfile && userProfile.inviteToken) {
+            elements.connectionTokenTextarea.value = userProfile.inviteToken;
+            elements.tokenModal.classList.remove('hidden');
+        } else {
+            alert("Could not retrieve invite token. Please try again.");
+        }
     }
 
     async function handleOfferToken(token) {
         try {
-            const { fromId, tempId, profile: friendProfile, offer } = token;
+            const { fromId, profile: friendProfile, offer } = token;
             if (fromId === userProfile.id || blockedUsers.includes(fromId)) {
                 alert("Cannot add this user."); return;
             }
@@ -516,9 +531,13 @@ window.onload = () => {
             friends[fromId] = { ...friends[fromId], profile: friendProfile, peerConnection: pc, status: 'connecting' };
             saveData();
             renderContactList();
+            
+            const tempId = `reply-${Date.now()}`;
+            pendingConnections[tempId] = { pc };
+
             pc.onicecandidate = e => {
                 if (e.candidate === null) {
-                    const answerPayload = { type: 'answer', toTempId: tempId, fromId: userProfile.id, profile: userProfile, answer: pc.localDescription };
+                    const answerPayload = { type: 'answer', toId: fromId, fromId: userProfile.id, profile: userProfile, answer: pc.localDescription };
                     elements.connectionTokenTextarea.value = btoa(JSON.stringify(answerPayload));
                     elements.tokenModal.classList.remove('hidden');
                 }
@@ -530,18 +549,11 @@ window.onload = () => {
     }
 
     async function handleAnswerToken(token) {
-        const { toTempId, fromId, profile: friendProfile, answer } = token;
-        const pending = pendingConnections[toTempId];
-        if (!pending) { alert("This connection offer has expired."); return; }
-        const { pc, dc } = pending;
-        pc.friendId = fromId;
-        friends[fromId] = friends[fromId] || { messages: [], messageQueue: [] };
-        friends[fromId] = { ...friends[fromId], profile: friendProfile, peerConnection: pc, dataChannel: dc, status: 'connecting' };
-        delete pendingConnections[toTempId];
-        setupDataChannel(dc, fromId);
-        await pc.setRemoteDescription(new RTCSessionDescription(answer));
-        saveData();
-        renderContactList();
+        const { fromId, answer } = token;
+        const friend = friends[fromId];
+        if (friend && friend.peerConnection) {
+            await friend.peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
+        }
     }
 
     function createPeerConnection(friendId) {
@@ -586,13 +598,22 @@ window.onload = () => {
             const friend = friends[friendId];
             if (friend) { friend.status = 'offline'; renderContactList(); updateChatUI(); }
         };
-        dc.onmessage = e => handleIncomingData(JSON.parse(e.data), friendId);
+        dc.onmessage = e => handleIncomingData(e.data, friendId);
     }
     
-    function handleIncomingData(data, fromId) {
+    function handleIncomingData(rawdata, fromId) {
         if (blockedUsers.includes(fromId)) return;
         const friend = friends[fromId];
         if (!friend) return;
+
+        // Handle binary data for file chunks
+        if (typeof rawdata !== 'string') {
+            // This is where file chunk assembly would happen.
+            // For simplicity in this version, we'll assume text-based data.
+            return;
+        }
+        
+        const data = JSON.parse(rawdata);
 
         switch (data.type) {
             case 'chat':
@@ -602,11 +623,41 @@ window.onload = () => {
                 saveData();
                 break;
             case 'reaction': handleReaction(data); break;
+            case 'delete':
+                const msgIndex = friend.messages.findIndex(m => m.id === data.messageId);
+                if (msgIndex > -1) {
+                    friend.messages[msgIndex].deleted = true;
+                    friend.messages[msgIndex].content = "Message deleted";
+                }
+                if (activeChat === fromId) {
+                    const msgEl = document.getElementById(data.messageId);
+                    if (msgEl) msgEl.querySelector('.message-bubble').textContent = "Message deleted";
+                }
+                saveData();
+                break;
             case 'delivered':
                 const msg = friend.messages.find(m => m.id === data.messageId);
                 if (msg) msg.status = 'Delivered';
                 if (activeChat === fromId) updateMessageStatus(data.messageId, 'Delivered');
                 saveData();
+                break;
+            case 'read':
+                data.messageIds.forEach(id => {
+                    const msg = friend.messages.find(m => m.id === id);
+                    if (msg) msg.status = 'Read';
+                    if (activeChat === fromId) updateMessageStatus(id, 'Read');
+                });
+                saveData();
+                break;
+            case 'typing-start':
+                if (activeChat !== fromId) {
+                    const contactStatus = document.querySelector(`.contact-status-text[data-userid="${fromId}"]`);
+                    if(contactStatus) contactStatus.innerHTML = `<span class="typing-indicator">typing...</span>`;
+                }
+                break;
+            case 'typing-stop':
+                 const contactStatus = document.querySelector(`.contact-status-text[data-userid="${fromId}"]`);
+                 if(contactStatus) contactStatus.textContent = friend.status === 'online' ? 'Online' : 'Offline';
                 break;
             case 'hello':
                 friend.status = 'online';
@@ -644,6 +695,19 @@ window.onload = () => {
         updateChatUI();
         renderContactList();
         showChatView();
+        
+        // Mark messages as read
+        const unreadIds = friend.messages
+            .filter(m => m.senderId === friendId && m.status !== 'Read')
+            .map(m => m.id);
+        if (unreadIds.length > 0) {
+            sendData(friendId, { type: 'read', messageIds: unreadIds });
+            unreadIds.forEach(id => {
+                const msg = friend.messages.find(m => m.id === id);
+                if (msg) msg.status = 'Read';
+            });
+            saveData();
+        }
     }
     
     function updateChatUI() {
@@ -709,12 +773,13 @@ window.onload = () => {
 
         let replyHTML = msgData.replyingTo ? `<div class="reply-context"><p>${msgData.replyingTo.text}</p></div>` : '';
         let statusHTML = msgData.senderId === userProfile.id ? `<div class="message-status">${msgData.status || 'Sent'}</div>` : '';
+        let contentHTML = msgData.isImage ? `<img src="${msgData.content}" alt="Image">` : msgData.content;
 
         wrapper.innerHTML = `
             <div class="message">
                 ${replyHTML}
                 <div class="message-bubble">
-                    ${msgData.content}
+                    ${contentHTML}
                     <div class="reactions-container" id="reactions-${msgData.id}"></div>
                 </div>
                 ${statusHTML}
@@ -769,7 +834,7 @@ window.onload = () => {
         }
         if (e.shiftKey && e.key === 'T') {
             e.preventDefault();
-            generateOfferToken();
+            showInviteToken();
         }
     }
 
@@ -782,15 +847,13 @@ window.onload = () => {
         const messageWrapper = e.target.closest('.message-wrapper');
         if (!messageWrapper) return;
         
-        // If a menu is already open, a click should close it.
         if (document.querySelector('.message-action-menu')) {
-            closeAllMenus();
             return;
         }
         
         clearTimeout(longPressTimer);
         longPressTimer = setTimeout(() => {
-            longPressTimer = null; // Prevent re-triggering
+            longPressTimer = null;
             createActionMenu(messageWrapper);
         }, 500);
     }
@@ -800,11 +863,10 @@ window.onload = () => {
     }
     
     function createActionMenu(messageWrapper) {
-        closeAllMenus(); // Close any other open menus first
+        closeAllMenus();
         const menu = document.createElement('div');
         menu.className = 'message-action-menu';
-        menu.onclick = e => e.stopPropagation();
-
+        
         const isSent = messageWrapper.classList.contains('sent');
         
         if (!isSent) {
@@ -835,6 +897,19 @@ window.onload = () => {
         };
         menu.appendChild(copyBtn);
 
+        if (isSent) {
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'action-menu-button';
+            deleteBtn.textContent = 'Delete';
+            deleteBtn.onclick = () => {
+                if (confirm("Are you sure you want to delete this message?")) {
+                    sendData(activeChat, { type: 'delete', messageId: messageWrapper.id });
+                }
+                closeAllMenus();
+            };
+            menu.appendChild(deleteBtn);
+        }
+
         messageWrapper.prepend(menu);
         setTimeout(() => menu.classList.add('visible'), 10);
     }
@@ -859,6 +934,82 @@ window.onload = () => {
     function cancelReply() {
         replyingTo = null;
         elements.replyBanner.classList.add('hidden');
+    }
+    
+    function handleTyping() {
+        if (!activeChat || !friends[activeChat] || friends[activeChat].status !== 'online') return;
+        
+        if (!typingTimer) {
+            sendData(activeChat, { type: 'typing-start' });
+        }
+        
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => {
+            sendData(activeChat, { type: 'typing-stop' });
+            typingTimer = null;
+        }, 2000);
+    }
+    
+    function handleImageUpload(event) {
+        const file = event.target.files[0];
+        if (!file || !activeChat) return;
+
+        const reader = new FileReader();
+        reader.onload = e => {
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const MAX_WIDTH = 800;
+                const MAX_HEIGHT = 800;
+                let width = img.width;
+                let height = img.height;
+
+                if (width > height) {
+                    if (width > MAX_WIDTH) {
+                        height *= MAX_WIDTH / width;
+                        width = MAX_WIDTH;
+                    }
+                } else {
+                    if (height > MAX_HEIGHT) {
+                        width *= MAX_HEIGHT / height;
+                        height = MAX_HEIGHT;
+                    }
+                }
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+
+                let quality = 0.9;
+                let dataUrl = canvas.toDataURL('image/png', quality);
+                while (dataUrl.length > 1024 * 1024) { // 1MB limit
+                    quality -= 0.1;
+                    if (quality < 0.1) break;
+                    dataUrl = canvas.toDataURL('image/png', quality);
+                }
+                
+                const messageData = {
+                    id: `msg-${Date.now()}`, type: 'chat', content: dataUrl, isImage: true,
+                    timestamp: new Date().toISOString(), senderId: userProfile.id,
+                    replyingTo: null, status: 'Sent'
+                };
+                
+                const friend = friends[activeChat];
+                friend.messages.push(messageData);
+                appendMessage(messageData);
+
+                if (friend.status === 'online' && friend.dataChannel?.readyState === 'open') {
+                    sendData(activeChat, messageData);
+                } else {
+                    messageData.status = 'Queued';
+                    updateMessageStatus(messageData.id, 'Queued');
+                    friend.messageQueue.push(messageData);
+                }
+                saveData();
+            };
+            img.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
     }
 
     initialize();
