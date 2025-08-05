@@ -231,6 +231,7 @@
                 chats: {}, // { 'chatCode': { name: 'Chat Name', messages: [] } }
                 peer: null,
                 connections: {}, // { 'peerId': conn }
+                knownPeers: {}, // { 'peerId': timestamp }
                 isMobile: window.innerWidth < 768,
             };
 
@@ -257,6 +258,7 @@
                     console.log('My peer ID is: ' + id);
                     state.username = username;
                     localStorage.setItem('username', username);
+                    state.knownPeers[id] = Date.now(); // Add self to known peers
                     discoverPeers();
                 });
 
@@ -272,34 +274,54 @@
             };
             
             const setupConnectionEvents = (conn) => {
-                 if(state.connections[conn.peer]) return;
-                 state.connections[conn.peer] = conn;
-                 updateChatActionButtons();
-                 conn.on('data', data => {
-                    console.log('Received data:', data);
+                if(!conn || (state.connections[conn.peer] && state.connections[conn.peer].open)) return;
+
+                conn.on('open', () => {
+                    console.log(`Connection opened with ${conn.peer}`);
+                    state.connections[conn.peer] = conn;
+                    
+                    // Add to known peers and save
+                    state.knownPeers[conn.peer] = Date.now();
+                    saveToStorage();
+
+                    // Exchange peer lists to build the network
+                    conn.send({ type: 'peer-list-request', peers: Object.keys(state.knownPeers) });
+                    
+                    updateChatActionButtons();
+                });
+
+                conn.on('data', data => {
                     handleReceivedData(data, conn.peer);
                 });
+
                 conn.on('close', () => {
                     console.log(`Connection with ${conn.peer} closed.`);
                     delete state.connections[conn.peer];
                     updateChatActionButtons();
                 });
-                conn.on('open', () => {
-                     conn.send({ type: 'request-all-chats' });
+
+                conn.on('error', err => {
+                    console.error(`Connection error with ${conn.peer}:`, err);
+                    delete state.connections[conn.peer];
                 });
             }
 
             // --- Core Logic ---
-            const loadChatsFromStorage = () => {
-                const savedData = localStorage.getItem('localChats');
-                if (savedData) {
-                    state.chats = JSON.parse(savedData) || {};
+            const loadFromStorage = () => {
+                const savedChats = localStorage.getItem('localChats');
+                if (savedChats) {
+                    state.chats = JSON.parse(savedChats) || {};
+                }
+                const savedPeers = localStorage.getItem('knownPeers');
+                if (savedPeers) {
+                    state.knownPeers = JSON.parse(savedPeers) || {};
                 }
                 updateChatList();
             };
             
-            const saveChatsToStorage = () => {
+            const saveToStorage = () => {
                 localStorage.setItem('localChats', JSON.stringify(state.chats));
+                localStorage.setItem('knownPeers', JSON.stringify(state.knownPeers));
             };
 
             const generateChatCode = () => {
@@ -315,7 +337,7 @@
                     name: chatName,
                     messages: [{ type: 'system', text: `Chat created by ${state.username}` }]
                 };
-                saveChatsToStorage();
+                saveToStorage();
                 updateChatList();
                 setActiveChat(code);
                 broadcastMessage({ type: 'new-chat', chat: { code: code, name: chatName } });
@@ -350,7 +372,7 @@
                 }
                 
                 delete state.chats[code];
-                saveChatsToStorage();
+                saveToStorage();
                 
                 state.activeChat = null;
                 showScreen('welcome');
@@ -371,7 +393,7 @@
                     };
                     
                     state.chats[state.activeChat].messages.push(message);
-                    saveChatsToStorage();
+                    saveToStorage();
                     renderMessages();
                     messageInput.value = '';
                     
@@ -388,6 +410,23 @@
                 });
             };
             
+            const addNewPeers = (peerList) => {
+                let newPeerFound = false;
+                peerList.forEach(peerId => {
+                    if (!state.knownPeers[peerId]) {
+                        console.log(`Discovered new peer: ${peerId}`);
+                        state.knownPeers[peerId] = Date.now();
+                        newPeerFound = true;
+                    }
+                });
+
+                if (newPeerFound) {
+                    saveToStorage();
+                    // Try to connect to the newly discovered peers
+                    discoverPeers();
+                }
+            };
+
             const handleReceivedData = (data, fromPeerId) => {
                 switch(data.type) {
                     case 'chat-message':
@@ -395,7 +434,7 @@
                             const messageExists = state.chats[data.code].messages.some(m => m.id === data.message.id);
                             if (!messageExists) {
                                 state.chats[data.code].messages.push(data.message);
-                                saveChatsToStorage();
+                                saveToStorage();
                                 if (state.activeChat === data.code) {
                                     renderMessages();
                                 }
@@ -406,7 +445,7 @@
                     case 'new-chat':
                         if (!state.chats[data.chat.code]) {
                             state.chats[data.chat.code] = { name: data.chat.name, messages: [] };
-                            saveChatsToStorage();
+                            saveToStorage();
                             updateChatList();
                             showToast(`New chat available: ${data.chat.name}`);
                         }
@@ -420,7 +459,7 @@
                     case 'chat-info-response':
                         if (!state.chats[data.code]) {
                             state.chats[data.code] = data.chat;
-                            saveChatsToStorage();
+                            saveToStorage();
                             updateChatList();
                             showToast(`Joined new chat: ${data.chat.name}`);
                         }
@@ -445,7 +484,7 @@
                             }
                         });
                         if(newChatsFound) {
-                            saveChatsToStorage();
+                            saveToStorage();
                             updateChatList();
                             showToast("Discovered new chats from the network!");
                         }
@@ -454,7 +493,7 @@
                         if (state.chats[data.code]) {
                             const chatName = state.chats[data.code].name;
                             delete state.chats[data.code];
-                            saveChatsToStorage();
+                            saveToStorage();
                             if (state.activeChat === data.code) {
                                 state.activeChat = null;
                                 showScreen('welcome');
@@ -464,12 +503,33 @@
                             showToast(`Chat "${chatName}" was deleted by its creator.`);
                         }
                         break;
+                    case 'peer-list-request':
+                        // Merge their list with ours and connect to any new ones
+                        addNewPeers(data.peers);
+                        // Send our full list back
+                        const peerConn = state.connections[fromPeerId];
+                        if (peerConn) {
+                            peerConn.send({ type: 'peer-list-response', peers: Object.keys(state.knownPeers) });
+                        }
+                        break;
+                    case 'peer-list-response':
+                        // Merge the final list and connect to any new ones
+                        addNewPeers(data.peers);
+                        break;
                 }
             };
             
             const discoverPeers = () => {
-                console.log("Peer is open. Waiting for connections or user actions.");
-            }
+                console.log("Attempting to connect to known peers...", Object.keys(state.knownPeers));
+                for (const peerId in state.knownPeers) {
+                    if (peerId === state.peer.id) continue;
+                    if (state.connections[peerId] && state.connections[peerId].open) continue;
+
+                    console.log(`Trying to connect to known peer: ${peerId}`);
+                    const conn = state.peer.connect(peerId, { reliable: true });
+                    setupConnectionEvents(conn);
+                }
+            };
 
 
             // --- UI Rendering ---
@@ -488,7 +548,7 @@
                 chatActionsDropdown.innerHTML = '';
                 if (!state.activeChat) return;
 
-                const isAlone = Object.keys(state.connections).length === 0;
+                const isAlone = Object.values(state.connections).filter(c => c.open).length === 0;
                 const button = document.createElement('button');
                 button.id = isAlone ? 'delete-chat-btn' : 'leave-chat-btn';
                 button.textContent = isAlone ? 'Delete Chat' : 'Leave Chat';
@@ -743,7 +803,7 @@
 
             // --- Initialization ---
             const init = async () => {
-                loadChatsFromStorage();
+                loadFromStorage();
                 if (state.username) {
                     initializePeer(state.username);
                 } else {
