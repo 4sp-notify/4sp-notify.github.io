@@ -470,9 +470,6 @@ window.onload = () => {
     
     // --- WebRTC Signaling and Connection Logic ---
 
-    /**
-     * Universal token processor. Determines if a token is an offer or an answer and acts accordingly.
-     */
     async function processConnectionToken() {
         const tokenStr = elements.addFriendInput.value.trim();
         if (!tokenStr) return;
@@ -494,95 +491,88 @@ window.onload = () => {
         }
     }
 
-    /**
-     * Generates an offer token for another user to connect with.
-     */
     async function generateOfferToken() {
         try {
             const tempId = `pending-${Date.now()}`;
             const pc = createPeerConnection(tempId);
-            pendingConnections[tempId] = pc; // Store the pending connection
+            pendingConnections[tempId] = pc;
+
+            pc.onicecandidate = (event) => {
+                if (event.candidate === null) {
+                    const tokenPayload = {
+                        type: 'offer',
+                        fromId: userProfile.id,
+                        tempId: tempId,
+                        profile: userProfile,
+                        offer: pc.localDescription
+                    };
+                    elements.connectionTokenTextarea.value = btoa(JSON.stringify(tokenPayload));
+                    elements.tokenModalTitle.textContent = "Your Connection Token";
+                    elements.tokenModalText.textContent = "Share this token with someone to add them as a friend.";
+                    elements.tokenModal.classList.remove('hidden');
+                }
+            };
 
             const dc = pc.createDataChannel('chat');
             setupDataChannel(dc, tempId);
             
-            const iceGatheringPromise = new Promise(resolve => {
-                pc.onicecandidate = e => e.candidate === null && resolve();
-            });
-
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
-            
-            await iceGatheringPromise; // Wait for ICE gathering to complete
 
-            const tokenPayload = {
-                type: 'offer',
-                fromId: userProfile.id,
-                tempId: tempId,
-                profile: userProfile,
-                offer: pc.localDescription
-            };
-            elements.connectionTokenTextarea.value = btoa(JSON.stringify(tokenPayload));
-            elements.tokenModalTitle.textContent = "Your Connection Token";
-            elements.tokenModalText.textContent = "Share this entire token with someone to allow them to add you as a friend.";
-            elements.tokenModal.classList.remove('hidden');
         } catch (error) {
             console.error("Error generating offer token:", error);
             alert("Could not generate a connection token. Please check your network connection and try again.");
         }
     }
 
-    /**
-     * Handles an incoming offer token from a potential friend.
-     */
     async function handleOfferToken(token) {
-        const { fromId, tempId, profile: friendProfile, offer } = token;
+        try {
+            const { fromId, tempId, profile: friendProfile, offer } = token;
 
-        if (fromId === userProfile.id || friends[fromId] || blockedUsers.includes(fromId)) {
-            alert("Cannot add this user (they may already be a friend, blocked, or yourself).");
-            return;
+            if (fromId === userProfile.id || friends[fromId] || blockedUsers.includes(fromId)) {
+                alert("Cannot add this user (they may already be a friend, blocked, or yourself).");
+                return;
+            }
+
+            const pc = createPeerConnection(fromId);
+            friends[fromId] = { profile: friendProfile, peerConnection: pc, status: 'offline' };
+            
+            pc.onicecandidate = (event) => {
+                if (event.candidate === null) {
+                    const answerPayload = {
+                        type: 'answer',
+                        toTempId: tempId,
+                        fromId: userProfile.id,
+                        profile: userProfile,
+                        answer: pc.localDescription
+                    };
+                    elements.connectionTokenTextarea.value = btoa(JSON.stringify(answerPayload));
+                    elements.tokenModalTitle.textContent = "Send This Token Back";
+                    elements.tokenModalText.textContent = `You've accepted the request from ${friendProfile.firstName}. Copy the token below and send it back to them to finalize the connection.`;
+                    elements.tokenModal.classList.remove('hidden');
+                }
+            };
+
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+        } catch(error) {
+            console.error("Error handling offer token:", error);
+            alert("Could not process the friend's token. It might be invalid or expired.");
         }
-
-        const pc = createPeerConnection(fromId);
-        friends[fromId] = { profile: friendProfile, peerConnection: pc, status: 'offline' };
-        
-        const iceGatheringPromise = new Promise(resolve => {
-            pc.onicecandidate = e => e.candidate === null && resolve();
-        });
-
-        await pc.setRemoteDescription(new RTCSessionDescription(offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-
-        await iceGatheringPromise; // Wait for ICE gathering to complete
-
-        const answerPayload = {
-            type: 'answer',
-            toTempId: tempId,
-            fromId: userProfile.id,
-            profile: userProfile,
-            answer: pc.localDescription
-        };
-        elements.connectionTokenTextarea.value = btoa(JSON.stringify(answerPayload));
-        elements.tokenModalTitle.textContent = "Send This Token Back";
-        elements.tokenModalText.textContent = `You've accepted the request from ${friendProfile.firstName}. Copy the token below and send it back to them to finalize the connection.`;
-        elements.tokenModal.classList.remove('hidden');
     }
 
-    /**
-     * Handles an incoming answer token to finalize a connection.
-     */
     async function handleAnswerToken(token) {
         const { toTempId, fromId, profile: friendProfile, answer } = token;
         const pc = pendingConnections[toTempId];
 
         if (!pc) {
-            throw new Error("This offer has expired or is invalid.");
+            alert("This connection offer has expired. Please ask your friend to generate a new one.");
+            return;
         }
 
         pc.friendId = fromId;
         
-        // A bit of a hack to find the data channel created during the offer stage.
         const dataChannel = [...pc.getSenders()].map(s => s.transport).find(t => t && t.datachannel)?.datachannel;
 
         friends[fromId] = {
@@ -663,7 +653,6 @@ window.onload = () => {
                     appendMessage(data.content, 'received');
                 } else {
                     console.log(`Unread message from ${fromId}`);
-                    // Future enhancement: add a notification badge
                 }
                 break;
             case 'profile-sync':
@@ -697,7 +686,7 @@ window.onload = () => {
         elements.chatArea.classList.remove('hidden');
         
         elements.chatWithName.textContent = `${friend.profile.firstName} ${friend.profile.lastName}`;
-        elements.chatWindow.innerHTML = ''; // Clear previous chat
+        elements.chatWindow.innerHTML = '';
         
         updateChatUI();
         renderContactList();
