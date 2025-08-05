@@ -498,31 +498,38 @@ window.onload = () => {
      * Generates an offer token for another user to connect with.
      */
     async function generateOfferToken() {
-        const tempId = `pending-${Date.now()}`;
-        const pc = createPeerConnection(tempId);
-        pendingConnections[tempId] = pc; // Store the pending connection
+        try {
+            const tempId = `pending-${Date.now()}`;
+            const pc = createPeerConnection(tempId);
+            pendingConnections[tempId] = pc; // Store the pending connection
 
-        const dc = pc.createDataChannel('chat');
-        setupDataChannel(dc, tempId);
-        
-        const offer = await pc.createOffer();
-        await pc.setLocalDescription(offer);
-        
-        pc.onicecandidate = (event) => {
-            if (event.candidate === null) {
-                const tokenPayload = {
-                    type: 'offer',
-                    fromId: userProfile.id,
-                    tempId: tempId,
-                    profile: userProfile,
-                    offer: pc.localDescription
-                };
-                elements.connectionTokenTextarea.value = btoa(JSON.stringify(tokenPayload));
-                elements.tokenModalTitle.textContent = "Your Connection Token";
-                elements.tokenModalText.textContent = "Share this entire token with someone to allow them to add you as a friend.";
-                elements.tokenModal.classList.remove('hidden');
-            }
-        };
+            const dc = pc.createDataChannel('chat');
+            setupDataChannel(dc, tempId);
+            
+            const iceGatheringPromise = new Promise(resolve => {
+                pc.onicecandidate = e => e.candidate === null && resolve();
+            });
+
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            
+            await iceGatheringPromise; // Wait for ICE gathering to complete
+
+            const tokenPayload = {
+                type: 'offer',
+                fromId: userProfile.id,
+                tempId: tempId,
+                profile: userProfile,
+                offer: pc.localDescription
+            };
+            elements.connectionTokenTextarea.value = btoa(JSON.stringify(tokenPayload));
+            elements.tokenModalTitle.textContent = "Your Connection Token";
+            elements.tokenModalText.textContent = "Share this entire token with someone to allow them to add you as a friend.";
+            elements.tokenModal.classList.remove('hidden');
+        } catch (error) {
+            console.error("Error generating offer token:", error);
+            alert("Could not generate a connection token. Please check your network connection and try again.");
+        }
     }
 
     /**
@@ -539,25 +546,27 @@ window.onload = () => {
         const pc = createPeerConnection(fromId);
         friends[fromId] = { profile: friendProfile, peerConnection: pc, status: 'offline' };
         
+        const iceGatheringPromise = new Promise(resolve => {
+            pc.onicecandidate = e => e.candidate === null && resolve();
+        });
+
         await pc.setRemoteDescription(new RTCSessionDescription(offer));
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
 
-        pc.onicecandidate = (event) => {
-            if (event.candidate === null) {
-                const answerPayload = {
-                    type: 'answer',
-                    toTempId: tempId,
-                    fromId: userProfile.id,
-                    profile: userProfile,
-                    answer: pc.localDescription
-                };
-                elements.connectionTokenTextarea.value = btoa(JSON.stringify(answerPayload));
-                elements.tokenModalTitle.textContent = "Send This Token Back";
-                elements.tokenModalText.textContent = `You've accepted the request from ${friendProfile.firstName}. Copy the token below and send it back to them to finalize the connection.`;
-                elements.tokenModal.classList.remove('hidden');
-            }
+        await iceGatheringPromise; // Wait for ICE gathering to complete
+
+        const answerPayload = {
+            type: 'answer',
+            toTempId: tempId,
+            fromId: userProfile.id,
+            profile: userProfile,
+            answer: pc.localDescription
         };
+        elements.connectionTokenTextarea.value = btoa(JSON.stringify(answerPayload));
+        elements.tokenModalTitle.textContent = "Send This Token Back";
+        elements.tokenModalText.textContent = `You've accepted the request from ${friendProfile.firstName}. Copy the token below and send it back to them to finalize the connection.`;
+        elements.tokenModal.classList.remove('hidden');
     }
 
     /**
@@ -571,17 +580,19 @@ window.onload = () => {
             throw new Error("This offer has expired or is invalid.");
         }
 
-        // The connection is being finalized. Move it from pending to friends.
         pc.friendId = fromId;
+        
+        // A bit of a hack to find the data channel created during the offer stage.
+        const dataChannel = [...pc.getSenders()].map(s => s.transport).find(t => t && t.datachannel)?.datachannel;
+
         friends[fromId] = {
             profile: friendProfile,
             peerConnection: pc,
-            dataChannel: pc.getSenders().find(s => s.track?.kind === 'application')?.transport.datachannel, // A bit of a hack to get the datachannel
+            dataChannel: dataChannel,
             status: 'connecting'
         };
         delete pendingConnections[toTempId];
         
-        // Re-setup the data channel with the real friend ID
         if (friends[fromId].dataChannel) {
             setupDataChannel(friends[fromId].dataChannel, fromId);
         }
