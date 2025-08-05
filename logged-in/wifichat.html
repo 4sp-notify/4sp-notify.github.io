@@ -254,7 +254,6 @@
 </head>
 <body>
 
-    <!-- Main Application Structure -->
     <div class="app-container">
         <div class="sidebar">
             <div class="sidebar-header">
@@ -271,8 +270,7 @@
                 </div>
             </div>
             <div class="contact-list" id="contact-list">
-                <!-- Contact items will be dynamically inserted here -->
-            </div>
+                </div>
         </div>
         <div class="main-content" id="main-content">
             <div class="welcome-screen" id="welcome-screen">
@@ -296,7 +294,6 @@
         </div>
     </div>
 
-    <!-- Modals for various interactions -->
     <div class="modal-overlay hidden" id="profile-modal">
         <div class="modal-content">
             <h2>Create Your Profile</h2>
@@ -495,8 +492,11 @@ window.onload = () => {
         try {
             const tempId = `pending-${Date.now()}`;
             const pc = createPeerConnection(tempId);
-            pendingConnections[tempId] = pc;
+            const dc = pc.createDataChannel('chat');
+            pendingConnections[tempId] = { pc, dc }; // Store both peerConnection and dataChannel
 
+            setupDataChannel(dc, tempId);
+            
             pc.onicecandidate = (event) => {
                 if (event.candidate === null) {
                     const tokenPayload = {
@@ -512,9 +512,6 @@ window.onload = () => {
                     elements.tokenModal.classList.remove('hidden');
                 }
             };
-
-            const dc = pc.createDataChannel('chat');
-            setupDataChannel(dc, tempId);
             
             const offer = await pc.createOffer();
             await pc.setLocalDescription(offer);
@@ -564,28 +561,26 @@ window.onload = () => {
 
     async function handleAnswerToken(token) {
         const { toTempId, fromId, profile: friendProfile, answer } = token;
-        const pc = pendingConnections[toTempId];
+        const pending = pendingConnections[toTempId];
 
-        if (!pc) {
+        if (!pending) {
             alert("This connection offer has expired. Please ask your friend to generate a new one.");
             return;
         }
 
+        const { pc, dc } = pending;
         pc.friendId = fromId;
         
-        const dataChannel = [...pc.getSenders()].map(s => s.transport).find(t => t && t.datachannel)?.datachannel;
-
         friends[fromId] = {
             profile: friendProfile,
             peerConnection: pc,
-            dataChannel: dataChannel,
+            dataChannel: dc, // Assign the stored data channel
             status: 'connecting'
         };
         delete pendingConnections[toTempId];
         
-        if (friends[fromId].dataChannel) {
-            setupDataChannel(friends[fromId].dataChannel, fromId);
-        }
+        // Re-wire the data channel handlers to use the permanent ID
+        setupDataChannel(dc, fromId);
 
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
         
@@ -672,6 +667,8 @@ window.onload = () => {
         const friend = friends[friendId];
         if (friend && friend.dataChannel && friend.dataChannel.readyState === 'open') {
             friend.dataChannel.send(JSON.stringify(data));
+        } else {
+            console.error(`Cannot send data to ${friendId}: Data channel is not open or does not exist.`);
         }
     }
 
