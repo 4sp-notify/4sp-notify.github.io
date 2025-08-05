@@ -1,827 +1,258 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Local Wi-Fi Messenger</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <style>
-        body {
-            font-family: 'Inter', sans-serif;
-        }
-        .chat-bubble {
-            max-width: 75%;
-        }
-        .chat-bubble-me {
-            background-color: #3b82f6;
-            color: white;
-        }
-        .chat-bubble-other {
-            background-color: #e5e7eb;
-            color: #1f2937;
-        }
-        #toast {
-            transition: opacity 0.5s, transform 0.5s;
-        }
-        /* For the dropdown menu */
-        .dropdown {
-            position: relative;
-            display: inline-block;
-        }
-        .dropdown-content {
-            display: none;
-            position: absolute;
-            right: 0;
-            background-color: #f9f9f9;
-            min-width: 160px;
-            box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2);
-            z-index: 1;
-            border-radius: 0.5rem;
-        }
-        .dropdown-content button {
-            color: black;
-            padding: 12px 16px;
-            text-decoration: none;
-            display: block;
-            width: 100%;
-            text-align: left;
-        }
-        .dropdown-content button:hover {background-color: #f1f1f1}
-        .show {display: block;}
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Local Messenger</title>
+  <script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.2/dist/peerjs.min.js"></script>
+  <style>
+    :root {
+      color-scheme: light dark;
+    }
+    body {
+      margin: 0;
+      font-family: sans-serif;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      background-color: var(--background, white);
+      color: var(--foreground, black);
+    }
+    @media (prefers-color-scheme: dark) {
+      body {
+        --background: #1e1e1e;
+        --foreground: #f0f0f0;
+      }
+    }
+    #container {
+      display: flex;
+      flex: 1;
+    }
+    #sidebar, #bottom-bar {
+      background: var(--background);
+      border-right: 1px solid #ccc;
+      padding: 10px;
+      overflow-y: auto;
+    }
+    #sidebar {
+      width: 250px;
+      display: flex;
+      flex-direction: column;
+    }
+    #bottom-bar {
+      display: none;
+    }
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    #messages {
+      flex: 1;
+      padding: 10px;
+      overflow-y: auto;
+    }
+    #input {
+      display: flex;
+      border-top: 1px solid #ccc;
+    }
+    #input input {
+      flex: 1;
+      padding: 10px;
+      border: none;
+    }
+    #input button {
+      padding: 10px;
+      border: none;
+      background: #007bff;
+      color: white;
+    }
+    .message {
+      margin: 5px 0;
+      padding: 8px;
+      background: #e0e0ff;
+      border-radius: 6px;
+      max-width: 70%;
+    }
+    .contact {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 5px;
+    }
+    .contact button {
+      margin-left: 5px;
+    }
+    @media (max-width: 600px) {
+      #sidebar {
+        display: none;
+      }
+      #bottom-bar {
+        display: flex;
+        flex-direction: row;
+        overflow-x: auto;
+        height: 60px;
+        border-top: 1px solid #ccc;
+      }
+    }
+  </style>
 </head>
-<body class="bg-gray-100">
-
-    <div id="app" class="h-screen w-screen flex flex-col md:flex-row">
-
-        <!-- Sidebar / Top Bar -->
-        <div id="sidebar" class="bg-white border-r border-gray-200 md:w-80 flex-shrink-0 p-4 pb-20 md:p-4 hidden md:flex flex-col">
-            <h1 class="text-2xl font-bold text-gray-800 mb-4">Local Chats</h1>
-            
-            <!-- Action Buttons -->
-            <div id="single-create-btn-container" class="mb-4">
-                <button id="create-chat-btn-desktop" class="w-full bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-600 transition duration-200">Create New Chat</button>
-            </div>
-            <div id="split-action-btn-container" class="hidden mb-4 grid grid-cols-2 gap-2">
-                <button id="create-chat-btn-split" class="w-full bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-600 transition duration-200">Create</button>
-                <button id="join-chat-btn-split" class="w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition duration-200">Join</button>
-            </div>
-
-            <div id="chat-list" class="flex-grow overflow-y-auto">
-                <!-- Chat list will be populated here -->
-            </div>
-        </div>
-
-        <!-- Main Chat Area -->
-        <div id="chat-area" class="flex-1 flex flex-col bg-gray-50 overflow-hidden">
-            <!-- Welcome Screen -->
-            <div id="welcome-screen" class="flex-1 flex flex-col justify-center items-center p-4">
-                <h2 class="text-2xl font-semibold text-gray-700 mb-2">Welcome to Local Messenger</h2>
-                <p class="text-gray-500 text-center mb-6">Create a new chat or join one with a code to start messaging.</p>
-                <div class="w-full max-w-sm">
-                    <button id="create-chat-btn-welcome" class="w-full bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-600 transition duration-200 mb-4">Create New Chat</button>
-                    <div class="flex items-center">
-                        <input type="text" id="join-code-input-welcome" placeholder="Enter 6-digit code" class="flex-grow p-2 border rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <button id="join-chat-btn-welcome" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-r-lg hover:bg-green-600 transition duration-200">Join</button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Chat View -->
-            <div id="chat-view" class="hidden flex-1 flex flex-col">
-                <div class="bg-white border-b border-gray-200 p-4 flex items-center justify-between flex-shrink-0">
-                    <div>
-                        <h3 id="chat-name" class="text-lg font-semibold text-gray-800"></h3>
-                        <p id="chat-code" class="text-sm text-gray-500"></p>
-                    </div>
-                    <div class="flex items-center">
-                        <div class="dropdown">
-                            <button id="chat-actions-btn" class="p-2 rounded-full hover:bg-gray-200">
-                                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" /></svg>
-                            </button>
-                            <div id="chat-actions-dropdown" class="dropdown-content">
-                                <!-- Leave/Delete buttons will be injected here -->
-                            </div>
-                        </div>
-                        <button id="back-to-list-btn" class="md:hidden text-blue-500 font-semibold ml-2">Back</button>
-                    </div>
-                </div>
-                <div id="messages" class="flex-1 p-4 overflow-y-auto">
-                    <!-- Messages will be populated here -->
-                </div>
-                <div class="bg-white border-t border-gray-200 p-4 flex-shrink-0">
-                    <div class="flex items-center">
-                        <input type="text" id="message-input" placeholder="Type a message..." class="flex-grow p-2 border rounded-l-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <button id="send-btn" class="bg-blue-500 text-white font-semibold py-2 px-4 rounded-r-lg hover:bg-blue-600 transition duration-200">Send</button>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Bottom Navigation (Mobile) -->
-        <div id="bottom-nav" class="md:hidden fixed bottom-0 left-0 w-full bg-white border-t border-gray-200 p-2 flex justify-around z-40">
-            <button id="chats-tab-btn" class="flex flex-col items-center text-blue-500">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" /></svg>
-                <span class="text-xs">Chats</span>
-            </button>
-            <button id="create-tab-btn" class="flex flex-col items-center text-gray-600">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v3m0 0v3m0-3h3m-3 0H9m12 0a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                <span class="text-xs">New Chat</span>
-            </button>
-             <button id="join-tab-btn" class="flex flex-col items-center text-gray-600">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" /></svg>
-                <span class="text-xs">Join Chat</span>
-            </button>
-        </div>
-
-        <!-- Modals -->
-        <div id="username-modal" class="hidden fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg p-6 w-full max-w-sm relative">
-                <button class="absolute top-2 right-2 p-1 close-modal-btn">
-                     <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600 hover:text-gray-900" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-                <h3 class="text-lg font-semibold mb-4">Enter Your Name</h3>
-                <input type="text" id="username-input" placeholder="Your name" class="w-full p-2 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <button id="save-username-btn" class="w-full bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-600 transition duration-200">Join Chat</button>
-            </div>
-        </div>
-        
-        <div id="create-chat-modal" class="hidden fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg p-6 w-full max-w-sm relative">
-                <button class="absolute top-2 right-2 p-1 close-modal-btn">
-                     <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600 hover:text-gray-900" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-                <h3 class="text-lg font-semibold mb-4">Create New Chat</h3>
-                <input type="text" id="new-chat-name-input" placeholder="Chat Name" class="w-full p-2 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <button id="confirm-create-chat-btn" class="w-full bg-blue-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-600 transition duration-200">Create</button>
-            </div>
-        </div>
-
-        <div id="join-chat-modal" class="hidden fixed inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-center p-4 z-50">
-            <div class="bg-white rounded-lg p-6 w-full max-w-sm relative">
-                <button class="absolute top-2 right-2 p-1 close-modal-btn">
-                     <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 text-gray-600 hover:text-gray-900" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg>
-                </button>
-                <h3 class="text-lg font-semibold mb-4">Join a Chat</h3>
-                <input type="text" id="join-code-input-modal" placeholder="Enter 6-digit code" class="w-full p-2 border rounded-lg mb-4 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <button id="confirm-join-chat-btn" class="w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition duration-200">Join</button>
-            </div>
-        </div>
-        
-        <!-- Toast Notification -->
-        <div id="toast" class="fixed bottom-5 right-5 bg-gray-800 text-white py-2 px-4 rounded-lg opacity-0 transform translate-y-2 z-50">
-            Toast message
-        </div>
-
+<body>
+  <div id="container">
+    <div id="sidebar">
+      <h3>Contacts</h3>
+      <div id="contact-list"></div>
+      <input id="new-contact-id" placeholder="Peer ID" />
+      <input id="new-contact-name" placeholder="Name" />
+      <button onclick="addContact()">Add Contact</button>
     </div>
+    <div id="main">
+      <div id="messages"></div>
+      <div id="input">
+        <input type="text" id="msg" placeholder="Type a message...">
+        <button onclick="sendMessage()">Send</button>
+      </div>
+    </div>
+  </div>
+  <div id="bottom-bar"></div>
 
-    <script src="https://unpkg.com/peerjs@1.4.7/dist/peerjs.min.js"></script>
-    <script>
-        document.addEventListener('DOMContentLoaded', () => {
-            // --- DOM Elements ---
-            const app = document.getElementById('app');
-            const sidebar = document.getElementById('sidebar');
-            const chatArea = document.getElementById('chat-area');
-            const welcomeScreen = document.getElementById('welcome-screen');
-            const chatView = document.getElementById('chat-view');
-            const chatList = document.getElementById('chat-list');
-            const messages = document.getElementById('messages');
-            const messageInput = document.getElementById('message-input');
-            const sendBtn = document.getElementById('send-btn');
-            const chatName = document.getElementById('chat-name');
-            const chatCode = document.getElementById('chat-code');
-            const backToListBtn = document.getElementById('back-to-list-btn');
-            const toast = document.getElementById('toast');
+  <script>
+    const peer = new Peer();
+    let connections = {};
+    let userId = localStorage.getItem('userId') || generateId();
+    let username = localStorage.getItem('username');
+    let contacts = JSON.parse(localStorage.getItem('contacts') || '{}');
+    let messages = JSON.parse(localStorage.getItem('messages') || '{}');
+    let blocked = JSON.parse(localStorage.getItem('blocked') || '[]');
 
-            // Modals
-            const usernameModal = document.getElementById('username-modal');
-            const usernameInput = document.getElementById('username-input');
-            const saveUsernameBtn = document.getElementById('save-username-btn');
-            const createChatModal = document.getElementById('create-chat-modal');
-            const newChatNameInput = document.getElementById('new-chat-name-input');
-            const confirmCreateChatBtn = document.getElementById('confirm-create-chat-btn');
-            const joinChatModal = document.getElementById('join-chat-modal');
-            const joinCodeInputModal = document.getElementById('join-code-input-modal');
-            const confirmJoinChatBtn = document.getElementById('confirm-join-chat-btn');
-            const closeModalBtns = document.querySelectorAll('.close-modal-btn');
+    if (!username) {
+      username = prompt("Choose a username:");
+      localStorage.setItem('username', username);
+    }
 
-            // Buttons
-            const createChatBtnDesktop = document.getElementById('create-chat-btn-desktop');
-            const createChatBtnWelcome = document.getElementById('create-chat-btn-welcome');
-            const joinChatBtnWelcome = document.getElementById('join-chat-btn-welcome');
-            const joinCodeInputWelcome = document.getElementById('join-code-input-welcome');
-            const singleCreateBtnContainer = document.getElementById('single-create-btn-container');
-            const splitActionBtnContainer = document.getElementById('split-action-btn-container');
-            const createChatBtnSplit = document.getElementById('create-chat-btn-split');
-            const joinChatBtnSplit = document.getElementById('join-chat-btn-split');
-            const chatActionsBtn = document.getElementById('chat-actions-btn');
-            const chatActionsDropdown = document.getElementById('chat-actions-dropdown');
+    function generateId() {
+      const id = 'user-' + Math.random().toString(36).substring(2, 10);
+      localStorage.setItem('userId', id);
+      return id;
+    }
 
-            // Mobile Nav
-            const bottomNav = document.getElementById('bottom-nav');
-            const chatsTabBtn = document.getElementById('chats-tab-btn');
-            const createTabBtn = document.getElementById('create-tab-btn');
-            const joinTabBtn = document.getElementById('join-tab-btn');
+    function save() {
+      localStorage.setItem('contacts', JSON.stringify(contacts));
+      localStorage.setItem('messages', JSON.stringify(messages));
+      localStorage.setItem('blocked', JSON.stringify(blocked));
+    }
 
-            // --- App State ---
-            let state = {
-                username: localStorage.getItem('username') || '',
-                activeChat: null,
-                chats: {}, // { 'chatCode': { name: 'Chat Name', messages: [] } }
-                peer: null,
-                connections: {}, // { 'peerId': conn }
-                knownPeers: {}, // { 'peerId': timestamp }
-                isMobile: window.innerWidth < 768,
-            };
+    function updateContactsUI() {
+      const list = document.getElementById('contact-list');
+      list.innerHTML = '';
+      for (let id in contacts) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'contact';
+        wrapper.innerHTML = `
+          <span>${contacts[id]}</span>
+          <div>
+            <button onclick="selectContact('${id}')">Chat</button>
+            <button onclick="editContact('${id}')">Edit</button>
+            <button onclick="deleteContact('${id}')">Delete</button>
+            <button onclick="blockContact('${id}')">Block</button>
+          </div>
+        `;
+        list.appendChild(wrapper);
+      }
+    }
 
-            let joinPromise = null;
+    function addContact() {
+      const id = document.getElementById('new-contact-id').value;
+      const name = document.getElementById('new-contact-name').value;
+      if (id && name) {
+        contacts[id] = name;
+        messages[id] = messages[id] || [];
+        updateContactsUI();
+        save();
+      }
+    }
 
-            // --- UI Helpers ---
-            const showToast = (message) => {
-                toast.textContent = message;
-                toast.classList.remove('opacity-0', 'translate-y-2');
-                setTimeout(() => {
-                    toast.classList.add('opacity-0', 'translate-y-2');
-                }, 3000);
-            };
+    function editContact(id) {
+      const newName = prompt("New name:", contacts[id]);
+      if (newName) {
+        contacts[id] = newName;
+        updateContactsUI();
+        save();
+      }
+    }
 
-            // --- PeerJS Setup for WebRTC ---
-            const initializePeer = (username) => {
-                if (state.peer) {
-                    state.peer.destroy();
-                }
-                const peerId = `${username.replace(/\s+/g, '-')}-${Math.random().toString(36).substr(2, 5)}`;
-                state.peer = new Peer(peerId, { debug: 2 });
+    function deleteContact(id) {
+      if (confirm("Delete contact and chat?")) {
+        delete contacts[id];
+        delete messages[id];
+        updateContactsUI();
+        save();
+      }
+    }
 
-                state.peer.on('open', id => {
-                    console.log('My peer ID is: ' + id);
-                    state.username = username;
-                    localStorage.setItem('username', username);
-                    state.knownPeers[id] = Date.now(); // Add self to known peers
-                    discoverPeers();
-                });
+    function blockContact(id) {
+      if (!blocked.includes(id)) blocked.push(id);
+      deleteContact(id);
+    }
 
-                state.peer.on('connection', conn => {
-                    console.log(`Incoming connection from ${conn.peer}`);
-                    setupConnectionEvents(conn);
-                });
+    let currentChatId = null;
 
-                state.peer.on('error', err => {
-                    console.error('PeerJS error:', err);
-                    if (err.type !== 'peer-unavailable') {
-                       showToast(`Connection error: ${err.type}`);
-                    }
-                });
-            };
-            
-            const setupConnectionEvents = (conn) => {
-                if(!conn || (state.connections[conn.peer] && state.connections[conn.peer].open)) return;
+    function selectContact(id) {
+      if (blocked.includes(id)) return alert("This contact is blocked.");
+      currentChatId = id;
+      document.getElementById('messages').innerHTML = '';
+      if (!messages[id]) messages[id] = [];
+      messages[id].forEach(msg => displayMessage(msg));
+    }
 
-                conn.on('open', () => {
-                    console.log(`Connection opened with ${conn.peer}`);
-                    state.connections[conn.peer] = conn;
-                    
-                    // Add to known peers and save
-                    state.knownPeers[conn.peer] = Date.now();
-                    saveToStorage();
+    function displayMessage(msg) {
+      const div = document.createElement('div');
+      div.className = 'message';
+      div.textContent = `${msg.from}: ${msg.text}`;
+      document.getElementById('messages').appendChild(div);
+    }
 
-                    // Exchange peer lists to build the network
-                    conn.send({ type: 'peer-list-request', peers: Object.keys(state.knownPeers) });
-                    
-                    updateChatActionButtons();
-                });
+    function sendMessage() {
+      const input = document.getElementById('msg');
+      const text = input.value;
+      if (!currentChatId || !text) return;
+      const msg = { from: username, text, time: Date.now() };
+      messages[currentChatId].push(msg);
+      displayMessage(msg);
+      if (connections[currentChatId]) {
+        connections[currentChatId].send(JSON.stringify({ type: 'msg', msg }));
+      }
+      input.value = '';
+      save();
+    }
 
-                conn.on('data', data => {
-                    handleReceivedData(data, conn.peer);
-                });
+    peer.on('open', id => {
+      console.log('My ID:', id);
+      alert('Your ID: ' + userId);
+      updateContactsUI();
+    });
 
-                conn.on('close', () => {
-                    console.log(`Connection with ${conn.peer} closed.`);
-                    delete state.connections[conn.peer];
-                    updateChatActionButtons();
-                });
+    peer.on('connection', conn => {
+      conn.on('data', data => {
+        if (typeof data === 'string') data = JSON.parse(data);
+        if (data.type === 'msg') {
+          const fromId = conn.peer;
+          if (!messages[fromId]) messages[fromId] = [];
+          messages[fromId].push(data.msg);
+          if (currentChatId === fromId) displayMessage(data.msg);
+          save();
+        }
+      });
+    });
 
-                conn.on('error', err => {
-                    console.error(`Connection error with ${conn.peer}:`, err);
-                    delete state.connections[conn.peer];
-                });
-            }
-
-            // --- Core Logic ---
-            const loadFromStorage = () => {
-                const savedChats = localStorage.getItem('localChats');
-                if (savedChats) {
-                    state.chats = JSON.parse(savedChats) || {};
-                }
-                const savedPeers = localStorage.getItem('knownPeers');
-                if (savedPeers) {
-                    state.knownPeers = JSON.parse(savedPeers) || {};
-                }
-                updateChatList();
-            };
-            
-            const saveToStorage = () => {
-                localStorage.setItem('localChats', JSON.stringify(state.chats));
-                localStorage.setItem('knownPeers', JSON.stringify(state.knownPeers));
-            };
-
-            const generateChatCode = () => {
-                return Math.floor(100000 + Math.random() * 900000).toString();
-            };
-
-            const createNewChat = (chatName) => {
-                const code = generateChatCode();
-                if (state.chats[code]) {
-                    return createNewChat(chatName);
-                }
-                state.chats[code] = {
-                    name: chatName,
-                    messages: [{ type: 'system', text: `Chat created by ${state.username}` }]
-                };
-                saveToStorage();
-                updateChatList();
-                setActiveChat(code);
-                broadcastMessage({ type: 'new-chat', chat: { code: code, name: chatName } });
-            };
-
-            const joinChat = (code) => {
-                if (state.chats[code]) {
-                    setActiveChat(code);
-                    return;
-                }
-                showToast(`Searching network for chat ${code}...`);
-                broadcastMessage({ type: 'request-chat-info', code: code });
-                joinPromise = { code: code };
-            };
-
-            const setActiveChat = (code) => {
-                state.activeChat = code;
-                renderChatView();
-                showScreen('chat');
-                updateSidebarButtons();
-                updateChatActionButtons();
-            };
-            
-            const leaveOrDeleteChat = () => {
-                const code = state.activeChat;
-                if (!code) return;
-
-                const isDelete = Object.values(state.connections).filter(c => c.open).length === 0;
-
-                if (isDelete) {
-                    broadcastMessage({ type: 'chat-deleted', code: code });
-                }
-                
-                delete state.chats[code];
-                saveToStorage();
-                
-                state.activeChat = null;
-                showScreen('welcome');
-                updateChatList();
-                updateSidebarButtons();
-                showToast(isDelete ? 'Chat deleted' : 'You have left the chat');
-            };
-
-            const sendMessage = () => {
-                const text = messageInput.value.trim();
-                if (text && state.activeChat) {
-                    const message = {
-                        type: 'user',
-                        id: `${state.peer.id}-${Date.now()}`,
-                        sender: state.username,
-                        text: text,
-                        timestamp: new Date().toISOString()
-                    };
-                    
-                    state.chats[state.activeChat].messages.push(message);
-                    saveToStorage();
-                    renderMessages();
-                    messageInput.value = '';
-                    
-                    broadcastMessage({ type: 'chat-message', code: state.activeChat, message: message });
-                }
-            };
-            
-            const broadcastMessage = (data) => {
-                console.log('Broadcasting:', data);
-                Object.values(state.connections).forEach(conn => {
-                    if (conn && conn.open) {
-                       conn.send(data);
-                    }
-                });
-            };
-            
-            const addNewPeers = (peerList) => {
-                let newPeerFound = false;
-                peerList.forEach(peerId => {
-                    if (!state.knownPeers[peerId]) {
-                        console.log(`Discovered new peer: ${peerId}`);
-                        state.knownPeers[peerId] = Date.now();
-                        newPeerFound = true;
-                    }
-                });
-
-                if (newPeerFound) {
-                    saveToStorage();
-                    // Try to connect to the newly discovered peers
-                    discoverPeers();
-                }
-            };
-
-            const handleReceivedData = (data, fromPeerId) => {
-                // Always update our known peers list when we hear from someone
-                state.knownPeers[fromPeerId] = Date.now();
-                saveToStorage();
-
-                switch(data.type) {
-                    case 'chat-message':
-                        if (state.chats[data.code]) {
-                            const messageExists = state.chats[data.code].messages.some(m => m.id === data.message.id);
-                            if (!messageExists) {
-                                state.chats[data.code].messages.push(data.message);
-                                saveToStorage();
-                                if (state.activeChat === data.code) {
-                                    renderMessages();
-                                }
-                                updateChatList();
-                            }
-                        }
-                        break;
-                    case 'new-chat':
-                        if (!state.chats[data.chat.code]) {
-                            state.chats[data.chat.code] = { name: data.chat.name, messages: [] };
-                            saveToStorage();
-                            updateChatList();
-                            showToast(`New chat available: ${data.chat.name}`);
-                        }
-                        break;
-                    case 'request-chat-info':
-                         if (state.chats[data.code]) {
-                            const conn = state.connections[fromPeerId];
-                            if(conn) conn.send({ type: 'chat-info-response', code: data.code, chat: state.chats[data.code] });
-                         }
-                        break;
-                    case 'chat-info-response':
-                        if (!state.chats[data.code]) {
-                            state.chats[data.code] = data.chat;
-                            saveToStorage();
-                            updateChatList();
-                            showToast(`Joined new chat: ${data.chat.name}`);
-                        }
-                        if (joinPromise && joinPromise.code === data.code) {
-                            setActiveChat(data.code);
-                            joinPromise = null;
-                        }
-                        break;
-                    case 'request-all-chats':
-                        const conn = state.connections[fromPeerId];
-                        if(conn) {
-                            const knownChats = Object.entries(state.chats).map(([code, {name}]) => ({code, name}));
-                            conn.send({ type: 'all-chats-response', chats: knownChats });
-                        }
-                        break;
-                    case 'all-chats-response':
-                        let newChatsFound = false;
-                        data.chats.forEach(chat => {
-                            if(!state.chats[chat.code]) {
-                                state.chats[chat.code] = { name: chat.name, messages: [] };
-                                newChatsFound = true;
-                            }
-                        });
-                        if(newChatsFound) {
-                            saveToStorage();
-                            updateChatList();
-                            showToast("Discovered new chats from the network!");
-                        }
-                        break;
-                    case 'chat-deleted':
-                        if (state.chats[data.code]) {
-                            const chatName = state.chats[data.code].name;
-                            delete state.chats[data.code];
-                            saveToStorage();
-                            if (state.activeChat === data.code) {
-                                state.activeChat = null;
-                                showScreen('welcome');
-                                updateSidebarButtons();
-                            }
-                            updateChatList();
-                            showToast(`Chat "${chatName}" was deleted by its creator.`);
-                        }
-                        break;
-                    case 'peer-list-request':
-                        // Merge their list with ours and connect to any new ones
-                        addNewPeers(data.peers);
-                        // Send our full list back
-                        const peerConn = state.connections[fromPeerId];
-                        if (peerConn) {
-                            peerConn.send({ type: 'peer-list-response', peers: Object.keys(state.knownPeers) });
-                        }
-                        break;
-                    case 'peer-list-response':
-                        // Merge the final list and connect to any new ones
-                        addNewPeers(data.peers);
-                        break;
-                }
-            };
-            
-            const discoverPeers = () => {
-                console.log("Attempting to connect to known peers...", Object.keys(state.knownPeers));
-                for (const peerId in state.knownPeers) {
-                    if (peerId === state.peer.id) continue;
-                    if (state.connections[peerId] && state.connections[peerId].open) continue;
-
-                    console.log(`Trying to connect to known peer: ${peerId}`);
-                    const conn = state.peer.connect(peerId, { reliable: true });
-                    setupConnectionEvents(conn);
-                }
-            };
-
-
-            // --- UI Rendering ---
-            const updateSidebarButtons = () => {
-                if (state.isMobile) return;
-                if (state.activeChat) {
-                    singleCreateBtnContainer.classList.add('hidden');
-                    splitActionBtnContainer.classList.remove('hidden');
-                } else {
-                    singleCreateBtnContainer.classList.remove('hidden');
-                    splitActionBtnContainer.classList.add('hidden');
-                }
-            };
-            
-            const updateChatActionButtons = () => {
-                chatActionsDropdown.innerHTML = '';
-                if (!state.activeChat) return;
-
-                const isAlone = Object.values(state.connections).filter(c => c.open).length === 0;
-                const button = document.createElement('button');
-                button.id = isAlone ? 'delete-chat-btn' : 'leave-chat-btn';
-                button.textContent = isAlone ? 'Delete Chat' : 'Leave Chat';
-                button.classList.add(isAlone ? 'text-red-600' : 'text-gray-800');
-                button.addEventListener('click', () => {
-                    leaveOrDeleteChat();
-                    chatActionsDropdown.classList.remove('show');
-                });
-                chatActionsDropdown.appendChild(button);
-            };
-
-            const renderChatView = () => {
-                if (!state.activeChat || !state.chats[state.activeChat]) {
-                    showScreen('welcome');
-                    return;
-                }
-                const chat = state.chats[state.activeChat];
-                chatName.textContent = chat.name;
-                chatCode.textContent = `Code: ${state.activeChat}`;
-                renderMessages();
-            };
-
-            const renderMessages = () => {
-                if (!state.activeChat) return;
-                messages.innerHTML = '';
-                const chat = state.chats[state.activeChat];
-                chat.messages.forEach(msg => {
-                    const msgWrapper = document.createElement('div');
-                    msgWrapper.classList.add('flex', 'mb-4');
-
-                    const msgBubble = document.createElement('div');
-                    msgBubble.classList.add('p-3', 'rounded-lg', 'chat-bubble');
-
-                    if (msg.type === 'system') {
-                        msgWrapper.classList.add('justify-center');
-                        msgBubble.classList.add('bg-gray-200', 'text-gray-600', 'text-sm', 'italic');
-                        msgBubble.textContent = msg.text;
-                    } else {
-                         if (msg.sender === state.username) {
-                            msgWrapper.classList.add('justify-end');
-                            msgBubble.classList.add('chat-bubble-me');
-                        } else {
-                            msgWrapper.classList.add('justify-start');
-                            msgBubble.classList.add('chat-bubble-other');
-                        }
-                        
-                        const senderP = document.createElement('p');
-                        senderP.classList.add('font-bold', 'text-sm');
-                        senderP.textContent = msg.sender;
-                        
-                        const textP = document.createElement('p');
-                        textP.textContent = msg.text;
-                        
-                        msgBubble.appendChild(senderP);
-                        msgBubble.appendChild(textP);
-                    }
-                    
-                    msgWrapper.appendChild(msgBubble);
-                    messages.appendChild(msgWrapper);
-                });
-                messages.scrollTop = messages.scrollHeight;
-            };
-
-            const updateChatList = () => {
-                chatList.innerHTML = '';
-                if (Object.keys(state.chats).length === 0) {
-                    chatList.innerHTML = `<p class="text-gray-500 text-sm">No chats yet. Create one!</p>`;
-                    return;
-                }
-                Object.entries(state.chats).forEach(([code, chat]) => {
-                    const chatItem = document.createElement('div');
-                    chatItem.classList.add('p-3', 'rounded-lg', 'cursor-pointer', 'hover:bg-gray-100', 'mb-2');
-                    chatItem.dataset.code = code;
-                    if (code === state.activeChat) {
-                        chatItem.classList.add('bg-blue-100');
-                    }
-                    
-                    const chatNameP = document.createElement('p');
-                    chatNameP.classList.add('font-semibold', 'text-gray-800');
-                    chatNameP.textContent = chat.name;
-                    
-                    const lastMessage = chat.messages[chat.messages.length - 1];
-                    const lastMessageP = document.createElement('p');
-                    lastMessageP.classList.add('text-sm', 'text-gray-600', 'truncate');
-                    lastMessageP.textContent = lastMessage ? (lastMessage.type === 'system' ? lastMessage.text : `${lastMessage.sender}: ${lastMessage.text}`) : 'No messages yet.';
-                    
-                    chatItem.appendChild(chatNameP);
-                    chatItem.appendChild(lastMessageP);
-                    
-                    chatItem.addEventListener('click', () => {
-                        setActiveChat(code);
-                    });
-                    
-                    chatList.appendChild(chatItem);
-                });
-            };
-            
-            const showScreen = (screen) => {
-                welcomeScreen.classList.add('hidden');
-                chatView.classList.add('hidden');
-                
-                if (state.isMobile) {
-                    sidebar.classList.add('hidden');
-                    chatArea.classList.remove('hidden');
-                    bottomNav.classList.remove('hidden');
-
-                    if (screen === 'chat') {
-                        chatView.classList.remove('hidden');
-                        bottomNav.classList.add('hidden');
-                        sidebar.classList.add('hidden');
-                    } else { // 'list' or 'welcome'
-                        sidebar.classList.remove('hidden');
-                        chatArea.classList.add('hidden');
-                        bottomNav.classList.remove('hidden');
-                    }
-                } else { // Desktop
-                    sidebar.classList.remove('hidden');
-                    chatArea.classList.remove('hidden');
-                    bottomNav.classList.add('hidden');
-
-                    if (screen === 'chat') {
-                        welcomeScreen.classList.add('hidden');
-                        chatView.classList.remove('hidden');
-                    } else {
-                        welcomeScreen.classList.remove('hidden');
-                        chatView.classList.add('hidden');
-                    }
-                }
-                 updateChatList();
-            };
-
-            const handleResize = () => {
-                const wasMobile = state.isMobile;
-                state.isMobile = window.innerWidth < 768;
-                if (wasMobile !== state.isMobile) {
-                    showScreen(state.activeChat ? 'chat' : 'welcome');
-                }
-            };
-
-            // --- Event Listeners ---
-            window.addEventListener('resize', handleResize);
-            
-            let usernamePromise = null;
-            saveUsernameBtn.addEventListener('click', () => {
-                const username = usernameInput.value.trim();
-                if (username) {
-                    usernameModal.classList.add('hidden');
-                    initializePeer(username);
-                    if (usernamePromise) {
-                        usernamePromise.resolve();
-                        usernamePromise = null;
-                    }
-                }
-            });
-
-            const promptForUsernameIfNeeded = () => {
-                return new Promise((resolve) => {
-                    if (state.peer || state.username) {
-                        resolve();
-                    } else {
-                        usernameModal.classList.remove('hidden');
-                        usernamePromise = { resolve: resolve };
-                    }
-                });
-            };
-            
-            // Create Chat Logic
-            const openCreateChatModal = async () => {
-                await promptForUsernameIfNeeded();
-                createChatModal.classList.remove('hidden');
-                newChatNameInput.focus();
-            };
-            createChatBtnDesktop.addEventListener('click', openCreateChatModal);
-            createChatBtnWelcome.addEventListener('click', openCreateChatModal);
-            createTabBtn.addEventListener('click', openCreateChatModal);
-            createChatBtnSplit.addEventListener('click', openCreateChatModal);
-            
-            confirmCreateChatBtn.addEventListener('click', () => {
-                const name = newChatNameInput.value.trim();
-                if (name) {
-                    createNewChat(name);
-                    createChatModal.classList.add('hidden');
-                    newChatNameInput.value = '';
-                }
-            });
-
-            // Join Chat Logic
-            const openJoinChatModal = async () => {
-                await promptForUsernameIfNeeded();
-                joinChatModal.classList.remove('hidden');
-                joinCodeInputModal.focus();
-            };
-            joinTabBtn.addEventListener('click', openJoinChatModal);
-            joinChatBtnSplit.addEventListener('click', openJoinChatModal);
-            
-            const attemptJoin = async (code) => {
-                if (code && code.length === 6 && /^\d+$/.test(code)) {
-                    await promptForUsernameIfNeeded();
-                    joinChat(code);
-                    joinChatModal.classList.add('hidden');
-                    joinCodeInputModal.value = '';
-                } else {
-                    showToast('Please enter a valid 6-digit code.');
-                }
-            };
-            confirmJoinChatBtn.addEventListener('click', () => attemptJoin(joinCodeInputModal.value.trim()));
-            joinChatBtnWelcome.addEventListener('click', () => attemptJoin(joinCodeInputWelcome.value.trim()));
-            joinCodeInputWelcome.addEventListener('keyup', (e) => {
-                if (e.key === 'Enter') attemptJoin(joinCodeInputWelcome.value.trim());
-            });
-
-
-            sendBtn.addEventListener('click', sendMessage);
-            messageInput.addEventListener('keyup', (e) => {
-                if (e.key === 'Enter') {
-                    sendMessage();
-                }
-            });
-            
-            // Mobile Navigation
-            chatsTabBtn.addEventListener('click', () => {
-                showScreen('list');
-            });
-            
-            backToListBtn.addEventListener('click', () => {
-                state.activeChat = null;
-                showScreen('list');
-                updateSidebarButtons();
-            });
-            
-            // Modal Close Buttons
-            closeModalBtns.forEach(btn => {
-                btn.addEventListener('click', () => {
-                    btn.closest('.fixed').classList.add('hidden');
-                });
-            });
-
-            // Chat Actions Dropdown
-            chatActionsBtn.addEventListener('click', (event) => {
-                event.stopPropagation();
-                chatActionsDropdown.classList.toggle('show');
-            });
-
-            window.addEventListener('click', (event) => {
-                if (!event.target.matches('#chat-actions-btn') && !event.target.closest('#chat-actions-btn')) {
-                    if (chatActionsDropdown.classList.contains('show')) {
-                        chatActionsDropdown.classList.remove('show');
-                    }
-                }
-            });
-
-
-            // --- Initialization ---
-            const init = async () => {
-                loadFromStorage();
-                if (state.username) {
-                    initializePeer(state.username);
-                } else {
-                    await promptForUsernameIfNeeded();
-                }
-                handleResize();
-                showScreen('welcome');
-                updateSidebarButtons();
-            };
-
-            init();
-        });
-    </script>
+    function connectTo(id, name) {
+      const conn = peer.connect(id);
+      connections[id] = conn;
+      contacts[id] = name;
+      messages[id] = messages[id] || [];
+      updateContactsUI();
+      save();
+    }
+  </script>
 </body>
 </html>
