@@ -266,8 +266,8 @@
                     </div>
                 </div>
                 <div class="add-friend-form">
-                    <input type="text" id="add-friend-input" placeholder="Enter Friend's Connection Token">
-                    <button class="btn btn-primary" id="add-friend-btn">Add Friend</button>
+                    <input type="text" id="add-friend-input" placeholder="Paste any Connection Token">
+                    <button class="btn btn-primary" id="add-friend-btn">Process Token</button>
                 </div>
             </div>
             <div class="contact-list" id="contact-list">
@@ -319,8 +319,8 @@
 
     <div class="modal-overlay hidden" id="token-modal">
         <div class="modal-content">
-            <h2>Your Connection Token</h2>
-            <p>Share this entire token with someone to allow them to add you as a friend.</p>
+            <h2 id="token-modal-title">Your Connection Token</h2>
+            <p id="token-modal-text">Share this entire token with someone to allow them to add you as a friend.</p>
             <textarea id="connection-token-textarea" readonly></textarea>
             <button class="btn btn-secondary" id="close-token-modal-btn">Close</button>
         </div>
@@ -334,6 +334,7 @@ window.onload = () => {
     let friends = {}; // { userId: { profile, peerConnection, dataChannel, status: 'offline' } }
     let blockedUsers = [];
     let activeChat = null; // userId of the currently active chat
+    let pendingConnections = {}; // Stores PC objects waiting for an answer
 
     // --- DOM Element References ---
     const elements = {
@@ -373,15 +374,14 @@ window.onload = () => {
         declineRequestBtn: document.getElementById('decline-request-btn'),
         
         tokenModal: document.getElementById('token-modal'),
+        tokenModalTitle: document.getElementById('token-modal-title'),
+        tokenModalText: document.getElementById('token-modal-text'),
         connectionTokenTextarea: document.getElementById('connection-token-textarea'),
         closeTokenModalBtn: document.getElementById('close-token-modal-btn'),
     };
 
     // --- Core Logic ---
 
-    /**
-     * Initializes the application by loading data from localStorage.
-     */
     function initialize() {
         loadData();
         if (!userProfile) {
@@ -392,27 +392,20 @@ window.onload = () => {
         addEventListeners();
     }
 
-    /**
-     * Sets up all the necessary event listeners for the application.
-     */
     function addEventListeners() {
         elements.createProfileBtn.addEventListener('click', createProfile);
-        elements.myId.addEventListener('click', showConnectionToken);
+        elements.myId.addEventListener('click', generateOfferToken);
         elements.closeTokenModalBtn.addEventListener('click', () => elements.tokenModal.classList.add('hidden'));
-        elements.addFriendBtn.addEventListener('click', handleAddFriend);
+        elements.addFriendBtn.addEventListener('click', processConnectionToken);
         elements.sendBtn.addEventListener('click', sendMessage);
         elements.chatInput.addEventListener('keyup', e => e.key === 'Enter' && sendMessage());
         elements.unfriendBtn.addEventListener('click', unfriendActiveContact);
     }
 
-    /**
-     * Loads user profile, friends, and blocked list from browser's localStorage.
-     */
     function loadData() {
         userProfile = JSON.parse(localStorage.getItem(APP_PREFIX + 'userProfile'));
         friends = JSON.parse(localStorage.getItem(APP_PREFIX + 'friends')) || {};
         blockedUsers = JSON.parse(localStorage.getItem(APP_PREFIX + 'blockedUsers')) || [];
-        // Reset connection state on load
         Object.values(friends).forEach(friend => {
             friend.status = 'offline';
             friend.peerConnection = null;
@@ -420,23 +413,14 @@ window.onload = () => {
         });
     }
 
-    /**
-     * Saves a specific piece of state to localStorage.
-     * @param {string} key - The key for the data (e.g., 'userProfile', 'friends').
-     * @param {any} value - The value to save.
-     */
     function saveData(key, value) {
-        // Create a deep copy to avoid storing non-serializable objects like peer connections
         const dataToSave = JSON.parse(JSON.stringify(value, (k, v) => {
-            if (k === 'peerConnection' || k === 'dataChannel') return undefined;
+            if (['peerConnection', 'dataChannel'].includes(k)) return undefined;
             return v;
         }));
         localStorage.setItem(APP_PREFIX + key, JSON.stringify(dataToSave));
     }
 
-    /**
-     * Sets up the main UI with the loaded user profile and friend list.
-     */
     function setupUI() {
         elements.myAvatar.textContent = `${userProfile.firstName[0]}${userProfile.lastName[0]}`;
         elements.myName.textContent = `${userProfile.firstName} ${userProfile.lastName}`;
@@ -444,19 +428,14 @@ window.onload = () => {
         renderContactList();
     }
     
-    /**
-     * Renders the list of contacts in the sidebar.
-     */
     function renderContactList() {
         elements.contactList.innerHTML = '';
         Object.values(friends).forEach(friend => {
-            if (!friend.profile) return; // Skip if profile is missing
+            if (!friend.profile) return;
             const contactEl = document.createElement('div');
             contactEl.className = 'contact-item';
             contactEl.dataset.userId = friend.profile.id;
-            if (friend.profile.id === activeChat) {
-                contactEl.classList.add('active');
-            }
+            if (friend.profile.id === activeChat) contactEl.classList.add('active');
             contactEl.innerHTML = `
                 <div class="contact-avatar">
                     ${friend.profile.firstName[0]}${friend.profile.lastName[0]}
@@ -472,9 +451,6 @@ window.onload = () => {
         });
     }
 
-    /**
-     * Creates a new user profile and saves it.
-     */
     function createProfile() {
         const firstName = elements.firstNameInput.value.trim();
         const lastName = elements.lastNameInput.value.trim();
@@ -495,125 +471,131 @@ window.onload = () => {
     // --- WebRTC Signaling and Connection Logic ---
 
     /**
-     * Handles the "Add Friend" button click. Parses the token and initiates a connection.
+     * Universal token processor. Determines if a token is an offer or an answer and acts accordingly.
      */
-    async function handleAddFriend() {
-        const token = elements.addFriendInput.value.trim();
-        if (!token) return;
-        
+    async function processConnectionToken() {
+        const tokenStr = elements.addFriendInput.value.trim();
+        if (!tokenStr) return;
+
         try {
-            const { profile: friendProfile, offer } = JSON.parse(atob(token));
+            const token = JSON.parse(atob(tokenStr));
             
-            if (friendProfile.id === userProfile.id) {
-                alert("You can't add yourself as a friend.");
-                return;
+            if (token.type === 'offer') {
+                await handleOfferToken(token);
+            } else if (token.type === 'answer') {
+                await handleAnswerToken(token);
+            } else {
+                throw new Error("Invalid token type.");
             }
-            if (friends[friendProfile.id]) {
-                alert("This user is already your friend.");
-                return;
-            }
-             if (blockedUsers.includes(friendProfile.id)) {
-                alert("This user is blocked.");
-                return;
-            }
-
-            // This user is the "answerer"
-            const pc = createPeerConnection(friendProfile.id);
-            friends[friendProfile.id] = { profile: friendProfile, peerConnection: pc, status: 'offline' };
-            
-            await pc.setRemoteDescription(new RTCSessionDescription(offer));
-            const answer = await pc.createAnswer();
-            await pc.setLocalDescription(answer);
-            
-            // The answer is the final piece. We need to send it back.
-            // In a real app, this uses a server. Here, we must do it manually.
-            const answerToken = btoa(JSON.stringify({
-                profile: userProfile,
-                answer: pc.localDescription
-            }));
-            
-            elements.requestTitle.textContent = "Complete the Connection";
-            elements.requestText.innerHTML = `You have accepted the request from <strong>${friendProfile.firstName}</strong>. Copy the token below and send it back to them to finalize the connection.`;
-            elements.connectionTokenTextarea.value = answerToken;
-            elements.tokenModal.querySelector('h2').textContent = "Send This Token Back";
-            elements.tokenModal.classList.remove('hidden');
-            
-            elements.acceptRequestBtn.classList.add('hidden');
-            elements.declineRequestBtn.classList.add('hidden');
-
             elements.addFriendInput.value = '';
         } catch (error) {
-            console.error("Invalid connection token:", error);
-            alert("Invalid or expired connection token.");
+            console.error("Failed to process token:", error);
+            alert("Invalid or expired connection token. Please ensure the full token was copied correctly.");
         }
     }
-    
+
     /**
-     * Generates a connection token (containing a WebRTC offer) for another user to connect with.
+     * Generates an offer token for another user to connect with.
      */
-    async function showConnectionToken() {
-        // This user is the "offerer"
-        const tempId = `temp-${Date.now()}`;
+    async function generateOfferToken() {
+        const tempId = `pending-${Date.now()}`;
         const pc = createPeerConnection(tempId);
-        
-        // The offerer creates the data channel
+        pendingConnections[tempId] = pc; // Store the pending connection
+
         const dc = pc.createDataChannel('chat');
         setupDataChannel(dc, tempId);
         
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
         
-        // This is a special handler for when the offerer gets the final answer
         pc.onicecandidate = (event) => {
             if (event.candidate === null) {
-                const token = btoa(JSON.stringify({
+                const tokenPayload = {
+                    type: 'offer',
+                    fromId: userProfile.id,
+                    tempId: tempId,
                     profile: userProfile,
                     offer: pc.localDescription
-                }));
-                elements.connectionTokenTextarea.value = token;
-                elements.tokenModal.querySelector('h2').textContent = "Your Connection Token";
+                };
+                elements.connectionTokenTextarea.value = btoa(JSON.stringify(tokenPayload));
+                elements.tokenModalTitle.textContent = "Your Connection Token";
+                elements.tokenModalText.textContent = "Share this entire token with someone to allow them to add you as a friend.";
                 elements.tokenModal.classList.remove('hidden');
-            }
-        };
-
-        // We need a way to complete this connection once the answer comes back
-        // The "Add Friend" input will now be used to paste the answer token
-        elements.addFriendInput.placeholder = "Paste friend's answer token here to connect";
-        elements.addFriendBtn.onclick = async () => {
-            const answerToken = elements.addFriendInput.value.trim();
-            if (!answerToken) return;
-            try {
-                const { profile: friendProfile, answer } = JSON.parse(atob(answerToken));
-                
-                // Now we know the real ID, update our records
-                friends[friendProfile.id] = { profile: friendProfile, peerConnection: pc, status: 'offline', dataChannel: dc };
-                delete friends[tempId];
-                pc.friendId = friendProfile.id; // Update the ID on the connection object
-                
-                await pc.setRemoteDescription(new RTCSessionDescription(answer));
-                
-                elements.addFriendInput.placeholder = "Enter Friend's Connection Token";
-                elements.addFriendBtn.onclick = handleAddFriend; // Reset button behavior
-                elements.addFriendInput.value = '';
-            } catch (e) {
-                alert('Invalid answer token.');
-                console.error(e);
             }
         };
     }
 
     /**
-     * Creates and configures a new RTCPeerConnection object.
-     * @param {string} friendId - The ID of the friend this connection is for.
-     * @returns {RTCPeerConnection}
+     * Handles an incoming offer token from a potential friend.
      */
-    function createPeerConnection(friendId) {
-        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
-        pc.friendId = friendId; // Attach friend's ID for reference in events
+    async function handleOfferToken(token) {
+        const { fromId, tempId, profile: friendProfile, offer } = token;
+
+        if (fromId === userProfile.id || friends[fromId] || blockedUsers.includes(fromId)) {
+            alert("Cannot add this user (they may already be a friend, blocked, or yourself).");
+            return;
+        }
+
+        const pc = createPeerConnection(fromId);
+        friends[fromId] = { profile: friendProfile, peerConnection: pc, status: 'offline' };
+        
+        await pc.setRemoteDescription(new RTCSessionDescription(offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
 
         pc.onicecandidate = (event) => {
-            // In this simplified model, ICE candidates are part of the offer/answer SDP.
+            if (event.candidate === null) {
+                const answerPayload = {
+                    type: 'answer',
+                    toTempId: tempId,
+                    fromId: userProfile.id,
+                    profile: userProfile,
+                    answer: pc.localDescription
+                };
+                elements.connectionTokenTextarea.value = btoa(JSON.stringify(answerPayload));
+                elements.tokenModalTitle.textContent = "Send This Token Back";
+                elements.tokenModalText.textContent = `You've accepted the request from ${friendProfile.firstName}. Copy the token below and send it back to them to finalize the connection.`;
+                elements.tokenModal.classList.remove('hidden');
+            }
         };
+    }
+
+    /**
+     * Handles an incoming answer token to finalize a connection.
+     */
+    async function handleAnswerToken(token) {
+        const { toTempId, fromId, profile: friendProfile, answer } = token;
+        const pc = pendingConnections[toTempId];
+
+        if (!pc) {
+            throw new Error("This offer has expired or is invalid.");
+        }
+
+        // The connection is being finalized. Move it from pending to friends.
+        pc.friendId = fromId;
+        friends[fromId] = {
+            profile: friendProfile,
+            peerConnection: pc,
+            dataChannel: pc.getSenders().find(s => s.track?.kind === 'application')?.transport.datachannel, // A bit of a hack to get the datachannel
+            status: 'connecting'
+        };
+        delete pendingConnections[toTempId];
+        
+        // Re-setup the data channel with the real friend ID
+        if (friends[fromId].dataChannel) {
+            setupDataChannel(friends[fromId].dataChannel, fromId);
+        }
+
+        await pc.setRemoteDescription(new RTCSessionDescription(answer));
+        
+        saveData('friends', friends);
+        renderContactList();
+        alert(`Connection with ${friendProfile.firstName} is being established!`);
+    }
+
+    function createPeerConnection(friendId) {
+        const pc = new RTCPeerConnection({ iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] });
+        pc.friendId = friendId;
 
         pc.onconnectionstatechange = () => {
             const friend = friends[pc.friendId];
@@ -622,7 +604,6 @@ window.onload = () => {
             if (pc.connectionState === 'connected') {
                 friend.status = 'online';
                 if (friend.dataChannel) {
-                    // Send a ping to confirm connection and share profile
                     sendData(pc.friendId, { type: 'profile-sync', profile: userProfile });
                 }
             } else if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
@@ -633,7 +614,6 @@ window.onload = () => {
             updateChatUI();
         };
         
-        // This is for the "answerer" side
         pc.ondatachannel = (event) => {
             const friend = friends[pc.friendId];
             if (friend) {
@@ -641,22 +621,15 @@ window.onload = () => {
                 setupDataChannel(event.channel, pc.friendId);
             }
         };
-
         return pc;
     }
 
-    /**
-     * Sets up the event listeners for a new data channel.
-     * @param {RTCDataChannel} dc - The data channel to set up.
-     * @param {string} friendId - The ID of the friend this channel belongs to.
-     */
     function setupDataChannel(dc, friendId) {
         dc.onopen = () => {
             console.log(`Data channel opened with ${friendId}`);
             const friend = friends[friendId];
             if (friend) {
                 friend.status = 'online';
-                // Sync profile info upon connection
                 sendData(friendId, { type: 'profile-sync', profile: userProfile });
                 renderContactList();
                 updateChatUI();
@@ -671,23 +644,18 @@ window.onload = () => {
         };
     }
     
-    /**
-     * Routes incoming data from the data channel to the appropriate handler.
-     * @param {object} data - The parsed JSON data object.
-     * @param {string} fromId - The ID of the user who sent the data.
-     */
     function handleIncomingData(data, fromId) {
+        if (blockedUsers.includes(fromId)) return;
         switch (data.type) {
             case 'chat':
                 if (activeChat === fromId) {
                     appendMessage(data.content, 'received');
                 } else {
-                    // Add a notification badge or similar UI feedback
                     console.log(`Unread message from ${fromId}`);
+                    // Future enhancement: add a notification badge
                 }
                 break;
             case 'profile-sync':
-                // Update friend's profile info if it has changed
                 if (friends[fromId]) {
                     friends[fromId].profile = data.profile;
                     saveData('friends', friends);
@@ -700,11 +668,6 @@ window.onload = () => {
         }
     }
     
-    /**
-     * Sends a JSON data object to a specific friend.
-     * @param {string} friendId - The ID of the friend to send to.
-     * @param {object} data - The JSON object to send.
-     */
     function sendData(friendId, data) {
         const friend = friends[friendId];
         if (friend && friend.dataChannel && friend.dataChannel.readyState === 'open') {
@@ -714,10 +677,6 @@ window.onload = () => {
 
     // --- UI and Chat Management ---
 
-    /**
-     * Activates the chat window for a specific user.
-     * @param {string} friendId - The ID of the friend to chat with.
-     */
     function activateChat(friendId) {
         activeChat = friendId;
         const friend = friends[friendId];
@@ -730,12 +689,9 @@ window.onload = () => {
         elements.chatWindow.innerHTML = ''; // Clear previous chat
         
         updateChatUI();
-        renderContactList(); // To highlight the active contact
+        renderContactList();
     }
     
-    /**
-     * Updates the chat input and send button based on connection status.
-     */
     function updateChatUI() {
         if (activeChat && friends[activeChat] && friends[activeChat].status === 'online') {
             elements.chatInput.disabled = false;
@@ -748,9 +704,6 @@ window.onload = () => {
         }
     }
 
-    /**
-     * Sends a chat message to the active contact.
-     */
     function sendMessage() {
         const content = elements.chatInput.value.trim();
         if (!content || !activeChat) return;
@@ -760,11 +713,6 @@ window.onload = () => {
         elements.chatInput.value = '';
     }
 
-    /**
-     * Appends a message to the active chat window.
-     * @param {string} text - The message content.
-     * @param {'sent'|'received'} type - The type of message.
-     */
     function appendMessage(text, type) {
         const messageEl = document.createElement('div');
         messageEl.className = `message ${type}`;
@@ -773,9 +721,6 @@ window.onload = () => {
         elements.chatWindow.scrollTop = elements.chatWindow.scrollHeight;
     }
     
-    /**
-     * Unfriends the currently active contact.
-     */
     function unfriendActiveContact() {
         if (!activeChat) return;
         if (confirm(`Are you sure you want to unfriend ${friends[activeChat].profile.firstName}?`)) {
@@ -790,10 +735,6 @@ window.onload = () => {
         }
     }
     
-    /**
-     * Cleans up a connection when a user disconnects or is unfriended.
-     * @param {string} friendId - The ID of the friend whose connection to clean up.
-     */
     function cleanupConnection(friendId) {
         const friend = friends[friendId];
         if (!friend) return;
