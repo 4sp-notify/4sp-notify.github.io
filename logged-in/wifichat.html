@@ -254,6 +254,7 @@
 </head>
 <body>
 
+    <!-- Main Application Structure -->
     <div class="app-container">
         <div class="sidebar">
             <div class="sidebar-header">
@@ -270,7 +271,8 @@
                 </div>
             </div>
             <div class="contact-list" id="contact-list">
-                </div>
+                <!-- Contact items will be dynamically inserted here -->
+            </div>
         </div>
         <div class="main-content" id="main-content">
             <div class="welcome-screen" id="welcome-screen">
@@ -294,6 +296,7 @@
         </div>
     </div>
 
+    <!-- Modals for various interactions -->
     <div class="modal-overlay hidden" id="profile-modal">
         <div class="modal-content">
             <h2>Create Your Profile</h2>
@@ -493,7 +496,7 @@ window.onload = () => {
             const tempId = `pending-${Date.now()}`;
             const pc = createPeerConnection(tempId);
             const dc = pc.createDataChannel('chat');
-            pendingConnections[tempId] = { pc, dc }; // Store both peerConnection and dataChannel
+            pendingConnections[tempId] = { pc, dc };
 
             setupDataChannel(dc, tempId);
             
@@ -533,6 +536,8 @@ window.onload = () => {
 
             const pc = createPeerConnection(fromId);
             friends[fromId] = { profile: friendProfile, peerConnection: pc, status: 'offline' };
+            saveData('friends', friends); // Save friend immediately
+            renderContactList();
             
             pc.onicecandidate = (event) => {
                 if (event.candidate === null) {
@@ -574,12 +579,11 @@ window.onload = () => {
         friends[fromId] = {
             profile: friendProfile,
             peerConnection: pc,
-            dataChannel: dc, // Assign the stored data channel
+            dataChannel: dc,
             status: 'connecting'
         };
         delete pendingConnections[toTempId];
         
-        // Re-wire the data channel handlers to use the permanent ID
         setupDataChannel(dc, fromId);
 
         await pc.setRemoteDescription(new RTCSessionDescription(answer));
@@ -599,7 +603,7 @@ window.onload = () => {
             
             if (pc.connectionState === 'connected') {
                 friend.status = 'online';
-                if (friend.dataChannel) {
+                if (friend.dataChannel && friend.dataChannel.readyState === 'open') {
                     sendData(pc.friendId, { type: 'profile-sync', profile: userProfile });
                 }
             } else if (['disconnected', 'failed', 'closed'].includes(pc.connectionState)) {
@@ -642,6 +646,9 @@ window.onload = () => {
     
     function handleIncomingData(data, fromId) {
         if (blockedUsers.includes(fromId)) return;
+        const friend = friends[fromId];
+        if (!friend) return;
+
         switch (data.type) {
             case 'chat':
                 if (activeChat === fromId) {
@@ -651,13 +658,13 @@ window.onload = () => {
                 }
                 break;
             case 'profile-sync':
-                if (friends[fromId]) {
-                    friends[fromId].profile = data.profile;
-                    saveData('friends', friends);
-                    renderContactList();
-                    if (activeChat === fromId) {
-                        elements.chatWithName.textContent = `${data.profile.firstName} ${data.profile.lastName}`;
-                    }
+                friend.profile = data.profile;
+                friend.status = 'online'; // KEY FIX: Mark friend as online upon receiving sync
+                saveData('friends', friends);
+                renderContactList();
+                if (activeChat === fromId) {
+                    elements.chatWithName.textContent = `${data.profile.firstName} ${data.profile.lastName}`;
+                    updateChatUI(); // Update chat UI in case this was the connecting event
                 }
                 break;
         }
