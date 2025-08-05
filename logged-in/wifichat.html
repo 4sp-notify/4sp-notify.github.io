@@ -72,7 +72,7 @@
         .hidden { display: none !important; }
 
         .app-container {
-            width: 100%; height: 100%; max-width: 1200px;
+            width: 100%; height: 100%;
             background-color: var(--sidebar-bg-color);
             display: flex; overflow: hidden; position: relative;
         }
@@ -134,23 +134,25 @@
 
         /* --- Main Content Area --- */
         .main-content { flex-grow: 1; display: flex; flex-direction: column; background-color: var(--background-color); }
+        .chat-area { display: flex; flex-direction: column; height: 100%; }
         .chat-header {
             padding: 10px 16px; border-bottom: 1px solid var(--border-color); display: flex;
             justify-content: space-between; align-items: center;
             background-color: var(--header-bg-color);
             backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-            position: sticky; top: 0; z-index: 5;
+            position: sticky; top: 0; z-index: 5; flex-shrink: 0;
         }
         .chat-header h3 { margin: 0; }
         #back-to-contacts-btn { display: none; background: none; border: none; font-size: 1.5em; color: var(--primary-color); padding: 0 10px; }
-        .chat-window { flex-grow: 1; padding: 10px; overflow-y: auto; }
+        .chat-window { flex-grow: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; }
         .date-separator {
             text-align: center; font-size: 12px; color: var(--text-secondary-color);
             margin: 15px 0; font-weight: 500;
         }
-        .message-wrapper { display: flex; margin-bottom: 2px; max-width: 80%; position: relative; }
-        .message-wrapper.sent { margin-left: auto; flex-direction: row-reverse; }
-        .message { display: flex; flex-direction: column; user-select: none; -webkit-user-select: none; }
+        .message-wrapper { display: flex; margin-bottom: 2px; max-width: 80%; position: relative; width: fit-content; }
+        .message-wrapper.sent { margin-left: auto; }
+        .message-wrapper.received { margin-right: auto; }
+        .message { display: flex; flex-direction: column; user-select: none; -webkit-user-select: none; width: fit-content; }
         .message-bubble { padding: 10px 15px; border-radius: 20px; word-wrap: break-word; position: relative; }
         .message.sent .message-bubble { background-color: var(--sent-bubble-color); color: var(--text-light); border-bottom-right-radius: 4px; }
         .message.received .message-bubble { background-color: var(--bubble-received-color); color: var(--text-primary-color); border-bottom-left-radius: 4px; }
@@ -186,8 +188,9 @@
             opacity: 0;
             transform: scale(0.8);
             transition: opacity 0.15s ease-out, transform 0.15s ease-out;
+            pointer-events: none;
         }
-        .message-action-menu.visible { opacity: 1; transform: scale(1); }
+        .message-action-menu.visible { opacity: 1; transform: scale(1); pointer-events: auto; }
         .message-wrapper.sent .message-action-menu { right: 0; }
         .message-wrapper.received .message-action-menu { left: 0; }
         .action-menu-button {
@@ -199,6 +202,7 @@
         .chat-input-area {
             padding: 10px; border-top: 1px solid var(--border-color);
             display: flex; flex-direction: column; background-color: var(--sidebar-bg-color);
+            flex-shrink: 0;
         }
         #reply-banner {
             padding: 8px; margin-bottom: 8px; background-color: var(--input-bg-color);
@@ -769,14 +773,20 @@ window.onload = () => {
         }
     }
 
-    function closeAllMenus() {
+    function closeAllMenus(e) {
+        if (e && e.target.closest('.message-action-menu')) return;
         document.querySelectorAll('.message-action-menu').forEach(menu => menu.remove());
     }
 
     function handleInteractionStart(e, type) {
-        closeAllMenus();
         const messageWrapper = e.target.closest('.message-wrapper');
         if (!messageWrapper) return;
+        
+        // If a menu is already open, a click should close it.
+        if (document.querySelector('.message-action-menu')) {
+            closeAllMenus();
+            return;
+        }
         
         clearTimeout(longPressTimer);
         longPressTimer = setTimeout(() => {
@@ -790,53 +800,42 @@ window.onload = () => {
     }
     
     function createActionMenu(messageWrapper) {
+        closeAllMenus(); // Close any other open menus first
         const menu = document.createElement('div');
         menu.className = 'message-action-menu';
-        menu.onclick = e => e.stopPropagation(); // Prevent closing when clicking inside
+        menu.onclick = e => e.stopPropagation();
 
         const isSent = messageWrapper.classList.contains('sent');
         
-        // Reply Button (only for received messages)
         if (!isSent) {
             const replyBtn = document.createElement('button');
             replyBtn.className = 'action-menu-button';
             replyBtn.textContent = 'Reply';
-            replyBtn.onclick = () => {
-                startReply(messageWrapper);
-                closeAllMenus();
-            };
+            replyBtn.onclick = () => { startReply(messageWrapper); closeAllMenus(); };
             menu.appendChild(replyBtn);
         }
 
-        // React Button
         const reactBtn = document.createElement('button');
         reactBtn.className = 'action-menu-button';
         reactBtn.textContent = 'React';
         reactBtn.onclick = () => {
-            // This could be expanded to show an emoji picker
             const emoji = prompt("Enter an emoji to react:");
-            if (emoji) {
-                sendData(activeChat, { type: 'reaction', targetMessageId: messageWrapper.id, emoji });
-            }
+            if (emoji) { sendData(activeChat, { type: 'reaction', targetMessageId: messageWrapper.id, emoji }); }
             closeAllMenus();
         };
         menu.appendChild(reactBtn);
 
-        // Copy Button
         const copyBtn = document.createElement('button');
         copyBtn.className = 'action-menu-button';
         copyBtn.textContent = 'Copy';
         copyBtn.onclick = () => {
             const textToCopy = messageWrapper.querySelector('.message-bubble').textContent;
-            navigator.clipboard.writeText(textToCopy).then(() => {
-                // optional: show a "copied!" confirmation
-            });
+            navigator.clipboard.writeText(textToCopy);
             closeAllMenus();
         };
         menu.appendChild(copyBtn);
 
         messageWrapper.prepend(menu);
-        // Use a timeout to allow the element to be in the DOM before adding the class for transition
         setTimeout(() => menu.classList.add('visible'), 10);
     }
 
