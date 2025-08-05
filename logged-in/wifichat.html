@@ -38,11 +38,17 @@
             font-family: inherit;
         }
 
-        .win98-button:active {
+        .win98-button:active:not(:disabled) {
             border-color: #808080 #ffffff #ffffff #808080;
             box-shadow: none;
             background: #c0c0c0;
             padding: 6px 14px 4px 16px; /* Simulates button press */
+        }
+        
+        .win98-button:disabled {
+            color: #808080;
+            text-shadow: 1px 1px 0 #ffffff;
+            cursor: default;
         }
 
         .win98-input {
@@ -54,6 +60,10 @@
             font-family: inherit;
             width: 100%;
             box-sizing: border-box;
+        }
+        
+        .win98-input:disabled {
+            background-color: #c0c0c0;
         }
 
         .win98-input:focus {
@@ -172,6 +182,11 @@
         
         .message .sender {
             font-weight: bold;
+        }
+        
+        .message.system {
+            color: #000080;
+            font-style: italic;
         }
 
         /* --- Input Area --- */
@@ -323,59 +338,64 @@
         }
 
         /**
-         * Initializes the PeerJS connection.
+         * Initializes the PeerJS connection and reconnects if possible.
          */
         function initialize() {
-            const userId = generateId();
-            peer = new Peer(userId, {
-                // For production, you would set up your own PeerJS server.
-                // For this example, we use the public one.
-                // host: 'localhost', port: 9000, path: '/myapp'
-            });
+            const savedId = localStorage.getItem('win98-messenger-id');
+            const userId = savedId || generateId();
+            peer = new Peer(userId, {});
 
             // --- PeerJS Event Listeners ---
-
-            // Fired when the peer is connected to the PeerJS server.
             peer.on('open', id => {
                 console.log('My peer ID is: ' + id);
-                myIdSpan.textContent = `${id.substring(0, 8)}...`; // Show a shortened version
-                fullIdDisplay.textContent = id; // Show full ID in modal
-                connectionStatusSpan.textContent = "Ready to connect";
+                localStorage.setItem('win98-messenger-id', id); // Save our ID
+                myIdSpan.textContent = `${id.substring(0, 8)}...`;
+                fullIdDisplay.textContent = id;
+                updateUiForState('disconnected'); // Set initial UI state
+
+                // Attempt to auto-reconnect to the last peer
+                const lastPeerId = localStorage.getItem('win98-messenger-last-peer');
+                if (lastPeerId) {
+                    addMessage('System', `Attempting to reconnect to ${lastPeerId.substring(0, 8)}...`);
+                    connectToPeer(lastPeerId);
+                } else {
+                    connectionStatusSpan.textContent = "Ready to connect";
+                }
             });
 
-            // Fired when a remote peer tries to connect.
             peer.on('connection', newConnection => {
-                // If we already have a connection, refuse new ones for this simple chat
                 if (conn && conn.open) {
-                    console.log('Already connected. Refusing new connection.');
+                    console.log('Already connected. Refusing new connection from', newConnection.peer);
                     newConnection.close();
                     return;
                 }
-
                 console.log('Incoming connection from:', newConnection.peer);
                 conn = newConnection;
                 setupConnectionEvents(conn);
             });
 
-            // Fired on errors
             peer.on('error', err => {
                 console.error('PeerJS Error:', err);
-                alert('An error occurred: ' + err.message);
-                connectionStatusSpan.textContent = `Error: ${err.type}`;
+                addMessage('System', `Error: ${err.message}`);
+                // If a connection attempt fails, reset UI and clear stale peer data
+                if (err.type === 'peer-unavailable' || err.type === 'network') {
+                    addMessage('System', `Could not connect. Friend may be offline.`);
+                    localStorage.removeItem('win98-messenger-last-peer');
+                    updateUiForState('disconnected');
+                }
             });
         }
 
         /**
-         * Sets up event listeners for a new connection (both incoming and outgoing).
+         * Sets up event listeners for a new connection.
          * @param {DataConnection} connection - The PeerJS DataConnection object.
          */
         function setupConnectionEvents(connection) {
             connection.on('open', () => {
                 console.log('Connection established with ' + connection.peer);
-                connectionStatusSpan.textContent = `Connected to ${connection.peer.substring(0,8)}...`;
-                peerIdInput.value = ''; // Clear the input
-                peerIdInput.disabled = true;
-                connectButton.disabled = true;
+                localStorage.setItem('win98-messenger-last-peer', connection.peer);
+                updateUiForState('connected', connection.peer);
+                addMessage('System', `You are now connected to ${connection.peer.substring(0, 8)}...`);
             });
 
             connection.on('data', data => {
@@ -385,36 +405,89 @@
 
             connection.on('close', () => {
                 console.log('Connection closed.');
-                connectionStatusSpan.textContent = 'Disconnected. Ready to connect.';
+                localStorage.removeItem('win98-messenger-last-peer');
                 conn = null;
-                peerIdInput.disabled = false;
-                connectButton.disabled = false;
+                updateUiForState('disconnected');
                 addMessage('System', 'Your friend has disconnected.');
             });
+        }
+
+        /**
+         * Updates the UI based on connection state.
+         * @param {'disconnected'|'connecting'|'connected'} state - The current state.
+         * @param {string} [peerId=''] - The ID of the remote peer.
+         */
+        function updateUiForState(state, peerId = '') {
+            connectButton.disabled = false; // Enable by default, disable specifically
+            
+            if (state === 'connected') {
+                peerIdInput.value = peerId;
+                peerIdInput.disabled = true;
+                connectButton.textContent = 'Leave';
+                connectionStatusSpan.textContent = `Connected to ${peerId.substring(0, 8)}...`;
+            } else if (state === 'disconnected') {
+                peerIdInput.value = '';
+                peerIdInput.disabled = false;
+                peerIdInput.placeholder = "Enter friend's 18-digit code...";
+                connectButton.textContent = 'Connect';
+                connectionStatusSpan.textContent = 'Ready to connect';
+            } else if (state === 'connecting') {
+                peerIdInput.value = peerId;
+                peerIdInput.disabled = true;
+                connectButton.textContent = '...';
+                connectButton.disabled = true;
+                connectionStatusSpan.textContent = `Connecting to ${peerId.substring(0, 8)}...`;
+            }
+        }
+
+        /**
+         * Initiates a connection to a given peer ID.
+         * @param {string} peerId - The ID to connect to.
+         */
+        function connectToPeer(peerId) {
+            if (conn) {
+                console.log('Closing existing connection before opening new one.');
+                conn.close();
+            }
+
+            if (peerId && peerId !== peer.id) {
+                console.log('Attempting to connect to ' + peerId);
+                updateUiForState('connecting', peerId);
+                conn = peer.connect(peerId);
+                setupConnectionEvents(conn);
+            } else if (peerId === peer.id) {
+                addMessage('System', "You can't connect to yourself!");
+                updateUiForState('disconnected');
+            } else {
+                addMessage('System', 'Please enter a valid friend code.');
+                updateUiForState('disconnected');
+            }
         }
         
         /**
          * Appends a message to the chat window.
-         * @param {string} sender - Who sent the message (e.g., 'You', 'Friend', 'System').
+         * @param {string} sender - Who sent the message.
          * @param {string} message - The message content.
          */
         function addMessage(sender, message) {
             const messageEl = document.createElement('div');
             messageEl.classList.add('message');
             
-            // Sanitize message to prevent HTML injection
             const safeMessage = document.createTextNode(message);
             
-            messageEl.innerHTML = `<span class="sender">${sender}:</span> `;
-            messageEl.appendChild(safeMessage);
+            if (sender === 'System') {
+                messageEl.classList.add('system');
+                messageEl.appendChild(safeMessage);
+            } else {
+                messageEl.innerHTML = `<span class="sender">${sender}:</span> `;
+                messageEl.appendChild(safeMessage);
+            }
 
             messagesDiv.appendChild(messageEl);
-            messagesDiv.scrollTop = messagesDiv.scrollHeight; // Auto-scroll to bottom
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
         }
 
         // --- UI Event Listeners ---
-
-        // Handle sending a message
         sendButton.addEventListener('click', () => {
             if (conn && conn.open) {
                 const msg = messageInput.value;
@@ -428,50 +501,34 @@
             }
         });
 
-        // Allow sending with the Enter key
         messageInput.addEventListener('keyup', e => {
             if (e.key === 'Enter') {
                 sendButton.click();
             }
         });
 
-        // Handle connecting to a peer
         connectButton.addEventListener('click', () => {
-            if (conn) {
-                console.log('Closing existing connection before opening new one.');
-                conn.close();
-            }
-
-            const peerId = peerIdInput.value.trim();
-            if (peerId && peerId !== peer.id) {
-                console.log('Attempting to connect to ' + peerId);
-                connectionStatusSpan.textContent = `Connecting to ${peerId.substring(0,8)}...`;
-                conn = peer.connect(peerId);
-                setupConnectionEvents(conn);
-            } else if (peerId === peer.id) {
-                addMessage('System', "You can't connect to yourself!");
+            if (connectButton.textContent === 'Leave') {
+                if (conn) conn.close();
             } else {
-                addMessage('System', 'Please enter a valid friend code.');
+                const peerId = peerIdInput.value.trim();
+                connectToPeer(peerId);
             }
         });
         
-        // Handle showing the copy ID modal
         copyIdButton.addEventListener('click', () => {
             copyIdModal.style.display = 'flex';
         });
 
-        // Handle closing the modal
         modalCloseButton.addEventListener('click', () => {
             copyIdModal.style.display = 'none';
         });
         
-        // Close modal if clicking outside the window
         copyIdModal.addEventListener('click', (e) => {
             if (e.target === copyIdModal) {
                  copyIdModal.style.display = 'none';
             }
         });
-
 
         // --- Start the application ---
         initialize();
