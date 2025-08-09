@@ -780,7 +780,7 @@
     // --- Soundboard Logic ---
     document.addEventListener('DOMContentLoaded', () => {
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-        const LOCAL_STORAGE_KEY = 'soundboardSettingsV20'; // Incremented key for new settings
+        const LOCAL_STORAGE_KEY = 'soundboardSettingsV21'; // Incremented key for new settings
         
         let activeSounds = new Map();
         const soundCache = new Map(); // Cache for loaded AudioBuffers
@@ -813,7 +813,12 @@
             mainPanner: new PannerNode(audioContext, { panningModel: 'HRTF', distanceModel: 'inverse' }),
             reverb: { node: audioContext.createConvolver(), gain: audioContext.createGain() },
             earlyReflections: { input: audioContext.createGain(), output: audioContext.createGain(), surfaces: {} },
-            partyMode: { bass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 120 }), comp: new DynamicsCompressorNode(audioContext, { threshold: -18, ratio: 8 }), reverb: audioContext.createConvolver() },
+            partyMode: { 
+                bass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 120 }), 
+                comp: new DynamicsCompressorNode(audioContext, { threshold: -18, ratio: 8 }), 
+                reverb: audioContext.createConvolver(),
+                gain: audioContext.createGain() // Gain node to control the wet mix
+            },
             inputGain: audioContext.createGain(),
             eqBass: new BiquadFilterNode(audioContext, { type: 'lowshelf', frequency: 100, gain: 0 }),
             bassWaveShaper: audioContext.createWaveShaper(),
@@ -821,26 +826,29 @@
             eqTreble: new BiquadFilterNode(audioContext, { type: 'highshelf', frequency: 6000, gain: 0 }),
             vintageWarmer: audioContext.createWaveShaper(),
             stableVolume: new DynamicsCompressorNode(audioContext, {threshold: -24, ratio: 12}), 
-            vocalBoost: new BiquadFilterNode(audioContext, {type: 'peaking', frequency: 3000, Q: 2.0, gain: 0}), // Adjusted for 'Crisp'
+            vocalBoost: new BiquadFilterNode(audioContext, {type: 'peaking', frequency: 3000, Q: 2.0, gain: 0}),
             awarenessGain: audioContext.createGain(),
             nightModeCompressor: new DynamicsCompressorNode(audioContext, {threshold: 0, knee: 30, ratio: 1, attack: 0.003, release: 0.25 }),
         };
         
-        nodes.spatialInput.connect(nodes.airAbsorptionFilter);
-        nodes.airAbsorptionFilter.connect(nodes.mainPanner).connect(nodes.inputGain);
-        nodes.airAbsorptionFilter.connect(nodes.reverb.gain).connect(nodes.reverb.node).connect(nodes.inputGain);
-        nodes.airAbsorptionFilter.connect(nodes.earlyReflections.input);
-        nodes.earlyReflections.output.connect(nodes.inputGain);
-        
-        // Connect party mode reverb
-        nodes.inputGain.connect(nodes.partyMode.reverb);
-        nodes.partyMode.reverb.connect(nodes.partyMode.bass);
-        nodes.partyMode.bass.connect(nodes.partyMode.comp);
+        // Initialize gains to be off
+        nodes.partyMode.gain.gain.value = 0;
+        nodes.reverb.gain.gain.value = 0;
 
-        // Main audio chain
+        // --- CORRECTED AUDIO GRAPH ---
+
+        // Path for non-spatial sounds
         nodes.inputGain.connect(masterGain);
-        masterGain.connect(nodes.partyMode.bass)
-                  .connect(nodes.eqBass)
+
+        // Path for spatial sounds
+        nodes.spatialInput.connect(nodes.airAbsorptionFilter);
+        nodes.airAbsorptionFilter.connect(nodes.mainPanner).connect(masterGain);
+        nodes.airAbsorptionFilter.connect(nodes.reverb.gain).connect(nodes.reverb.node).connect(masterGain);
+        nodes.airAbsorptionFilter.connect(nodes.earlyReflections.input);
+        nodes.earlyReflections.output.connect(masterGain);
+
+        // Main effects chain (Dry Path)
+        masterGain.connect(nodes.eqBass)
                   .connect(nodes.bassWaveShaper)
                   .connect(nodes.eqMid)
                   .connect(nodes.eqTreble)
@@ -849,8 +857,18 @@
                   .connect(nodes.vocalBoost)
                   .connect(nodes.awarenessGain)
                   .connect(nodes.nightModeCompressor)
-                  .connect(finalCompressor)
-                  .connect(audioContext.destination);
+                  .connect(finalCompressor);
+
+        // Stadium Echo (Party Mode) parallel path (Wet Path)
+        masterGain.connect(nodes.partyMode.bass);
+        nodes.partyMode.bass.connect(nodes.partyMode.reverb);
+        nodes.partyMode.reverb.connect(nodes.partyMode.comp);
+        nodes.partyMode.comp.connect(nodes.partyMode.gain);
+        nodes.partyMode.gain.connect(finalCompressor); // Mix wet signal into the final compressor
+
+        // Final output
+        finalCompressor.connect(audioContext.destination);
+
 
         async function createReverbIR(audioContext, duration = 2, decay = 2) { const sampleRate = audioContext.sampleRate; const length = sampleRate * duration; const impulse = audioContext.createBuffer(2, length, sampleRate); for (let ch = 0; ch < 2; ch++) { const data = impulse.getChannelData(ch); for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay); } return impulse; }
         async function setupReverbs() { nodes.reverb.node.buffer = await createReverbIR(audioContext, 2, 3); nodes.partyMode.reverb.buffer = await createReverbIR(audioContext, 3, 1.5); }
@@ -858,7 +876,7 @@
         function makeDistortionCurve(amount) { const k = typeof amount === 'number' ? amount : 50; const n_samples = 44100; const curve = new Float32Array(n_samples); const deg = Math.PI / 180; for (let i = 0; i < n_samples; i++) { const x = i * 2 / n_samples - 1; curve[i] = (3 + k) * x * 20 * deg / (Math.PI + k * Math.abs(x)); } return curve; }
         function makeVintageCurve(amount) { const n_samples = 44100; const curve = new Float32Array(n_samples); if (amount === 0) { for (let i = 0; i < n_samples; i++) { curve[i] = i * 2 / n_samples - 1; } } else { for (let i = 0; i < n_samples; i++) { const x = i * 2 / n_samples - 1; curve[i] = Math.tanh(x * amount); } } return curve; }
 
-        nodes.bassWaveShaper.curve = makeDistortionCurve(0); nodes.bassWaveShaper.oversample = '4x'; nodes.vintageWarmer.curve = makeVintageCurve(0); nodes.vintageWarmer.oversample = '4x'; nodes.reverb.gain.gain.value = 0;
+        nodes.bassWaveShaper.curve = makeDistortionCurve(0); nodes.bassWaveShaper.oversample = '4x'; nodes.vintageWarmer.curve = makeVintageCurve(0); nodes.vintageWarmer.oversample = '4x';
         
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
         const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start() { if (this.isActive) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); showStatus('Could not access microphone. Please enable it in browser settings.', 'error'); const awarenessCheckbox = document.querySelector('[data-setting="modeAwareness"]'); if(awarenessCheckbox) awarenessCheckbox.checked = false; }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); let voiceEnergy = 0; for (let i = 5; i < 100; i++) voiceEnergy += dataArray[i]; voiceEnergy /= 95; const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; nodes.awarenessGain.gain.setTargetAtTime(newVolume, audioContext.currentTime, 0.1); } };
@@ -949,8 +967,7 @@
                             let playVolume = 1.0;
                             const masterVolume = masterGain.gain.value;
 
-                            // Apply volume cap for 'Explicit' category
-                            if (categoryKey === 'Explicit' && masterVolume > 0.65) {
+                            if (categoryKey.toLowerCase() === 'explicit' && masterVolume > 0.65) {
                                 playVolume = 0.65 / masterVolume;
                             }
 
@@ -1003,7 +1020,20 @@
             eqTreble: v => { const val = parseFloat(v); nodes.eqTreble.gain.value = val; document.getElementById('eqTrebleValue').textContent = `${val} dB`; const numInput = document.querySelector(`[data-slider-id="eqTreble"]`); if(numInput) numInput.value = v; },
             modeSpatial: v => { for (const instances of activeSounds.values()) { instances.forEach(sound => sound.toggleSpatial(v)); } if (v) { const posEl = document.querySelector('.spatial-audio-control'); const x = parseFloat(posEl.dataset.x) || 0; const y = parseFloat(posEl.dataset.y) || 0; const z = parseFloat(posEl.dataset.z) || 0; updateSpatialPuckAndAudio(x, y, z, document.getElementById('spatial-pad').offsetWidth / 2 || 90); } },
             modeVintageWarmth: v => { nodes.vintageWarmer.curve = makeVintageCurve(v ? 1.5 : 0); },
-            modeParty: v => { const nightModeCheckbox = document.getElementById('modeNight'); if (v && nightModeCheckbox.checked) { nightModeCheckbox.checked = false; nightModeCheckbox.dispatchEvent(new Event('change')); } const bassGain = v ? 8 : 0; const compThreshold = v ? -20 : 0; const reverbMix = v ? 0.3 : 0; nodes.partyMode.bass.gain.setTargetAtTime(bassGain, audioContext.currentTime, 0.02); nodes.partyMode.comp.threshold.setTargetAtTime(compThreshold, audioContext.currentTime, 0.02); nodes.partyMode.reverb.gain.gain.setTargetAtTime(reverbMix, audioContext.currentTime, 0.05);},
+            modeParty: v => {
+                const nightModeCheckbox = document.getElementById('modeNight');
+                if (v && nightModeCheckbox.checked) {
+                    nightModeCheckbox.checked = false;
+                    nightModeCheckbox.dispatchEvent(new Event('change'));
+                }
+                const bassGain = v ? 8 : 0;
+                const compThreshold = v ? -20 : 0;
+                const partyMix = v ? 0.4 : 0; // Mix level for the effect
+
+                nodes.partyMode.bass.gain.setTargetAtTime(bassGain, audioContext.currentTime, 0.02);
+                nodes.partyMode.comp.threshold.setTargetAtTime(compThreshold, audioContext.currentTime, 0.02);
+                nodes.partyMode.gain.gain.setTargetAtTime(partyMix, audioContext.currentTime, 0.05);
+            },
             modeNight: v => { const partyModeCheckbox = document.getElementById('modeParty'); if (v && partyModeCheckbox.checked) { partyModeCheckbox.checked = false; partyModeCheckbox.dispatchEvent(new Event('change')); } const volControlGroup = document.getElementById('masterVolumeControlGroup'); const volSlider = document.getElementById('masterVolume'); const volInput = document.getElementById('masterVolumeInput'); if (v) { volumeBeforeNightMode = volSlider.value; volControlGroup.classList.add('locked'); volSlider.disabled = true; volInput.disabled = true; volSlider.value = 0.15; volSlider.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeCompressor.threshold.setTargetAtTime(-40, audioContext.currentTime, 0.01); nodes.nightModeCompressor.ratio.setTargetAtTime(12.0, audioContext.currentTime, 0.01); } else { volControlGroup.classList.remove('locked'); volSlider.disabled = false; volInput.disabled = false; volSlider.value = volumeBeforeNightMode; volSlider.dispatchEvent(new Event('input', { bubbles: true })); nodes.nightModeCompressor.threshold.setTargetAtTime(0, audioContext.currentTime, 0.01); nodes.nightModeCompressor.ratio.setTargetAtTime(1.0, audioContext.currentTime, 0.01); } },
             modeVocalBoost: v => nodes.vocalBoost.gain.setTargetAtTime(v ? 6 : 0, audioContext.currentTime, 0.01), 
             modeAwareness: v => v ? awarenessEngine.start() : awarenessEngine.stop(), 
