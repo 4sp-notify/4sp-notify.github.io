@@ -301,42 +301,88 @@
     var dosbox_DOOM = new Dosbox({
         id: "DOOM",
         onload: function(dosbox) {
-            // Changed to a local file path
             dosbox.run("DOOM-@evilution.zip", "./DOOM/DOOM.EXE");
         }
-        // The 'onrun' function has been removed from here as requested.
     });
+
+    // --- ROBUST AUDIO MUTING LOGIC ---
+    // We store the original browser AudioContext and any suspended instances we create.
+    let originalAudioContext = window.AudioContext || window.webkitAudioContext;
+    let suspendedAudioContexts = [];
+
+    // This function mutes all future audio by creating "suspended" AudioContexts.
+    function engageGlobalMute() {
+        if (!originalAudioContext) {
+            console.warn("Web Audio API not supported. Cannot apply global mute.");
+            return;
+        }
+
+        // We define a temporary, custom class that creates a pre-suspended AudioContext.
+        class MutedAudioContext extends originalAudioContext {
+            constructor(options) {
+                super(options);
+                // Immediately suspend the context to prevent any sound.
+                this.suspend().then(() => {
+                    console.log(`AudioContext created in a suspended (muted) state.`);
+                });
+                // Store this instance so we can resume it later.
+                suspendedAudioContexts.push(this);
+            }
+        }
+        // Overwrite the global constructor. Any script that now tries to create
+        // an AudioContext will get our muted version instead.
+        window.AudioContext = MutedAudioContext;
+        window.webkitAudioContext = MutedAudioContext;
+        console.log("Global AudioContext has been temporarily overwritten to enforce mute.");
+    }
+
+    // This function un-mutes the contexts and restores the original browser functionality.
+    function releaseGlobalMute() {
+        if (!originalAudioContext) return;
+
+        // Resume all the contexts that were suspended.
+        suspendedAudioContexts.forEach(context => {
+            context.resume().then(() => {
+                console.log("Resumed a suspended AudioContext.");
+            });
+        });
+        suspendedAudioContexts = []; // Clear the array for next use.
+
+        // Restore the original AudioContext constructor to the window.
+        window.AudioContext = originalAudioContext;
+        window.webkitAudioContext = originalAudioContext;
+        console.log("Global AudioContext has been restored.");
+    }
 
     // --- Custom Controls Logic ---
     const customPlayBtn = document.getElementById('customPlayBtn');
     if (customPlayBtn) {
         customPlayBtn.addEventListener('click', () => {
-            // First, we simulate a click on the original js-dos start button to launch the game.
+            // 1. Engage the global mute BEFORE starting the game.
+            console.log("Play button pressed. Engaging robust global mute for 12 seconds.");
+            engageGlobalMute();
+            
+            // 2. Start the game by clicking the original button.
+            // When js-dos runs, it will use our MutedAudioContext constructor.
             const originalStartBtn = document.querySelector('#DOOM .dosbox-start');
             if (originalStartBtn) {
                 originalStartBtn.click();
             }
             
-            // We hide the custom play button after it's been clicked.
+            // Hide the custom play button.
             customPlayBtn.style.display = 'none';
 
-            // *** NEW MUTE/UNMUTE LOGIC IS HERE ***
-            console.log("Play button pressed. Muting game audio for 12 seconds.");
-
-            // We immediately mute the dosbox instance to silence the game audio.
-            // A check is performed to ensure the mute function exists before calling it.
-            if (dosbox_DOOM && typeof dosbox_DOOM.mute === 'function') {
-                dosbox_DOOM.mute();
-            }
-
-            // A timeout is set to unmute the audio after 12,000 milliseconds (12 seconds).
+            // 3. Set a timer to unmute after 12 seconds.
             setTimeout(() => {
-                console.log("12 seconds have passed. Restoring game audio.");
-                // We unmute the dosbox instance, restoring the game's sound.
+                console.log("12 seconds have passed. Releasing global mute and restoring audio.");
+                // This function will both resume the created context and restore the original functionality.
+                releaseGlobalMute();
+
+                // As a fallback, also call the js-dos unmute function in case it tracks its own state.
                 if (dosbox_DOOM && typeof dosbox_DOOM.unmute === 'function') {
                     dosbox_DOOM.unmute();
                 }
-            }, 12000); // Duration is now 12 seconds.
+            }, 12000);
         });
     }
 
@@ -349,31 +395,22 @@
     }
 
     // --- ADVANCED TITLE LOCK LOGIC ---
-    // Allows title changes from approved scripts (like url-changer.js)
-    // but blocks changes from the emulator (e.g., to "DOSBox").
-    let lastValidTitle = document.title; // Initialize with the original title from the <title> tag
-    const forbiddenSubstrings = ["DOSBox"]; // Add any other emulator titles to block here
+    let lastValidTitle = document.title;
+    const forbiddenSubstrings = ["DOSBox"]; 
 
     const titleObserver = new MutationObserver(() => {
         const currentTitle = document.title;
         const isForbidden = forbiddenSubstrings.some(substring => currentTitle.includes(substring));
-
         if (isForbidden) {
-            // If the new title is forbidden, revert to the last known good title.
             document.title = lastValidTitle;
         } else {
-            // Otherwise, the new title is valid. Update our record of the last valid title.
             lastValidTitle = currentTitle;
         }
     });
 
-    // Start observing the <title> element itself for changes.
     if (document.querySelector('title')) {
-        titleObserver.observe(document.querySelector('title'), {
-            childList: true
-        });
+        titleObserver.observe(document.querySelector('title'), { childList: true });
     }
-
 
     // --- UNIFIED Core 4SP Dashboard and Firebase Logic ---
     const sidebarEl = document.getElementById('sidebar');
@@ -381,7 +418,6 @@
     const headerLogoutBtn = document.getElementById('logoutBtn');
     const sidebarSignOutLink = document.getElementById('signOutLink');
 
-    // This function handles signing the user out and redirecting to the login page.
     function handleLogout() {
         if (typeof firebase !== 'undefined' && firebase.auth) {
             firebase.auth().signOut().then(() => {
@@ -392,33 +428,14 @@
         }
     }
 
-    // Attach logout handler to the header button
-    if (headerLogoutBtn) {
-        headerLogoutBtn.addEventListener('click', handleLogout);
-    }
-
-    // Attach logout handler to the sidebar link
-    if (sidebarSignOutLink) {
-        sidebarSignOutLink.addEventListener('click', (e) => {
-            e.preventDefault(); // Prevent default link behavior
-            handleLogout();
-        });
-    }
-
-    // Firebase authentication state listener to protect the page
+    if (headerLogoutBtn) { headerLogoutBtn.addEventListener('click', handleLogout); }
+    if (sidebarSignOutLink) { sidebarSignOutLink.addEventListener('click', (e) => { e.preventDefault(); handleLogout(); }); }
     if (typeof firebase !== 'undefined' && firebase.auth) {
         firebase.auth().onAuthStateChanged(user => {
-            if (!user) {
-                // If no user is logged in, redirect to the login page.
-                window.location.href = '../login.html';
-            } else {
-                // Optional: Log authenticated user for debugging
-                console.log('User is authenticated:', user.email);
-            }
+            if (!user) { window.location.href = '../login.html'; } 
+            else { console.log('User is authenticated:', user.email); }
         });
     }
-
-    // Sidebar toggle functionality
     if (toggleSidebarBtn && sidebarEl) {
         toggleSidebarBtn.addEventListener('click', () => {
             sidebarEl.classList.toggle('collapsed');
