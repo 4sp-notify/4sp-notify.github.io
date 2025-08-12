@@ -27,6 +27,7 @@
             margin: 50px auto;
             overflow: hidden;
             min-height: 650px; /* Ensure container has enough height */
+            transition: all 0.5s ease;
         }
 
         .auth-col {
@@ -36,7 +37,7 @@
             flex-direction: column;
             justify-content: center;
             align-items: center;
-            transition: background-color 0.5s ease;
+            transition: all 0.5s ease;
         }
 
         .auth-col.left-col {
@@ -58,6 +59,7 @@
         .auth-col form {
             width: 100%;
             max-width: 350px;
+            transition: opacity 0.3s ease;
         }
 
         /* --- Step Styling --- */
@@ -233,11 +235,11 @@
         }
         .auth-col .error-message { color: #d9534f; }
         
-        /* UPDATED: Success message styling */
         .auth-col .success-message { 
             color: #28a745; /* Darker green */
             font-size: 1.1em; 
             text-align: center;
+            font-weight: normal; /* Removed bold effect */
         }
 
         .auth-col .checkbox-group {
@@ -299,6 +301,26 @@
             transform: scale(1.1);
         }
 
+        /* --- Success State Styling --- */
+        .auth-split-container.success-mode .right-col {
+            opacity: 0;
+            flex: 0;
+            padding: 0;
+            min-width: 0;
+        }
+        .auth-split-container.success-mode .left-col {
+            flex-basis: 100%;
+            border-right: none;
+        }
+        .auth-split-container.success-mode form {
+            opacity: 0;
+            height: 0;
+            overflow: hidden;
+        }
+        .auth-split-container.success-mode #step3 {
+            text-align: center;
+        }
+
         @media (max-width: 768px) {
             .auth-split-container {
                 flex-direction: column;
@@ -336,7 +358,7 @@
         </div>
     </header>
 
-    <div class="auth-split-container">
+    <div class="auth-split-container" id="authContainer">
         <div class="auth-col left-col">
             <button type="button" id="backBtn" class="back-button" aria-label="Go back">
                 <img src="images/cross-white.png" alt="Go back">
@@ -425,12 +447,6 @@
                 <p style="text-align: center;">Please provide a valid Gmail address. Due to technical limitations with GitHub Pages, other email providers may block our verification emails.</p>
                 <p style="text-align: center; margin-top: 20px;">Your password must be strong and secure to protect your account.</p>
             </div>
-             <!-- Right Panel for Step 3 -->
-            <div id="right-panel-step3" class="right-panel-content">
-                <h2>Welcome to 4SP!</h2>
-                <p style="text-align: center;">Your account has been created. Please check your Gmail inbox (and spam folder) for a verification link to activate your account.</p>
-                <p style="text-align: center; margin-top: 20px;">You can now close this page.</p>
-            </div>
         </div>
     </div>
 
@@ -445,13 +461,15 @@
             const db = firebase.firestore();
             const auth = firebase.auth();
 
+            // --- MAIN CONTAINER ---
+            const authContainer = document.getElementById('authContainer');
+
             // --- FORM STEPS ---
             const step1 = document.getElementById('step1');
             const step2 = document.getElementById('step2');
             const step3 = document.getElementById('step3');
             const rightPanelStep1 = document.getElementById('right-panel-step1');
             const rightPanelStep2 = document.getElementById('right-panel-step2');
-            const rightPanelStep3 = document.getElementById('right-panel-step3');
             
             // --- BUTTONS ---
             const backBtn = document.getElementById('backBtn');
@@ -537,7 +555,9 @@
             };
             
             const goToStep = (step) => {
-                [step1, step2, step3, rightPanelStep1, rightPanelStep2, rightPanelStep3].forEach(el => el.classList.remove('active'));
+                [step1, step2, step3, rightPanelStep1, rightPanelStep2].forEach(el => el.classList.remove('active'));
+                authContainer.classList.remove('success-mode');
+                signupForm.style.opacity = 1;
                 
                 if (step === 2) {
                     backBtn.classList.add('visible');
@@ -552,8 +572,10 @@
                     step2.classList.add('active');
                     rightPanelStep2.classList.add('active');
                 } else if (step === 3) {
+                    authContainer.classList.add('success-mode');
                     step3.classList.add('active');
-                    rightPanelStep3.classList.add('active');
+                    // Hide the form itself, which contains checkboxes and links
+                    signupForm.style.opacity = 0;
                 }
             };
 
@@ -592,7 +614,7 @@
 
             signupForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
-                if (!step2.classList.contains('active')) return; // Only submit on step 2
+                if (!step2.classList.contains('active')) return; 
                 
                 showMessage('', false);
                 const email = document.getElementById('signupEmail').value;
@@ -623,14 +645,11 @@
                     await createUserDocument(userCredential.user, 'password', currentUsername);
                     
                     goToStep(3);
-                    // UPDATED: Simplified success message
                     step3.innerHTML = `
-                        <h2 style="font-family: 'PrimaryFont', sans-serif;">Success!</h2>
+                        <h2>Success!</h2>
                         <p class="success-message">
                             Account for ${currentUsername} created! Please check your Gmail for a verification link.
                         </p>`;
-                    document.querySelector('.checkbox-group').style.display = 'none'; // Hide checkboxes
-                    document.querySelector('.switch-link').style.display = 'none'; // Hide login link
 
                 } catch (error) {
                     console.error('Sign-up error:', error);
@@ -663,15 +682,11 @@
                         await user.sendEmailVerification(actionCodeSettings);
                         await createUserDocument(user, 'google', user.displayName);
                         goToStep(3);
-                        // UPDATED: Simplified success message
                         step3.innerHTML = `
-                            <h2 style="font-family: 'PrimaryFont', sans-serif;">Success!</h2>
+                            <h2>Success!</h2>
                             <p class="success-message">
                                 Account for ${user.displayName} created! Please check your Gmail for a verification link.
                             </p>`;
-                        document.querySelector('.checkbox-group').style.display = 'none';
-                        document.querySelector('.switch-link').style.display = 'none';
-                        await auth.signOut();
                     } else {
                         await auth.signOut();
                         showMessage('An account with this Google email already exists. Please login instead.');
