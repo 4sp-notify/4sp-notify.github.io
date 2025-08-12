@@ -6,10 +6,11 @@
   <title>4SP - DOOM</title>
 
   <script type="text/javascript" src="js-dos-api.js"></script>
+  <script src="../url-changer.js"></script>
+  <script src="../ban-enforcer.js"></script>
+
   
   <link rel="stylesheet" href="../css/style.css" />
-  <script src="../ban-enforcer.js"></script>
-  <script src="../panic-key.js"></script>
   
   <style>
     :root {
@@ -257,7 +258,7 @@
 
     <main class="main-content fade-in">
       <div class="page-header">
-        <h2 class="page-title">DOOM via JS-DOS</h2>
+        <h2 class="page-title">But Can It Run DOOM? Yes It Can.</h2>
       </div>
       
       <div class="controls-section">
@@ -330,34 +331,77 @@
         });
     }
 
+    // --- ADVANCED TITLE LOCK LOGIC ---
+    // Allows title changes from approved scripts (like url-changer.js)
+    // but blocks changes from the emulator (e.g., to "DOSBox").
+    let lastValidTitle = document.title; // Initialize with the original title from the <title> tag
+    const forbiddenSubstrings = ["DOSBox"]; // Add any other emulator titles to block here
+
+    const titleObserver = new MutationObserver(() => {
+        const currentTitle = document.title;
+        const isForbidden = forbiddenSubstrings.some(substring => currentTitle.includes(substring));
+
+        if (isForbidden) {
+            // If the new title is forbidden, revert to the last known good title.
+            document.title = lastValidTitle;
+        } else {
+            // Otherwise, the new title is valid. Update our record of the last valid title.
+            lastValidTitle = currentTitle;
+        }
+    });
+
+    // Start observing the <title> element itself for changes.
+    if (document.querySelector('title')) {
+        titleObserver.observe(document.querySelector('title'), {
+            childList: true
+        });
+    }
+
+
     // --- UNIFIED Core 4SP Dashboard and Firebase Logic ---
     const sidebarEl = document.getElementById('sidebar');
     const toggleSidebarBtn = document.getElementById('toggleSidebar');
     const headerLogoutBtn = document.getElementById('logoutBtn');
     const sidebarSignOutLink = document.getElementById('signOutLink');
 
+    // This function handles signing the user out and redirecting to the login page.
     function handleLogout() {
-        if (typeof firebase !== 'undefined') {
+        if (typeof firebase !== 'undefined' && firebase.auth) {
             firebase.auth().signOut().then(() => {
                 window.location.href = '../login.html';
-            }).catch(error => console.error('Logout error:', error));
+            }).catch(error => {
+                console.error('Logout error:', error);
+            });
         }
     }
 
-    if (headerLogoutBtn) headerLogoutBtn.addEventListener('click', handleLogout);
+    // Attach logout handler to the header button
+    if (headerLogoutBtn) {
+        headerLogoutBtn.addEventListener('click', handleLogout);
+    }
+
+    // Attach logout handler to the sidebar link
     if (sidebarSignOutLink) {
         sidebarSignOutLink.addEventListener('click', (e) => {
-            e.preventDefault();
+            e.preventDefault(); // Prevent default link behavior
             handleLogout();
         });
     }
 
-    if (typeof firebase !== 'undefined') {
-        firebase.auth().onAuthStateChanged(async user => {
-            if (!user) { /* window.location.href = '../login.html'; */ }
+    // Firebase authentication state listener to protect the page
+    if (typeof firebase !== 'undefined' && firebase.auth) {
+        firebase.auth().onAuthStateChanged(user => {
+            if (!user) {
+                // If no user is logged in, redirect to the login page.
+                window.location.href = '../login.html';
+            } else {
+                // Optional: Log authenticated user for debugging
+                console.log('User is authenticated:', user.email);
+            }
         });
     }
 
+    // Sidebar toggle functionality
     if (toggleSidebarBtn && sidebarEl) {
         toggleSidebarBtn.addEventListener('click', () => {
             sidebarEl.classList.toggle('collapsed');
