@@ -523,6 +523,19 @@
                     emailVerified: false
                 });
             };
+            
+            // NEW: Helper function to check if a username already exists in the database.
+            const isUsernameTaken = async (username) => {
+                try {
+                    const querySnapshot = await db.collection('users').where('username', '==', username).limit(1).get();
+                    return !querySnapshot.empty;
+                } catch (error) {
+                    console.error("Error checking username uniqueness:", error);
+                    // Fail safe: assume it's taken to prevent accidental data overwrites.
+                    return true;
+                }
+            };
+
             const updateButtonState = () => {
                 const areCheckboxesChecked = agreeTermsCheckbox.checked && agreePrivacyCheckbox.checked;
                 [nextBtn, emailSignupBtn, googleSignupBtn].forEach(btn => {
@@ -635,34 +648,15 @@
                 }
             });
 
-            // --- MODIFIED GOOGLE SIGNUP LOGIC ---
+            // --- REVERTED AND FIXED GOOGLE SIGNUP LOGIC ---
             googleSignupBtn.addEventListener('click', async () => {
                 showMessage('', false);
-
-                // First, validate the username from Step 1, making the flow consistent.
-                const usernameInput = document.getElementById('signupUsername');
-                const username = usernameInput.value.trim();
-                const usernameRegex = /^[a-zA-Z0-9?!@#$%&\*\\-]+$/;
-
-                if (username.length < 4 || username.length > 16) {
-                    showMessage('Please enter a valid username (4-16 characters) on the left before using Google Sign-Up.');
-                    return;
-                }
-                if (!usernameRegex.test(username)) {
-                    showMessage('The username you entered contains invalid characters. Please correct it.');
-                    return;
-                }
-                if (await checkProfanity(username)) {
-                    showMessage('The username you entered contains inappropriate language. Please choose another.');
-                    return;
-                }
-
-                // If the username is valid, proceed with the Google Authentication flow.
                 try {
                     const provider = new firebase.auth.GoogleAuthProvider();
                     const result = await auth.signInWithPopup(provider);
                     const user = result.user;
 
+                    // Standard email checks
                     if (!user.email.toLowerCase().endsWith('@gmail.com')) {
                         await user.delete();
                         await auth.signOut();
@@ -677,11 +671,34 @@
                     }
 
                     if (result.additionalUserInfo.isNewUser) {
+                        // --- Robust Username Generation ---
+                        // 1. Get initial name from Google or fallback to email prefix if name is missing.
+                        let proposedUsername = user.displayName || user.email.split('@')[0];
+
+                        // 2. Sanitize the name by removing any characters not allowed by your rules.
+                        const allowedCharsRegex = /[^a-zA-Z0-9?!@#$%&\*\\-]/g;
+                        proposedUsername = proposedUsername.replace(allowedCharsRegex, '');
+
+                        // 3. Check for profanity and generate a neutral username if needed.
+                        if (await checkProfanity(proposedUsername)) {
+                            proposedUsername = `User${user.uid.substring(0, 8)}`;
+                        }
+
+                        // 4. Ensure the final username is unique by checking the database.
+                        let finalUsername = proposedUsername;
+                        let counter = 1;
+                        while (await isUsernameTaken(finalUsername)) {
+                            finalUsername = `${proposedUsername}_${counter}`;
+                            counter++;
+                        }
+                        // --- End of Username Generation ---
+
+                        // Now, create the account with the safe, unique username.
                         await user.sendEmailVerification(actionCodeSettings);
-                        // Use the validated username from the input field, not the Google display name.
-                        await createUserDocument(user, 'google', username);
-                        showSuccessScreen(username, user.email);
+                        await createUserDocument(user, 'google', finalUsername);
+                        showSuccessScreen(finalUsername, user.email);
                     } else {
+                        // Handle existing user case
                         await auth.signOut();
                         showMessage('An account with this Google email already exists. Please login instead.');
                     }
