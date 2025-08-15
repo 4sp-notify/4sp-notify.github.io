@@ -26,7 +26,7 @@
             max-width: 900px;
             margin: 50px auto;
             overflow: hidden;
-            min-height: 650px; /* Ensure container has enough height */
+            min-height: 650px;
         }
 
         .auth-col {
@@ -73,15 +73,13 @@
             transition: opacity 0.3s ease;
         }
 
-        /* --- Step Styling --- */
         .signup-step, .right-panel-content {
             width: 100%;
-            display: none; /* Hide all steps by default */
+            display: none;
         }
         .signup-step.active, .right-panel-content.active {
-            display: block; /* Show only the active step/panel */
+            display: block;
         }
-
 
         .auth-col .input-group {
             margin-bottom: 20px;
@@ -115,7 +113,7 @@
        
         .auth-col .input-group input[type="email"],
         .auth-col .input-group input[type="text"] {
-            padding-right: 15px; /* No button space needed */
+            padding-right: 15px;
         }
 
         .auth-col .input-group input:focus {
@@ -208,7 +206,7 @@
             font-family: 'SecondaryFont', sans-serif;
             color: #555;
             text-align: center;
-            font-size: 1em; /* MODIFIED: Explicitly set font size for consistency */
+            font-size: 1em;
         }
 
         .auth-col .switch-link a {
@@ -226,7 +224,7 @@
             width: 100%;
             max-width: 350px;
             margin-top: 15px;
-            min-height: 40px; /* Increased height for longer messages */
+            min-height: 40px;
             text-align: center;
             font-size: 0.9em;
         }
@@ -291,7 +289,6 @@
             transform: scale(1.1);
         }
 
-        /* --- Success State Styling --- */
         .user-stats-container {
             width: 100%;
             max-width: 400px;
@@ -337,6 +334,31 @@
                 border-right: none;
                 border-bottom: 1px solid #eee;
             }
+        }
+
+        /* Loading state for buttons */
+        .btn-loading {
+            position: relative;
+            color: transparent !important;
+        }
+
+        .btn-loading::after {
+            content: "";
+            position: absolute;
+            width: 16px;
+            height: 16px;
+            top: 50%;
+            left: 50%;
+            margin-left: -8px;
+            margin-top: -8px;
+            border: 2px solid #ffffff;
+            border-radius: 50%;
+            border-top-color: transparent;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
         }
     </style>
 </head>
@@ -477,14 +499,27 @@
             const togglePasswordBtn = document.getElementById('togglePassword');
             const toggleVerifyPasswordBtn = document.getElementById('toggleVerifyPassword');
             let currentUsername = '';
+            
             const actionCodeSettings = {
                 url: `${window.location.protocol}//${window.location.hostname}${(window.location.port ? ':' + window.location.port: '')}/verify.html`,
                 handleCodeInApp: true
             };
+            
             const showMessage = (text, isError = true) => {
                 signupMessageDiv.textContent = text;
                 signupMessageDiv.className = isError ? 'message-area error-message' : 'message-area success-message';
             };
+            
+            const setButtonLoading = (button, isLoading) => {
+                if (isLoading) {
+                    button.classList.add('btn-loading');
+                    button.disabled = true;
+                } else {
+                    button.classList.remove('btn-loading');
+                    button.disabled = false;
+                }
+            };
+            
             const setupPasswordToggle = (button, input) => {
                 button.addEventListener('click', () => {
                     const isPassword = input.type === 'password';
@@ -493,16 +528,21 @@
                     button.querySelector('.eye-off-icon').style.display = isPassword ? 'inline' : 'none';
                 });
             };
+            
             const checkProfanity = async (text) => {
                 if (!text || !text.trim()) return false;
                 try {
                     const response = await fetch(`https://www.purgomalum.com/service/containsprofanity?text=${encodeURIComponent(text)}`);
-                    return await response.text() === 'true';
+                    if (!response.ok) throw new Error('API request failed');
+                    const result = await response.text();
+                    return result.toLowerCase() === 'true';
                 } catch (error) {
                     console.error('Error calling profanity API:', error);
-                    return true;
+                    // If profanity check fails, allow the username (don't block user)
+                    return false;
                 }
             };
+            
             const isEmailBanned = async (email) => {
                 if (!email) return false;
                 try {
@@ -514,14 +554,21 @@
                     return true;
                 }
             };
-            const createUserDocument = (user, authMethod, username) => {
-                return db.collection('users').doc(user.uid).set({
-                    email: user.email,
-                    authMethod: authMethod,
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                    username: username,
-                    emailVerified: false
-                });
+            
+            const createUserDocument = async (user, authMethod, username) => {
+                try {
+                    await db.collection('users').doc(user.uid).set({
+                        email: user.email,
+                        authMethod: authMethod,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        username: username,
+                        emailVerified: false
+                    });
+                    return true;
+                } catch (error) {
+                    console.error("Error creating user document:", error);
+                    return false;
+                }
             };
             
             const isUsernameTaken = async (username) => {
@@ -530,7 +577,7 @@
                     return !querySnapshot.empty;
                 } catch (error) {
                     console.error("Error checking username uniqueness:", error);
-                    return true;
+                    return true; // Assume taken to be safe
                 }
             };
 
@@ -543,15 +590,18 @@
                     }
                 });
             };
+            
             const goToStep = (step) => {
                 [step1, step2, rightPanelStep1, rightPanelStep2].forEach(el => el.classList.remove('active'));
                 signupForm.style.display = 'block';
                 backBtn.style.display = 'block';
+                
                 if (step === 2) {
                     backBtn.classList.add('visible');
                 } else {
                     backBtn.classList.remove('visible');
                 }
+                
                 if (step === 1) {
                     step1.classList.add('active');
                     rightPanelStep1.classList.add('active');
@@ -560,12 +610,14 @@
                     rightPanelStep2.classList.add('active');
                 }
             };
+            
             const showSuccessScreen = (username, email) => {
                 signupForm.style.display = 'none';
                 backBtn.style.display = 'none';
                 const now = new Date();
                 const creationDate = now.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
                 const creationTime = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', timeZoneName: 'short' });
+                
                 leftCol.innerHTML = `
                     <h2>Account Created!</h2>
                     <div class="user-stats-container">
@@ -577,135 +629,279 @@
                         </ul>
                     </div>
                     <a href="login.html" class="btn-primary">Proceed to Login</a>`;
+                
                 rightCol.innerHTML = `
                     <h2>What's Next?</h2>
                     <p>A verification link has been sent to your email address.</p>
                     <p>Please click the link in that email to activate your account. You will not be able to log in until your email is verified.</p>
                     <p style="margin-top: 20px; font-size: 0.9em; color: #888;">(Be sure to check your spam or junk folder if you don't see it.)</p>`;
             };
+            
+            const cleanupFailedUser = async (user) => {
+                try {
+                    if (user) {
+                        await user.delete();
+                    }
+                    await auth.signOut();
+                } catch (error) {
+                    console.error('Error cleaning up failed user:', error);
+                    // Try to sign out even if delete fails
+                    try {
+                        await auth.signOut();
+                    } catch (signOutError) {
+                        console.error('Error signing out:', signOutError);
+                    }
+                }
+            };
+            
+            // Setup password toggles
             setupPasswordToggle(togglePasswordBtn, signupPasswordInput);
             setupPasswordToggle(toggleVerifyPasswordBtn, verifyPasswordInput);
+            
+            // Checkbox event listeners
             agreeTermsCheckbox.addEventListener('change', updateButtonState);
             agreePrivacyCheckbox.addEventListener('change', updateButtonState);
+            
+            // Back button
             backBtn.addEventListener('click', () => {
                 goToStep(1);
             });
+            
+            // Next button (step 1 to step 2)
             nextBtn.addEventListener('click', async () => {
                 showMessage('', false);
                 const usernameInput = document.getElementById('signupUsername');
                 const username = usernameInput.value.trim();
                 const usernameRegex = /^[a-zA-Z0-9?!@#$%&\*\\-]+$/;
+                
                 if (username.length < 4 || username.length > 16) {
                     showMessage('Username must be between 4 and 16 characters.');
                     return;
                 }
+                
                 if (!usernameRegex.test(username)) {
                     showMessage('Username contains invalid characters. Only letters, numbers, and ?!@#$%&*- are allowed.');
                     return;
                 }
-                if (await checkProfanity(username)) {
-                    showMessage('Username contains inappropriate language. Please choose another.');
-                    return;
+                
+                setButtonLoading(nextBtn, true);
+                
+                try {
+                    if (await checkProfanity(username)) {
+                        showMessage('Username contains inappropriate language. Please choose another.');
+                        return;
+                    }
+                    
+                    if (await isUsernameTaken(username)) {
+                        showMessage('Username is already taken. Please choose another.');
+                        return;
+                    }
+                    
+                    currentUsername = username;
+                    goToStep(2);
+                } catch (error) {
+                    console.error('Error validating username:', error);
+                    showMessage('Error validating username. Please try again.');
+                } finally {
+                    setButtonLoading(nextBtn, false);
                 }
-                currentUsername = username;
-                goToStep(2);
             });
+            
+            // Email signup form submission
             signupForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 if (!step2.classList.contains('active')) return;
+                
                 showMessage('', false);
-                const email = document.getElementById('signupEmail').value;
+                const email = document.getElementById('signupEmail').value.trim();
                 const password = signupPasswordInput.value;
                 const verifyPassword = verifyPasswordInput.value;
+                
                 if (!email.toLowerCase().endsWith('@gmail.com')) {
                     showMessage('Due to technical limitations with GitHub Pages, we can only send verification emails to Gmail accounts at this time. We apologize for the inconvenience.');
                     return;
                 }
+                
                 if (password !== verifyPassword) {
                     showMessage('Passwords do not match.');
                     return;
                 }
+                
                 const passwordRegex = /^(?=.*[A-Z])(?=.*\d)(?=.*[^a-zA-Z0-9]).{6,36}$/;
                 if (!passwordRegex.test(password)) {
                     showMessage('Password must be 6-36 characters and include at least one uppercase letter, one number, and one special character.');
                     return;
                 }
-                if (await isEmailBanned(email)) {
-                    showMessage('This email address is not allowed to register.');
-                    return;
-                }
+                
+                setButtonLoading(emailSignupBtn, true);
+                
                 try {
+                    if (await isEmailBanned(email)) {
+                        showMessage('This email address is not allowed to register.');
+                        return;
+                    }
+                    
                     const userCredential = await auth.createUserWithEmailAndPassword(email, password);
-                    await userCredential.user.sendEmailVerification(actionCodeSettings);
-                    await createUserDocument(userCredential.user, 'password', currentUsername);
-                    showSuccessScreen(currentUsername, email);
+                    const user = userCredential.user;
+                    
+                    try {
+                        await user.sendEmailVerification(actionCodeSettings);
+                        const documentCreated = await createUserDocument(user, 'password', currentUsername);
+                        
+                        if (!documentCreated) {
+                            throw new Error('Failed to create user document');
+                        }
+                        
+                        showSuccessScreen(currentUsername, email);
+                    } catch (error) {
+                        console.error('Error in post-creation steps:', error);
+                        await cleanupFailedUser(user);
+                        throw error;
+                    }
                 } catch (error) {
                     console.error('Sign-up error:', error);
-                    let message = error.code === 'auth/email-already-in-use' ? 'This email address is already in use.' : 'Sign-up failed. Please try again.';
+                    let message = 'Sign-up failed. Please try again.';
+                    if (error.code === 'auth/email-already-in-use') {
+                        message = 'This email address is already in use.';
+                    } else if (error.code === 'auth/weak-password') {
+                        message = 'Password is too weak. Please choose a stronger password.';
+                    } else if (error.code === 'auth/invalid-email') {
+                        message = 'Please enter a valid email address.';
+                    }
                     showMessage(message);
+                } finally {
+                    setButtonLoading(emailSignupBtn, false);
                 }
             });
 
-            // --- CORRECTED GOOGLE SIGNUP LOGIC ---
+            // Google signup
             googleSignupBtn.addEventListener('click', async () => {
                 showMessage('', false);
+                setButtonLoading(googleSignupBtn, true);
+                
                 try {
                     const provider = new firebase.auth.GoogleAuthProvider();
+                    provider.addScope('email');
+                    provider.addScope('profile');
+                    
                     const result = await auth.signInWithPopup(provider);
+                    
+                    // Validate result object
+                    if (!result || !result.user) {
+                        throw new Error('Invalid authentication result');
+                    }
+                    
                     const user = result.user;
-
-                    // **FIX**: Add a check to ensure the user object and email exist before proceeding.
-                    if (!user || !user.email) {
-                        if (user) await user.delete(); 
-                        await auth.signOut();
-                        showMessage('Could not retrieve email from Google. Please choose a different account or use the email/password method.');
+                    
+                    // Check if user object and email exist
+                    if (!user.email) {
+                        await cleanupFailedUser(user);
+                        showMessage('Could not retrieve email from Google. Please try a different account or use email/password signup.');
                         return;
                     }
 
+                    // Validate Gmail requirement
                     if (!user.email.toLowerCase().endsWith('@gmail.com')) {
-                        await user.delete();
-                        await auth.signOut();
-                        showMessage('Only Google accounts with a @gmail.com address are supported.');
+                        await cleanupFailedUser(user);
+                        showMessage('Only Google accounts with @gmail.com addresses are supported.');
                         return;
                     }
+                    
+                    // Check if email is banned
                     if (await isEmailBanned(user.email)) {
-                        await user.delete();
-                        await auth.signOut();
+                        await cleanupFailedUser(user);
                         showMessage('This email address is not allowed to register.');
                         return;
                     }
 
-                    if (result.additionalUserInfo.isNewUser) {
-                        let proposedUsername = user.displayName || user.email.split('@')[0];
-                        const allowedCharsRegex = /[^a-zA-Z0-9?!@#$%&\*\\-]/g;
-                        proposedUsername = proposedUsername.replace(allowedCharsRegex, '');
+                    // Check if this is a new user
+                    const isNewUser = result.additionalUserInfo && result.additionalUserInfo.isNewUser;
+                    
+                    if (isNewUser) {
+                        try {
+                            // Generate username
+                            let proposedUsername = user.displayName || user.email.split('@')[0] || 'User';
+                            
+                            // Clean username: remove invalid characters
+                            const allowedCharsRegex = /[^a-zA-Z0-9?!@#$%&\*\\-]/g;
+                            proposedUsername = proposedUsername.replace(allowedCharsRegex, '');
+                            
+                            // Ensure username is within length limits
+                            if (proposedUsername.length < 4) {
+                                proposedUsername = `User${user.uid.substring(0, 8)}`;
+                            } else if (proposedUsername.length > 16) {
+                                proposedUsername = proposedUsername.substring(0, 16);
+                            }
 
-                        if (await checkProfanity(proposedUsername)) {
-                            proposedUsername = `User${user.uid.substring(0, 8)}`;
+                            // Check for profanity
+                            if (await checkProfanity(proposedUsername)) {
+                                proposedUsername = `User${user.uid.substring(0, 8)}`;
+                            }
+
+                            // Ensure username uniqueness
+                            let finalUsername = proposedUsername;
+                            let counter = 1;
+                            while (await isUsernameTaken(finalUsername)) {
+                                const suffix = `_${counter}`;
+                                const maxBaseLength = 16 - suffix.length;
+                                const baseUsername = proposedUsername.length > maxBaseLength 
+                                    ? proposedUsername.substring(0, maxBaseLength)
+                                    : proposedUsername;
+                                finalUsername = `${baseUsername}${suffix}`;
+                                counter++;
+                                
+                                // Prevent infinite loop
+                                if (counter > 1000) {
+                                    finalUsername = `User${user.uid.substring(0, 12)}`;
+                                    break;
+                                }
+                            }
+
+                            // Send verification email
+                            await user.sendEmailVerification(actionCodeSettings);
+                            
+                            // Create user document
+                            const documentCreated = await createUserDocument(user, 'google', finalUsername);
+                            
+                            if (!documentCreated) {
+                                throw new Error('Failed to create user document');
+                            }
+                            
+                            showSuccessScreen(finalUsername, user.email);
+                            
+                        } catch (error) {
+                            console.error('Error in Google signup post-processing:', error);
+                            await cleanupFailedUser(user);
+                            throw error;
                         }
-
-                        let finalUsername = proposedUsername;
-                        let counter = 1;
-                        while (await isUsernameTaken(finalUsername)) {
-                            finalUsername = `${proposedUsername}_${counter}`;
-                            counter++;
-                        }
-
-                        await user.sendEmailVerification(actionCodeSettings);
-                        await createUserDocument(user, 'google', finalUsername);
-                        showSuccessScreen(finalUsername, user.email);
                     } else {
+                        // User already exists
                         await auth.signOut();
                         showMessage('An account with this Google email already exists. Please login instead.');
                     }
                 } catch (error) {
                     console.error('Google Sign-In error:', error);
-                    if (error.code !== 'auth/popup-closed-by-user') {
-                        showMessage('Failed to sign up with Google. Please try again.');
+                    
+                    // Handle specific error cases
+                    if (error.code === 'auth/popup-closed-by-user') {
+                        // User closed popup, don't show error
+                        showMessage('', false);
+                    } else if (error.code === 'auth/popup-blocked') {
+                        showMessage('Popup was blocked by your browser. Please allow popups and try again.');
+                    } else if (error.code === 'auth/cancelled-popup-request') {
+                        // Another popup was already opened, ignore
+                        showMessage('', false);
+                    } else if (error.code === 'auth/network-request-failed') {
+                        showMessage('Network error. Please check your connection and try again.');
+                    } else {
+                        showMessage('Failed to sign up with Google. Please try again or use email signup.');
                     }
+                } finally {
+                    setButtonLoading(googleSignupBtn, false);
                 }
             });
             
+            // Initialize
             updateButtonState();
             goToStep(1);
         });
