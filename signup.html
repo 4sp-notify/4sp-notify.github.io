@@ -783,6 +783,10 @@
                     const provider = new firebase.auth.GoogleAuthProvider();
                     provider.addScope('email');
                     provider.addScope('profile');
+                    // Force account selection to ensure user grants proper permissions
+                    provider.setCustomParameters({
+                        'prompt': 'select_account'
+                    });
                     
                     const result = await auth.signInWithPopup(provider);
                     
@@ -793,22 +797,42 @@
                     
                     const user = result.user;
                     
-                    // Check if user object and email exist
-                    if (!user.email) {
+                    // Get email from multiple possible sources
+                    let userEmail = user.email;
+                    
+                    // Try to get email from credential if not in user object
+                    if (!userEmail && result.credential) {
+                        userEmail = result.credential.signInMethod === 'google.com' ? 
+                            (result.additionalUserInfo && result.additionalUserInfo.profile ? 
+                                result.additionalUserInfo.profile.email : null) : null;
+                    }
+                    
+                    // Try to get email from additional user info
+                    if (!userEmail && result.additionalUserInfo && result.additionalUserInfo.profile) {
+                        userEmail = result.additionalUserInfo.profile.email;
+                    }
+                    
+                    // Check if we got an email
+                    if (!userEmail) {
                         await cleanupFailedUser(user);
-                        showMessage('Could not retrieve email from Google. Please try a different account or use email/password signup.');
+                        showMessage('Could not retrieve email from Google. Please make sure you grant email permission and try again.');
                         return;
+                    }
+                    
+                    // Update user email if it was retrieved from alternative source
+                    if (userEmail !== user.email) {
+                        console.log('Retrieved email from alternative source:', userEmail);
                     }
 
                     // Validate Gmail requirement
-                    if (!user.email.toLowerCase().endsWith('@gmail.com')) {
+                    if (!userEmail.toLowerCase().endsWith('@gmail.com')) {
                         await cleanupFailedUser(user);
                         showMessage('Only Google accounts with @gmail.com addresses are supported.');
                         return;
                     }
                     
                     // Check if email is banned
-                    if (await isEmailBanned(user.email)) {
+                    if (await isEmailBanned(userEmail)) {
                         await cleanupFailedUser(user);
                         showMessage('This email address is not allowed to register.');
                         return;
@@ -820,7 +844,7 @@
                     if (isNewUser) {
                         try {
                             // Generate username
-                            let proposedUsername = user.displayName || user.email.split('@')[0] || 'User';
+                            let proposedUsername = user.displayName || userEmail.split('@')[0] || 'User';
                             
                             // Clean username: remove invalid characters
                             const allowedCharsRegex = /[^a-zA-Z0-9?!@#$%&\*\\-]/g;
@@ -860,14 +884,14 @@
                             // Send verification email
                             await user.sendEmailVerification(actionCodeSettings);
                             
-                            // Create user document
+                            // Create user document - use userEmail for consistency
                             const documentCreated = await createUserDocument(user, 'google', finalUsername);
                             
                             if (!documentCreated) {
                                 throw new Error('Failed to create user document');
                             }
                             
-                            showSuccessScreen(finalUsername, user.email);
+                            showSuccessScreen(finalUsername, userEmail);
                             
                         } catch (error) {
                             console.error('Error in Google signup post-processing:', error);
