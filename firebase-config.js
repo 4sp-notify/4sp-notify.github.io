@@ -3,6 +3,7 @@
 const firebaseConfig = {
   apiKey: "AIzaSyBeqn-t-e-hZhYV_6zh1UCvrk38HhYOZ7o",
   authDomain: "foursimpleproblems.firebaseapp.com",
+  databaseURL: "https://foursimpleproblems-default-rtdb.firebaseio.com",
   projectId: "foursimpleproblems",
   storageBucket: "foursimpleproblems.firebasestorage.app",
   messagingSenderId: "329009885873",
