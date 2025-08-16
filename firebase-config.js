@@ -1,14 +1,12 @@
 // firebase-config.js
 
 const firebaseConfig = {
-  apiKey: "AIzaSyBeqn-t-e-hZhYV_6zh1UCvrk38HhYOZ7o",
-  authDomain: "foursimpleproblems.firebaseapp.com",
-  databaseURL: "https://foursimpleproblems-default-rtdb.firebaseio.com",
-  projectId: "foursimpleproblems",
-  storageBucket: "foursimpleproblems.firebasestorage.app",
-  messagingSenderId: "329009885873",
-  appId: "1:329009885873:web:4b907162188effc788e890",
-  measurementId: "G-9CQPE80MXD"
+  apiKey: "AIzaSyCbaYBA-Ab3noI-p2ZC57sR7OnLcc7ojL8",
+  authDomain: "foursimpleproblems-v4.firebaseapp.com",
+  projectId: "foursimpleproblems-v4",
+  storageBucket: "foursimpleproblems-v4.firebasestorage.app",
+  messagingSenderId: "251178815270",
+  appId: "1:251178815270:web:cc7fdb5ed05f8d8d203be7"
 };
 
 // Initialize Firebase
