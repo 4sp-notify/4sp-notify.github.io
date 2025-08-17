@@ -121,7 +121,6 @@
         gap: 8px;
     }
     
-    /* Specific style for the admin ban button */
     #manageBansBtn {
         border-color: rgba(220, 53, 69, 0.3);
         color: #dc3545;
@@ -226,7 +225,6 @@
         border-bottom-color: rgba(220, 53, 69, 0.2);
     }
     
-    /* Style for sub-headings in the ban panel */
     #ban-management-section h4 {
         font-family: 'PrimaryFont', sans-serif;
         margin: 25px 0 15px 0;
@@ -243,7 +241,6 @@
         line-height: 1.5;
     }
 
-    /* --- NEW --- Style for Limit Info Box */
     .limit-info {
         padding: 10px 15px;
         margin-bottom: 20px;
@@ -257,18 +254,17 @@
         transition: all 0.3s ease;
     }
     .limit-info.on-cooldown {
-        background-color: #fff8e1; /* Light yellow for warning */
+        background-color: #fff8e1;
         border-color: #ffecb3;
         color: #856404;
     }
     .limit-info strong {
-        color: #6720bd; /* Primary theme color */
+        color: #6720bd;
         font-weight: 600;
     }
     .limit-info.on-cooldown strong {
         color: #856404;
     }
-    /* --- END NEW --- */
 
     .settings-form {
         display: flex;
@@ -464,7 +460,6 @@
         box-shadow: 0 4px 12px rgba(66, 133, 244, 0.3);
     }
     
-    /* Wrapper to lift reauth controls above the overlay */
     .reauth-wrapper {
         position: relative;
         z-index: 7;
@@ -495,7 +490,6 @@
         border: 1px solid #f5c6cb;
     }
     
-    /* --- NEW BAN MANAGEMENT STYLES --- */
     .banned-list-container {
         margin-top: 25px;
         max-height: 400px;
@@ -562,8 +556,6 @@
         background: #5a6268;
         transform: scale(1.05);
     }
-    /* END OF NEW STYLES */
-
 
     .fade-in {
         animation: fadeIn 0.6s ease-out;
@@ -760,7 +752,8 @@
                 </form>
             </section>
 
-            <section class="settings-section" id="password-section" data-disabled-message="PASSWORD CHANGES AREN'T AVAILABLE FOR GOOGLE ACCOUNTS">
+            <!-- === MODIFIED SECTION: Added data-disabled-message for GitHub === -->
+            <section class="settings-section" id="password-section" data-disabled-message="PASSWORD CHANGES AREN'T AVAILABLE FOR OAUTH ACCOUNTS">
                 <h3>Change Password</h3>
                 <p>Update your account password for enhanced security. Your new password must be at least 6 characters long and different from your current password.</p>
                 
@@ -837,7 +830,8 @@
                         </div>
                     </form>
 
-                    <button class="reauth-btn" id="reauthBtn" style="display: none;">Reauthenticate with Google</button>
+                    <!-- === MODIFIED: This button is now generic for any OAuth provider === -->
+                    <button class="reauth-btn" id="reauthBtn" style="display: none;">Reauthenticate</button>
                 </div>
             </section>
         </main>
@@ -849,19 +843,15 @@
     <script src="../firebase-config.js"></script>
     <script>
         // Global variables
-        let isGoogleAccount = false;
+        // --- MODIFICATION: Replaced boolean flags with a single string for auth method ---
+        let authMethod = 'password'; // Default to password
         let isReauthenticated = false;
-        let currentPanicSettings = null; // This will be populated from IndexedDB
-        let isAdmin = false; // Admin status flag
-        let tabCooldownInterval = null; // Holds the interval for the tab disguise cooldown
+        let currentPanicSettings = null;
+        let isAdmin = false;
+        let tabCooldownInterval = null;
         
         const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
 
-        /**
-         * --- NEW ---
-         * This function updates the UI elements that display limits for username and password changes.
-         * It checks Firestore data for cooldowns and counts, then updates the text and enables/disables forms accordingly.
-         */
         async function updateLimitDisplays() {
             const user = firebase.auth().currentUser;
             if (!user) return;
@@ -922,8 +912,11 @@
             const passwordSection = document.getElementById('password-section');
             const passwordFormInputs = document.querySelectorAll('#password-form input, #password-form button');
 
-            if (isGoogleAccount) {
+            // --- MODIFICATION: Check authMethod instead of boolean flags ---
+            if (authMethod === 'google' || authMethod === 'github') {
                 passwordSection.classList.add('disabled');
+                // Dynamically set the disabled message
+                passwordSection.setAttribute('data-disabled-message', `PASSWORD CHANGES AREN'T AVAILABLE FOR ${authMethod.toUpperCase()} ACCOUNTS`);
                 passwordInfoEl.style.display = 'none';
                 return; 
             }
@@ -979,20 +972,33 @@
 
             loadPanicKeySettingsLocal();
             
-            isGoogleAccount = user.providerData.some(p => p.providerId === 'google.com');
-            document.getElementById('displayAccountType').textContent = isGoogleAccount ? 'Google Account' : 'Email/Password Account';
+            // --- MODIFICATION: Detect and set the auth method ---
+            const isGoogle = user.providerData.some(p => p.providerId === 'google.com');
+            const isGithub = user.providerData.some(p => p.providerId === 'github.com');
+            
+            let accountTypeText = 'Email/Password Account';
+            if (isGoogle) {
+                authMethod = 'google';
+                accountTypeText = 'Google Account';
+            } else if (isGithub) {
+                authMethod = 'github';
+                accountTypeText = 'GitHub Account';
+            } else {
+                authMethod = 'password';
+            }
+            
+            document.getElementById('displayAccountType').textContent = accountTypeText;
             
             const changePasswordBtn = document.getElementById('changePasswordBtn');
-            changePasswordBtn.style.display = isGoogleAccount ? 'none' : 'flex';
+            changePasswordBtn.style.display = (authMethod !== 'password') ? 'none' : 'flex';
             
-            // This single function now handles all limit displays and form states
             await updateLimitDisplays();
 
             setupDeleteAccountSection();
             initializeTabDisguise();
         });
         
-        // --- NEW: IndexedDB Logic for Panic Key ---
+        // IndexedDB logic remains the same...
         const LOCAL_DB_NAME = 'userLocalSettingsDB';
         const LOCAL_STORE_NAME = 'panicKeyStore';
         const LOCAL_SETTINGS_ID = 'currentPanicSettings';
@@ -1065,9 +1071,7 @@
                 showMessage('error', 'Could not open local DB for saving: ' + error.message);
             }
         }
-        // --- END: IndexedDB Logic ---
 
-        // --- NEW TAB DISGUISE LOGIC ---
         function initializeTabDisguise() {
             if (typeof urlChanger === 'undefined') {
                 console.error("urlChanger script not loaded or initialized before settings script.");
@@ -1076,7 +1080,7 @@
 
             const select = document.getElementById('tab-preset');
             const saveBtn = document.getElementById('saveTabPresetBtn');
-            const COOLDOWN_MINUTES = 1;
+            const COOLDOWN_SECONDS = 5;
 
             select.innerHTML = ''; 
             urlChanger.presets.forEach(preset => {
@@ -1095,7 +1099,7 @@
                 const lastSave = parseInt(localStorage.getItem('tabPresetLastSave') || '0');
                 const now = Date.now();
                 const timeSinceSave = (now - lastSave);
-                const cooldownMillis = COOLDOWN_MINUTES * 5 * 1000;
+                const cooldownMillis = COOLDOWN_SECONDS * 1000;
 
                 if (timeSinceSave < cooldownMillis) {
                     saveBtn.disabled = true;
@@ -1129,9 +1133,7 @@
             
             handleCooldown();
         }
-        // --- END OF TAB DISGUISE LOGIC ---
 
-        // --- BAN MANAGEMENT FUNCTIONS ---
         function initializeAdminFeatures() {
             document.getElementById('manageBansBtn').style.display = 'flex';
             document.getElementById('ban-management-section').style.display = 'block';
@@ -1220,25 +1222,27 @@
                 showMessage('error', `Failed to remove ban: ${error.message}`);
             }
         }
-        // --- END OF BAN FUNCTIONS ---
 
         function setupDeleteAccountSection() {
             const deleteSection = document.getElementById('delete-section');
             const deleteForm = document.getElementById('delete-form');
             const emailReauthForm = document.getElementById('email-reauth-form');
-            const googleReauthBtn = document.getElementById('reauthBtn');
+            const reauthBtn = document.getElementById('reauthBtn');
 
             isReauthenticated = false;
             deleteForm.style.display = 'none';
             emailReauthForm.style.display = 'none';
-            googleReauthBtn.style.display = 'none';
+            reauthBtn.style.display = 'none';
             deleteSection.classList.remove('disabled', 'fadeout');
 
-            if (isGoogleAccount) {
+            // --- MODIFICATION: Check authMethod string ---
+            if (authMethod === 'google' || authMethod === 'github') {
                 deleteSection.classList.add('disabled');
-                deleteSection.setAttribute('data-disabled-message', 'Reauthenticate with your Google account to enable account deletion');
-                googleReauthBtn.style.display = 'block';
-            } else {
+                const providerName = authMethod.charAt(0).toUpperCase() + authMethod.slice(1);
+                deleteSection.setAttribute('data-disabled-message', `Reauthenticate with your ${providerName} account to enable account deletion`);
+                reauthBtn.textContent = `Reauthenticate with ${providerName}`;
+                reauthBtn.style.display = 'block';
+            } else { // 'password'
                 emailReauthForm.style.display = 'flex';
             }
         }
@@ -1281,8 +1285,17 @@
             }
         });
 
+        // --- MODIFICATION: Dynamic provider for reauthentication ---
         document.getElementById('reauthBtn').addEventListener('click', async () => {
-            const provider = new firebase.auth.GoogleAuthProvider();
+            let provider;
+            if (authMethod === 'google') {
+                provider = new firebase.auth.GoogleAuthProvider();
+            } else if (authMethod === 'github') {
+                provider = new firebase.auth.GithubAuthProvider();
+            } else {
+                return showMessage('error', 'Cannot determine reauthentication provider.');
+            }
+
             try {
                 const user = firebase.auth().currentUser;
                 await user.reauthenticateWithPopup(provider);
@@ -1299,7 +1312,7 @@
 
             } catch (error) {
                 isReauthenticated = false;
-                showMessage('error', 'Google reauthentication failed: ' + error.message);
+                showMessage('error', `Reauthentication failed: ${error.message}`);
             }
         });
 
@@ -1310,7 +1323,6 @@
         });
 
         async function updateUsername() {
-            // Re-check if form is disabled as a safeguard
             if (document.getElementById('newUsername').disabled) {
                 return showMessage('error', 'You have reached your username change limit for this period.');
             }
@@ -1322,7 +1334,6 @@
             if (!/^[a-zA-Z0-9.\?\!@#$%&*-]+$/.test(newNameRaw)) return showMessage('error', 'Username contains invalid characters.');
 
             try {
-                // The limit check from the original function is still useful as a final client-side check.
                 if (!isExemptUser) {
                     const userDoc = await dbRef().get();
                     const userData = userDoc.data() || {};
@@ -1355,14 +1366,13 @@
                 
                 document.getElementById('displayUsername').textContent = filteredName;
                 showMessage('success', 'Username updated successfully!');
-                await updateLimitDisplays(); // Refresh the display after the update
+                await updateLimitDisplays();
             } catch (error) {
                 showMessage('error', `Failed to update username: ${error.message}`);
             }
         }
 
         async function changePassword() {
-            // Check if the form is disabled directly.
             if (document.getElementById('newPassword').disabled) return;
             
             const user = firebase.auth().currentUser;
@@ -1381,7 +1391,7 @@
                 document.getElementById('oldPassword').value = '';
                 document.getElementById('newPassword').value = '';
                 showMessage('success', 'Password changed successfully!');
-                await updateLimitDisplays(); // Refresh the display after the update
+                await updateLimitDisplays();
             } catch (error) {
                 showMessage('error', `Failed to change password: ${error.code === 'auth/wrong-password' ? 'Current password is incorrect.' : error.message}`);
             }
@@ -1429,5 +1439,3 @@
     </script>
 </body>
 </html>
-}
-now this html
