@@ -240,6 +240,64 @@
         margin-bottom: 20px;
         line-height: 1.5;
     }
+    
+    /* --- REDESIGNED USERNAME LIMIT INFO --- */
+    .username-limit-container {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: -15px;
+        margin-bottom: 15px;
+    }
+    .username-limit-counter {
+        font-family: 'PrimaryFont', sans-serif;
+        font-weight: 600;
+        font-size: 0.9em;
+        color: #555;
+        background-color: #f0f2f5;
+        padding: 4px 8px;
+        border-radius: 6px;
+    }
+    .username-limit-info-btn {
+        background: none;
+        border: 1px solid #ccc;
+        color: #777;
+        width: 24px;
+        height: 24px;
+        border-radius: 50%;
+        cursor: pointer;
+        font-weight: bold;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        transition: all 0.2s ease;
+        position: relative;
+    }
+    .username-limit-info-btn:hover {
+        background-color: #6720bd;
+        color: white;
+        border-color: #6720bd;
+    }
+    .username-limit-tooltip {
+        display: none;
+        position: absolute;
+        bottom: 120%;
+        right: 0;
+        background-color: #333;
+        color: white;
+        padding: 8px 12px;
+        border-radius: 6px;
+        font-size: 0.85em;
+        white-space: nowrap;
+        z-index: 10;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .username-limit-info-btn:hover .username-limit-tooltip {
+        display: block;
+    }
+    /* --- END REDESIGN --- */
+
 
     .limit-info {
         padding: 10px 15px;
@@ -573,7 +631,6 @@
         100% { box-shadow: 0 6px 30px rgba(103, 32, 189, 0.08); }
     }
     
-    /* --- NEW NOTIFICATION STYLES --- */
     #notification-container {
         position: fixed;
         bottom: 20px;
@@ -639,7 +696,6 @@
         from { opacity: 1; transform: translateX(0); }
         to { opacity: 0; transform: translateX(100%); }
     }
-    /* --- END NOTIFICATION STYLES --- */
 
     @media (max-width: 768px) {
         .settings-container {
@@ -756,17 +812,21 @@
 
             <section class="settings-section" id="username-section">
                 <h3>Edit Username</h3>
-                <!-- MODIFIED: Text updated for new 1-minute rule -->
-                <p>Update your display name. You can change your username once every minute.</p>
+                <p>You can change your username up to 10 times every 30 days, with a 1-minute cooldown between each change.</p>
                 
-                <div class="limit-info" id="usernameChangeInfo">
-                    <span>Loading limit information...</span>
+                <!-- NEW MINIMAL UI -->
+                <div class="username-limit-container" id="usernameChangeInfoContainer">
+                    <span class="username-limit-counter" id="usernameChangesLeft">--/--</span>
+                    <button class="username-limit-info-btn">
+                        i
+                        <span class="username-limit-tooltip" id="usernameResetTooltip">Resets in -- days</span>
+                    </button>
                 </div>
                 
                 <form class="settings-form" id="username-form">
                     <div class="form-group">
                         <label for="newUsername">New Username (4-16 characters)</label>
-                        <input type="text" id="newUsername" placeholder="Enter your new username (letters, numbers, . ? ! @ # $ % & * -)..." required maxlength="16"/>
+                        <input type="text" id="newUsername" placeholder="Enter your new username..." required maxlength="16"/>
                     </div>
                     <button type="button" onclick="updateUsername()">Update Username</button>
                 </form>
@@ -883,7 +943,6 @@
         </main>
     </div>
 
-    <!-- NEW: Notification container added here -->
     <div id="notification-container"></div>
 
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
@@ -898,13 +957,11 @@
         let isAdmin = false;
         let tabCooldownInterval = null;
         
-        // --- NEW: Notification Globals ---
-        const activeNotifications = new Map(); // Tracks active notifications by their message key
-        const pressedKeys = new Set(); // Tracks keys for the clear shortcut
+        const activeNotifications = new Map();
+        const pressedKeys = new Set();
         
         const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
 
-        // --- MODIFIED: Username change logic updated to a 1-minute cooldown ---
         async function updateLimitDisplays() {
             const user = firebase.auth().currentUser;
             if (!user) return;
@@ -913,31 +970,56 @@
             const userData = userDoc.exists ? userDoc.data() : {};
             
             // --- 1. Update Username Limit Display ---
-            const usernameInfoEl = document.getElementById('usernameChangeInfo');
+            const usernameInfoContainer = document.getElementById('usernameChangeInfoContainer');
+            const usernameChangesLeftEl = document.getElementById('usernameChangesLeft');
+            const usernameResetTooltipEl = document.getElementById('usernameResetTooltip');
             const usernameForm = document.getElementById('username-form');
             const usernameButton = usernameForm.querySelector('button');
             const usernameInput = usernameForm.querySelector('input');
 
-            const { lastUsernameChange } = userData;
-            let onCooldown = false;
-            if (lastUsernameChange && lastUsernameChange.toDate) {
-                const COOLDOWN_MS = 60 * 1000; // 1 minute
-                const timeSinceChange = Date.now() - lastUsernameChange.toDate().getTime();
-                if (timeSinceChange < COOLDOWN_MS) {
-                    onCooldown = true;
-                    const secondsRemaining = Math.ceil((COOLDOWN_MS - timeSinceChange) / 1000);
-                    usernameInfoEl.innerHTML = `You can change your username again in <strong>${secondsRemaining} second(s)</strong>.`;
-                    usernameInfoEl.classList.add('on-cooldown');
+            const USERNAME_CHANGE_LIMIT = 10;
+            const PERIOD_MS = 30 * 24 * 60 * 60 * 1000;
+            const COOLDOWN_MS = 60 * 1000; // 1 minute
+
+            const { 
+                usernameChangeCount = 0, 
+                usernameChangePeriodStart = null, 
+                lastUsernameChange = null 
+            } = userData;
+
+            let inCurrentPeriod = false;
+            if (usernameChangePeriodStart && usernameChangePeriodStart.toDate) {
+                if ((Date.now() - usernameChangePeriodStart.toDate().getTime()) < PERIOD_MS) {
+                    inCurrentPeriod = true;
                 }
             }
 
-            if (!onCooldown) {
-                 usernameInfoEl.innerHTML = `You can change your username once every <strong>minute</strong>.`;
-                 usernameInfoEl.classList.remove('on-cooldown');
+            const remainingChanges = inCurrentPeriod ? USERNAME_CHANGE_LIMIT - usernameChangeCount : USERNAME_CHANGE_LIMIT;
+            usernameChangesLeftEl.textContent = `${remainingChanges}/${USERNAME_CHANGE_LIMIT}`;
+
+            const resetTime = usernameChangePeriodStart ? usernameChangePeriodStart.toDate().getTime() + PERIOD_MS : Date.now() + PERIOD_MS;
+            const daysRemaining = Math.ceil((resetTime - Date.now()) / (1000 * 60 * 60 * 24));
+            usernameResetTooltipEl.textContent = `Resets in ${daysRemaining} day(s)`;
+
+            let onMinuteCooldown = false;
+            if (lastUsernameChange && lastUsernameChange.toDate) {
+                const timeSinceChange = Date.now() - lastUsernameChange.toDate().getTime();
+                if (timeSinceChange < COOLDOWN_MS) {
+                    onMinuteCooldown = true;
+                    const secondsRemaining = Math.ceil((COOLDOWN_MS - timeSinceChange) / 1000);
+                    showNotification('info', `Username change on cooldown for ${secondsRemaining}s.`);
+                }
             }
 
-            usernameButton.disabled = onCooldown;
-            usernameInput.disabled = onCooldown;
+            const hasNoMonthlyChanges = inCurrentPeriod && usernameChangeCount >= USERNAME_CHANGE_LIMIT;
+            if (hasNoMonthlyChanges) {
+                 showNotification('error', 'You have used all your username changes for this month.');
+            }
+
+            const isDisabled = onMinuteCooldown || hasNoMonthlyChanges;
+            usernameButton.disabled = isDisabled;
+            usernameInput.disabled = isDisabled;
+
 
             // --- 2. Update Password Limit Display (logic remains the same) ---
             const passwordInfoEl = document.getElementById('passwordChangeInfo');
@@ -955,15 +1037,15 @@
             passwordInfoEl.style.display = 'block';
 
             const PASSWORD_COOLDOWN_MS = 14 * 24 * 60 * 60 * 1000;
-            const { lastPasswordChange } = userData;
+            const { lastPasswordChange: lastPassChange } = userData; // Renamed to avoid conflict
             let onPasswordCooldown = false;
 
-            if (lastPasswordChange && lastPasswordChange.toDate) {
-                const timeSinceChange = Date.now() - lastPasswordChange.toDate().getTime();
+            if (lastPassChange && lastPassChange.toDate) {
+                const timeSinceChange = Date.now() - lastPassChange.toDate().getTime();
                 if (timeSinceChange < PASSWORD_COOLDOWN_MS) {
                     onPasswordCooldown = true;
-                    const daysRemaining = Math.ceil((PASSWORD_COOLDOWN_MS - timeSinceChange) / (1000 * 60 * 60 * 24));
-                    passwordInfoEl.innerHTML = `You can change your password again in <strong>${daysRemaining} day(s)</strong>.`;
+                    const daysRemainingPass = Math.ceil((PASSWORD_COOLDOWN_MS - timeSinceChange) / (1000 * 60 * 60 * 24));
+                    passwordInfoEl.innerHTML = `You can change your password again in <strong>${daysRemainingPass} day(s)</strong>.`;
                     passwordInfoEl.classList.add('on-cooldown');
                 }
             }
@@ -1027,7 +1109,6 @@
             initializeTabDisguise();
         });
         
-        // IndexedDB logic remains the same...
         const LOCAL_DB_NAME = 'userLocalSettingsDB';
         const LOCAL_STORE_NAME = 'panicKeyStore';
         const LOCAL_SETTINGS_ID = 'currentPanicSettings';
@@ -1349,47 +1430,67 @@
             sidebar.classList.toggle('collapsed');
         });
 
-        // --- MODIFIED: Username update logic with 1-minute cooldown and same-name check ---
         async function updateUsername() {
             if (document.getElementById('newUsername').disabled) {
-                return showNotification('error', 'You are on cooldown. Please wait.');
+                return showNotification('error', 'You are on cooldown or have no changes left.');
             }
             
             const newNameRaw = document.getElementById('newUsername').value.trim();
             const currentName = document.getElementById('displayUsername').textContent;
 
-            // New check for same username
             if (newNameRaw === currentName) {
-                return showNotification('error', 'This is already your username. Please choose a different one.');
+                return showNotification('error', 'This is already your username.');
             }
 
-            if (newNameRaw.length < 4 || newNameRaw.length > 16) return showNotification('error', 'Username must be between 4 and 16 characters.');
+            if (newNameRaw.length < 4 || newNameRaw.length > 16) return showNotification('error', 'Username must be 4-16 characters.');
             if (!/^[a-zA-Z0-9.\?\!@#$%&*-]+$/.test(newNameRaw)) return showNotification('error', 'Username contains invalid characters.');
 
             try {
-                // Server-side cooldown check
                 const userDoc = await dbRef().get();
                 const userData = userDoc.data() || {};
-                const { lastUsernameChange } = userData;
+                const { 
+                    usernameChangeCount = 0, 
+                    usernameChangePeriodStart = null,
+                    lastUsernameChange = null
+                } = userData;
+
+                // Combined Cooldown Check
                 if(lastUsernameChange && (Date.now() - lastUsernameChange.toDate().getTime() < 60000)) {
-                    await updateLimitDisplays(); // Refresh display just in case
-                    return showNotification('error', 'You must wait 1 minute between username changes.');
+                    await updateLimitDisplays();
+                    return showNotification('error', 'You must wait 1 minute between changes.');
                 }
                 
+                const isNewPeriod = !usernameChangePeriodStart || (Date.now() - usernameChangePeriodStart.toDate().getTime() > 30 * 24 * 60 * 60 * 1000);
+                if (!isNewPeriod && usernameChangeCount >= 10) {
+                     await updateLimitDisplays();
+                     return showNotification('error', 'You have no more changes left this month.');
+                }
+                
+                // Purgomalum API call (non-strict)
                 const response = await fetch(`https://www.purgomalum.com/service/json?text=${encodeURIComponent(newNameRaw)}`);
                 if (!response.ok) throw new Error('Profanity filter unavailable.');
-                const filteredName = (await response.json()).result;
-                if (filteredName !== newNameRaw) return showNotification('error', `Username contains prohibited words.`);
+                const data = await response.json();
+                const filteredName = data.result;
 
-                // New update payload with only the timestamp
-                const updatePayload = { 
+                if (filteredName.includes('*')) {
+                     showNotification('info', 'Your username contained inappropriate words and has been filtered. This still counts as a change.');
+                }
+
+                const updatePayload = isNewPeriod ? {
                     username: filteredName,
+                    usernameChangeCount: 1,
+                    usernameChangePeriodStart: firebase.firestore.FieldValue.serverTimestamp(),
+                    lastUsernameChange: firebase.firestore.FieldValue.serverTimestamp()
+                } : {
+                    username: filteredName,
+                    usernameChangeCount: firebase.firestore.FieldValue.increment(1),
                     lastUsernameChange: firebase.firestore.FieldValue.serverTimestamp()
                 };
                 
                 await dbRef().update(updatePayload);
                 
                 document.getElementById('displayUsername').textContent = filteredName;
+                document.getElementById('newUsername').value = filteredName; // Update input field with filtered name
                 showNotification('success', 'Username updated successfully!');
                 await updateLimitDisplays();
             } catch (error) {
@@ -1448,52 +1549,33 @@
             }
         }
         
-        // --- NEW NOTIFICATION SYSTEM ---
-        /**
-         * Displays a notification in the bottom-right corner.
-         * @param {('success'|'error'|'info')} type - The type of notification.
-         * @param {string} text - The message to display.
-         */
         function showNotification(type, text) {
-            const DURATION = 10000; // 10 seconds
+            const DURATION = 10000;
             const container = document.getElementById('notification-container');
-            const key = `${type}-${text}`; // Unique key for this specific message
+            const key = `${type}-${text}`;
 
-            // Check if an identical notification is already showing
             if (activeNotifications.has(key)) {
                 const existing = activeNotifications.get(key);
-                
-                // Increment the counter
                 let count = parseInt(existing.counter.textContent) || 1;
                 count++;
                 existing.counter.textContent = count > 10 ? '10+' : count;
                 existing.counter.style.display = 'flex';
-
-                // Reset its removal timer
                 clearTimeout(existing.timerId);
                 existing.timerId = setTimeout(() => removeNotification(key), DURATION);
-                
-                return; // Stop here
+                return;
             }
 
-            // Create new notification element
             const notification = document.createElement('div');
             notification.className = `notification-popup ${type}`;
             notification.textContent = text;
             
-            // Create counter element
             const counter = document.createElement('span');
             counter.className = 'notification-counter';
-            counter.style.display = 'none'; // Hidden by default
+            counter.style.display = 'none';
             notification.appendChild(counter);
 
-            // Set timer to remove it
             const timerId = setTimeout(() => removeNotification(key), DURATION);
-
-            // Store the notification's data
             activeNotifications.set(key, { element: notification, timerId: timerId, counter: counter });
-            
-            // Add to the DOM
             container.appendChild(notification);
         }
 
@@ -1501,33 +1583,22 @@
             if (activeNotifications.has(key)) {
                 const { element, timerId } = activeNotifications.get(key);
                 clearTimeout(timerId);
-                
-                // Add exiting animation class
                 element.classList.add('exiting');
-                
-                // Remove from DOM after animation finishes
                 element.addEventListener('animationend', () => {
                     if (element.parentNode) {
                         element.parentNode.removeChild(element);
                     }
                 }, { once: true });
-
-                // Remove from our tracking map
                 activeNotifications.delete(key);
             }
         }
         
         function clearAllNotifications() {
-            const container = document.getElementById('notification-container');
-            activeNotifications.forEach((value, key) => {
-                removeNotification(key);
-            });
+            activeNotifications.forEach((value, key) => removeNotification(key));
         }
         
-        // --- NEW: Keyboard shortcut listener ---
         document.addEventListener('keydown', (event) => {
             pressedKeys.add(event.code);
-            // Check for Shift + C + N combination
             if (pressedKeys.has('ShiftLeft') || pressedKeys.has('ShiftRight')) {
                 if (pressedKeys.has('KeyC') && pressedKeys.has('KeyN')) {
                     clearAllNotifications();
