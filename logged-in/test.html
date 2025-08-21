@@ -35,6 +35,16 @@
             margin: 0; font-family: var(--v4-font-primary);
             background: var(--v4-bg-gradient); color: var(--v4-text-primary);
             line-height: 1.6;
+            user-select: none; /* Disable text highlighting */
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+        }
+        input, textarea {
+             user-select: auto; /* Re-enable for inputs */
+            -webkit-user-select: auto;
+            -moz-user-select: auto;
+            -ms-user-select: auto;
         }
         .soundboard-container-wrapper { display: flex; flex: 1; overflow: hidden; }
         
@@ -524,7 +534,7 @@
         .status-message-v4.error { background: linear-gradient(135deg, #8f262a, #721c24); }
         .status-message-v4.info { background: linear-gradient(135deg, #004085, #002752); }
         
-        /* --- NEW: Welcome Modal & Input Animations --- */
+        /* --- NEW: Welcome & Dev Modal & Input Animations --- */
         .modal-backdrop { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); backdrop-filter: blur(5px); z-index: 2000; opacity: 0; transition: opacity 0.3s ease; pointer-events: none; display: flex; align-items: center; justify-content: center; }
         .modal-backdrop.visible { opacity: 1; pointer-events: auto; }
         .modal-content { background: var(--v4-card-bg); width: 90%; max-width: 500px; border-radius: 15px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); display: flex; flex-direction: column; max-height: 90vh; transform: scale(0.95); transition: transform 0.3s ease; }
@@ -548,8 +558,11 @@
         @keyframes flash-red { 0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.5); } 100% { box-shadow: 0 0 0 8px rgba(220, 53, 69, 0); } }
         @keyframes shake-horizontal { 10%, 90% { transform: translateX(-2px); } 20%, 80% { transform: translateX(4px); } 30%, 50%, 70% { transform: translateX(-6px); } 40%, 60% { transform: translateX(6px); } }
         
-        .particle-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; overflow: hidden; pointer-events: none; }
-        .particle { position: absolute; background-color: var(--v4-purple-accent); width: 5px; height: 5px; border-radius: 50%; opacity: 0; animation: particle-burst 0.7s ease-out forwards; }
+        #devMenu { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--v4-card-bg); border: 1px solid var(--v4-border-light); border-radius: 10px; box-shadow: 0 5px 25px rgba(0,0,0,0.2); z-index: 3000; color: var(--v4-text-primary); }
+        #devMenuHeader { padding: 10px; background: var(--v4-input-bg); border-bottom: 1px solid var(--v4-border-light); cursor: move; border-top-left-radius: 10px; border-top-right-radius: 10px; text-align: center; font-weight: bold; }
+        #devMenuContent { padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+        #devMenu .btn-dev { width: 100%; padding: 8px; border-radius: 6px; }
+
     </style>
 </head>
 <body class="soundboard-page">
@@ -813,6 +826,14 @@
         </div>
     </div>
 
+    <div id="devMenu">
+        <div id="devMenuHeader">Dev Testing Options</div>
+        <div id="devMenuContent">
+            <button id="devResetSettingsBtn" class="btn-secondary btn-dev">Reset All Settings</button>
+            <button id="devShowWelcomeBtn" class="btn-secondary btn-dev">Show Welcome Popup Again</button>
+        </div>
+    </div>
+
     <script>
     // --- Standard Setup (Auth, Sidebar, User Info) ---
     const dbRef_ = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
@@ -997,7 +1018,6 @@
             }
             
             if (!document.getElementById('allowMultipleSounds').checked) {
-                // When overlay is off, clear sounds without affecting autoclicker state
                 const fadeOutTime = parseFloat(document.getElementById('fadeOut').value || 0.1);
                 for (const [_, instances] of activeSounds.entries()) {
                     [...instances].forEach(sound => sound.stop(fadeOutTime));
@@ -1066,7 +1086,6 @@
                         button.dataset.category = categoryKey;
                         button.addEventListener('click', () => playSound(fileName, button));
                         
-                        // New autoclicker event listeners
                         button.addEventListener('mouseenter', () => {
                             currentlyHoveredButton = button;
                             if (document.getElementById('autoclickerEnabled').checked && document.querySelector('input[name="autoclickerActivation"]:checked').value === 'hover') {
@@ -1220,11 +1239,42 @@
             });
         }
 
+        function makeDraggable(element, handle) {
+            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+            handle.onmousedown = dragMouseDown;
+
+            function dragMouseDown(e) {
+                e = e || window.event;
+                e.preventDefault();
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+                document.onmouseup = closeDragElement;
+                document.onmousemove = elementDrag;
+            }
+
+            function elementDrag(e) {
+                e = e || window.event;
+                e.preventDefault();
+                pos1 = pos3 - e.clientX;
+                pos2 = pos4 - e.clientY;
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+                element.style.top = (element.offsetTop - pos2) + "px";
+                element.style.left = (element.offsetLeft - pos1) + "px";
+            }
+
+            function closeDragElement() {
+                document.onmouseup = null;
+                document.onmousemove = null;
+            }
+        }
+
         async function initialize() {
             await setupReverbs();
             createEarlyReflectionsEngine();
             requestAnimationFrame(updateButtonVisuals);
             showWelcomePopupIfNeeded();
+            makeDraggable(document.getElementById('devMenu'), document.getElementById('devMenuHeader'));
 
             saveSettingsBtn.addEventListener('click', saveSettings); 
             document.getElementById('resetSettingsBtn').addEventListener('click', () => { if (confirm('Are you sure you want to reset all settings on this page? This cannot be undone.')) { localStorage.removeItem(LOCAL_STORAGE_KEY); window.location.reload(); } }); 
@@ -1232,28 +1282,41 @@
             document.getElementById('settingsSearch').addEventListener('input', handleSettingsSearch); 
             document.getElementById('soundSearchInput').addEventListener('input', debouncedSoundSearch); 
             
-            document.addEventListener('keydown', (event) => { 
+            const keysPressed = {};
+            document.addEventListener('keydown', (event) => {
+                keysPressed[event.key.toLowerCase()] = true;
                 if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA') { return; } 
-                if (event.shiftKey && (event.key === 'C' || event.key === 'c')) {
+                
+                if (keysPressed['shift'] && keysPressed['c']) {
                     event.preventDefault();
                     const currentVolume = masterGain.gain.value;
                     const wasAlreadyMuted = currentVolume === 0;
                     if (!wasAlreadyMuted) {
                         masterGain.gain.setValueAtTime(0, audioContext.currentTime);
                     }
-                    clearSounds();
+                    for (let i = 0; i < 100; i++) {
+                        setTimeout(clearSounds, i * 1);
+                    }
                     setTimeout(() => {
                         if (!wasAlreadyMuted) {
                              masterGain.gain.setValueAtTime(currentVolume, audioContext.currentTime);
                         }
-                    }, 100);
+                    }, 150);
                 } 
-                if (!event.shiftKey && (event.key === 'M' || event.key === 'm')) { event.preventDefault(); toggleMute(); }
-                if (event.shiftKey && (event.key === 'S' || event.key === 's')) {
+                if (!event.shiftKey && event.key.toLowerCase() === 'm') { event.preventDefault(); toggleMute(); }
+                if (keysPressed['shift'] && keysPressed['s']) {
                     event.preventDefault();
                     document.querySelector('.settings-tab-container').classList.toggle('hidden-setting');
                 }
+                if (keysPressed['shift'] && keysPressed['0'] && keysPressed['c']) {
+                    event.preventDefault();
+                    const devMenu = document.getElementById('devMenu');
+                    devMenu.style.display = devMenu.style.display === 'block' ? 'none' : 'block';
+                }
             }); 
+            document.addEventListener('keyup', (event) => {
+                keysPressed[event.key.toLowerCase()] = false;
+            });
             
             document.querySelector('.settings-tabs').addEventListener('click', e => { if (e.target.matches('.tab-link')) { document.querySelectorAll('.tab-link, .tab-content').forEach(el => el.classList.remove('active')); e.target.classList.add('active'); document.getElementById(e.target.dataset.tab).classList.add('active'); document.getElementById('settingsSearch').value = ''; document.getElementById('searchResultsContainer').style.display = 'none'; document.querySelector('.settings-tab-container').classList.remove('search-active'); } }); 
             document.getElementById('resetEqBtn').addEventListener('click', () => { ['eqBass', 'eqMid', 'eqTreble'].forEach(key => { const slider = document.getElementById(key); if (slider) { slider.value = 0; slider.dispatchEvent(new Event('input', { bubbles: true })); } }); }); 
@@ -1288,7 +1351,7 @@
                         currentIntervalValue = newValue;
                         clickIntervalInput.classList.add('input-flash-accept');
                         setTimeout(() => clickIntervalInput.classList.remove('input-flash-accept'), 700);
-                        if (autoClickerIntervalId) { // Restart if active
+                        if (autoClickerIntervalId) {
                            startAutoClicker();
                         }
                     } else {
@@ -1297,6 +1360,26 @@
                         setTimeout(() => clickIntervalInput.classList.remove('input-flash-deny'), 700);
                     }
                 }
+            });
+
+            document.querySelectorAll('input, button, select, a').forEach(el => {
+                el.addEventListener('click', () => el.blur());
+                el.addEventListener('keyup', (e) => {
+                    if (e.key === ' ' || e.key === 'Enter') {
+                        el.blur();
+                    }
+                });
+            });
+
+            document.getElementById('devResetSettingsBtn').addEventListener('click', () => {
+                if (confirm('Are you sure you want to reset ALL settings? This will reload the page.')) {
+                    localStorage.removeItem(LOCAL_STORAGE_KEY);
+                    location.reload();
+                }
+            });
+            document.getElementById('devShowWelcomeBtn').addEventListener('click', () => {
+                localStorage.removeItem('hasSeenWelcomePopup');
+                showStatus('Welcome popup will show on next visit.', 'success');
             });
 
             spatialPad.addEventListener('mousedown', startDrag); 
