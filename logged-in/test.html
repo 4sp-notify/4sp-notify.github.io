@@ -537,7 +537,11 @@
         .controls-list li { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--v4-border-softer); }
         .controls-list li:last-child { border-bottom: none; }
         .key-combo { background: #e9ecef; padding: 3px 8px; border-radius: 5px; border: 1px solid #dee2e6; font-family: monospace; font-weight: bold; color: var(--v4-text-primary); }
-        
+        .btn-primary { background: var(--v4-purple-gradient); color: white; border: none; padding: 10px 20px; border-radius: 8px; font-family: var(--v4-font-primary); text-transform: uppercase; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.1); }
+        .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(103, 32, 189, 0.4); }
+        .btn-secondary { background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-family: var(--v4-font-primary); text-transform: uppercase; cursor: pointer; transition: all 0.3s ease; }
+        .btn-secondary:hover { background: #5a6268; }
+
         .input-flash-accept { animation: flash-green 0.7s ease-out forwards; }
         .input-flash-deny { animation: shake-horizontal 0.5s ease-out, flash-red 0.7s ease-out; }
         @keyframes flash-green { 0% { box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.5); } 100% { box-shadow: 0 0 0 8px rgba(25, 135, 84, 0); } }
@@ -600,8 +604,8 @@
                 <div id="searchResultsContainer"></div>
 
                 <div id="playback" class="tab-content active">
-                     <div class="control-group" data-search-terms="allow multiple sounds">
-                         <label class="checkbox-label-v4">Allow Multiple Sounds <input type="checkbox" id="allowMultipleSounds" data-setting="allowMultiple"></label>
+                     <div class="control-group" data-search-terms="allow multiple sounds overlay">
+                         <label class="checkbox-label-v4">Allow Sound Overlay <input type="checkbox" id="allowMultipleSounds" data-setting="allowMultiple"></label>
                      </div>
                      <div class="control-group" data-search-terms="sound looping">
                          <label class="checkbox-label-v4">Sound Looping <input type="checkbox" id="soundLooping" data-setting="looping"></label>
@@ -639,11 +643,11 @@
                 <div id="autoclicker" class="tab-content">
                     <div class="control-group" data-search-terms="autoclicker enable">
                          <label class="checkbox-label-v4">Enable Autoclicker <input type="checkbox" id="autoclickerEnabled" data-setting="autoclickerEnabled"></label>
-                    </div>
-                    <div class="control-group" data-search-terms="autoclicker interval speed">
+                     </div>
+                     <div class="control-group" data-search-terms="autoclicker interval speed">
                          <label for="clickInterval">Click Interval (ms)</label>
                          <input type="number" id="clickInterval" value="200" min="50" data-setting="clickInterval">
-                    </div>
+                     </div>
                      <div class="control-group" data-search-terms="autoclicker activation method hover hold">
                          <label>Activation Method</label>
                          <div class="radio-group-container">
@@ -831,6 +835,8 @@
         let isMuted = false;
         let lastVolumeBeforeMute = 1;
         let volumeBeforeNightMode = 1;
+        
+        let currentlyHoveredButton = null;
 
         let spatialPadRect = null;
         let currentSnapAngle = null;
@@ -875,14 +881,7 @@
             nightModeCompressor: new DynamicsCompressorNode(audioContext, {threshold: 0, knee: 30, ratio: 1, attack: 0.003, release: 0.25 }),
         };
         
-        const autoclickerEngine = {
-            isRunning: false,
-            target: null,
-            method: 'hover',
-            interval: 200,
-            lastClickTimestamp: 0,
-            loopId: null,
-        };
+        let autoClickerIntervalId = null;
 
         nodes.partyMode.gain.gain.value = 0;
         nodes.reverb.gain.gain.value = 0;
@@ -921,13 +920,19 @@
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
         const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start() { if (this.isActive) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); showStatus('Could not access microphone. Please enable it in browser settings.', 'error'); const awarenessCheckbox = document.querySelector('[data-setting="modeAwareness"]'); if(awarenessCheckbox) awarenessCheckbox.checked = false; }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); let voiceEnergy = 0; for (let i = 5; i < 100; i++) voiceEnergy += dataArray[i]; voiceEnergy /= 95; const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; nodes.awarenessGain.gain.setTargetAtTime(newVolume, audioContext.currentTime, 0.1); } };
         
+        const stopAutoClicker = () => {
+            if (autoClickerIntervalId) {
+                clearInterval(autoClickerIntervalId);
+                autoClickerIntervalId = null;
+            }
+        };
+
         const clearSounds = () => {
+            stopAutoClicker();
             const autoclickerCheckbox = document.getElementById('autoclickerEnabled');
             if (autoclickerCheckbox) {
                 autoclickerCheckbox.checked = false;
             }
-            autoclickerEngine.isRunning = false;
-            autoclickerEngine.target = null;
             
             const fadeOutTime = parseFloat(document.getElementById('fadeOut').value || 0.1);
             for (const [_, instances] of activeSounds.entries()) {
@@ -984,15 +989,20 @@
         
         async function playSound(fileName, button) {
             let currentSoundCount = 0;
-            for (const instances of activeSounds.values()) {
-                currentSoundCount += instances.length;
-            }
-            if (currentSoundCount >= 400) {
-                showStatus('Sound limit reached (400). Please wait or clear sounds (Shift+C).', 'error', 2000);
+            activeSounds.forEach(instances => currentSoundCount += instances.length);
+            
+            if (currentSoundCount >= 500) {
+                showStatus('Sound limit reached (500). Please wait or clear sounds (Shift+C).', 'error', 2000);
                 return;
             }
             
-            if (!document.getElementById('allowMultipleSounds').checked) clearSounds();
+            if (!document.getElementById('allowMultipleSounds').checked) {
+                // When overlay is off, clear sounds without affecting autoclicker state
+                const fadeOutTime = parseFloat(document.getElementById('fadeOut').value || 0.1);
+                for (const [_, instances] of activeSounds.entries()) {
+                    [...instances].forEach(sound => sound.stop(fadeOutTime));
+                }
+            }
             
             let playVolume = 1.0;
             const masterVolume = masterGain.gain.value;
@@ -1025,11 +1035,11 @@
             try {
                 const response = await fetch('../SoundboardNames.json');
                 const soundsData = await response.json();
-                const container = document.getElementById('soundCategoriesContainerV4');
-                container.innerHTML = ''; 
+                const containerV4 = document.getElementById('soundCategoriesContainerV4');
+                containerV4.innerHTML = ''; 
 
                 const sortOrder = document.querySelector('input[name="soundSortOrder"]:checked')?.value || 'alpha-asc';
-
+                
                 for (const categoryKey in soundsData) {
                     const categoryDiv = document.createElement('div');
                     categoryDiv.className = 'sound-category-v4';
@@ -1055,14 +1065,37 @@
                         button.dataset.soundFile = fileName;
                         button.dataset.category = categoryKey;
                         button.addEventListener('click', () => playSound(fileName, button));
+                        
+                        // New autoclicker event listeners
+                        button.addEventListener('mouseenter', () => {
+                            currentlyHoveredButton = button;
+                            if (document.getElementById('autoclickerEnabled').checked && document.querySelector('input[name="autoclickerActivation"]:checked').value === 'hover') {
+                                startAutoClicker();
+                            }
+                        });
+                        button.addEventListener('mouseleave', () => {
+                            if (currentlyHoveredButton === button) {
+                                currentlyHoveredButton = null;
+                                stopAutoClicker();
+                            }
+                        });
+                        button.addEventListener('mousedown', () => {
+                            if (document.getElementById('autoclickerEnabled').checked && document.querySelector('input[name="autoclickerActivation"]:checked').value === 'hold') {
+                                currentlyHoveredButton = button;
+                                startAutoClicker();
+                            }
+                        });
+                        button.addEventListener('mouseup', () => {
+                             if (document.querySelector('input[name="autoclickerActivation"]:checked').value === 'hold') {
+                                currentlyHoveredButton = null;
+                                stopAutoClicker();
+                            }
+                        });
 
-                        button.addEventListener('mouseenter', function() { if (autoclickerEngine.method === 'hover') { autoclickerEngine.target = this; autoclickerEngine.lastClickTimestamp = 0; } });
-                        button.addEventListener('mouseleave', function() { if (autoclickerEngine.method === 'hover' && autoclickerEngine.target === this) { autoclickerEngine.target = null; } });
-                        button.addEventListener('mousedown', function() { if (autoclickerEngine.method === 'hold') { this.click(); autoclickerEngine.target = this; autoclickerEngine.lastClickTimestamp = Date.now(); } });
                         buttonsGrid.appendChild(button);
                     });
                     categoryDiv.appendChild(buttonsGrid);
-                    container.appendChild(categoryDiv);
+                    containerV4.appendChild(categoryDiv);
                 }
             } catch (error) {
                 console.error("Failed to load sounds:", error);
@@ -1070,6 +1103,25 @@
             }
         }
         
+        function startAutoClicker() {
+            stopAutoClicker(); 
+            if (!currentlyHoveredButton || !document.getElementById('autoclickerEnabled').checked) return;
+
+            const delay = parseInt(document.getElementById('clickInterval').value, 10);
+            if (isNaN(delay) || delay < 50) {
+                showStatus('Interval must be 50ms or higher.', 'error');
+                return;
+            }
+
+            autoClickerIntervalId = setInterval(() => {
+                if (currentlyHoveredButton) {
+                    currentlyHoveredButton.click();
+                } else {
+                    stopAutoClicker();
+                }
+            }, delay);
+        }
+
         const toggleMute = () => { isMuted = !isMuted; const muteIndicator = document.getElementById('muteIndicator'); if (isMuted) { lastVolumeBeforeMute = masterGain.gain.value; masterGain.gain.value = 0; muteIndicator.classList.add('visible'); } else { masterGain.gain.value = lastVolumeBeforeMute; muteIndicator.classList.remove('visible'); } document.getElementById('masterVolume').value = masterGain.gain.value; document.getElementById('masterVolumeValue').textContent = `${Math.round(masterGain.gain.value * 100)}%`; };
         
         const updateFunctions = { 
@@ -1154,19 +1206,6 @@
         function startDrag(event) { if (!document.getElementById('modeSpatial').checked || (event.type === 'mousedown' && event.button !== 0)) return; spatialPadRect = spatialPad.getBoundingClientRect(); isDragging = true; document.body.style.userSelect = 'none'; handleDrag(event); }
         function stopDrag() { if (!isDragging) return; isDragging = false; spatialPadRect = null; currentSnapAngle = null; document.body.style.userSelect = ''; spatialPuck.classList.remove('snapped'); const baseSpeed = parseFloat(document.getElementById('speed').value || 1); activeSounds.forEach(instances => instances.forEach(s => { if(s.sourceNode) s.sourceNode.playbackRate.setTargetAtTime(baseSpeed, audioContext.currentTime, 0.01); })); lastDragPosition = { x: 0, y: 0, timestamp: 0 }; const deadzoneRadius = 0.15; const posEl = document.querySelector('.spatial-audio-control'); const currentX = parseFloat(posEl.dataset.x); const currentY = parseFloat(posEl.dataset.y); if (Math.sqrt(currentX**2 + currentY**2) < deadzoneRadius) { updateSpatialPuckAndAudio(0, 0, currentZ, spatialPad.offsetWidth / 2); } }
 
-        function startAutoclickerEngine() {
-            if (autoclickerEngine.loopId) return;
-            autoclickerEngine.loopId = setInterval(() => {
-                if (autoclickerEngine.isRunning && autoclickerEngine.target) {
-                    const now = Date.now();
-                    if (now - autoclickerEngine.lastClickTimestamp >= autoclickerEngine.interval) {
-                        autoclickerEngine.target.click();
-                        autoclickerEngine.lastClickTimestamp = now;
-                    }
-                }
-            }, 50);
-        }
-
         function showWelcomePopupIfNeeded() {
             const welcomeModal = document.getElementById('welcomeModal');
             if (localStorage.getItem('hasSeenWelcomePopup') !== 'true') {
@@ -1184,7 +1223,6 @@
         async function initialize() {
             await setupReverbs();
             createEarlyReflectionsEngine();
-            startAutoclickerEngine();
             requestAnimationFrame(updateButtonVisuals);
             showWelcomePopupIfNeeded();
 
@@ -1230,21 +1268,32 @@
                 radio.addEventListener('change', loadSoundsAndCreateButtons);
             });
 
-            document.getElementById('autoclickerEnabled').addEventListener('change', e => { autoclickerEngine.isRunning = e.target.checked; if (!e.target.checked) { autoclickerEngine.target = null; } });
-            document.querySelectorAll('input[name="autoclickerActivation"]').forEach(radio => { radio.addEventListener('change', () => { if (radio.checked) { autoclickerEngine.method = radio.value; autoclickerEngine.target = null; } }); });
-            document.addEventListener('mouseup', () => { if (autoclickerEngine.method === 'hold') { autoclickerEngine.target = null; } });
-            
+            document.getElementById('autoclickerEnabled').addEventListener('change', e => {
+                if (!e.target.checked) {
+                    stopAutoClicker();
+                }
+            });
+
+            document.querySelectorAll('input[name="autoclickerActivation"]').forEach(radio => {
+                radio.addEventListener('change', stopAutoClicker);
+            });
+
             const clickIntervalInput = document.getElementById('clickInterval');
+            let currentIntervalValue = clickIntervalInput.value;
             clickIntervalInput.addEventListener('keydown', (e) => {
                 if (e.key === 'Enter') {
                     e.preventDefault();
                     const newValue = parseInt(clickIntervalInput.value, 10);
-                    if (newValue >= 50 && newValue !== autoclickerEngine.interval) {
-                        autoclickerEngine.interval = newValue;
+                    if (newValue >= 50 && newValue !== parseInt(currentIntervalValue, 10)) {
+                        currentIntervalValue = newValue;
                         clickIntervalInput.classList.add('input-flash-accept');
                         setTimeout(() => clickIntervalInput.classList.remove('input-flash-accept'), 700);
+                        if (autoClickerIntervalId) { // Restart if active
+                           startAutoClicker();
+                        }
                     } else {
                         clickIntervalInput.classList.add('input-flash-deny');
+                        clickIntervalInput.value = currentIntervalValue;
                         setTimeout(() => clickIntervalInput.classList.remove('input-flash-deny'), 700);
                     }
                 }
@@ -1266,3 +1315,4 @@
     });
     </script>
 </body>
+</html>
