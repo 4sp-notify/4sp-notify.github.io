@@ -619,11 +619,11 @@
                 <div id="autoclicker" class="tab-content">
                     <div class="control-group" data-search-terms="autoclicker enable">
                          <label class="checkbox-label-v4">Enable Autoclicker <input type="checkbox" id="autoclickerEnabled" data-setting="autoclickerEnabled"></label>
-                    </div>
-                    <div class="control-group" data-search-terms="autoclicker interval speed">
+                     </div>
+                     <div class="control-group" data-search-terms="autoclicker interval speed">
                          <label for="clickInterval">Click Interval (ms)</label>
                          <input type="number" id="clickInterval" value="200" min="50" data-setting="clickInterval">
-                    </div>
+                     </div>
                      <div class="control-group" data-search-terms="autoclicker activation method hover hold">
                          <label>Activation Method</label>
                          <div class="radio-group-container">
@@ -791,7 +791,6 @@
         let isMuted = false;
         let lastVolumeBeforeMute = 1;
         let volumeBeforeNightMode = 1;
-        let blockSoundCreation = false; // Flag to prevent sound creation during clear
 
         let spatialPadRect = null;
         let currentSnapAngle = null;
@@ -836,23 +835,26 @@
             nightModeCompressor: new DynamicsCompressorNode(audioContext, {threshold: 0, knee: 30, ratio: 1, attack: 0.003, release: 0.25 }),
         };
         
+        const autoclickerEngine = {
+            isRunning: false,
+            target: null,
+            method: 'hover',
+            interval: 200,
+            lastClickTimestamp: 0,
+            loopId: null,
+        };
+
         // Initialize gains to be off
         nodes.partyMode.gain.gain.value = 0;
         nodes.reverb.gain.gain.value = 0;
 
         // --- CORRECTED AUDIO GRAPH ---
-
-        // Path for non-spatial sounds
         nodes.inputGain.connect(masterGain);
-
-        // Path for spatial sounds
         nodes.spatialInput.connect(nodes.airAbsorptionFilter);
         nodes.airAbsorptionFilter.connect(nodes.mainPanner).connect(masterGain);
         nodes.airAbsorptionFilter.connect(nodes.reverb.gain).connect(nodes.reverb.node).connect(masterGain);
         nodes.airAbsorptionFilter.connect(nodes.earlyReflections.input);
         nodes.earlyReflections.output.connect(masterGain);
-
-        // Main effects chain (Dry Path)
         masterGain.connect(nodes.eqBass)
                   .connect(nodes.bassWaveShaper)
                   .connect(nodes.eqMid)
@@ -863,17 +865,12 @@
                   .connect(nodes.awarenessGain)
                   .connect(nodes.nightModeCompressor)
                   .connect(finalCompressor);
-
-        // Stadium Echo (Party Mode) parallel path (Wet Path)
         masterGain.connect(nodes.partyMode.bass);
         nodes.partyMode.bass.connect(nodes.partyMode.reverb);
         nodes.partyMode.reverb.connect(nodes.partyMode.comp);
         nodes.partyMode.comp.connect(nodes.partyMode.gain);
-        nodes.partyMode.gain.connect(finalCompressor); // Mix wet signal into the final compressor
-
-        // Final output
+        nodes.partyMode.gain.connect(finalCompressor);
         finalCompressor.connect(audioContext.destination);
-
 
         async function createReverbIR(audioContext, duration = 2, decay = 2) { const sampleRate = audioContext.sampleRate; const length = sampleRate * duration; const impulse = audioContext.createBuffer(2, length, sampleRate); for (let ch = 0; ch < 2; ch++) { const data = impulse.getChannelData(ch); for (let i = 0; i < length; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay); } return impulse; }
         async function setupReverbs() { nodes.reverb.node.buffer = await createReverbIR(audioContext, 2, 3); nodes.partyMode.reverb.buffer = await createReverbIR(audioContext, 3, 1.5); }
@@ -885,23 +882,19 @@
         
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
         const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start() { if (this.isActive) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); showStatus('Could not access microphone. Please enable it in browser settings.', 'error'); const awarenessCheckbox = document.querySelector('[data-setting="modeAwareness"]'); if(awarenessCheckbox) awarenessCheckbox.checked = false; }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); let voiceEnergy = 0; for (let i = 5; i < 100; i++) voiceEnergy += dataArray[i]; voiceEnergy /= 95; const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; nodes.awarenessGain.gain.setTargetAtTime(newVolume, audioContext.currentTime, 0.1); } };
-        const stopAllAutoclickers = () => { document.querySelectorAll('[data-autoclicker-interval-id]').forEach(button => { if (button.dataset.autoclickerIntervalId) { clearInterval(button.dataset.autoclickerIntervalId); delete button.dataset.autoclickerIntervalId; } }); };
+        
         const clearSounds = () => {
-            blockSoundCreation = true;
-            stopAllAutoclickers();
-
             const autoclickerCheckbox = document.getElementById('autoclickerEnabled');
             if (autoclickerCheckbox) {
                 autoclickerCheckbox.checked = false;
             }
-
+            autoclickerEngine.isRunning = false;
+            autoclickerEngine.target = null;
+            
             const fadeOutTime = parseFloat(document.getElementById('fadeOut').value || 0.1);
             for (const [_, instances] of activeSounds.entries()) {
                 [...instances].forEach(sound => sound.stop(fadeOutTime));
             }
-            setTimeout(() => {
-                blockSoundCreation = false;
-            }, (fadeOutTime * 1000) + 200);
         };
         
         class Sound {
@@ -952,8 +945,6 @@
         }
         
         async function playSound(fileName, button) {
-            if (blockSoundCreation) return;
-
             let currentSoundCount = 0;
             for (const instances of activeSounds.values()) {
                 currentSoundCount += instances.length;
@@ -1027,12 +1018,24 @@
                         button.dataset.category = categoryKey;
                         button.addEventListener('click', () => playSound(fileName, button));
 
-                        const startAutoclicker = (btn) => { if (btn.dataset.autoclickerIntervalId) return; const interval = parseInt(document.getElementById('clickInterval').value, 10); const intervalId = setInterval(() => btn.click(), interval); btn.dataset.autoclickerIntervalId = intervalId; };
-                        const stopAutoclicker = (btn) => { if (btn.dataset.autoclickerIntervalId) { clearInterval(btn.dataset.autoclickerIntervalId); delete btn.dataset.autoclickerIntervalId; } };
-                        button.addEventListener('mouseenter', (e) => { const method = document.querySelector('input[name="autoclickerActivation"]:checked').value; if (document.getElementById('autoclickerEnabled').checked && method === 'hover') { startAutoclicker(e.currentTarget); } });
-                        button.addEventListener('mouseleave', (e) => { stopAutoclicker(e.currentTarget); });
-                        button.addEventListener('mousedown', (e) => { const method = document.querySelector('input[name="autoclickerActivation"]:checked').value; if (document.getElementById('autoclickerEnabled').checked && method === 'hold') { e.currentTarget.click(); startAutoclicker(e.currentTarget); } });
-                        button.addEventListener('mouseup', (e) => { stopAutoclicker(e.currentTarget); });
+                        button.addEventListener('mouseenter', function() {
+                            if (autoclickerEngine.method === 'hover') {
+                                autoclickerEngine.target = this;
+                                autoclickerEngine.lastClickTimestamp = 0;
+                            }
+                        });
+                        button.addEventListener('mouseleave', function() {
+                            if (autoclickerEngine.method === 'hover' && autoclickerEngine.target === this) {
+                                autoclickerEngine.target = null;
+                            }
+                        });
+                        button.addEventListener('mousedown', function() {
+                            if (autoclickerEngine.method === 'hold') {
+                                this.click();
+                                autoclickerEngine.target = this;
+                                autoclickerEngine.lastClickTimestamp = Date.now();
+                            }
+                        });
                         buttonsGrid.appendChild(button);
                     });
                     categoryDiv.appendChild(buttonsGrid);
@@ -1128,10 +1131,25 @@
         function startDrag(event) { if (!document.getElementById('modeSpatial').checked || (event.type === 'mousedown' && event.button !== 0)) return; spatialPadRect = spatialPad.getBoundingClientRect(); isDragging = true; document.body.style.userSelect = 'none'; handleDrag(event); }
         function stopDrag() { if (!isDragging) return; isDragging = false; spatialPadRect = null; currentSnapAngle = null; document.body.style.userSelect = ''; spatialPuck.classList.remove('snapped'); const baseSpeed = parseFloat(document.getElementById('speed').value || 1); activeSounds.forEach(instances => instances.forEach(s => { if(s.sourceNode) s.sourceNode.playbackRate.setTargetAtTime(baseSpeed, audioContext.currentTime, 0.01); })); lastDragPosition = { x: 0, y: 0, timestamp: 0 }; const deadzoneRadius = 0.15; const posEl = document.querySelector('.spatial-audio-control'); const currentX = parseFloat(posEl.dataset.x); const currentY = parseFloat(posEl.dataset.y); if (Math.sqrt(currentX**2 + currentY**2) < deadzoneRadius) { updateSpatialPuckAndAudio(0, 0, currentZ, spatialPad.offsetWidth / 2); } }
 
+        function startAutoclickerEngine() {
+            if (autoclickerEngine.loopId) return;
+            autoclickerEngine.loopId = setInterval(() => {
+                if (autoclickerEngine.isRunning && autoclickerEngine.target) {
+                    const now = Date.now();
+                    if (now - autoclickerEngine.lastClickTimestamp >= autoclickerEngine.interval) {
+                        autoclickerEngine.target.click();
+                        autoclickerEngine.lastClickTimestamp = now;
+                    }
+                }
+            }, 50);
+        }
+
         async function initialize() {
             await setupReverbs();
             createEarlyReflectionsEngine();
+            startAutoclickerEngine();
             requestAnimationFrame(updateButtonVisuals);
+
             saveSettingsBtn.addEventListener('click', saveSettings); 
             document.getElementById('resetSettingsBtn').addEventListener('click', () => { if (confirm('Are you sure you want to reset all settings on this page? This cannot be undone.')) { localStorage.removeItem(LOCAL_STORAGE_KEY); window.location.reload(); } }); 
             document.getElementById('clearSoundsBtn').addEventListener('click', clearSounds); 
@@ -1173,6 +1191,11 @@
             document.querySelectorAll('input[name="soundSortOrder"]').forEach(radio => {
                 radio.addEventListener('change', loadSoundsAndCreateButtons);
             });
+
+            document.getElementById('autoclickerEnabled').addEventListener('change', e => { autoclickerEngine.isRunning = e.target.checked; if (!e.target.checked) { autoclickerEngine.target = null; } });
+            document.getElementById('clickInterval').addEventListener('input', e => { autoclickerEngine.interval = parseInt(e.target.value, 10) || 200; });
+            document.querySelectorAll('input[name="autoclickerActivation"]').forEach(radio => { radio.addEventListener('change', () => { if (radio.checked) { autoclickerEngine.method = radio.value; autoclickerEngine.target = null; } }); });
+            document.addEventListener('mouseup', () => { if (autoclickerEngine.method === 'hold') { autoclickerEngine.target = null; } });
 
             spatialPad.addEventListener('mousedown', startDrag); 
             document.addEventListener('mousemove', handleDrag); 
