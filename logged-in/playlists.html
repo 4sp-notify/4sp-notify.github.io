@@ -30,7 +30,15 @@
             --v4-font-secondary: 'SecondaryFont', sans-serif;
         }
         .hidden { display: none !important; }
-        body { display: flex; flex-direction: column; min-height: 100vh; margin: 0; font-family: var(--v4-font-primary); background: var(--v4-bg-gradient); color: var(--v4-text-primary); line-height: 1.6; }
+        body {
+            display: flex; flex-direction: column; min-height: 100vh; margin: 0; font-family: var(--v4-font-primary); background: var(--v4-bg-gradient); color: var(--v4-text-primary); line-height: 1.6;
+            user-select: none;
+            -webkit-user-select: none;
+        }
+        input[type="text"], input[type="number"], textarea {
+            user-select: text;
+            -webkit-user-select: text;
+        }
         .soundboard-container-wrapper { display: flex; flex: 1; overflow: hidden; }
         
         /* Sidebar */
@@ -289,6 +297,27 @@
         #addPlaylistBtn.visible { opacity: 1; transform: translateX(0); }
         .sound-category-header { font-size: 0.9em; font-weight: bold; color: var(--v4-text-secondary); text-transform: uppercase; margin-top: 20px; padding-bottom: 8px; border-bottom: 1px solid var(--v4-border-softer); margin-bottom: 15px; }
         .sound-selection-grid > .sound-category-header:first-of-type { margin-top: 0; }
+        
+        /* --- NEW: Welcome & Dev Modal & Input Animations --- */
+        #welcomeModal .modal-content {max-width: 500px;}
+        .controls-list { list-style: none; padding: 0; margin: 0; }
+        .controls-list li { display: flex; justify-content: space-between; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--v4-border-softer); }
+        .controls-list li:last-child { border-bottom: none; }
+        .key-combo { background: #e9ecef; padding: 3px 8px; border-radius: 5px; border: 1px solid #dee2e6; font-family: monospace; font-weight: bold; color: var(--v4-text-primary); }
+        .btn-secondary { background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 8px; font-family: var(--v4-font-primary); text-transform: uppercase; cursor: pointer; transition: all 0.3s ease; }
+        .btn-secondary:hover { background: #5a6268; }
+
+        .input-flash-accept { animation: flash-green 0.7s ease-out forwards; }
+        .input-flash-deny { animation: shake-horizontal 0.5s ease-out, flash-red 0.7s ease-out; }
+        @keyframes flash-green { 0% { box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.5); } 100% { box-shadow: 0 0 0 8px rgba(25, 135, 84, 0); } }
+        @keyframes flash-red { 0% { box-shadow: 0 0 0 0 rgba(220, 53, 69, 0.5); } 100% { box-shadow: 0 0 0 8px rgba(220, 53, 69, 0); } }
+        @keyframes shake-horizontal { 10%, 90% { transform: translateX(-2px); } 20%, 80% { transform: translateX(4px); } 30%, 50%, 70% { transform: translateX(-6px); } 40%, 60% { transform: translateX(6px); } }
+        
+        #devMenu { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: var(--v4-card-bg); border: 1px solid var(--v4-border-light); border-radius: 10px; box-shadow: 0 5px 25px rgba(0,0,0,0.2); z-index: 3000; color: var(--v4-text-primary); }
+        #devMenuHeader { padding: 10px; background: var(--v4-input-bg); border-bottom: 1px solid var(--v4-border-light); cursor: move; border-top-left-radius: 10px; border-top-right-radius: 10px; text-align: center; font-weight: bold; }
+        #devMenuContent { padding: 15px; display: flex; flex-direction: column; gap: 10px; }
+        #devMenu .btn-dev { width: 100%; padding: 8px; border-radius: 6px; }
+
     </style>
 </head>
 <body class="soundboard-page">
@@ -453,6 +482,33 @@
     </div>
 
     <div id="mute-indicator-container"> <span id="muteIndicator" class="mute-status">Muted</span> </div>
+    
+    <div id="welcomeModal" class="modal-backdrop">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Welcome to Playlists!</h2>
+            </div>
+            <div class="modal-body">
+                <p>Here are some handy shortcuts to get you started:</p>
+                <ul class="controls-list">
+                    <li><span>Mute/Unmute All Sounds</span><span class="key-combo">M</span></li>
+                    <li><span>Clear All Playing Sounds</span><span class="key-combo">Shift + C</span></li>
+                </ul>
+            </div>
+            <div class="modal-footer">
+                <button id="dismissWelcomeBtn" class="btn-secondary">Dismiss</button>
+                <button id="dismissWelcomePermanentlyBtn" class="btn-primary">Got It, Don't Show Again</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="devMenu">
+        <div id="devMenuHeader">Dev Testing Options</div>
+        <div id="devMenuContent">
+            <button id="devResetSettingsBtn" class="btn-secondary btn-dev">Reset All Settings</button>
+            <button id="devShowWelcomeBtn" class="btn-secondary btn-dev">Show Welcome Popup Again</button>
+        </div>
+    </div>
 
     <script>
     const dbRef_ = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
@@ -495,6 +551,8 @@
         const soundCache = new Map();
         let isMuted = false; let lastVolumeBeforeMute = 1;
         let validatedPlaylist = null;
+        let currentlyHoveredButton = null;
+        let autoClickerIntervalId = null;
 
         // --- IndexedDB Functions ---
         function initDB() {
@@ -556,8 +614,25 @@
         nodes.inputGain.connect(nodes.eqBass).connect(nodes.bassWaveShaper).connect(nodes.eqMid).connect(nodes.eqTreble).connect(masterGain).connect(audioContext.destination);
 
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
-        const clearSounds = () => { for (const soundInstances of activeSounds.values()) { [...soundInstances].forEach(sound => sound.stop()); } };
-        const stopAllAutoclickers = () => { document.querySelectorAll('[data-autoclicker-interval-id]').forEach(button => { if (button.dataset.autoclickerIntervalId) { clearInterval(button.dataset.autoclickerIntervalId); delete button.dataset.autoclickerIntervalId; } }); };
+        
+        const stopAutoClicker = () => {
+            if (autoClickerIntervalId) {
+                clearInterval(autoClickerIntervalId);
+                autoClickerIntervalId = null;
+            }
+        };
+
+        const clearSounds = () => {
+            stopAutoClicker();
+            const autoclickerCheckbox = document.getElementById('autoclickerEnabled');
+            if (autoclickerCheckbox) {
+                autoclickerCheckbox.checked = false;
+            }
+            for (const soundInstances of activeSounds.values()) { 
+                [...soundInstances].forEach(sound => sound.stop()); 
+            }
+        };
+
         const toggleMute = () => { isMuted = !isMuted; const muteIndicator = document.getElementById('muteIndicator'); if (isMuted) { lastVolumeBeforeMute = masterGain.gain.value; masterGain.gain.value = 0; muteIndicator.classList.add('visible'); } else { masterGain.gain.value = lastVolumeBeforeMute; muteIndicator.classList.remove('visible'); } if(controls.masterVolume) { controls.masterVolume.value = masterGain.gain.value; document.getElementById('masterVolumeValue').textContent = `${Math.round(masterGain.gain.value * 100)}%`; } };
 
         class Sound {
@@ -717,6 +792,25 @@
             }
         }
 
+        function startAutoClicker() {
+            stopAutoClicker(); 
+            if (!currentlyHoveredButton || !document.getElementById('autoclickerEnabled').checked) return;
+
+            const delay = parseInt(document.getElementById('clickInterval').value, 10);
+            if (isNaN(delay) || delay < 50) {
+                showStatus('Interval must be 50ms or higher.', 'error');
+                return;
+            }
+
+            autoClickerIntervalId = setInterval(() => {
+                if (currentlyHoveredButton) {
+                    currentlyHoveredButton.click();
+                } else {
+                    stopAutoClicker();
+                }
+            }, delay);
+        }
+
         async function renderPlaylistSoundboard(playlistId) {
             const playlist = await getPlaylistDB(playlistId);
             if (!playlist) { showStatus('Playlist not found.', 'error'); renderPlaylistsList(); return; }
@@ -738,7 +832,42 @@
 
             const grid = container.querySelector('.sound-buttons-grid-v4');
             if(playlist.sounds.length === 0){ grid.innerHTML = `<p style="color: ${playlist.color ? '#eee' : 'var(--v4-text-secondary)'};">This playlist is empty. Edit it to add some sounds!</p>`; }
-            else { playlist.sounds.forEach(fileName => { const button = document.createElement('button'); button.className = 'sound-button-v4'; button.textContent = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); button.dataset.soundFile = fileName; button.addEventListener('click', () => playSound(fileName, button)); const startAutoclicker = (btn) => { if (btn.dataset.autoclickerIntervalId) return; const interval = parseInt(document.getElementById('clickInterval').value, 10); const intervalId = setInterval(() => btn.click(), interval); btn.dataset.autoclickerIntervalId = intervalId; }; const stopAutoclicker = (btn) => { if (btn.dataset.autoclickerIntervalId) { clearInterval(btn.dataset.autoclickerIntervalId); delete btn.dataset.autoclickerIntervalId; } }; button.addEventListener('mouseenter', (e) => { const method = document.querySelector('input[name="autoclickerActivation"]:checked').value; if (controls.autoclickerEnabled.checked && method === 'hover') { startAutoclicker(e.currentTarget); } }); button.addEventListener('mouseleave', (e) => { stopAutoclicker(e.currentTarget); }); button.addEventListener('mousedown', (e) => { const method = document.querySelector('input[name="autoclickerActivation"]:checked').value; if (controls.autoclickerEnabled.checked && method === 'hold') { e.currentTarget.click(); startAutoclicker(e.currentTarget); } }); button.addEventListener('mouseup', (e) => { stopAutoclicker(e.currentTarget); }); grid.appendChild(button); }); }
+            else { 
+                playlist.sounds.forEach(fileName => { 
+                    const button = document.createElement('button'); 
+                    button.className = 'sound-button-v4'; 
+                    button.textContent = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' '); 
+                    button.dataset.soundFile = fileName; 
+                    button.addEventListener('click', () => playSound(fileName, button)); 
+                    
+                    button.addEventListener('mouseenter', () => {
+                        currentlyHoveredButton = button;
+                        if (document.getElementById('autoclickerEnabled').checked && document.querySelector('input[name="autoclickerActivation"]:checked').value === 'hover') {
+                            startAutoClicker();
+                        }
+                    });
+                    button.addEventListener('mouseleave', () => {
+                        if (currentlyHoveredButton === button) {
+                            currentlyHoveredButton = null;
+                            stopAutoClicker();
+                        }
+                    });
+                    button.addEventListener('mousedown', () => {
+                        if (document.getElementById('autoclickerEnabled').checked && document.querySelector('input[name="autoclickerActivation"]:checked').value === 'hold') {
+                            currentlyHoveredButton = button;
+                            startAutoClicker();
+                        }
+                    });
+                    button.addEventListener('mouseup', () => {
+                            if (document.querySelector('input[name="autoclickerActivation"]:checked').value === 'hold') {
+                            currentlyHoveredButton = null;
+                            stopAutoClicker();
+                        }
+                    });
+                    
+                    grid.appendChild(button); 
+                }); 
+            }
             document.getElementById('backToPlaylistsBtn').addEventListener('click', renderPlaylistsList);
         }
 
@@ -746,16 +875,19 @@
         
         function playSound(fileName, button) {
             let currentSoundCount = 0;
-            for (const instances of activeSounds.values()) {
-                currentSoundCount += instances.length;
-            }
+            activeSounds.forEach(instances => currentSoundCount += instances.length);
+            
             if (currentSoundCount >= 500) {
                 showStatus('Sound limit reached (500). Please wait or clear sounds (Shift+C).', 'error', 2000);
                 return;
             }
 
             const onEnd = (soundInstance) => { const instances = activeSounds.get(fileName) || []; const filtered = instances.filter(s => s !== soundInstance); if (filtered.length > 0) activeSounds.set(fileName, filtered); else activeSounds.delete(fileName); };
-            if (!document.getElementById('allowMultipleSounds').checked) { clearSounds(); }
+            if (!document.getElementById('allowMultipleSounds').checked) { 
+                for (const soundInstances of activeSounds.values()) { 
+                    [...soundInstances].forEach(sound => sound.stop()); 
+                }
+            }
             const sound = new Sound(fileName, onEnd);
             activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]);
             sound.play({ looping: document.getElementById('soundLooping').checked }).catch(err => { showStatus(`Error playing ${fileName}`, 'error'); onEnd(sound); });
@@ -1059,11 +1191,58 @@
             closeImportModal();
         });
 
+        function showWelcomePopupIfNeeded() {
+            const welcomeModal = document.getElementById('welcomeModal');
+            if (localStorage.getItem('hasSeenWelcomePopup') !== 'true') {
+                welcomeModal.classList.add('visible');
+            }
+            document.getElementById('dismissWelcomeBtn').addEventListener('click', () => {
+                welcomeModal.classList.remove('visible');
+            });
+            document.getElementById('dismissWelcomePermanentlyBtn').addEventListener('click', () => {
+                localStorage.setItem('hasSeenWelcomePopup', 'true');
+                welcomeModal.classList.remove('visible');
+            });
+        }
+
+        function makeDraggable(element, handle) {
+            let pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
+            handle.onmousedown = dragMouseDown;
+
+            function dragMouseDown(e) {
+                e = e || window.event;
+                e.preventDefault();
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+                document.onmouseup = closeDragElement;
+                document.onmousemove = elementDrag;
+            }
+
+            function elementDrag(e) {
+                e = e || window.event;
+                e.preventDefault();
+                pos1 = pos3 - e.clientX;
+                pos2 = pos4 - e.clientY;
+                pos3 = e.clientX;
+                pos4 = e.clientY;
+                element.style.top = (element.offsetTop - pos2) + "px";
+                element.style.left = (element.offsetLeft - pos1) + "px";
+            }
+
+            function closeDragElement() {
+                document.onmouseup = null;
+                document.onmousemove = null;
+            }
+        }
+
 
         async function initializeApp() {
             await initDB();
             try { const response = await fetch('../SoundboardNames.json'); allSoundsData = await response.json(); } catch (error) { showStatus('Failed to load sound list.', 'error'); }
             
+            showWelcomePopupIfNeeded();
+            makeDraggable(document.getElementById('devMenu'), document.getElementById('devMenuHeader'));
+
             createModal.addEventListener('click', (e) => { if(e.target === createModal) closeCreateModal(); });
             importModal.addEventListener('click', (e) => { if(e.target === importModal) closeImportModal(); });
             exportModal.addEventListener('click', (e) => { if(e.target === exportModal) closeExportModal(); });
@@ -1114,27 +1293,63 @@
             const recommendedTune = { eqBass: 4, eqMid: 2, eqTreble: 5 };
             document.getElementById('applyEqTuneBtn').addEventListener('click', () => { Object.entries(recommendedTune).forEach(([key, value]) => { const slider = document.getElementById(key); if (slider) { slider.value = value; slider.dispatchEvent(new Event('input', { bubbles: true })); } }); });
 
-            document.addEventListener('keydown', (event) => { 
+            const keysPressed = {};
+            document.addEventListener('keydown', (event) => {
+                const key = event.key.toLowerCase();
+                keysPressed[key] = true;
                 if (event.target.tagName === 'INPUT' || event.target.tagName === 'SELECT' || event.target.tagName === 'TEXTAREA') return; 
-                if (event.shiftKey && (event.key === 'C' || event.key === 'c')) {
+                
+                if (keysPressed['shift'] && key === 'c') {
                     event.preventDefault();
-                    stopAllAutoclickers();
                     const currentVolume = masterGain.gain.value;
                     const wasAlreadyMuted = currentVolume === 0;
                     if (!wasAlreadyMuted) {
                         masterGain.gain.setValueAtTime(0, audioContext.currentTime);
                     }
-                    clearSounds();
+                    for (let i = 0; i < 100; i++) {
+                        setTimeout(clearSounds, i * 1);
+                    }
                     setTimeout(() => {
                         if (!wasAlreadyMuted) {
                              masterGain.gain.setValueAtTime(currentVolume, audioContext.currentTime);
                         }
-                    }, 100);
+                    }, 150);
                 } 
-                if (!event.shiftKey && (event.key === 'M' || event.key === 'm')) { 
+                if (!keysPressed['shift'] && key === 'm') { 
                     event.preventDefault(); 
                     toggleMute(); 
-                } 
+                }
+                if (keysPressed['shift'] && keysPressed['0'] && key === 'c') {
+                    event.preventDefault();
+                    const devMenu = document.getElementById('devMenu');
+                    devMenu.style.display = devMenu.style.display === 'block' ? 'none' : 'block';
+                }
+            });
+            document.addEventListener('keyup', (event) => {
+                keysPressed[event.key.toLowerCase()] = false;
+            });
+
+            document.querySelectorAll('input[type="checkbox"], input[type="radio"], button, select, a').forEach(el => {
+                const handler = (e) => {
+                    el.blur();
+                };
+                el.addEventListener('click', handler);
+                el.addEventListener('keyup', e => {
+                    if (e.key === ' ' || e.key === 'Enter') {
+                        handler(e);
+                    }
+                });
+            });
+
+            document.getElementById('devResetSettingsBtn').addEventListener('click', () => {
+                if (confirm('Are you sure you want to reset ALL settings? This will reload the page.')) {
+                    localStorage.removeItem(SETTINGS_KEY);
+                    location.reload();
+                }
+            });
+            document.getElementById('devShowWelcomeBtn').addEventListener('click', () => {
+                localStorage.removeItem('hasSeenWelcomePopup');
+                showStatus('Welcome popup will show on next visit.', 'success');
             });
 
             renderPlaylistsList();
