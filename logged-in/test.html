@@ -890,40 +890,49 @@
         
         try {
             await db.runTransaction(async (transaction) => {
-                const requestDoc = await transaction.get(requestRef);
-                if (!requestDoc.exists) throw "Document not found.";
-                const requestData = requestDoc.data();
-                if (requestData.userId === currentUser.uid) { alert("You cannot vote on your own request."); return; }
-                if (requestData.status === 'recyclable') return;
+            const requestDoc = await transaction.get(requestRef);
+            if (!requestDoc.exists) throw "Document not found.";
+            const requestData = requestDoc.data();
+            if (requestData.userId === currentUser.uid) {
+                alert("You cannot vote on your own request.");
+                return;
+            }
+            if (requestData.status === 'recyclable') return;
 
-                const userDoc = await transaction.get(userRef);
-                const userData = userDoc.data() || {};
-                const currentVoteCount = userData.dailyVoteCount || 0;
+            const userDoc = await transaction.get(userRef);
+            const userData = userDoc.data() || {};
+            const currentVoteCount = userData.dailyVoteCount || 0;
 
-                let { upvotedBy = [], downvotedBy = [] } = requestData;
-                const upvoteIndex = upvotedBy.indexOf(currentUser.uid);
-                const downvoteIndex = downvotedBy.indexOf(currentUser.uid);
-                
-                let isNewVote = (isUpvote && upvoteIndex === -1) || (!isUpvote && downvoteIndex === -1);
+            let { upvotedBy = [], downvotedBy = [] } = requestData;
+            const upvoteIndex = upvotedBy.indexOf(currentUser.uid);
+            const downvoteIndex = downvotedBy.indexOf(currentUser.uid);
+            
+            let isNewVote = (isUpvote && upvoteIndex === -1) || (!isUpvote && downvoteIndex === -1);
 
-                if (isUpvote) {
-                    if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); } else { upvotedBy.push(currentUser.uid); }
-                    if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); }
-                } else {
-                    if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); } else { downvotedBy.push(currentUser.uid); }
-                    if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); }
+            if (isUpvote) {
+                if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); } 
+                else { upvotedBy.push(currentUser.uid); }
+                if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); }
+            } else {
+                if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); } 
+                else { downvotedBy.push(currentUser.uid); }
+                if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); }
+            }
+
+            if (!IS_ADMIN_ACCOUNT && isNewVote) {
+                if (currentVoteCount >= VOTE_LIMIT) {
+                    throw new Error("Vote limit reached.");
                 }
-
-                if (!IS_ADMIN_ACCOUNT && isNewVote) {
-                    if (currentVoteCount >= VOTE_LIMIT) throw new Error("Vote limit reached.");
-                    transaction.update(userRef, { 
-                        dailyVoteCount: firebase.firestore.FieldValue.increment(1), 
-                        lastActionDate: new Date().toLocaleDateString('sv-SE') // YYYY-MM-DD format
-                    });
-                }
-                
-                transaction.update(requestRef, { upvotedBy, downvotedBy, upvotes: upvotedBy.length, downvotes: downvotedBy.length });
-            });
+                // *** THIS IS THE CRITICAL CHANGE ***
+                // Instead of incrementing on the server, we calculate the new value here.
+                transaction.update(userRef, { 
+                    dailyVoteCount: currentVoteCount + 1, 
+                    lastActionDate: new Date().toLocaleDateString('sv-SE')
+                });
+            }
+            
+            transaction.update(requestRef, { upvotedBy, downvotedBy, upvotes: upvotedBy.length, downvotes: downvotedBy.length });
+        });
 
             await checkAndResetDailyLimits(currentUser); // Re-sync local profile after transaction
             fetchAndDisplayRequests();
