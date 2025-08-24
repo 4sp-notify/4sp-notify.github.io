@@ -305,48 +305,62 @@
         }
     });
 
-    // --- ROBUST AUDIO MUTING LOGIC ---
-    // We store the original browser AudioContext and any suspended instances we create.
-    let originalAudioContext = window.AudioContext || window.webkitAudioContext;
-    let suspendedAudioContexts = [];
+    // --- NEW: SILENT STARTUP LOGIC ---
+    const originalAudioContext = window.AudioContext || window.webkitAudioContext;
+    let modifiedAudioContexts = [];
 
-    // This function mutes all future audio by creating "suspended" AudioContexts.
-    function engageGlobalMute() {
+    // This function intercepts AudioContext creation and routes it through a muted GainNode.
+    function engageSilentProcessing() {
         if (!originalAudioContext) {
-            console.warn("Web Audio API not supported. Cannot apply global mute.");
+            console.warn("Web Audio API not supported. Cannot apply silent processing.");
             return;
         }
 
-        // We define a temporary, custom class that creates a pre-suspended AudioContext.
-        class MutedAudioContext extends originalAudioContext {
+        // We define a temporary, custom class that modifies the audio output.
+        class SilentAudioContext extends originalAudioContext {
             constructor(options) {
-                super(options);
-                // Immediately suspend the context to prevent any sound.
-                this.suspend().then(() => {
-                    console.log(`AudioContext created in a suspended (muted) state.`);
+                super(options); // Create the actual AudioContext.
+
+                // Create a GainNode, which acts as a volume control.
+                const masterGain = this.createGain();
+                // Set the initial volume to 0 (silent).
+                masterGain.gain.setValueAtTime(0, this.currentTime);
+                // Connect our volume control to the actual speakers.
+                masterGain.connect(super.destination);
+
+                // IMPORTANT: We overwrite the 'destination' property.
+                // Now, when the game tries to connect its sound to the 'destination',
+                // it's actually connecting to our masterGain node instead of the speakers.
+                Object.defineProperty(this, 'destination', {
+                    value: masterGain,
+                    writable: false,
                 });
-                // Store this instance so we can resume it later.
-                suspendedAudioContexts.push(this);
+                
+                console.log("AudioContext created with silent gain node. Audio is processing but not audible.");
+                modifiedAudioContexts.push(this);
             }
         }
+        
         // Overwrite the global constructor. Any script that now tries to create
-        // an AudioContext will get our muted version instead.
-        window.AudioContext = MutedAudioContext;
-        window.webkitAudioContext = MutedAudioContext;
-        console.log("Global AudioContext has been temporarily overwritten to enforce mute.");
+        // an AudioContext will get our silent version instead.
+        window.AudioContext = SilentAudioContext;
+        window.webkitAudioContext = SilentAudioContext;
+        console.log("Global AudioContext has been temporarily overwritten to enforce silent startup.");
     }
 
-    // This function un-mutes the contexts and restores the original browser functionality.
-    function releaseGlobalMute() {
+    // This function restores the audio output and original browser functionality.
+    function restoreAudioOutput() {
         if (!originalAudioContext) return;
 
-        // Resume all the contexts that were suspended.
-        suspendedAudioContexts.forEach(context => {
-            context.resume().then(() => {
-                console.log("Resumed a suspended AudioContext.");
-            });
+        // Turn the volume back up on all the contexts we modified.
+        modifiedAudioContexts.forEach(context => {
+            // The 'destination' is our GainNode. We access its 'gain' property.
+            if (context.destination && typeof context.destination.gain?.setValueAtTime === 'function') {
+                context.destination.gain.setValueAtTime(1, context.currentTime);
+                console.log("Restored volume for a modified AudioContext.");
+            }
         });
-        suspendedAudioContexts = []; // Clear the array for next use.
+        modifiedAudioContexts = []; // Clear the array for next use.
 
         // Restore the original AudioContext constructor to the window.
         window.AudioContext = originalAudioContext;
@@ -358,12 +372,12 @@
     const customPlayBtn = document.getElementById('customPlayBtn');
     if (customPlayBtn) {
         customPlayBtn.addEventListener('click', () => {
-            // 1. Engage the global mute BEFORE starting the game.
-            console.log("Play button pressed. Engaging robust global mute for 12 seconds.");
-            engageGlobalMute();
+            // 1. Engage silent processing BEFORE starting the game.
+            console.log("Play button pressed. Engaging silent processing for 15 seconds.");
+            engageSilentProcessing();
             
             // 2. Start the game by clicking the original button.
-            // When js-dos runs, it will use our MutedAudioContext constructor.
+            // When js-dos runs, it will use our SilentAudioContext constructor.
             const originalStartBtn = document.querySelector('#DOOM .dosbox-start');
             if (originalStartBtn) {
                 originalStartBtn.click();
@@ -372,11 +386,10 @@
             // Hide the custom play button.
             customPlayBtn.style.display = 'none';
 
-            // 3. Set a timer to unmute after 12 seconds.
+            // 3. Set a timer to restore audio output after 15 seconds.
             setTimeout(() => {
-                console.log("12 seconds have passed. Releasing global mute and restoring audio.");
-                // This function will both resume the created context and restore the original functionality.
-                releaseGlobalMute();
+                console.log("15 seconds have passed. Restoring audio output.");
+                restoreAudioOutput();
 
                 // As a fallback, also call the js-dos unmute function in case it tracks its own state.
                 if (dosbox_DOOM && typeof dosbox_DOOM.unmute === 'function') {
