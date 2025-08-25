@@ -460,9 +460,43 @@
             outline: none;
         }
 
+        /* --- NEW: FULL PAGE LOADER FOR REDIRECT --- */
+        #page-loader {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 20000;
+            background-color: rgba(255, 255, 255, 0.7);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.3s ease, visibility 0.3s ease;
+        }
+        #page-loader.visible {
+            opacity: 1;
+            visibility: visible;
+        }
+        #page-loader::after {
+            content: "";
+            width: 50px;
+            height: 50px;
+            border: 5px solid #ccc;
+            border-radius: 50%;
+            border-top-color: #6720bd;
+            animation: spin 1s linear infinite;
+        }
+
     </style>
 </head>
 <body>
+    <div id="page-loader"></div>
+
     <section class="hero-section dark-bg">
         <div class="container">
             <h1>SIGN UP FOR 4SP</h1>
@@ -618,11 +652,20 @@
             const verifyPasswordInput = document.getElementById('verifyPassword');
             const togglePasswordBtn = document.getElementById('togglePassword');
             const toggleVerifyPasswordBtn = document.getElementById('toggleVerifyPassword');
+            const pageLoader = document.getElementById('page-loader');
             let currentUsername = '';
             
             const actionCodeSettings = {
                 url: `${window.location.protocol}//${window.location.hostname}${(window.location.port ? ':' + window.location.port: '')}/verify.html`,
                 handleCodeInApp: true
+            };
+
+            const showPageLoader = (show) => {
+                if(show) {
+                    pageLoader.classList.add('visible');
+                } else {
+                    pageLoader.classList.remove('visible');
+                }
             };
             
             const showMessage = (text, isError = true) => {
@@ -860,7 +903,6 @@
             
             // --- RECREATED PROVIDER SIGNUP FLOW (Using Redirects) ---
             
-            // This function initiates the redirect.
             const startProviderSignUp = (providerName) => {
                 let provider;
                 if (providerName === 'Google') {
@@ -873,7 +915,6 @@
                     return;
                 }
                 
-                // Store a flag so we know a redirect is happening
                 sessionStorage.setItem('pendingRedirect', providerName);
                 auth.signInWithRedirect(provider).catch(error => {
                     console.error("Redirect Error:", error);
@@ -882,28 +923,18 @@
                 });
             };
 
-            // This function handles the result when the page reloads.
             const handleRedirectResult = async () => {
-                const pendingProvider = sessionStorage.getItem('pendingRedirect');
-                if (!pendingProvider) return; // No redirect was in progress
-
-                const button = pendingProvider === 'Google' ? googleSignupBtn : githubSignupBtn;
-                setButtonLoading(button, true);
-                
-                let tempUser = null;
                 try {
                     const result = await auth.getRedirectResult();
                     if (!result || !result.user) {
-                        // This can happen if the user closes the tab before completing.
-                        // No error message is needed.
-                        return;
+                        return; // No user, no redirect, do nothing.
                     }
                     
                     const user = result.user;
-                    tempUser = user;
-
+                    const pendingProvider = sessionStorage.getItem('pendingRedirect');
+                    
                     if (!user.email) {
-                        throw new Error(`Email permission was denied by ${pendingProvider}. We need your email to create an account.`);
+                        throw new Error(`Email permission was denied by ${pendingProvider || 'your provider'}. We need your email to create an account.`);
                     }
                     if (await isEmailBanned(user.email)) {
                         throw new Error('This email address is not allowed to register.');
@@ -922,26 +953,27 @@
 
                         const docCreated = await createUserDocument(user, pendingProvider.toLowerCase(), finalUsername);
                         if (!docCreated) throw new Error("Could not save user profile. Please try again.");
+                        
                         if (!user.emailVerified) await user.sendEmailVerification(actionCodeSettings);
                         showSuccessScreen(finalUsername, user.email);
                     } else {
-                        throw new Error(`An account with this ${pendingProvider} email already exists. Please log in instead.`);
+                        throw new Error(`An account with this ${pendingProvider || 'provider'} email already exists. Please log in instead.`);
                     }
                 } catch (error) {
-                    if (tempUser) await cleanupFailedUser(tempUser);
+                    if (error.code !== 'auth/user-cancelled') { // Don't show error if user just closes window
+                      showMessage(error.message || `Failed to sign up.`);
+                    }
                     if (auth.currentUser) await auth.signOut();
-                    console.error(`${pendingProvider} Redirect Error:`, error);
-                    showMessage(error.message || `Failed to sign up with ${pendingProvider}.`);
+                    console.error(`Redirect Result Error:`, error);
                 } finally {
                     sessionStorage.removeItem('pendingRedirect');
-                    setButtonLoading(button, false);
+                    showPageLoader(false);
                 }
             };
 
             googleSignupBtn.addEventListener('click', () => startProviderSignUp('Google'));
             githubSignupBtn.addEventListener('click', () => startProviderSignUp('GitHub'));
 
-            // --- INSTRUCTIONAL OVERLAY LOGIC ---
             const instructionalOverlay = document.getElementById('instructional-overlay');
             const instructionInput = document.getElementById('instruction-input');
             const hasSeenInstructions = localStorage.getItem('hasSeenSignupInstructions');
@@ -960,16 +992,12 @@
                 });
             }
 
-            // --- INITIALIZE PAGE AND HANDLE REDIRECT ---
             const initializePage = () => {
-                const pendingProvider = sessionStorage.getItem('pendingRedirect');
-                if (pendingProvider) {
-                    // If a redirect is pending, immediately show loading state
-                    const button = pendingProvider === 'Google' ? googleSignupBtn : githubSignupBtn;
-                    setButtonLoading(button, true);
+                if (sessionStorage.getItem('pendingRedirect')) {
+                    showPageLoader(true);
                 }
                 
-                handleRedirectResult(); // Check for redirect result on page load
+                handleRedirectResult();
 
                 [step2, rightPanelStep2].forEach(el => { el.style.display = 'none'; el.classList.remove('active'); });
                 [step1, rightPanelStep1].forEach(el => { el.style.display = 'block'; setTimeout(() => el.classList.add('active'), 20); });
