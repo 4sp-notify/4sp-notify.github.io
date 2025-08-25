@@ -234,10 +234,9 @@
         }
         .auth-col .error-message { color: #d9534f; }
         
-        /* NEW: Styles for the agreement text */
         .agreement-text {
             font-family: 'SecondaryFont', sans-serif;
-            font-size: 0.85em !important; /* using important to override general p style */
+            font-size: 0.85em !important; 
             color: #666;
             text-align: center;
             max-width: 350px;
@@ -253,7 +252,6 @@
             text-decoration: underline;
         }
 
-        /* NEW: Styles for the email provider warning */
         .email-provider-warning {
             font-family: 'SecondaryFont', sans-serif;
             font-size: 0.8em !important;
@@ -572,12 +570,14 @@
                 }
             };
             
-            // Updated: accept explicit email param so we ALWAYS store the canonical email in Firestore doc
             const createUserDocument = async (user, authMethod, username, explicitEmail = null) => {
+                // This function is the single source of truth for creating a user's database record.
+                // The `explicitEmail` parameter is key. If it's provided, it will be used.
+                // This ensures that the email we found (either from the form or OAuth) is what gets saved.
                 const emailToStore = explicitEmail || (user && user.email) || null;
                 try {
                     await db.collection('users').doc(user.uid).set({
-                        email: emailToStore,
+                        email: emailToStore, // The captured email is saved here.
                         authMethod: authMethod,
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                         username: username,
@@ -714,8 +714,11 @@
                     const user = userCredential.user;
                     try {
                         await user.sendEmailVerification(actionCodeSettings);
-                        // Pass explicit email to ensure it's stored
+                        
+                        // CHANGE [1]: For email signup, the `email` from the form is passed directly
+                        // to the `createUserDocument` function to ensure it is registered in Firestore.
                         const documentCreated = await createUserDocument(user, 'password', currentUsername, email);
+                        
                         if (!documentCreated) { throw new Error('Failed to create user document'); }
                         showSuccessScreen(currentUsername, email);
                     } catch (error) {
@@ -735,7 +738,6 @@
                 }
             });
 
-            // --- Robust provider signup (popup -> redirect fallback + userinfo fallback) ---
             const processOAuthResult = async (result, providerName) => {
                 console.log('processOAuthResult', providerName, result);
                 if (!result || !result.user) {
@@ -743,28 +745,24 @@
                     return;
                 }
                 const user = result.user;
-                // canonical email detection order
+                
+                // This block robustly finds the user's email from the OAuth provider.
                 let userEmail = user.email ||
                     (result.additionalUserInfo && result.additionalUserInfo.profile && (result.additionalUserInfo.profile.email || result.additionalUserInfo.profile.emailAddress));
 
-                // if missing but accessToken present for Google, fetch userinfo
                 if (!userEmail && result.credential && result.credential.accessToken && providerName === 'Google') {
                     try {
                         const accessToken = result.credential.accessToken;
                         const r = await fetch(`https://www.googleapis.com/oauth2/v3/userinfo?access_token=${encodeURIComponent(accessToken)}`);
                         if (r.ok) {
                             const profile = await r.json();
-                            console.log('google userinfo', profile);
                             userEmail = profile.email || userEmail;
-                        } else {
-                            console.warn('userinfo fetch failed', r.status);
                         }
                     } catch (err) {
                         console.error('Error fetching google userinfo', err);
                     }
                 }
 
-                // GitHub fallback attempt: if no email, try fetching user's public emails if access token present
                 if (!userEmail && result.credential && result.credential.accessToken && providerName === 'GitHub') {
                     try {
                         const token = result.credential.accessToken;
@@ -773,11 +771,8 @@
                         });
                         if (r.ok) {
                             const emails = await r.json();
-                            // prefer primary and verified
                             const primary = Array.isArray(emails) && emails.find(e => e.primary && e.verified) || emails[0];
                             if (primary && primary.email) userEmail = primary.email;
-                        } else {
-                            console.warn('github emails fetch failed', r.status);
                         }
                     } catch (err) {
                         console.error('Error fetching github emails', err);
@@ -811,8 +806,10 @@
                             if (counter > 1000) { finalUsername = `User${user.uid.substring(0, 12)}`; break; }
                         }
 
-                        // For OAuth signups we DON'T send email verification (provider is authoritative).
+                        // CHANGE [2]: For OAuth signups, the retrieved `userEmail` is passed
+                        // to the `createUserDocument` function to ensure it is registered in Firestore.
                         const documentCreated = await createUserDocument(user, providerName.toLowerCase(), finalUsername, userEmail);
+                        
                         if (!documentCreated) { throw new Error('Failed to create user document'); }
                         showSuccessScreen(finalUsername, userEmail);
                     } catch (error) {
@@ -826,7 +823,6 @@
                 }
             };
 
-            // start popup sign-in with fallback to redirect on common failures
             const startOAuthPopup = async (providerName) => {
                 try {
                     let provider;
@@ -841,17 +837,14 @@
                     } else return;
 
                     const result = await auth.signInWithPopup(provider);
-                    // clear redirect flag just in case
                     localStorage.removeItem('oauthRedirectInProgress');
                     await processOAuthResult(result, providerName);
                 } catch (err) {
                     console.error('Popup sign-in error', err);
                     if (err && (err.code === 'auth/popup-blocked' || err.code === 'auth/cancelled-popup-request' || err.code === 'auth/operation-not-supported-in-this-environment' || err.code === 'auth/web-storage-unsupported')) {
-                        // fallback to redirect flow
                         await startOAuthRedirectFlow(providerName);
                     } else {
                         if (err && err.code) {
-                            // show friendly messages for known codes
                             if (err.code === 'auth/popup-closed-by-user') { showMessage('', false); }
                             else if (err.code === 'auth/network-request-failed') showMessage('Network error. Please try again.');
                             else showMessage(`Failed to sign up with ${providerName}. Please try again.`);
@@ -884,15 +877,12 @@
                 }
             };
 
-            // handle redirect result on load (if there was a redirect)
             const handlePendingRedirectResult = async () => {
                 try {
                     const result = await auth.getRedirectResult();
                     const providerName = localStorage.getItem('oauthRedirectInProgress') || (result && result.additionalUserInfo && result.additionalUserInfo.providerId && result.additionalUserInfo.providerId.includes('github') ? 'GitHub' : 'Google');
                     if (result && result.user) {
                         await processOAuthResult(result, providerName);
-                    } else {
-                        // nothing to process
                     }
                 } catch (err) {
                     console.error('getRedirectResult error', err);
@@ -912,12 +902,10 @@
                 startOAuthPopup('GitHub');
             });
 
-            // If we came back from a redirect, try to process it
             setTimeout(() => {
                 if (localStorage.getItem('oauthRedirectInProgress')) {
                     handlePendingRedirectResult();
                 } else {
-                    // still call once to catch cases where redirect result exists without flag
                     auth.getRedirectResult().then(res => {
                         if (res && res.user) {
                             const providerId = (res && res.additionalUserInfo && res.additionalUserInfo.providerId) || '';
@@ -928,7 +916,6 @@
                 }
             }, 500);
 
-            // Initialize Form
             const initializeForm = () => {
                 [step2, rightPanelStep2].forEach(el => { el.style.display = 'none'; el.classList.remove('active'); });
                 [step1, rightPanelStep1].forEach(el => { el.style.display = 'block'; setTimeout(() => el.classList.add('active'), 20); });
