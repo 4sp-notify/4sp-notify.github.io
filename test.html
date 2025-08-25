@@ -381,7 +381,7 @@
             to { transform: rotate(360deg); }
         }
 
-        /* --- NEW: BAN-ENFORCER STYLE POPUP --- */
+        /* --- BAN-ENFORCER STYLE POPUP --- */
         #instructional-overlay {
             position: fixed;
             top: 0;
@@ -631,6 +631,7 @@
             };
             
             const setButtonLoading = (button, isLoading) => {
+                if (!button) return;
                 if (isLoading) {
                     button.classList.add('btn-loading');
                     button.disabled = true;
@@ -810,7 +811,7 @@
             
             signupEmailInput.addEventListener('input', () => {
                 const email = signupEmailInput.value.toLowerCase();
-                if (email.includes('@') && !email.endsWith('@gmail.com')) {
+                if (email.includes('@') && !email.endsWith('@gmail.com') && email.length > 8) {
                     emailProviderWarning.classList.add('visible');
                 } else {
                     emailProviderWarning.classList.remove('visible');
@@ -856,22 +857,53 @@
                     setButtonLoading(emailSignupBtn, false);
                 }
             });
+            
+            // --- RECREATED PROVIDER SIGNUP FLOW (Using Redirects) ---
+            
+            // This function initiates the redirect.
+            const startProviderSignUp = (providerName) => {
+                let provider;
+                if (providerName === 'Google') {
+                    provider = new firebase.auth.GoogleAuthProvider();
+                    provider.setCustomParameters({ 'prompt': 'select_account' });
+                } else if (providerName === 'GitHub') {
+                    provider = new firebase.auth.GithubAuthProvider();
+                    provider.addScope('user:email');
+                } else {
+                    return;
+                }
+                
+                // Store a flag so we know a redirect is happening
+                sessionStorage.setItem('pendingRedirect', providerName);
+                auth.signInWithRedirect(provider).catch(error => {
+                    console.error("Redirect Error:", error);
+                    showMessage("Could not start sign-up process. Please check browser settings.");
+                    sessionStorage.removeItem('pendingRedirect');
+                });
+            };
 
-            // --- RECREATED GOOGLE SIGNUP FUNCTION ---
-            const signUpWithGoogle = async () => {
-                showMessage('', false);
-                setButtonLoading(googleSignupBtn, true);
-                const provider = new firebase.auth.GoogleAuthProvider();
-                provider.setCustomParameters({ 'prompt': 'select_account' });
+            // This function handles the result when the page reloads.
+            const handleRedirectResult = async () => {
+                const pendingProvider = sessionStorage.getItem('pendingRedirect');
+                if (!pendingProvider) return; // No redirect was in progress
 
-                let tempUser = null; // Temporary user object for potential cleanup
+                const button = pendingProvider === 'Google' ? googleSignupBtn : githubSignupBtn;
+                setButtonLoading(button, true);
+                
+                let tempUser = null;
                 try {
-                    const result = await auth.signInWithPopup(provider);
-                    const user = result.user;
-                    tempUser = user; // Assign for cleanup in case of failure
+                    const result = await auth.getRedirectResult();
+                    if (!result || !result.user) {
+                        // This can happen if the user closes the tab before completing.
+                        // No error message is needed.
+                        return;
+                    }
                     
+                    const user = result.user;
+                    tempUser = user;
+
                     if (!user.email) {
-                        throw new Error(`Email permission was denied by Google. We need your email to create an account. Please try again and approve the email access request.`);
+                        throw new Error(`Email permission was denied by ${pendingProvider}. We need your email to create an account.`);
                     }
                     if (await isEmailBanned(user.email)) {
                         throw new Error('This email address is not allowed to register.');
@@ -888,81 +920,28 @@
                             finalUsername = `${username.slice(0, 16 - suffix.length)}${suffix}`;
                         }
 
-                        const docCreated = await createUserDocument(user, 'google', finalUsername);
+                        const docCreated = await createUserDocument(user, pendingProvider.toLowerCase(), finalUsername);
                         if (!docCreated) throw new Error("Could not save user profile. Please try again.");
                         if (!user.emailVerified) await user.sendEmailVerification(actionCodeSettings);
                         showSuccessScreen(finalUsername, user.email);
-
                     } else {
-                        throw new Error('An account with this Google email already exists. Please log in instead.');
-                    }
-                } catch (error) {
-                    if (tempUser) await cleanupFailedUser(tempUser); // Cleanup if any part failed
-                    if (auth.currentUser) await auth.signOut(); // Ensure logged out state
-                    console.error("Google Sign-Up Error:", error);
-                    let message = error.message || "An unknown error occurred.";
-                    if (error.code === 'auth/popup-closed-by-user') message = '';
-                    showMessage(message);
-                } finally {
-                    setButtonLoading(googleSignupBtn, false);
-                }
-            };
-
-            // --- RECREATED GITHUB SIGNUP FUNCTION ---
-            const signUpWithGitHub = async () => {
-                showMessage('', false);
-                setButtonLoading(githubSignupBtn, true);
-                const provider = new firebase.auth.GithubAuthProvider();
-                provider.addScope('user:email');
-
-                let tempUser = null;
-                try {
-                    const result = await auth.signInWithPopup(provider);
-                    const user = result.user;
-                    tempUser = user;
-                    
-                    if (!user.email) {
-                        throw new Error(`Email permission was denied by GitHub. We need your email to create an account. Please try again and approve the email access request.`);
-                    }
-                    if (await isEmailBanned(user.email)) {
-                        throw new Error('This email address is not allowed to register.');
-                    }
-                    
-                    if (result.additionalUserInfo?.isNewUser) {
-                        let username = (user.displayName || user.email.split('@')[0] || 'User').replace(/[^a-zA-Z0-9?!@#$%&\*\\-]/g, '').slice(0, 16);
-                        if (username.length < 4) username = `User${user.uid.substring(0, 8)}`;
-                        if (await checkProfanity(username)) username = `User${user.uid.substring(0, 8)}`;
-
-                        let finalUsername = username;
-                        for (let i = 1; await isUsernameTaken(finalUsername); i++) {
-                            const suffix = `_${i}`;
-                            finalUsername = `${username.slice(0, 16 - suffix.length)}${suffix}`;
-                        }
-
-                        const docCreated = await createUserDocument(user, 'github', finalUsername);
-                        if (!docCreated) throw new Error("Could not save user profile. Please try again.");
-                        if (!user.emailVerified) await user.sendEmailVerification(actionCodeSettings);
-                        showSuccessScreen(finalUsername, user.email);
-
-                    } else {
-                        throw new Error('An account with this GitHub email already exists. Please log in instead.');
+                        throw new Error(`An account with this ${pendingProvider} email already exists. Please log in instead.`);
                     }
                 } catch (error) {
                     if (tempUser) await cleanupFailedUser(tempUser);
                     if (auth.currentUser) await auth.signOut();
-                    console.error("GitHub Sign-Up Error:", error);
-                    let message = error.message || "An unknown error occurred.";
-                    if (error.code === 'auth/popup-closed-by-user') message = '';
-                    showMessage(message);
+                    console.error(`${pendingProvider} Redirect Error:`, error);
+                    showMessage(error.message || `Failed to sign up with ${pendingProvider}.`);
                 } finally {
-                    setButtonLoading(githubSignupBtn, false);
+                    sessionStorage.removeItem('pendingRedirect');
+                    setButtonLoading(button, false);
                 }
             };
 
-            googleSignupBtn.addEventListener('click', signUpWithGoogle);
-            githubSignupBtn.addEventListener('click', signUpWithGitHub);
-            
-            // --- NEW INSTRUCTIONAL OVERLAY LOGIC ---
+            googleSignupBtn.addEventListener('click', () => startProviderSignUp('Google'));
+            githubSignupBtn.addEventListener('click', () => startProviderSignUp('GitHub'));
+
+            // --- INSTRUCTIONAL OVERLAY LOGIC ---
             const instructionalOverlay = document.getElementById('instructional-overlay');
             const instructionInput = document.getElementById('instruction-input');
             const hasSeenInstructions = localStorage.getItem('hasSeenSignupInstructions');
@@ -981,15 +960,24 @@
                 });
             }
 
-            // Initialize Form
-            const initializeForm = () => {
+            // --- INITIALIZE PAGE AND HANDLE REDIRECT ---
+            const initializePage = () => {
+                const pendingProvider = sessionStorage.getItem('pendingRedirect');
+                if (pendingProvider) {
+                    // If a redirect is pending, immediately show loading state
+                    const button = pendingProvider === 'Google' ? googleSignupBtn : githubSignupBtn;
+                    setButtonLoading(button, true);
+                }
+                
+                handleRedirectResult(); // Check for redirect result on page load
+
                 [step2, rightPanelStep2].forEach(el => { el.style.display = 'none'; el.classList.remove('active'); });
                 [step1, rightPanelStep1].forEach(el => { el.style.display = 'block'; setTimeout(() => el.classList.add('active'), 20); });
                 backBtn.classList.remove('visible');
                 updateButtonState();
             };
 
-            initializeForm();
+            initializePage();
         });
     </script>
 </body>
