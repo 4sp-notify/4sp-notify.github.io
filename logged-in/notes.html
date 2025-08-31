@@ -373,31 +373,45 @@
                 const request = indexedDB.open("NotesDB", 1);
                 request.onerror = event => reject("Database error: " + event.target.errorCode);
                 request.onsuccess = event => { db = event.target.result; resolve(); };
-                request.onupgradeneeded = event => { event.target.result.createObjectStore("notes", { keyPath: "id" }); };
+                request.onupgradeneeded = event => {
+                    if (!event.target.result.objectStoreNames.contains("notes")) {
+                        event.target.result.createObjectStore("notes", { keyPath: "id" });
+                    }
+                 };
             });
         }
         function getNotesDB() {
             return new Promise((resolve, reject) => {
-                const request = db.transaction(["notes"], "readonly").objectStore("notes").getAll();
+                if (!db) { reject("DB not initialized."); return; }
+                const transaction = db.transaction(["notes"], "readonly");
+                const store = transaction.objectStore("notes");
+                const request = store.getAll();
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = (event) => reject("Error fetching notes: " + event.target.errorCode);
             });
         }
         function getNoteDB(id) {
             return new Promise((resolve, reject) => {
-                const request = db.transaction(["notes"], "readonly").objectStore("notes").get(id);
+                if (!db) { reject("DB not initialized."); return; }
+                const transaction = db.transaction(["notes"], "readonly");
+                const store = transaction.objectStore("notes");
+                const request = store.get(id);
                 request.onsuccess = () => resolve(request.result);
                 request.onerror = (event) => reject("Error fetching note: " + event.target.errorCode);
             });
         }
         function saveNoteDB(note) {
              return new Promise((resolve, reject) => {
-                const request = db.transaction(["notes"], "readwrite").objectStore("notes").put(note);
+                if (!db) { reject("DB not initialized."); return; }
+                const transaction = db.transaction(["notes"], "readwrite");
+                const store = transaction.objectStore("notes");
+                const request = store.put(note);
                 request.onsuccess = () => resolve();
                 request.onerror = (event) => reject("Error saving note: " + event.target.errorCode);
             });
         }
         async function saveMultipleNotesDB(notes) {
+            if (!db) { throw new Error("DB not initialized."); }
             const transaction = db.transaction(["notes"], "readwrite");
             const store = transaction.objectStore("notes");
             for (const note of notes) {
@@ -410,7 +424,10 @@
         }
         function deleteNoteDB(id) {
             return new Promise((resolve, reject) => {
-                const request = db.transaction(["notes"], "readwrite").objectStore("notes").delete(id);
+                if (!db) { reject("DB not initialized."); return; }
+                const transaction = db.transaction(["notes"], "readwrite");
+                const store = transaction.objectStore("notes");
+                const request = store.delete(id);
                 request.onsuccess = () => resolve();
                 request.onerror = (event) => reject("Error deleting note: " + event.target.errorCode);
             });
@@ -418,96 +435,98 @@
 
         // --- Main App Logic (Async) ---
         async function renderNotesList(activeArrangerId = null) {
-            const notes = await getNotesDB();
-            notesView.innerHTML = '';
-            if (notes.length === 0) {
-                notesView.innerHTML = `<p style="text-align:center; color: var(--v4-text-secondary); margin-top: 20px;">You haven't created any notes yet. Type in the box above to start!</p>`;
-                return;
-            }
-            notes.sort((a, b) => (a.order || 0) - (b.order || 0));
-            notes.forEach(note => { 
-                const card = document.createElement('div'); 
-                card.className = 'note-card'; 
-                card.dataset.noteId = note.id;
-                if (note.id === editingNoteId || note.id === viewingNoteId) card.classList.add('active-note');
-                if (note.color) card.style.backgroundColor = note.color;
-
-                card.innerHTML = `
-                    <div class="note-card-header">
-                        <div class="note-info">
-                            <div class="note-title-container marquee-container"><div class="marquee-content-wrapper"><span class="note-title"></span></div></div>
-                            <div class="note-description-container marquee-container"><div class="marquee-content-wrapper"><span class="note-description"></span></div></div>
-                        </div>
-                        <div class="note-card-actions">
-                             <div class="reorder-btn-group ${note.color ? 'glassy' : ''}">
-                                 <button class="half-btn up" title="Move Up">▲</button>
-                                 <button class="half-btn down" title="Move Down">▼</button>
-                             </div>
-                            <button class="action-btn export ${note.color ? 'glassy' : ''}" title="Export Note">🔗</button>
-                            <button class="action-btn open ${note.color ? 'glassy' : ''}" title="Open Note">📖</button>
-                            <button class="action-btn edit ${note.color ? 'glassy' : ''}" title="Edit Note">✏️</button>
-                            <button class="action-btn delete ${note.color ? 'glassy' : ''}" title="Delete Note">🗑️</button>
-                        </div>
-                    </div>`;
-                
-                const titleSpan = card.querySelector('.note-title');
-                const descriptionSpan = card.querySelector('.note-description');
-                const descriptionContainer = card.querySelector('.note-description-container');
-                titleSpan.textContent = note.title;
-
-                if (note.description && note.description.trim()) {
-                    descriptionContainer.style.display = '';
-                    descriptionSpan.textContent = note.description;
-                } else {
-                    descriptionContainer.style.display = 'none';
+            try {
+                const notes = await getNotesDB();
+                notesView.innerHTML = '';
+                if (notes.length === 0) {
+                    notesView.innerHTML = `<p style="text-align:center; color: var(--v4-text-secondary); margin-top: 20px;">You haven't created any notes yet. Type in the box above to start!</p>`;
+                    return;
                 }
+                notes.sort((a, b) => (a.order || 0) - (b.order || 0));
+                notes.forEach(note => { 
+                    const card = document.createElement('div'); 
+                    card.className = 'note-card'; 
+                    card.dataset.noteId = note.id;
+                    if (note.id === editingNoteId || note.id === viewingNoteId) card.classList.add('active-note');
+                    if (note.color) card.style.backgroundColor = note.color;
 
-                if (note.color) {
-                    titleSpan.style.color = '#fff'; descriptionSpan.style.color = '#eee';
-                    titleSpan.style.textShadow = '0 1px 3px rgba(0,0,0,0.4)';
-                    descriptionSpan.style.textShadow = '0 1px 3px rgba(0,0,0,0.4)';
-                }
+                    card.innerHTML = `
+                        <div class="note-card-header">
+                            <div class="note-info">
+                                <div class="note-title-container marquee-container"><div class="marquee-content-wrapper"><span class="note-title"></span></div></div>
+                                <div class="note-description-container marquee-container"><div class="marquee-content-wrapper"><span class="note-description"></span></div></div>
+                            </div>
+                            <div class="note-card-actions">
+                                 <div class="reorder-btn-group ${note.color ? 'glassy' : ''}">
+                                     <button class="half-btn up" title="Move Up">▲</button>
+                                     <button class="half-btn down" title="Move Down">▼</button>
+                                 </div>
+                                <button class="action-btn export ${note.color ? 'glassy' : ''}" title="Export Note">🔗</button>
+                                <button class="action-btn open ${note.color ? 'glassy' : ''}" title="Open Note">📖</button>
+                                <button class="action-btn edit ${note.color ? 'glassy' : ''}" title="Edit Note">✏️</button>
+                                <button class="action-btn delete ${note.color ? 'glassy' : ''}" title="Delete Note">🗑️</button>
+                            </div>
+                        </div>`;
+                    
+                    const titleSpan = card.querySelector('.note-title');
+                    const descriptionSpan = card.querySelector('.note-description');
+                    const descriptionContainer = card.querySelector('.note-description-container');
+                    titleSpan.textContent = note.title;
 
-                card.addEventListener('click', (e) => {
-                    // If the click is on a button, do nothing here.
-                    if (e.target.closest('.note-card-actions')) {
-                        return;
-                    }
-                
-                    // Otherwise, toggle the view mode.
-                    if (viewingNoteId === note.id) {
-                        exitAllModes();
+                    if (note.description && note.description.trim()) {
+                        descriptionContainer.style.display = '';
+                        descriptionSpan.textContent = note.description;
                     } else {
-                        enterViewMode(note.id);
+                        descriptionContainer.style.display = 'none';
                     }
-                });
 
-                card.querySelector('.action-btn.export').addEventListener('click', (e) => { e.stopPropagation(); openExportModal(note.id); }); 
-                card.querySelector('.action-btn.open').addEventListener('click', (e) => { e.stopPropagation(); enterViewMode(note.id); }); 
-                card.querySelector('.action-btn.edit').addEventListener('click', (e) => { e.stopPropagation(); enterEditMode(note.id); }); 
-                card.querySelector('.action-btn.delete').addEventListener('click', (e) => { e.stopPropagation(); deleteNote(note.id); });
-                card.querySelector('.half-btn.up').addEventListener('click', e => { e.stopPropagation(); moveNote(note.id, 'up'); });
-                card.querySelector('.half-btn.down').addEventListener('click', e => { e.stopPropagation(); moveNote(note.id, 'down'); });
-                 card.addEventListener('contextmenu', e => {
-                    if (e.target.closest('.action-btn') || e.target.closest('.reorder-btn-group')) return;
-                    e.preventDefault();
-                    e.stopPropagation();
+                    if (note.color) {
+                        titleSpan.style.color = '#fff'; descriptionSpan.style.color = '#eee';
+                        titleSpan.style.textShadow = '0 1px 3px rgba(0,0,0,0.4)';
+                        descriptionSpan.style.textShadow = '0 1px 3px rgba(0,0,0,0.4)';
+                    }
+
+                    card.addEventListener('click', (e) => {
+                        if (e.target.closest('.note-card-actions')) {
+                            return;
+                        }
+                        if (viewingNoteId === note.id) {
+                            exitAllModes();
+                        } else {
+                            enterViewMode(note.id);
+                        }
+                    });
+
+                    card.querySelector('.action-btn.export').addEventListener('click', (e) => { e.stopPropagation(); openExportModal(note.id); }); 
+                    card.querySelector('.action-btn.open').addEventListener('click', (e) => { e.stopPropagation(); enterViewMode(note.id); }); 
+                    card.querySelector('.action-btn.edit').addEventListener('click', (e) => { e.stopPropagation(); enterEditMode(note.id); }); 
+                    card.querySelector('.action-btn.delete').addEventListener('click', (e) => { e.stopPropagation(); deleteNote(note.id); });
+                    card.querySelector('.half-btn.up').addEventListener('click', e => { e.stopPropagation(); moveNote(note.id, 'up'); });
+                    card.querySelector('.half-btn.down').addEventListener('click', e => { e.stopPropagation(); moveNote(note.id, 'down'); });
+                     card.addEventListener('contextmenu', e => {
+                        if (e.target.closest('.action-btn') || e.target.closest('.reorder-btn-group')) return;
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const reorderGroup = card.querySelector('.reorder-btn-group');
+                        const wasVisible = reorderGroup.classList.contains('visible');
+                        document.querySelectorAll('.reorder-btn-group').forEach(el => el.classList.remove('visible'));
+                        if (!wasVisible) {
+                            reorderGroup.classList.add('visible');
+                        }
+                    });
+                    
                     const reorderGroup = card.querySelector('.reorder-btn-group');
-                    const wasVisible = reorderGroup.classList.contains('visible');
-                    document.querySelectorAll('.reorder-btn-group').forEach(el => el.classList.remove('visible'));
-                    if (!wasVisible) {
+                    if (note.id === activeArrangerId) {
                         reorderGroup.classList.add('visible');
                     }
-                });
-                
-                const reorderGroup = card.querySelector('.reorder-btn-group');
-                if (note.id === activeArrangerId) {
-                    reorderGroup.classList.add('visible');
-                }
 
-                notesView.appendChild(card); 
-            });
-            initializeMarquees();
+                    notesView.appendChild(card); 
+                });
+                initializeMarquees();
+            } catch (err) {
+                console.error("Failed to render notes:", err);
+                showStatus("Could not load notes from the database.", "error");
+            }
         }
         
         async function enterViewMode(noteId) {
