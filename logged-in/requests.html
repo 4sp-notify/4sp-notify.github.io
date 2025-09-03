@@ -74,7 +74,7 @@
     .header-user-info .email { font-family: SecondaryFont, sans-serif; font-size: 0.9em; color: #777; }
     
     .header-actions { display: flex; gap: 12px; flex-wrap: wrap; }
-    #createRequestBtn, #scheduleBtn, #manageBansBtn, #viewLimitsBtn {
+    #createRequestBtn, #scheduleBtn, #manageBansBtn, #viewLimitsBtn, #deniedRequestsBtn {
         border: none; color: #fff; padding: 10px 20px;
         border-radius: 10px; font-family: PrimaryFont, sans-serif; cursor: pointer; transition: all 0.3s ease;
         font-size: 0.95em; font-weight: 600; display: flex; align-items: center; gap: 8px;
@@ -83,7 +83,7 @@
       background: linear-gradient(135deg, #7b2cbf 0%, #9d4edd 100%); 
       box-shadow: 0 4px 15px rgba(123, 44, 191, 0.2);
     }
-    #scheduleBtn, #viewLimitsBtn { 
+    #scheduleBtn, #viewLimitsBtn, #deniedRequestsBtn { 
         background-color: #fff;
         color: #5a6268;
         border: 2px solid #e0e0e0;
@@ -95,7 +95,7 @@
     }
 
     #createRequestBtn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(123, 44, 191, 0.3); }
-    #scheduleBtn:hover, #viewLimitsBtn:hover { border-color: #5a6268; background-color: #f8f9fa; }
+    #scheduleBtn:hover, #viewLimitsBtn:hover, #deniedRequestsBtn:hover { border-color: #5a6268; background-color: #f8f9fa; }
     #manageBansBtn:hover { border-color: #dc3545; background-color: #fdf2f2; }
     #createRequestBtn:disabled {
         background: #ccc; cursor: not-allowed; transform: none; box-shadow: none; opacity: 0.7;
@@ -389,6 +389,7 @@
               <button id="manageBansBtn" class="btn" style="display: none;"><i class="fas fa-user-shield"></i>Manage Bans</button>
               <button id="viewLimitsBtn" class="btn"><i class="fas fa-tachometer-alt"></i>View Limits</button>
               <button id="scheduleBtn" class="btn"><i class="fas fa-calendar-alt"></i>View Schedule</button>
+              <button id="deniedRequestsBtn" class="btn" onclick="window.location.href='denied-requests.html'"><i class="fas fa-ban"></i>Denied Requests</button>
               <button id="createRequestBtn" class="btn" disabled title="Loading user status..."><i class="fas fa-plus"></i>Create Request</button>
           </div>
       </div>
@@ -602,8 +603,7 @@
         requestsBanReason: null,
         dailyRequestCount: 0,
         dailyVoteCount: 0,
-        requestLimitReachedAt: null, // NEW: Timestamp for when request limit was hit
-        voteLimitReachedAt: null      // NEW: Timestamp for when vote limit was hit
+        limitsLastReset: null
     };
     let lastVisibleRequest = null;
     let isFetching = false;
@@ -820,13 +820,12 @@
             const urlContainer = modal.querySelector('#modalUrlContainer');
             if (data.type === 'sound' && data.soundUrl) { const link = urlContainer.querySelector('a'); let fullUrl = data.soundUrl; if (fullUrl && !fullUrl.startsWith('http')) fullUrl = 'https://' + fullUrl; link.href = fullUrl; link.textContent = data.soundUrl; urlContainer.style.display = 'block'; } else { urlContainer.style.display = 'none'; }
             
-            // NEW: Use horizontal vote design in modal
             const voteSection = modal.querySelector('#modalVoteSection');
             if (isRecyclable) { voteSection.innerHTML = ''; voteSection.className = 'hidden'; }
             else { 
                 const voteStats = calculateVoteStats(data.upvotes, data.downvotes); 
                 voteSection.className = 'vote-controls-horizontal';
-                voteSection.innerHTML = `<button class="vote-button-horizontal up ${data.upvotedBy?.includes(currentUser?.uid) ? 'voted' : ''}" title="Upvote"><i class="fas fa-thumbs-up"></i></button><span class="vote-score-display-horizontal">${voteStats.score}</span><button class="vote-button-horizontal down ${data.downvotedBy?.includes(currentUser?.uid) ? 'voted' : ''}" title="Downvote"><i class="fas fa-thumbs-down"></i></button>`;
+                voteSection.innerHTML = `<button class="vote-button-horizontal up ${data.upvotedBy?.includes(currentUser?.uid) ? 'voted' : ''}" title="Upvote"><i class="fas fa-thumbs-up"></i></button><span class="vote-score-display-horizontal">${voteStats.score}</span><button class="vote-button-horizontal down ${data.upvotedBy?.includes(currentUser?.uid) ? 'voted' : ''}" title="Downvote"><i class="fas fa-thumbs-down"></i></button>`;
             }
 
             const showUsername = !data.isAnonymous || IS_ADMIN_ACCOUNT;
@@ -864,10 +863,7 @@
         if (button) { 
             const requestId = detailsModal.dataset.requestId; 
             if (requestId) { 
-                handleVote(requestId, button.classList.contains('up')).then(async () => {
-                    openDetailsModal(requestId); 
-                    await fetchAndDisplayRequests();
-                }); 
+                handleVote(requestId, button.classList.contains('up')); 
             } 
         }
     });
@@ -907,52 +903,51 @@
         const userRef = db.collection('users').doc(currentUser.uid);
 
         try {
-            await db.runTransaction(async (transaction) => {
-                const requestDoc = await transaction.get(requestRef);
-                if (!requestDoc.exists) throw "Document not found.";
-                
-                const requestData = requestDoc.data();
-                if (requestData.userId === currentUser.uid) { 
-                    alert("You cannot vote on your own request."); 
-                    throw new Error("User attempting to vote on own request.");
-                }
-                if (requestData.status === 'recyclable') throw new Error("Cannot vote on recyclable item.");
+            const requestDoc = await requestRef.get();
+            if (!requestDoc.exists) throw "Document not found.";
+            
+            const requestData = requestDoc.data();
+            if (requestData.userId === currentUser.uid) { 
+                alert("You cannot vote on your own request."); 
+                return;
+            }
+            if (requestData.status === 'recyclable') {
+                alert("Cannot vote on a recyclable request.");
+                return;
+            }
 
-                let { upvotedBy = [], downvotedBy = [] } = requestData;
-                const upvoteIndex = upvotedBy.indexOf(currentUser.uid);
-                const downvoteIndex = downvotedBy.indexOf(currentUser.uid);
-                
-                let isNewVote = (isUpvote && upvoteIndex === -1 && downvoteIndex === -1) || (!isUpvote && downvoteIndex === -1 && upvoteIndex === -1);
+            let { upvotedBy = [], downvotedBy = [] } = requestData;
+            const upvoteIndex = upvotedBy.indexOf(currentUser.uid);
+            const downvoteIndex = downvotedBy.indexOf(currentUser.uid);
+            
+            const isNewVote = upvoteIndex === -1 && downvoteIndex === -1;
 
-                if (isUpvote) {
-                    if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); } 
-                    else { upvotedBy.push(currentUser.uid); } 
-                    if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); }
-                } else {
-                    if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); } 
-                    else { downvotedBy.push(currentUser.uid); }
-                    if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); }
-                }
+            if (isUpvote) {
+                if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); } 
+                else { upvotedBy.push(currentUser.uid); } 
+                if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); }
+            } else { // isDownvote
+                if (downvoteIndex > -1) { downvotedBy.splice(downvoteIndex, 1); } 
+                else { downvotedBy.push(currentUser.uid); }
+                if (upvoteIndex > -1) { upvotedBy.splice(upvoteIndex, 1); }
+            }
 
-                if (!IS_ADMIN_ACCOUNT && isNewVote) {
-                    const newVoteCount = currentUserProfile.dailyVoteCount + 1;
-                    let updateData = { dailyVoteCount: firebase.firestore.FieldValue.increment(1) };
-                    if (newVoteCount >= VOTE_LIMIT) {
-                        updateData.voteLimitReachedAt = firebase.firestore.FieldValue.serverTimestamp();
-                    }
-                    transaction.update(userRef, updateData);
-                }
-                
-                transaction.update(requestRef, { upvotedBy, downvotedBy, upvotes: upvotedBy.length, downvotes: downvotedBy.length });
-            });
+            const requestUpdatePromise = requestRef.update({ upvotedBy, downvotedBy, upvotes: upvotedBy.length, downvotes: downvotedBy.length });
+            
+            const userUpdatePromise = isNewVote && !IS_ADMIN_ACCOUNT
+                ? userRef.update({ dailyVoteCount: firebase.firestore.FieldValue.increment(1) })
+                : Promise.resolve();
+
+            await Promise.all([requestUpdatePromise, userUpdatePromise]);
 
             await checkAndResetDailyLimits(currentUser);
             await fetchAndDisplayRequests();
+            if (detailsModal.classList.contains('show')) {
+                openDetailsModal(detailsModal.dataset.requestId);
+            }
         } catch (error) {
             console.error("Vote failed: ", error);
-            if (error.message && !error.message.includes("own request") && !error.message.includes("recyclable")) {
-                 alert("An error occurred while casting your vote.");
-            }
+            alert("An error occurred while casting your vote.");
         }
     }
 
@@ -980,12 +975,7 @@
                 await requestRef.delete();
                 if (!IS_ADMIN_ACCOUNT) {
                     const userRef = db.collection('users').doc(currentUser.uid);
-                    const newRequestCount = currentUserProfile.dailyRequestCount + 1;
-                    let updateData = { dailyRequestCount: firebase.firestore.FieldValue.increment(1) };
-                    if (newRequestCount >= REQUEST_LIMIT) {
-                        updateData.requestLimitReachedAt = firebase.firestore.FieldValue.serverTimestamp();
-                    }
-                    await userRef.update(updateData);
+                    await userRef.update({ dailyRequestCount: firebase.firestore.FieldValue.increment(1) });
                     await checkAndResetDailyLimits(currentUser);
                 }
                 closeAdminMenu();
@@ -1076,16 +1066,20 @@
         }
     }
 
-    // --- NEW TIMESTAMP-BASED DAILY LIMIT LOGIC ---
+    // --- UPDATED DAILY LIMIT LOGIC ---
     async function checkAndResetDailyLimits(user) {
         const userRef = firebase.firestore().collection('users').doc(user.uid);
         try {
             const doc = await userRef.get();
-            
+            const today = new Date().toLocaleDateString();
+
             if (!doc.exists) {
                 const initialProfile = {
-                    email: user.email, username: 'User', dailyRequestCount: 0, dailyVoteCount: 0,
-                    requestLimitReachedAt: null, voteLimitReachedAt: null
+                    email: user.email, 
+                    username: 'User', 
+                    dailyRequestCount: 0, 
+                    dailyVoteCount: 0,
+                    limitsLastReset: today
                 };
                 await userRef.set(initialProfile, { merge: true });
                 Object.assign(currentUserProfile, initialProfile);
@@ -1093,34 +1087,20 @@
             }
 
             const data = doc.data();
-            const today = new Date().toLocaleDateString();
-            let updates = {};
-
-            // Check and reset request limit
-            if (data.requestLimitReachedAt) {
-                const limitDate = data.requestLimitReachedAt.toDate().toLocaleDateString();
-                if (today !== limitDate) {
-                    updates.dailyRequestCount = 0;
-                    updates.requestLimitReachedAt = null;
-                }
-            }
+            const lastResetDate = data.limitsLastReset;
             
-            // Check and reset vote limit
-            if (data.voteLimitReachedAt) {
-                const limitDate = data.voteLimitReachedAt.toDate().toLocaleDateString();
-                if (today !== limitDate) {
-                    updates.dailyVoteCount = 0;
-                    updates.voteLimitReachedAt = null;
-                }
-            }
-
-            if (Object.keys(updates).length > 0) {
+            if (lastResetDate !== today) {
+                const updates = {
+                    dailyRequestCount: 0,
+                    dailyVoteCount: 0,
+                    limitsLastReset: today
+                };
                 await userRef.update(updates);
-                // Fetch the latest data after reset to ensure local profile is synced
+                
                 const updatedDoc = await userRef.get();
                 Object.assign(currentUserProfile, updatedDoc.data());
+
             } else {
-                // If no resets, just sync local profile with DB
                 Object.assign(currentUserProfile, data);
             }
 
@@ -1369,12 +1349,7 @@
             
             if (!IS_ADMIN_ACCOUNT) {
                 const userRef = db.collection('users').doc(currentUser.uid);
-                const newRequestCount = currentUserProfile.dailyRequestCount + 1;
-                let updateData = { dailyRequestCount: firebase.firestore.FieldValue.increment(1) };
-                if (newRequestCount >= REQUEST_LIMIT) {
-                    updateData.requestLimitReachedAt = firebase.firestore.FieldValue.serverTimestamp();
-                }
-                await userRef.update(updateData);
+                await userRef.update({ dailyRequestCount: firebase.firestore.FieldValue.increment(1) });
                 await checkAndResetDailyLimits(currentUser);
             }
 
@@ -1392,3 +1367,4 @@
   </script>
 </body>
 </html>
+
