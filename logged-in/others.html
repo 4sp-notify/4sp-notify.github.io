@@ -77,6 +77,31 @@
       background-clip: text;
       flex-grow: 1;
     }
+    .header-actions {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    .app-search-bar {
+        height: 40px;
+        width: 280px;
+        padding: 0 15px;
+        border-radius: 10px;
+        border: 1px solid #ddd;
+        font-family: inherit;
+        font-size: 0.95em;
+        color: #333;
+        transition: all 0.2s ease-in-out;
+        outline: none;
+    }
+    .app-search-bar:focus {
+        border-color: #8a2be2;
+        box-shadow: 0 0 0 3px rgba(138, 43, 226, 0.2);
+    }
+    .app-search-bar::placeholder {
+        color: #999;
+    }
+
     .header-btn {
         width: 40px;
         height: 40px;
@@ -103,8 +128,9 @@
     /* --- NEW SINGLE-COLUMN LIST LAYOUT --- */
     .tiles-grid {
       display: flex;
-      flex-direction: column; /* Stacks items vertically */
-      gap: 20px; /* Space between items */
+      flex-direction: column;
+      gap: 20px;
+      position: relative;
     }
 
     /* --- TILE STYLES (WIDE & SHORT) --- */
@@ -113,9 +139,27 @@
       text-decoration: none;
       display: flex;
       border-radius: 24px;
-      transition: transform 0.3s ease, box-shadow 0.3s ease;
       position: relative;
+      /* ✅ UPDATED: This transition creates the jitter/overshoot effect on arrival */
+      transition: transform 0.6s cubic-bezier(0.34, 1.56, 0.64, 1), 
+                  opacity 0.25s linear;
     }
+    
+    /* ✅ NEW: Class to temporarily disable transitions during the INVERT phase */
+    .grid-item.no-transition {
+        transition: none;
+    }
+    
+    /* ✅ NEW: Class for items that are fading out */
+    .grid-item.is-filtering-out {
+        opacity: 0;
+    }
+    
+    /* ✅ NEW: Class for items that are hidden from the layout */
+    .grid-item.is-hidden {
+        display: none;
+    }
+
     .grid-item:hover {
       transform: translateY(-5px);
       box-shadow: 0 12px 25px rgba(103, 32, 189, 0.15);
@@ -150,7 +194,7 @@
       margin: 0 0 5px 0;
     }
     .tile-description {
-      font-size: 0.9em; /* Larger font for description */
+      font-size: 0.9em;
       color: #555;
       line-height: 1.5;
       margin: 0;
@@ -266,9 +310,12 @@
     <main class="main-content">
       <div class="dashboard-header fade-in">
         <h2 class="dashboard-title">OTHERS</h2>
-         <button id="reset-layout-btn" class="header-btn" title="Reset Layout">
-            <img src="../images/refresh-dark.png" alt="Reset">
-        </button>
+        <div class="header-actions">
+            <input type="search" id="app-search-input" class="app-search-bar" placeholder="Search apps...">
+            <button id="reset-layout-btn" class="header-btn" title="Reset Layout">
+                <img src="../images/refresh-dark.png" alt="Reset">
+            </button>
+        </div>
       </div>
 
       <div class="tiles-grid" id="tilesGrid">
@@ -286,13 +333,14 @@
     // --- DOM Elements ---
     const tilesGrid = document.getElementById('tilesGrid');
     const editModeHint = document.getElementById('edit-mode-hint');
+    const appSearchInput = document.getElementById('app-search-input');
 
     // --- Firebase Refs ---
     let currentUser = null;
     const userProfileDocRef = () => currentUser ? firebase.firestore().collection('users').doc(currentUser.uid) : null;
 
     // --- Data & State Management ---
-    const LAYOUT_STORAGE_KEY = '4sp_othersPageLayout_v16_list'; // Changed key for new layout
+    const LAYOUT_STORAGE_KEY = '4sp_othersPageLayout_v16_list';
     let layoutData = [];
     let selectedId = null;
 
@@ -360,6 +408,81 @@
       a.addEventListener('contextmenu', e => toggleEditMode(e, tileData.id));
       return a;
     }
+
+    // --- ✅ NEW: Advanced Animation Logic ---
+    function filterApps() {
+        const searchTerm = appSearchInput.value.toLowerCase().trim();
+
+        // --- Phase 1: Fade out excluded cards ---
+        const firstPositions = new Map();
+        const allTiles = [...tilesGrid.children];
+        
+        allTiles.forEach(tile => {
+            // Record position of cards that are currently visible
+            if (!tile.classList.contains('is-hidden')) {
+                firstPositions.set(tile, tile.getBoundingClientRect());
+            }
+            // Decide which cards to fade out
+            const isMatch = tile.querySelector('.tile-title').textContent.toLowerCase().includes(searchTerm);
+            if (!isMatch) {
+                tile.classList.add('is-filtering-out');
+            }
+        });
+
+        // --- Phase 2: After fade-out, slide remaining cards ---
+        // We wait for the fade animation (250ms) to finish
+        setTimeout(() => {
+            // Apply the layout change by hiding the faded cards
+            allTiles.forEach(tile => {
+                const isMatch = tile.querySelector('.tile-title').textContent.toLowerCase().includes(searchTerm);
+                if (isMatch) {
+                    tile.classList.remove('is-hidden', 'is-filtering-out');
+                } else {
+                    tile.classList.add('is-hidden');
+                }
+            });
+            
+            // For the satisfying click sound you wanted!
+            // You would need to have a click.mp3 file in your project for this.
+            // new Audio('path/to/click.mp3').play();
+            
+            // --- The FLIP Animation ---
+            const movingTiles = [];
+            allTiles.forEach(tile => {
+                if (!tile.classList.contains('is-hidden')) {
+                    movingTiles.push(tile);
+                    // LAST: Get the new position
+                    const lastPos = tile.getBoundingClientRect();
+                    // Get the original position
+                    const firstPos = firstPositions.get(tile);
+
+                    // If it doesn't have a first position, it's a new card. Let it fade in normally.
+                    if (!firstPos) return;
+
+                    // INVERT: Calculate the difference and apply a transform to move it
+                    // back to its original spot, but without animation.
+                    const deltaX = firstPos.left - lastPos.left;
+                    const deltaY = firstPos.top - lastPos.top;
+                    
+                    if (deltaX !== 0 || deltaY !== 0) {
+                        tile.classList.add('no-transition');
+                        tile.style.transform = `translate(${deltaX}px, ${deltaY}px)`;
+                    }
+                }
+            });
+
+            // Force the browser to paint the "inverted" state. This is crucial.
+            tilesGrid.offsetHeight; 
+
+            // PLAY: Remove the classes and styles to let the cards animate
+            // to their final position with the jitter effect.
+            movingTiles.forEach(tile => {
+                tile.classList.remove('no-transition');
+                tile.style.transform = '';
+            });
+
+        }, 250); // This MUST match the opacity transition duration
+    }
    
     // --- Edit Mode & UI ---
     function toggleEditMode(event, itemId) {
@@ -396,7 +519,6 @@
             return;
         }
         const itemInfo = layoutData.find(item => item.id === selectedId);
-        // UPDATED HINT for vertical list
         let hintHTML = `Editing '<span style="color: #FFC107;">${itemInfo.title}</span>' <span class="hint-divider"></span> Use <kbd>↑</kbd><kbd>↓</kbd> to Reorder <span class="hint-divider"></span> <kbd>Esc</kbd> Exit`;
         editModeHint.innerHTML = hintHTML;
         editModeHint.classList.add('visible');
@@ -410,7 +532,7 @@
         if (currentIndex === -1) return;
 
         let targetIndex = -1;
-        const itemsPerRow = getItemsPerRow(); // Will be 1
+        const itemsPerRow = getItemsPerRow();
 
         switch (direction) {
             case 'up':
@@ -419,7 +541,7 @@
             case 'down':
                 targetIndex = currentIndex + itemsPerRow;
                 break;
-            default: // left and right do nothing in this layout
+            default:
                 return;
         }
        
@@ -427,7 +549,6 @@
             return;
         }
 
-        // Simple swap logic works fine here
         const itemToMove = layoutData[currentIndex];
         const itemToSwap = layoutData[targetIndex];
         layoutData[targetIndex] = itemToMove;
@@ -438,7 +559,6 @@
         enterEditMode(selectedId);
     }
    
-    // UPDATED for single-column list
     function getItemsPerRow() {
       return 1;
     }
@@ -451,8 +571,8 @@
             case "Escape":
                 exitEditMode();
                 break;
-            case "ArrowLeft": // No action
-            case "ArrowRight": // No action
+            case "ArrowLeft":
+            case "ArrowRight":
                 break;
             case "ArrowUp":
                 event.preventDefault();
@@ -489,6 +609,9 @@
       document.getElementById('reset-layout-btn').addEventListener('click', resetLayout);
       document.addEventListener('keydown', handleKeyDown);
       document.addEventListener('click', (e) => { if (!e.target.closest('.grid-item')) exitEditMode(); });
+      
+      appSearchInput.addEventListener('input', filterApps);
+      
       loadLayout();
       renderLayout();
     });
