@@ -1072,17 +1072,11 @@
         display: flex;
         gap: 15px;
         align-items: center;
+        transition: opacity 0.5s ease-in-out, visibility 0.5s ease-in-out;
     }
-    .clock-fs-controls select {
-        background: rgba(255,255,255,0.1);
-        color: white;
-        border: 1px solid rgba(255,255,255,0.3);
-        border-radius: 8px;
-        padding: 8px 12px;
-        font-family: 'PrimaryFont', sans-serif;
-    }
-    .clock-fs-controls select:focus {
-        outline: 2px solid rgba(255,255,255,0.5);
+    .clock-fs-controls.controls-hidden {
+        opacity: 0;
+        visibility: hidden;
     }
     
     #clock-fs-color-toggle { font-size: 1.8em; cursor: pointer; transition: transform 0.3s; text-shadow: 0 0 10px black; }
@@ -1109,6 +1103,52 @@
     #clock-fs-color-palette.visible { opacity: 1; visibility: visible; }
     .color-swatch { width: 30px; height: 30px; border-radius: 50%; cursor: pointer; border: 2px solid white; transition: transform 0.2s; box-shadow: 0 0 5px rgba(0,0,0,0.2); }
     .color-swatch:hover { transform: scale(1.1); }
+
+    /* Custom Dropdown */
+    .custom-select-wrapper { position: relative; font-family: 'PrimaryFont', sans-serif; }
+    .custom-select-trigger {
+        background: rgba(255,255,255,0.1);
+        color: white;
+        border: 1px solid rgba(255,255,255,0.3);
+        border-radius: 8px;
+        padding: 8px 30px 8px 12px;
+        cursor: pointer;
+        position: relative;
+        min-width: 150px;
+        transition: background-color 0.2s;
+    }
+    .custom-select-trigger:hover { background: rgba(255,255,255,0.2); }
+    .custom-select-trigger::after {
+        content: '▼';
+        font-size: 0.7em;
+        position: absolute;
+        right: 12px;
+        top: 50%;
+        transform: translateY(-50%);
+    }
+    .custom-options {
+        position: absolute;
+        top: 105%;
+        left: 0;
+        right: 0;
+        background: rgba(40,40,40,0.8);
+        backdrop-filter: blur(5px);
+        border: 1px solid rgba(255,255,255,0.2);
+        border-radius: 8px;
+        z-index: 10;
+        max-height: 200px;
+        overflow-y: auto;
+        display: none;
+    }
+    .custom-select.open .custom-options { display: block; }
+    .custom-option {
+        padding: 10px 12px;
+        cursor: pointer;
+        transition: background-color 0.2s;
+    }
+    .custom-option:hover { background-color: rgba(255,255,255,0.1); }
+    .custom-option.selected { background-color: rgba(138, 43, 226, 0.5); font-weight: bold; }
+
     /* --- END: Fullscreen Clock Styles --- */
 
 
@@ -1263,9 +1303,14 @@
   <!-- START: Fullscreen Clock Overlay -->
   <div id="clock-fullscreen-overlay">
     <div class="clock-fs-controls">
-        <select id="clock-fs-countdown-select">
-            <option value="">No Countdown</option>
-        </select>
+        <div class="custom-select-wrapper" id="clock-fs-custom-select-wrapper">
+            <div class="custom-select">
+                <div class="custom-select-trigger"><span>No Countdown</span></div>
+                <div class="custom-options">
+                    <span class="custom-option selected" data-value="">No Countdown</span>
+                </div>
+            </div>
+        </div>
         <div id="clock-fs-color-toggle" title="Change Background">🎨</div>
     </div>
     <div id="clock-fs-color-palette">
@@ -2690,7 +2735,7 @@
           const fullscreenButton = document.createElement('button');
           fullscreenButton.className = 'weather-action-btn clock-fullscreen-btn';
           fullscreenButton.title = 'Fullscreen Clock';
-          fullscreenButton.innerHTML = `<img src="../images/zoom-in-white.png" alt="Fullscreen">`;
+          fullscreenButton.innerHTML = `<img src="../images/zoom-in-dark.png" alt="Fullscreen">`;
           buttonContainer.appendChild(fullscreenButton);
       }
       
@@ -2776,21 +2821,29 @@
     
     // --- START: Fullscreen Clock Logic ---
     const clockFullscreenOverlay = document.getElementById('clock-fullscreen-overlay');
+    const clockFsControls = document.querySelector('.clock-fs-controls');
     const clockFsTime = document.getElementById('clock-fs-main-time');
     const clockFsDate = document.getElementById('clock-fs-main-date');
-    const clockFsCountdownSelect = document.getElementById('clock-fs-countdown-select');
     const clockFsCountdownName = document.getElementById('clock-fs-countdown-name');
     const clockFsCountdownTimer = document.getElementById('clock-fs-countdown-timer');
     const clockFsColorToggle = document.getElementById('clock-fs-color-toggle');
     const clockFsColorPalette = document.getElementById('clock-fs-color-palette');
+    const customSelect = document.querySelector('#clock-fs-custom-select-wrapper .custom-select');
+    const customSelectTrigger = customSelect.querySelector('.custom-select-trigger');
+    const customOptions = customSelect.querySelector('.custom-options');
+    
     let clockFsInterval;
     let clockFsCountdownInterval;
+    let inactivityTimer;
 
     const getStorageKey = (key) => firebase.auth().currentUser ? `4sp_${key}_${firebase.auth().currentUser.uid}` : null;
     
     function formatCountdown(targetDate) {
         const end = new Date(targetDate); let now = new Date();
-        if (end <= now) { return "🎉 Finished!"; }
+        if (end <= now) { 
+            clearInterval(clockFsCountdownInterval);
+            return "🎉 Finished!"; 
+        }
         let tempNow = new Date(now); let decades = 0, years = 0, months = 0;
         let tempDateForNext = new Date(tempNow);
         tempDateForNext.setFullYear(tempDateForNext.getFullYear() + 10);
@@ -2813,6 +2866,32 @@
         clockFsTime.textContent = now.toLocaleTimeString();
         clockFsDate.textContent = now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
     }
+    
+    function setFullscreenCountdown(countdownId) {
+        clearInterval(clockFsCountdownInterval);
+        if (!countdownId) {
+            clockFsCountdownName.textContent = '';
+            clockFsCountdownTimer.innerHTML = '';
+            return;
+        }
+        const countdownsKey = getStorageKey('countdowns');
+        const countdowns = JSON.parse(localStorage.getItem(countdownsKey) || '[]');
+        const countdown = countdowns.find(cd => cd.id === countdownId);
+        if (countdown) {
+            clockFsCountdownName.textContent = countdown.name;
+            const update = () => clockFsCountdownTimer.innerHTML = formatCountdown(countdown.targetTimestamp);
+            update();
+            clockFsCountdownInterval = setInterval(update, 1000);
+        }
+    }
+    
+    function resetInactivityTimer() {
+        if(clockFsControls) clockFsControls.classList.remove('controls-hidden');
+        clearTimeout(inactivityTimer);
+        inactivityTimer = setTimeout(() => {
+            if(clockFsControls) clockFsControls.classList.add('controls-hidden');
+        }, 5000);
+    }
 
     function openClockFullscreen() {
         clockFullscreenOverlay.classList.add('active');
@@ -2822,30 +2901,38 @@
         updateFullscreenClock();
         clockFsInterval = setInterval(updateFullscreenClock, 1000);
 
-        // Populate countdowns
+        // Populate custom dropdown
         const countdownsKey = getStorageKey('countdowns');
         const countdowns = JSON.parse(localStorage.getItem(countdownsKey) || '[]');
-        clockFsCountdownSelect.innerHTML = '<option value="">No Countdown</option>';
+        customOptions.innerHTML = '<span class="custom-option selected" data-value="">No Countdown</span>'; // Reset
         const now = new Date();
         countdowns.filter(cd => new Date(cd.targetTimestamp) > now)
                   .sort((a,b) => new Date(a.targetTimestamp) - new Date(b.targetTimestamp))
                   .forEach(cd => {
-            const option = document.createElement('option');
-            option.value = cd.id;
+            const option = document.createElement('span');
+            option.className = 'custom-option';
+            option.dataset.value = cd.id;
             option.textContent = cd.name;
-            clockFsCountdownSelect.appendChild(option);
+            customOptions.appendChild(option);
         });
 
         clockFullscreenOverlay.requestFullscreen().catch(err => {
             console.error("Fullscreen request failed:", err);
             closeClockFullscreen();
         });
+        
+        // Start inactivity timer
+        resetInactivityTimer();
+        clockFullscreenOverlay.addEventListener('mousemove', resetInactivityTimer);
     }
 
     function closeClockFullscreen() {
         clockFullscreenOverlay.classList.remove('active');
         clearInterval(clockFsInterval);
         clearInterval(clockFsCountdownInterval);
+        clearTimeout(inactivityTimer);
+        clockFullscreenOverlay.removeEventListener('mousemove', resetInactivityTimer);
+        if(clockFsControls) clockFsControls.classList.remove('controls-hidden');
     }
     
     document.addEventListener('fullscreenchange', () => {
@@ -2863,29 +2950,33 @@
         localStorage.setItem(getStorageKey('clockFsColor'), color);
         clockFsColorPalette.classList.remove('visible');
     });
-    
-    clockFsCountdownSelect.addEventListener('change', () => {
-        clearInterval(clockFsCountdownInterval);
-        const selectedId = clockFsCountdownSelect.value;
-        if (!selectedId) {
-            clockFsCountdownName.textContent = '';
-            clockFsCountdownTimer.innerHTML = '';
-            return;
-        }
-        const countdownsKey = getStorageKey('countdowns');
-        const countdowns = JSON.parse(localStorage.getItem(countdownsKey) || '[]');
-        const countdown = countdowns.find(cd => cd.id === selectedId);
-        if (countdown) {
-            clockFsCountdownName.textContent = countdown.name;
-            const update = () => clockFsCountdownTimer.innerHTML = formatCountdown(countdown.targetTimestamp);
-            update();
-            clockFsCountdownInterval = setInterval(update, 1000);
-        }
+
+    // Custom Select Logic
+    customSelectTrigger.addEventListener('click', () => {
+        customSelect.classList.toggle('open');
     });
 
-    document.body.addEventListener('click', () => {
-        if (clockFsColorPalette.classList.contains('visible')) {
-            clockFsColorPalette.classList.remove('visible');
+    customOptions.addEventListener('click', (e) => {
+        const option = e.target.closest('.custom-option');
+        if (!option) return;
+        
+        customSelect.querySelector('.custom-option.selected').classList.remove('selected');
+        option.classList.add('selected');
+        
+        customSelectTrigger.querySelector('span').textContent = option.textContent;
+        customSelect.classList.remove('open');
+        setFullscreenCountdown(option.dataset.value);
+    });
+
+    window.addEventListener('click', (e) => {
+      if (!customSelect.contains(e.target)) {
+        customSelect.classList.remove('open');
+      }
+    });
+    
+    document.body.addEventListener('click', (e) => {
+        if (!clockFsColorPalette.contains(e.target) && !clockFsColorToggle.contains(e.target)) {
+             clockFsColorPalette.classList.remove('visible');
         }
     });
     // --- END: Fullscreen Clock Logic ---
