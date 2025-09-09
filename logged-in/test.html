@@ -242,6 +242,18 @@
       scrollbar-color: #8a2be2 #e0e0e0;
     }
 
+    /* START: New Styles for Wider Forecast Cards */
+    .scroll-frame.fill-space {
+        justify-content: space-between;
+    }
+    .scroll-frame.fill-space .daily-item-card {
+        flex-grow: 1;
+        flex-basis: 0;
+        min-width: 90px;
+        max-width: 140px;
+    }
+    /* END: New Styles */
+    
     /* Hourly Item Styling */
     .hourly-item {
       flex: 0 0 80px;
@@ -280,6 +292,9 @@
       border: 1px solid #e9ecef;
       cursor: pointer;
       transition: all 0.3s ease;
+    }
+    .daily-item-card:last-child {
+      margin-right: 0;
     }
     .daily-item-card:hover {
       transform: translateY(-5px);
@@ -788,7 +803,6 @@
     // --- AUTH & SIDEBAR ---
     firebase.auth().onAuthStateChanged(async user => {
         if (!user) return window.location.href = '../login.html';
-        // User info display functionality has been removed.
     });
     const handleLogout = () => firebase.auth().signOut().then(() => window.location.href = '../login.html');
     document.getElementById('logoutBtn').addEventListener('click', handleLogout);
@@ -797,20 +811,16 @@
         document.getElementById('sidebar').classList.toggle('collapsed');
     });
 
-    // --- SETTINGS MANAGEMENT (BUG FIX APPLIED HERE) ---
+    // --- SETTINGS MANAGEMENT ---
     const saveSettings=()=>localStorage.setItem('weatherSettings',JSON.stringify(weatherSettings));
     const loadSettings=()=>{
         const s=localStorage.getItem('weatherSettings');
         if(s){
             try {
                 const loadedSettings = JSON.parse(s);
-                // Merge loaded settings with defaults to prevent errors with old formats
                 weatherSettings = { ...defaultWeatherSettings, ...loadedSettings };
                 return true;
-            } catch (e) {
-                console.error("Failed to parse weather settings:", e);
-                return false;
-            }
+            } catch (e) { console.error("Failed to parse weather settings:", e); return false; }
         }
         return false
     };
@@ -819,18 +829,14 @@
     const fetchWeather = async () => {
         document.getElementById('weather-widget').innerHTML = `<p class="loading-text">Fetching weather for ${weatherSettings.location.name}...</p>`;
         try {
-            if (weatherSettings.dataSource === 'nws') {
-                await fetchNWSWeather();
-            } else {
-                await fetchOpenMeteoWeather();
-            }
+            if (weatherSettings.dataSource === 'nws') { await fetchNWSWeather(); } else { await fetchOpenMeteoWeather(); }
         } catch(error) {
             console.error("Weather fetch failed:", error);
             document.getElementById('weather-widget').innerHTML = `<p class="error-text">⚠️ Could not retrieve weather data. ${error.message}</p>`;
         }
     };
 
-    // --- OPEN-METEO API LOGIC ---
+    // --- API LOGIC (OPEN-METEO & NWS) ---
     const fetchOpenMeteoWeather = async () => {
         const {units,location}=weatherSettings;
         const p=new URLSearchParams({current:"temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_gusts_10m",hourly:"temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,precipitation_probability,uv_index,wind_speed_10m,wind_gusts_10m",daily:"weather_code,temperature_2m_max,temperature_2m_min,apparent_temperature_max,apparent_temperature_min,sunrise,sunset,daylight_duration,uv_index_max,precipitation_sum,precipitation_probability_max,wind_speed_10m_max,wind_gusts_10m_max,wind_direction_10m_dominant,relative_humidity_2m_mean",timezone:Intl.DateTimeFormat().resolvedOptions().timeZone,forecast_days:14,temperature_unit:units==='metric'?'celsius':'fahrenheit',wind_speed_unit:units==='metric'?'kmh':'mph',precipitation_unit:units==='metric'?'mm':'inch'});
@@ -840,7 +846,6 @@
         renderWidget(fullWeatherData);
     };
     
-    // --- NATIONAL WEATHER SERVICE (NWS) API LOGIC ---
     const fetchNWSWeather = async () => {
         const { latitude, longitude } = weatherSettings.location;
         const pointsUrl = `https://api.weather.gov/points/${latitude},${longitude}`;
@@ -879,8 +884,7 @@
         let hourlyHTML = '';
         if (data.hourly && data.hourly.time && data.hourly.time.length > 0) {
             hourlyHTML = `<div class="hourly-item now"><p class="hourly-time">NOW</p><p class="hourly-icon">${code.i}</p><p class="hourly-temp">${Math.round(temperature_2m)}°</p></div>`;
-            const currentHour = new Date(data.current.time).getHours();
-            const startIndex = data.hourly.time.findIndex(t => new Date(t).getHours() === currentHour);
+            const currentHour = new Date(data.current.time).getHours(); const startIndex = data.hourly.time.findIndex(t => new Date(t).getHours() === currentHour);
             if (startIndex !== -1) { for (let i = startIndex + 1; i < startIndex + 25 && i < data.hourly.time.length; i++) { const d = new Date(data.hourly.time[i]); const h = d.getHours(); hourlyHTML += `<div class="hourly-item"><p class="hourly-time">${h === 0 ? '12am' : h === 12 ? '12pm' : h > 12 ? h - 12 + 'pm' : h + 'am'}</p><p class="hourly-icon">${(WMO_CODES[data.hourly.weather_code[i]] || {i: '?'}).i}</p><p class="hourly-temp">${Math.round(data.hourly.temperature_2m[i])}°</p></div>`; } }
         }
         let dailyHTML = '';
@@ -906,6 +910,12 @@
         document.querySelectorAll('.daily-item-card').forEach(c=>c.addEventListener('click',()=>openDailyDetailModal(c.dataset.dayIndex)));
         setupForecastGraph();
         if(data.hourly && data.hourly.time) initializeWeatherCalculator();
+
+        // Add class to daily forecast container if it has 7 or fewer days
+        const dailyScrollFrame = document.querySelector('#daily-forecast-section .scroll-frame');
+        if (dailyScrollFrame && data.daily.time.length <= 7) {
+            dailyScrollFrame.classList.add('fill-space');
+        }
     }
 
     // --- CHART & MODAL LOGIC ---
@@ -931,23 +941,60 @@
     function setupModal(modal){if(!modal)return;modal.querySelector('.modal-close-btn')?.addEventListener('click',()=>modal.classList.remove('modal-open'));modal.addEventListener('click',e=>{if(e.target===modal)modal.classList.remove('modal-open')})}
     function openDailyDetailModal(index){
         const m=document.getElementById('forecastDetailModal'),d=fullWeatherData.daily,{units}=weatherSettings,tempS=units==='imperial'?'°F':'°C',speedS=units==='imperial'?'mph':'km/h',precipS=units==='imperial'?'in':'mm',date=new Date(d.time[index]+'T00:00:00'),code=WMO_CODES[d.weather_code[index]]||{d:'?',i:'❓'};
-        const dayDataForAdvice={temperature_2m_max:d.temperature_2m_max[index],weather_code:d.weather_code[index],precipitation_sum:d.precipitation_sum?.[index],precipitation_probability_max:d.precipitation_probability_max[index],wind_speed_10m_max:d.wind_speed_10m_max[index],relative_humidity_2m_mean:d.relative_humidity_2m_mean?.[index]};
+        const dayDataForAdvice={temperature_2m_max:d.temperature_2m_max[index],temperature_2m_min:d.temperature_2m_min[index],weather_code:d.weather_code[index],precipitation_sum:d.precipitation_sum?.[index],precipitation_probability_max:d.precipitation_probability_max[index],wind_speed_10m_max:d.wind_speed_10m_max[index],relative_humidity_2m_mean:d.relative_humidity_2m_mean?.[index],uv_index_max:d.uv_index_max?.[index]};
         m.querySelector('#modalDay').textContent=date.toLocaleDateString(undefined,{weekday:'long'}); m.querySelector('#modalDate').textContent=date.toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'});
         m.querySelector('#modal-icon').textContent=code.i; m.querySelector('#modal-temp-display').innerHTML=`${Math.round(d.temperature_2m_max[index])}°/${Math.round(d.temperature_2m_min[index])}°`; m.querySelector('#modal-desc').textContent=code.d;
         const updateDetail = (id, value) => { const el = m.querySelector(id); if (el) { if (value != null && value !== 'N/A') { el.textContent = value; el.parentElement.style.display = 'flex'; } else { el.parentElement.style.display = 'none'; } } };
-        updateDetail('#modal-feels-like', d.apparent_temperature_max?.[index] != null ? `${Math.round(d.apparent_temperature_max[index])}°/${Math.round(d.apparent_temperature_min[index])}°` : null);
-        updateDetail('#modal-humidity', d.relative_humidity_2m_mean?.[index] != null ? `${d.relative_humidity_2m_mean[index]}%` : null); updateDetail('#modal-precip-prob', `${d.precipitation_probability_max[index]}%`); updateDetail('#modal-precip-sum', d.precipitation_sum?.[index] != null ? `${fmtNum(d.precipitation_sum[index])} ${precipS}`: null); updateDetail('#modal-wind-speed', `${Math.round(d.wind_speed_10m_max[index])} ${speedS}`); updateDetail('#modal-sunrise', d.sunrise?.[index] ? new Date(d.sunrise[index]).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : null); updateDetail('#modal-sunset', d.sunset?.[index] ? new Date(d.sunset[index]).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : null); updateDetail('#modal-daylight', d.daylight_duration?.[index] ? `${fmtNum(d.daylight_duration[index]/3600,1)} hours` : null); updateDetail('#modal-uv', d.uv_index_max?.[index] != null ? fmtNum(d.uv_index_max[index],1) : null);
+        updateDetail('#modal-feels-like', d.apparent_temperature_max?.[index] != null ? `${Math.round(d.apparent_temperature_max[index])}°/${Math.round(d.apparent_temperature_min[index])}°` : null); updateDetail('#modal-humidity', d.relative_humidity_2m_mean?.[index] != null ? `${d.relative_humidity_2m_mean[index]}%` : null); updateDetail('#modal-precip-prob', `${d.precipitation_probability_max[index]}%`); updateDetail('#modal-precip-sum', d.precipitation_sum?.[index] != null ? `${fmtNum(d.precipitation_sum[index])} ${precipS}`: null); updateDetail('#modal-wind-speed', `${Math.round(d.wind_speed_10m_max[index])} ${speedS}`); updateDetail('#modal-sunrise', d.sunrise?.[index] ? new Date(d.sunrise[index]).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : null); updateDetail('#modal-sunset', d.sunset?.[index] ? new Date(d.sunset[index]).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'}) : null); updateDetail('#modal-daylight', d.daylight_duration?.[index] ? `${fmtNum(d.daylight_duration[index]/3600,1)} hours` : null); updateDetail('#modal-uv', d.uv_index_max?.[index] != null ? fmtNum(d.uv_index_max[index],1) : null);
         const windDirContainer = m.querySelector('#modal-wind-dir-container'); const windDirDegrees = d.wind_direction_10m_dominant?.[index]; if (windDirDegrees != null) { windDirContainer.parentElement.style.display = 'flex'; windDirContainer.innerHTML = `<span>${degToCard(windDirDegrees)}</span> <img src="../images/arrow-topleft-white.png" id="modal-wind-arrow" alt="Wind direction arrow">`; const windArrow = m.querySelector('#modal-wind-arrow'); if (windArrow) windArrow.style.transform = `rotate(${windDirDegrees - 45}deg)`; } else { windDirContainer.parentElement.style.display = 'none'; }
         m.querySelector('#modalDailyAdvice').innerHTML = generateWeatherAdvice(dayDataForAdvice, units); m.classList.add('modal-open');
     }
+    
+    // --- UPDATED & EXPANDED ADVICE FUNCTION ---
     function generateWeatherAdvice(dayData, units) {
-        const advice = []; const { temperature_2m_max, weather_code, precipitation_sum, precipitation_probability_max, wind_speed_10m_max, relative_humidity_2m_mean } = dayData; const tempMaxC = units === 'imperial' ? (temperature_2m_max - 32) * 5 / 9 : temperature_2m_max; const windSpeedMph = units === 'metric' ? wind_speed_10m_max * 0.621371 : wind_speed_10m_max;
-        if (tempMaxC >= 30) advice.push("It's going to be very hot. Wear light clothes and use sunscreen."); else if (tempMaxC >= 22) advice.push("Expect warm weather, a good day for a t-shirt."); else if (tempMaxC <= 5) advice.push("It's quite cold. Bundle up with a thick coat, scarf, and gloves.");
-        if ((precipitation_sum != null && precipitation_sum > 0.1) || precipitation_probability_max > 40) { if ([51, 53, 55, 61, 63, 65, 80, 81, 82].includes(weather_code)) advice.push("Rain is likely. Don't forget an umbrella or a raincoat."); else if ([56, 57, 66, 67, 71, 73, 75, 77, 85, 86].includes(weather_code)) advice.push("Snow is expected! Wear a warm, waterproof coat and snow boots."); else advice.push("There's a chance of precipitation, so it might be wise to bring an umbrella."); }
-        if (relative_humidity_2m_mean >= 75) advice.push("High humidity can make it feel muggy. Lightweight, breathable clothing is recommended."); else if (relative_humidity_2m_mean <= 35 && precipitation_probability_max < 20) advice.push("The air seems dry. Remember to drink plenty of water to stay hydrated.");
-        if (windSpeedMph >= 15) advice.push("It could be quite windy. A windbreaker would be a good idea."); if ([45, 48].includes(weather_code)) advice.push("Foggy conditions are expected. Be extra cautious if you're driving or walking."); if ([95, 96, 99].includes(weather_code)) advice.push("Thunderstorms are possible. It's best to stay indoors if you hear thunder.");
-        if (advice.length === 0) { if ([0, 1].includes(weather_code)) return "<p>Looks like a beautiful, clear day. Perfect for outdoor activities!</p>"; return "<p>Enjoy your day! Check the details above for a full forecast.</p>"; }
-        return '<ul>' + advice.map(item => `<li>${item}</li>`).join('') + '</ul>';
+        const advice = new Set(); // Use a Set to avoid duplicate advice
+        const { temperature_2m_max, temperature_2m_min, weather_code, precipitation_sum, precipitation_probability_max, wind_speed_10m_max, relative_humidity_2m_mean, uv_index_max } = dayData;
+        const tempMaxC = units === 'imperial' ? (temperature_2m_max - 32) * 5 / 9 : temperature_2m_max;
+        const tempMinC = units === 'imperial' ? (temperature_2m_min - 32) * 5 / 9 : temperature_2m_min;
+        const windSpeedMph = units === 'metric' ? wind_speed_10m_max * 0.621371 : wind_speed_10m_max;
+        const tempSwingF = units === 'metric' ? (temperature_2m_max - temperature_2m_min) * 9/5 : (temperature_2m_max - temperature_2m_min);
+        
+        // Temperature
+        if (tempMaxC >= 32) advice.add("Extreme heat expected. Avoid strenuous activity and stay hydrated.");
+        else if (tempMaxC >= 25) advice.add("It's going to be hot. Wear light clothing and drink plenty of water.");
+        else if (tempMinC <= 0) advice.add("Freezing temperatures overnight. Protect sensitive plants and watch for icy patches in the morning.");
+        else if (tempMaxC <= 5) advice.add("It's quite cold. Bundle up with a thick coat, scarf, and gloves.");
+        
+        // Temperature Swing
+        if (tempSwingF >= 25) advice.add("Large temperature swing today. Dressing in layers is a good idea.");
+
+        // Precipitation
+        if ((precipitation_sum != null && precipitation_sum > 0.1) || (precipitation_probability_max != null && precipitation_probability_max > 40)) {
+            if ([61, 63, 65, 80, 81, 82].includes(weather_code)) advice.add("Rain is likely. Don't forget an umbrella or a raincoat.");
+            else if ([71, 73, 75, 85, 86].includes(weather_code)) advice.add("Snow is expected! Wear a warm, waterproof coat and snow boots.");
+            else if ([95, 96, 99].includes(weather_code)) advice.add("Thunderstorms are possible. It's best to stay indoors if you hear thunder.");
+            else advice.add("There's a chance of precipitation, so an umbrella might be useful.");
+        }
+        
+        // Combined Conditions & Other
+        if (windSpeedMph >= 15) advice.add("It could be quite windy. A windbreaker would be a good idea.");
+        if (tempMinC <= 5 && windSpeedMph >= 10) advice.add("Wind chill will make it feel much colder than the actual temperature.");
+        if (tempMaxC >= 28 && relative_humidity_2m_mean != null && relative_humidity_2m_mean >= 60) advice.add("High heat and humidity will make it feel very muggy. Take it easy outdoors.");
+        if ([45, 48].includes(weather_code)) advice.add("Foggy conditions are expected. Be extra cautious if you're driving or walking.");
+
+        // UV Index (only if available)
+        if (uv_index_max != null) {
+            if (uv_index_max >= 8) advice.add("UV index is very high. Seek shade and use strong sunscreen.");
+            else if (uv_index_max >= 6) advice.add("High UV index today. Sunscreen is recommended.");
+        }
+
+        // Default/Pleasant day
+        if (advice.size === 0) {
+            if ([0, 1].includes(weather_code)) return "<p>Looks like a beautiful, clear day. Perfect for outdoor activities!</p>";
+            if (tempMaxC > 18 && tempMaxC < 24 && precipitation_probability_max < 20) return "<p>Conditions look pleasant and mild. A great day to be outside!</p>";
+            return "<p>Enjoy your day! Check the details above for a full forecast.</p>";
+        }
+        return '<ul>' + [...advice].map(item => `<li>${item}</li>`).join('') + '</ul>';
     }
     
     // --- CALCULATOR & SETTINGS MODAL ---
@@ -1000,12 +1047,10 @@
         await determineUserCountry();
         // REMAKING SETTINGS MENU: Use event delegation for robust clicks
         document.body.addEventListener('click', (event) => {
-            if (event.target.closest('#settingsBtn')) {
-                openSettingsModal();
-            }
-            if (event.target.closest('#refreshBtn')) {
-                fetchWeather();
-            }
+            const settingsButton = event.target.closest('#settingsBtn');
+            const refreshButton = event.target.closest('#refreshBtn');
+            if (settingsButton) { openSettingsModal(); }
+            if (refreshButton) { fetchWeather(); }
         });
 
         const sModal=document.getElementById('weatherSettingsModal'); setupModal(sModal);
