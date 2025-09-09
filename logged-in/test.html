@@ -60,7 +60,7 @@
     .sidebar nav ul {
       list-style: none;
       padding: 0;
-      margin: 60px 0 0;
+      margin: 20px 0 0; /* Adjusted margin for user info */
     }
     .sidebar nav li {
       margin-bottom: 10px;
@@ -112,6 +112,8 @@
     .sidebar.collapsed nav a .label {
       display: none;
     }
+    
+    /* START: User Info & Marquee Styles from Dashboard */
     .user-info {
       text-align: center;
       margin: 60px 0 30px;
@@ -155,6 +157,7 @@
       font-size: 0.9em;
       color: #bbb;
     }
+    /* END: User Info & Marquee Styles */
 
     /* --- Main Content --- */
     .main-content {
@@ -733,7 +736,7 @@
                 <div class="marquee-content" id="userEmail"></div>
             </div>
         </div>
-      <nav>
+        <nav>
         <ul>
           <li><a href="dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
           <li><a href="soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
@@ -801,11 +804,11 @@
           <div class="settings-section">
               <label class="section-label">Data Source</label>
               <div class="data-source-selector">
-                  <input type="radio" id="sourceOpenMeteo" name="dataSource" value="open-meteo" checked>
-                  <label for="sourceOpenMeteo">Open-Meteo</label>
+                  <input type="radio" id="sourceOpen-meteo" name="dataSource" value="open-meteo" checked>
+                  <label for="sourceOpen-meteo">Open-Meteo</label>
                   
-                  <input type="radio" id="sourceNWS" name="dataSource" value="nws">
-                  <label for="sourceNWS">NWS (USA)</label>
+                  <input type="radio" id="sourceNws" name="dataSource" value="nws">
+                  <label for="sourceNws">NWS (USA)</label>
               </div>
               <p id="nwsApiNote" style="display: none;">The NWS API is only available for locations within the United States.</p>
           </div>
@@ -861,7 +864,7 @@
     document.getElementById('signOutLink').addEventListener('click', handleLogout);
     document.getElementById('toggleSidebar').addEventListener('click', () => {
         document.getElementById('sidebar').classList.toggle('collapsed');
-        setTimeout(updateMarquees, 550);
+        setTimeout(updateMarquees, 550); // Delay matches CSS transition
     });
 
     // --- SETTINGS MANAGEMENT ---
@@ -1010,7 +1013,7 @@
             const currentHour = new Date(data.current.time).getHours();
             const startIndex = data.hourly.time.findIndex(t => new Date(t).getHours() === currentHour);
             if (startIndex !== -1) {
-                for (let i = startIndex; i < startIndex + 24 && i < data.hourly.time.length; i++) {
+                for (let i = startIndex + 1; i < startIndex + 25 && i < data.hourly.time.length; i++) {
                     const d = new Date(data.hourly.time[i]);
                     const h = d.getHours();
                     hourlyHTML += `<div class="hourly-item"><p class="hourly-time">${h === 0 ? '12am' : h === 12 ? '12pm' : h > 12 ? h - 12 + 'pm' : h + 'am'}</p><p class="hourly-icon">${(WMO_CODES[data.hourly.weather_code[i]] || {i: '?'}).i}</p><p class="hourly-temp">${Math.round(data.hourly.temperature_2m[i])}°</p></div>`;
@@ -1221,14 +1224,14 @@
         const m=document.getElementById('weatherSettingsModal');
         m.querySelector('#weatherLocationInput').value=weatherSettings.location.name;
         m.querySelector('#unitToggle').checked=weatherSettings.units==='metric';
-        m.querySelector(`#source${weatherSettings.dataSource.charAt(0).toUpperCase() + weatherSettings.dataSource.slice(1)}`).checked = true;
+        m.querySelector(`input[value="${weatherSettings.dataSource}"]`).checked = true;
         m.querySelector('#locationSuggestions').innerHTML='';
         m.querySelector('#locationSuggestions').style.display='none';
         updateNWSAvailability();
         m.classList.add('modal-open');
     }
     function updateNWSAvailability(isUS = userCountry === 'US') {
-        const nwsRadio = document.getElementById('sourceNWS');
+        const nwsRadio = document.getElementById('sourceNws');
         const nwsNote = document.getElementById('nwsApiNote');
         if (isUS) {
             nwsRadio.disabled = false;
@@ -1275,6 +1278,7 @@
     async function determineUserCountry() {
         try {
             const response = await fetch('https://ipapi.co/json/');
+            if (!response.ok) throw new Error('IP API fetch failed');
             const data = await response.json();
             userCountry = data.country_code;
         } catch (e) {
@@ -1293,9 +1297,11 @@
             radio.addEventListener('change', (e) => {
                 weatherSettings.dataSource = e.target.value;
                 saveSettings();
-                fetchWeather();
+                // No need to call fetchWeather here, it will be called when modal closes or location changes
             });
         });
+        sModal.querySelector('.modal-close-btn').addEventListener('click', fetchWeather); // Re-fetch on close in case units/source changed
+        
         sModal.querySelector('#useCurrentLocationBtn').addEventListener('click',b=>{if(!navigator.geolocation)return;b.disabled=!0;b.textContent='Locating...';navigator.geolocation.getCurrentPosition(async p=>{const{latitude,longitude}=p.coords;userCoords={latitude,longitude};const r=await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latitude}&lon=${longitude}`),d=await r.json();weatherSettings.location={name:getShortLocLabel(d.address,d.display_name),latitude,longitude};if(d.address.country_code==='us'){userCountry='US';updateNWSAvailability(true)}else{weatherSettings.dataSource='open-meteo';updateNWSAvailability(false)}document.getElementById('weatherLocationInput').value=weatherSettings.location.name;saveSettings();fetchWeather();sModal.classList.remove('modal-open');b.disabled=!1;b.textContent='📍 Use My Current Location'},()=>{b.disabled=!1;b.textContent='📍 Use My Current Location'},{enableHighAccuracy:!0,timeout:10000})});
         
         if(!loadSettings()&&navigator.geolocation){
