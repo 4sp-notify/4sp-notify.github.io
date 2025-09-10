@@ -137,9 +137,23 @@
     #clock-fs-countdown-section { margin-top: 5vh; min-height: 15vh; width: 100%; }
     #clock-fs-countdown-name { font-size: 2vw; font-weight: 500; } #clock-fs-countdown-timer { font-size: 4vw; font-weight: bold; }
     #clock-fs-countdown-timer .time-unit { display: inline-block; margin: 0 0.5vw; } #clock-fs-countdown-timer .time-label { font-size: 0.3em; display: block; margin-top: -0.5vh; }
-    .clock-fs-controls { position: absolute; top: 20px; left: 20px; display: flex; gap: 15px; align-items: center; transition: opacity 0.5s ease-in-out; }
-    .clock-fs-right-controls { position: absolute; top: 20px; right: 20px; transition: opacity 0.5s ease-in-out; }
-    .clock-fs-controls.controls-hidden, .clock-fs-right-controls.controls-hidden { opacity: 0; visibility: hidden; }
+    
+    /* UPDATED: Fullscreen controls fade behavior */
+    .clock-fs-controls, .clock-fs-right-controls {
+        opacity: 1;
+        visibility: visible;
+        position: absolute;
+        top: 20px;
+        transition: opacity 0.5s ease-in-out;
+    }
+    .clock-fs-controls { left: 20px; display: flex; gap: 15px; align-items: center; }
+    .clock-fs-right-controls { right: 20px; }
+    .clock-fs-controls.controls-hidden, .clock-fs-right-controls.controls-hidden {
+        opacity: 0;
+        visibility: hidden;
+        transition: opacity 0.5s ease-in-out, visibility 0s linear 0.5s;
+    }
+
     #clock-fs-color-toggle { font-size: 1.8em; cursor: pointer; transition: transform 0.3s; } #clock-fs-color-toggle:hover { transform: rotate(45deg); }
     #clock-fs-color-palette { position: absolute; top: 70px; right: 20px; width: 152px; background: rgba(255,255,255,.1); backdrop-filter: blur(5px); border-radius: 12px; padding: 10px; display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; z-index: 2001; opacity: 0; visibility: hidden; transition: opacity 0.3s; }
     #clock-fs-color-palette.visible { opacity: 1; visibility: visible; }
@@ -436,7 +450,7 @@
     
     // --- START: FULLSCREEN CLOCK LOGIC ---
     const clockFsOverlay=document.getElementById('clock-fullscreen-overlay'),clockFsTime=document.getElementById('clock-fs-main-time'),clockFsDate=document.getElementById('clock-fs-main-date'),clockFsCountdownName=document.getElementById('clock-fs-countdown-name'),clockFsCountdownTimer=document.getElementById('clock-fs-countdown-timer');
-    let clockFsInterval, clockFsCountdownInterval, inactivityTimer;
+    let clockFsInterval, clockFsCountdownTimeout, inactivityTimer;
 
     function resetInactivityTimer() {
         clearTimeout(inactivityTimer);
@@ -468,7 +482,6 @@
         populateAndInitFullscreenCountdownDropdown();
         updateFullscreenWeatherDisplay();
         
-        // Start inactivity detection
         clockFsOverlay.addEventListener('mousemove', resetInactivityTimer);
         resetInactivityTimer();
     }
@@ -476,13 +489,11 @@
     function closeClockFullscreen(){
         clockFsOverlay.classList.remove('active');
         clearInterval(clockFsInterval);
-        clearInterval(clockFsCountdownInterval);
+        clearTimeout(clockFsCountdownTimeout);
         
-        // Stop inactivity detection
         clearTimeout(inactivityTimer);
         clockFsOverlay.removeEventListener('mousemove', resetInactivityTimer);
         
-        // Ensure UI is visible when exiting
         clockFsOverlay.classList.remove('inactive-cursor');
         document.querySelectorAll('.clock-fs-controls, .clock-fs-right-controls').forEach(c => c.classList.remove('controls-hidden'));
         
@@ -505,9 +516,47 @@
         }
     }
     
-    function setFullscreenCountdown(id){clearInterval(clockFsCountdownInterval);localStorage.setItem(getStorageKey('selectedDashboardCountdownId'),id);if(!id){clockFsCountdownName.textContent='';clockFsCountdownTimer.innerHTML='';return}const countdowns=JSON.parse(localStorage.getItem(getStorageKey('countdowns'))||'[]');const c=countdowns.find(cd=>cd.id===id);if(c){clockFsCountdownName.textContent=c.name;const u=()=>clockFsCountdownTimer.innerHTML=formatCountdown(c.targetTimestamp);u();clockFsCountdownInterval=setInterval(u,1000)}}
-    
-    function formatCountdown(targetDate) { const end=new Date(targetDate);let now=new Date();if(end<=now){clearInterval(clockFsCountdownInterval);clearInterval(window.dashboardCountdownInterval);return"🎉 Finished!"}const diff=end-now;const w=Math.floor(diff/604800000),d=Math.floor((diff%604800000)/86400000),h=Math.floor((diff%86400000)/3600000),m=Math.floor((diff%3600000)/60000),s=Math.floor((diff%60000)/1000);const u=[{v:w,l:'wks'},{v:d,l:'days'},{v:h,l:'hrs'},{v:m,l:'mins'},{v:s,l:'secs'}];const v=u.filter((unit,idx)=>u.slice(0,idx).reduce((acc,p)=>acc+p.v,0)+unit.v>0);return v.map(unit=>`<span class="time-unit">${unit.v}<span class="time-label">${unit.l}</span></span>`).join('')||`<span class="time-unit">0<span class="time-label">secs</span></span>`}
+    // UPDATED: Countdown formatting and timer logic
+    function formatCountdown(targetDate) {
+        const end = new Date(targetDate);
+        const now = new Date();
+        if (end <= now) { return "🎉 Finished!"; }
+        const diff = end - now;
+        const w = Math.floor(diff / 604800000);
+        const d = Math.floor((diff % 604800000) / 86400000);
+        const h = Math.floor((diff % 86400000) / 3600000);
+        const m = Math.floor((diff % 3600000) / 60000);
+        const s = Math.floor((diff % 60000) / 1000);
+        const units = [{v: w, l:'wks'}, {v: d, l:'days'}, {v: h, l:'hrs'}, {v: m, l:'mins'}, {v: s, l:'secs'}];
+        const visibleUnits = units.filter((unit, idx) => units.slice(0, idx).reduce((acc, p) => acc + p.v, 0) + unit.v > 0);
+        return visibleUnits.map(unit => `<span class="time-unit">${unit.v}<span class="time-label">${unit.l}</span></span>`).join('') || `<span class="time-unit">0<span class="time-label">secs</span></span>`;
+    }
+
+    function setFullscreenCountdown(id) {
+        clearTimeout(clockFsCountdownTimeout);
+        localStorage.setItem(getStorageKey('selectedDashboardCountdownId'), id);
+        if (!id) {
+            clockFsCountdownName.textContent = '';
+            clockFsCountdownTimer.innerHTML = '';
+            return;
+        }
+        const countdowns = JSON.parse(localStorage.getItem(getStorageKey('countdowns')) || '[]');
+        const countdown = countdowns.find(cd => cd.id === id);
+        if (countdown) {
+            clockFsCountdownName.textContent = countdown.name;
+            const tick = () => {
+                const formattedTime = formatCountdown(countdown.targetTimestamp);
+                clockFsCountdownTimer.innerHTML = formattedTime;
+                if (formattedTime.includes("Finished")) {
+                    clearTimeout(clockFsCountdownTimeout);
+                    return;
+                }
+                const msUntilNextSecond = 1000 - new Date().getMilliseconds();
+                clockFsCountdownTimeout = setTimeout(tick, msUntilNextSecond);
+            };
+            tick();
+        }
+    }
     
     function populateAndInitFullscreenCountdownDropdown() {
         const wrapper = document.getElementById('fullscreen-countdown-select-wrapper');
@@ -546,13 +595,11 @@
                 const now = new Date();
                 timeEl.textContent = now.toLocaleTimeString();
                 dateEl.textContent = now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-
                 const start = new Date(now.getFullYear(), 0, 0);
                 const diff = (now - start) + ((start.getTimezoneOffset() - now.getTimezoneOffset()) * 60 * 1000);
                 const oneDay = 1000 * 60 * 60 * 24;
                 const dayOfYear = Math.floor(diff / oneDay);
                 if (dayOfYearEl) dayOfYearEl.textContent = `Day: ${dayOfYear}`;
-
                 const tempDate = new Date(now.valueOf());
                 tempDate.setDate(tempDate.getDate() + 3 - (tempDate.getDay() + 6) % 7);
                 const week1 = new Date(tempDate.getFullYear(), 0, 4);
@@ -566,10 +613,10 @@
             const countdownTimerEl = cardElement.querySelector('.dashboard-countdown-display-timer');
             const countdownSectionEl = cardElement.querySelector('.dashboard-countdown-section');
             const additionalInfoEl = cardElement.querySelector('.additional-time-info');
-            window.dashboardCountdownInterval = null;
+            window.dashboardCountdownTimeout = null;
 
             function renderCountdownInDashboard(countdownId) {
-                clearInterval(window.dashboardCountdownInterval);
+                clearTimeout(window.dashboardCountdownTimeout);
                 const countdowns = JSON.parse(localStorage.getItem(getStorageKey('countdowns')) || '[]');
                 const countdown = countdowns.find(cd => cd.id === countdownId);
                 
@@ -582,9 +629,17 @@
                 countdownSectionEl.style.display = 'block';
                 additionalInfoEl.style.display = 'none';
                 countdownNameEl.textContent = countdown.name;
-                const update = () => { countdownTimerEl.innerHTML = formatCountdown(countdown.targetTimestamp); };
-                update();
-                window.dashboardCountdownInterval = setInterval(update, 1000);
+                const tick = () => {
+                    const formattedTime = formatCountdown(countdown.targetTimestamp);
+                    countdownTimerEl.innerHTML = formattedTime;
+                    if (formattedTime.includes("Finished")) {
+                        clearTimeout(window.dashboardCountdownTimeout);
+                        return;
+                    }
+                    const msUntilNextSecond = 1000 - new Date().getMilliseconds();
+                    window.dashboardCountdownTimeout = setTimeout(tick, msUntilNextSecond);
+                };
+                tick();
             }
 
             window.updateDashboardCountdownDisplay = () => {
@@ -755,31 +810,46 @@
 
     // --- CUSTOM SELECT DROPDOWN LOGIC ---
     function initializeCustomSelect(wrapper, onChangeCallback) {
+        if (wrapper.dataset.customSelectInitialized) {
+             // To prevent multiple listeners, we can skip re-initialization 
+             // if the core structure hasn't changed. A more robust solution
+             // would remove old listeners, but this works for this use case.
+             return;
+        }
         const select = wrapper.querySelector('.custom-select');
         const trigger = select.querySelector('.custom-select-trigger');
         const optionsContainer = select.querySelector('.custom-options');
 
-        trigger.addEventListener('click', (e) => {
+        const handleTriggerClick = (e) => {
             e.stopPropagation();
             select.classList.toggle('open');
-        });
+        };
 
-        optionsContainer.addEventListener('click', (e) => {
+        const handleOptionClick = (e) => {
             if (e.target.classList.contains('custom-option')) {
                 const option = e.target;
                 const value = option.dataset.value;
                 const text = option.textContent;
-
-                optionsContainer.querySelector('.selected')?.classList.remove('selected');
+                if (optionsContainer.querySelector('.selected')) {
+                    optionsContainer.querySelector('.selected').classList.remove('selected');
+                }
                 option.classList.add('selected');
                 trigger.querySelector('span').textContent = text;
                 select.classList.remove('open');
-
                 if (onChangeCallback) {
                     onChangeCallback(value);
                 }
             }
-        });
+        };
+        
+        // A simple way to avoid duplicate listeners on re-renders
+        trigger.removeEventListener('click', handleTriggerClick);
+        trigger.addEventListener('click', handleTriggerClick);
+
+        optionsContainer.removeEventListener('click', handleOptionClick);
+        optionsContainer.addEventListener('click', handleOptionClick);
+        
+        wrapper.dataset.customSelectInitialized = true;
     }
     
     document.addEventListener('click', () => {
@@ -945,7 +1015,6 @@
         const dateTimePicker = flatpickr("#newCountdownDateTime", { enableTime: true, dateFormat: "Y-m-d H:i", minDate: "today" });
         document.getElementById('saveNewCountdownBtn').addEventListener('click', () => { const name = document.getElementById('newCountdownName').value.trim(); const dateTime = dateTimePicker.selectedDates[0]; if (!name || !dateTime) { showNotification("Please provide a name and a future date.", "error"); return; } const newCountdown = { id: `cd_${Date.now()}`, name, targetTimestamp: dateTime.toISOString() }; const key = getStorageKey('countdowns'); const countdowns = JSON.parse(localStorage.getItem(key) || '[]'); countdowns.push(newCountdown); localStorage.setItem(key, JSON.stringify(countdowns)); showNotification("Countdown saved!", "success"); document.getElementById('newCountdownModal').classList.remove('modal-open'); document.getElementById('newCountdownName').value = ''; dateTimePicker.clear(); if (window.updateDashboardCountdownDisplay) window.updateDashboardCountdownDisplay(); if(window.populateAndInitOverviewCountdownDropdown) populateAndInitOverviewCountdownDropdown(); });
         
-        // Shortcut Modal Buttons
         document.getElementById('saveShortcutsBtn').addEventListener('click', saveShortcutSettings);
         document.getElementById('resetShortcutsBtn').addEventListener('click', resetShortcutSettings);
 
@@ -961,7 +1030,7 @@
             useCurrentBtn.textContent = 'Locating...';
             navigator.geolocation.getCurrentPosition(async (position) => {
                 const { latitude, longitude } = position.coords;
-                userCoords = { lat: latitude, lon: longitude }; // Store for suggestions
+                userCoords = { lat: latitude, lon: longitude };
                 const { label } = await fetchCityName(latitude, longitude);
                 weatherSettings.location = { label, latitude, longitude };
                 wLocInput.value = label;
@@ -969,7 +1038,6 @@
                 showNotification(`Location updated to ${label}`, 'success');
                 useCurrentBtn.disabled = false;
                 useCurrentBtn.textContent = '📍 Use My Current Location';
-                // Automatically close modal and refresh weather after successful location get
                 document.getElementById('overviewSettingsModal').classList.remove('modal-open');
                 fetchWeather();
             }, (error) => {
@@ -977,7 +1045,7 @@
                 showNotification("Could not get location. Please enable location services.", "error");
                 useCurrentBtn.disabled = false;
                 useCurrentBtn.textContent = '📍 Use My Current Location';
-            }, { timeout: 10000 }); // <-- Added 10-second timeout
+            }, { timeout: 10000 });
         });
 
         async function fetchLocationSuggestions(query) {
@@ -1004,7 +1072,6 @@
                             wLocInput.value = shortLabel;
                             wLocSuggest.style.display = 'none';
                             saveWeatherSettings();
-                            // Automatically close modal and refresh weather after selection
                             document.getElementById('overviewSettingsModal').classList.remove('modal-open');
                             fetchWeather();
                         });
@@ -1021,11 +1088,9 @@
         window.updateNWSAvailability = function(isUS = userCountry === 'US') { const nR = document.getElementById('sourceNWS'); const nN = document.getElementById('nwsApiNote'); if (isUS) { nR.disabled = false; nN.style.display = 'none'; } else { if (weatherSettings.dataSource === 'nws') { weatherSettings.dataSource = 'open-meteo'; saveWeatherSettings(); document.getElementById('sourceOpenMeteo').checked = true; } nR.disabled = true; nN.style.display = 'block'; }};
         const fsWeatherToggle = document.getElementById('fullscreenWeatherToggle'); fsWeatherToggle.addEventListener('change', () => { weatherSettings.showWeatherInFullscreen = fsWeatherToggle.checked; saveWeatherSettings(); updateFullscreenWeatherDisplay(); });
         
-        // Fullscreen Color Picker Logic
         const colorToggle = document.getElementById('clock-fs-color-toggle');
         const colorPalette = document.getElementById('clock-fs-color-palette');
         const colorPickerInput = document.getElementById('color-picker-input');
-
         colorToggle.addEventListener('click', (e) => {
             e.stopPropagation();
             colorPalette.classList.toggle('visible');
