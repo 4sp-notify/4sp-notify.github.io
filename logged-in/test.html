@@ -648,7 +648,8 @@
     const WMO_CODES={0:{d:"Clear sky",i:"☀️"},1:{d:"Mainly clear",i:"🌤️"},2:{d:"Partly cloudy",i:"🌥️"},3:{d:"Overcast",i:"☁️"},45:{d:"Fog",i:"🌫️"},48:{d:"Depositing rime fog",i:"🌫️"},51:{d:"Light drizzle",i:"🌦️"},53:{d:"Moderate drizzle",i:"🌦️"},55:{d:"Dense drizzle",i:"🌧️"},56:{d:"Light freezing drizzle",i:"🌨️"},57:{d:"Dense freezing drizzle",i:"🌨️"},61:{d:"Slight rain",i:"🌧️"},63:{d:"Moderate rain",i:"🌧️"},65:{d:"Heavy rain",i:"Torrential rain"},66:{d:"Light freezing rain",i:"🌨️"},67:{d:"Heavy freezing rain",i:"🌨️"},71:{d:"Slight snow fall",i:"❄️"},73:{d:"Moderate snow fall",i:"❄️"},75:{d:"Heavy snow fall",i:"❄️"},77:{d:"Snow grains",i:"❄️"},80:{d:"Slight rain showers",i:"🌦️"},81:{d:"Moderate rain showers",i:"🌦️"},82:{d:"Violent rain showers",i:"⛈️"},85:{d:"Slight snow showers",i:"🌨️"},86:{d:"Heavy snow showers",i:"🌨️"},95:{d:"Thunderstorm",i:"⛈️"},96:{d:"Thunderstorm with slight hail",i:"⛈️"},99:{d:"Thunderstorm with heavy hail",i:"⛈️"}};
     const degToCard=d=>{if(d==null||isNaN(d))return"N/A";const v=Math.floor((d/22.5)+0.5);const a=["North","North-Northeast","Northeast","East-Northeast","East","East-Southeast","Southeast","South-Southeast","South","South-Southwest","Southwest","West-Southwest","West","West-Northwest","Northwest","North-Northwest"];return a[v%16]};
     const fmtNum=(n,p=2)=>{const num=Number(n);return isNaN(num)?n:num%1===0?num.toString():num.toFixed(p)};
-    
+    const showNotification = (message, type = 'info', duration = 4000) => { const n=document.createElement('div'); n.style.cssText=`position:fixed;bottom:20px;right:20px;padding:12px 20px;border-radius:8px;color:white;font-weight:600;z-index:10001;transform:translateY(150%);transition:transform 0.4s ease-in-out;background:${type==='success'?'#28a745':'#dc3545'}`; n.textContent=message; document.body.appendChild(n); setTimeout(() => n.style.transform = 'translateY(0)', 100); setTimeout(() => { n.style.transform = 'translateY(150%)'; setTimeout(() => n.parentElement.removeChild(n), 400); }, duration); };
+
     // --- GLOBAL STATE ---
     const defaultWeatherSettings = { dataSource: 'open-meteo', location: { label: 'New York, NY', latitude: 40.71, longitude: -74.01 }, units: 'imperial' };
     let weatherSettings = { ...defaultWeatherSettings };
@@ -668,16 +669,15 @@
         if (s) {
             try {
                 const loadedSettings = JSON.parse(s);
-                // Deep merge location to prevent partial/null objects from breaking the UI
                 const mergedLocation = { ...defaultWeatherSettings.location, ...(loadedSettings.location || {}) };
                 weatherSettings = { ...defaultWeatherSettings, ...loadedSettings, location: mergedLocation };
-                if (!weatherSettings.location.label) { // Final fallback if label is still missing
+                if (!weatherSettings.location.label) {
                     weatherSettings.location = defaultWeatherSettings.location;
                 }
                 return true;
             } catch (e) {
                 console.error("Failed to parse weather settings, using defaults:", e);
-                weatherSettings = { ...defaultWeatherSettings }; // Fallback on error
+                weatherSettings = { ...defaultWeatherSettings };
                 return false;
             }
         }
@@ -894,11 +894,20 @@
         sModal.querySelectorAll('input[name="dataSource"]').forEach(radio => radio.addEventListener('change', (e) => { weatherSettings.dataSource = e.target.value; saveSettings(); }));
         const useCurrentLocationBtn = sModal.querySelector('#useCurrentLocationBtn');
         useCurrentLocationBtn.addEventListener('click', () => {
-            if(!navigator.geolocation) return;
+            if(!navigator.geolocation) {
+                showNotification("Geolocation is not supported by your browser.", "error");
+                return;
+            }
             useCurrentLocationBtn.classList.add('loading');
             useCurrentLocationBtn.disabled = true;
             
-            navigator.geolocation.getCurrentPosition(async p => {
+            const geoOptions = {
+                enableHighAccuracy: false, // Set to false for better compatibility
+                timeout: 15000, // Increased timeout
+                maximumAge: 0
+            };
+
+            const success = async (p) => {
                 const {latitude, longitude} = p.coords;
                 userCoords = {latitude, longitude};
                 const {label, country_code} = await fetchCityName(latitude, longitude);
@@ -908,6 +917,7 @@
                     updateNWSAvailability(true);
                 } else {
                     weatherSettings.dataSource = 'open-meteo';
+                    document.getElementById('sourceOpenMeteo').checked = true;
                     updateNWSAvailability(false);
                 }
                 document.getElementById('weatherLocationInput').value = weatherSettings.location.label;
@@ -916,10 +926,20 @@
                 sModal.classList.remove('modal-open');
                 useCurrentLocationBtn.classList.remove('loading');
                 useCurrentLocationBtn.disabled = false;
-            }, () => {
+            };
+
+            const error = (err) => {
+                console.warn(`Geolocation Error (${err.code}): ${err.message}`);
+                let message = "Could not get location.";
+                if (err.code === 1) message = "Location permission denied. Please check your browser settings.";
+                else if (err.code === 2) message = "Location information is unavailable.";
+                else if (err.code === 3) message = "The request to get your location timed out.";
+                showNotification(message, "error");
                 useCurrentLocationBtn.classList.remove('loading');
                 useCurrentLocationBtn.disabled = false;
-            }, {enableHighAccuracy:true, timeout:10000});
+            };
+
+            navigator.geolocation.getCurrentPosition(success, error, geoOptions);
         });
         
         if(!loadSettings() && navigator.geolocation){
@@ -931,7 +951,10 @@
                 weatherSettings.units = (country_code === 'us' || country_code === 'lr' || country_code === 'mm') ? 'imperial':'metric';
                 saveSettings();
                 fetchWeather();
-            },()=>fetchWeather());
+            },(err) => {
+                console.warn("Initial geolocation failed, using default.", err);
+                fetchWeather()
+            }, { enableHighAccuracy: false, timeout: 10000 });
         }else{fetchWeather()}
     });
   </script>
