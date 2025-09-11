@@ -480,7 +480,7 @@
     #locationSuggestions li { padding: 10px 15px; cursor: pointer; transition: background-color 0.2s; border-bottom: 1px solid #eee; }
     #locationSuggestions li:last-child { border-bottom: none; }
     #locationSuggestions li:hover { background-color: #f0f2f5; }
-    #useCurrentLocationBtn { padding: 10px 15px; font-size: 0.95em; font-weight: 600; background: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; font-family: 'PrimaryFont', sans-serif; }
+    #useCurrentLocationBtn { padding: 10px 15px; font-size: 0.95em; font-weight: 600; background: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%); color: white; border: none; border-radius: 8px; cursor: pointer; transition: all 0.2s ease; font-family: 'PrimaryFont', sans-serif; display: flex; justify-content: center; align-items: center; min-height: 42px; }
     #useCurrentLocationBtn:hover { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(103, 32, 189, 0.3); }
     #useCurrentLocationBtn:disabled { background: #aaa; cursor: not-allowed; transform: none; box-shadow: none; }
     .unit-toggle-wrapper { display: flex; align-items: center; justify-content: space-between; padding: 10px; background-color: #f0f2f5; border-radius: 10px; }
@@ -499,6 +499,12 @@
     .data-source-selector input[type="radio"]:disabled + label { background-color: #e9ecef; cursor: not-allowed; color: #999; border-color: #e0e0e0; }
     #nwsApiNote { font-size: 0.85em; color: #777; text-align: center; margin-top: 5px; }
 
+    /* --- Loading Spinner for Button --- */
+    .btn-spinner { display: none; width: 18px; height: 18px; border: 2px solid rgba(255, 255, 255, 0.3); border-top-color: #fff; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #useCurrentLocationBtn.loading .btn-text { display: none; }
+    #useCurrentLocationBtn.loading .btn-spinner { display: block; }
+    
     /* Custom Flatpickr Theme */
     .flatpickr-calendar { font-family: 'PrimaryFont', sans-serif; background: #fff; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.2);}
     .flatpickr-day { font-size: 12px; padding: 0; width: 28px; height: 28px; line-height: 1; display: flex; justify-content: center; align-items: center; border-radius: 8px !important; }
@@ -606,7 +612,10 @@
               <div class="location-input-wrapper">
                   <input type="text" id="weatherLocationInput" placeholder="Enter a city or address..."><ul id="locationSuggestions"></ul>
               </div>
-              <button id="useCurrentLocationBtn">📍 Use My Current Location</button>
+              <button id="useCurrentLocationBtn">
+                <span class="btn-text">📍 Use My Current Location</span>
+                <div class="btn-spinner"></div>
+              </button>
           </div>
           <div class="settings-section">
               <label class="section-label">Data Source</label>
@@ -654,7 +663,27 @@
 
     // --- SETTINGS MANAGEMENT ---
     const saveSettings=()=>localStorage.setItem('weatherSettings',JSON.stringify(weatherSettings));
-    const loadSettings=()=>{ const s=localStorage.getItem('weatherSettings'); if(s){ try { const loadedSettings = JSON.parse(s); weatherSettings = { ...defaultWeatherSettings, ...loadedSettings }; return true; } catch (e) { console.error("Failed to parse weather settings:", e); return false; } } return false };
+    const loadSettings = () => {
+        const s = localStorage.getItem('weatherSettings');
+        if (s) {
+            try {
+                const loadedSettings = JSON.parse(s);
+                // Deep merge location to prevent partial/null objects from breaking the UI
+                const mergedLocation = { ...defaultWeatherSettings.location, ...(loadedSettings.location || {}) };
+                weatherSettings = { ...defaultWeatherSettings, ...loadedSettings, location: mergedLocation };
+                if (!weatherSettings.location.label) { // Final fallback if label is still missing
+                    weatherSettings.location = defaultWeatherSettings.location;
+                }
+                return true;
+            } catch (e) {
+                console.error("Failed to parse weather settings, using defaults:", e);
+                weatherSettings = { ...defaultWeatherSettings }; // Fallback on error
+                return false;
+            }
+        }
+        return false;
+    };
+
 
     // --- MAIN WEATHER FETCH CONTROLLER ---
     const fetchWeather = async () => {
@@ -743,7 +772,6 @@
         forecastChartInstance = new Chart(ctx, { type: 'line', data: chartData, options: chartOptions });
     }
     
-    // --- UPDATED to handle an optional callback on close ---
     function setupModal(modal, onCloseCallback = null) {
         if (!modal) return;
         const closeModal = () => {
@@ -864,7 +892,35 @@
         sModal.querySelector('#weatherLocationInput').addEventListener('keyup',e=>{clearTimeout(debounceTimer);if(e.target.value.length<3)return document.getElementById('locationSuggestions').style.display='none';debounceTimer=setTimeout(()=>fetchLocSuggestions(e.target.value),500)});
         sModal.querySelector('#unitToggle').addEventListener('change',e=>{weatherSettings.units=e.target.checked?'metric':'imperial';saveSettings();});
         sModal.querySelectorAll('input[name="dataSource"]').forEach(radio => radio.addEventListener('change', (e) => { weatherSettings.dataSource = e.target.value; saveSettings(); }));
-        sModal.querySelector('#useCurrentLocationBtn').addEventListener('click',b=>{if(!navigator.geolocation)return;b.disabled=!0;b.textContent='Locating...';navigator.geolocation.getCurrentPosition(async p=>{const{latitude,longitude}=p.coords;userCoords={latitude,longitude};const{label,country_code}=await fetchCityName(latitude,longitude);weatherSettings.location={label:label,latitude,longitude};if(country_code==='us'){userCountry='US';updateNWSAvailability(true)}else{weatherSettings.dataSource='open-meteo';updateNWSAvailability(false)}document.getElementById('weatherLocationInput').value=weatherSettings.location.label;saveSettings();fetchWeather();sModal.classList.remove('modal-open');b.disabled=!1;b.textContent='📍 Use My Current Location'},()=>{b.disabled=!1;b.textContent='📍 Use My Current Location'},{enableHighAccuracy:!0,timeout:10000})});
+        const useCurrentLocationBtn = sModal.querySelector('#useCurrentLocationBtn');
+        useCurrentLocationBtn.addEventListener('click', () => {
+            if(!navigator.geolocation) return;
+            useCurrentLocationBtn.classList.add('loading');
+            useCurrentLocationBtn.disabled = true;
+            
+            navigator.geolocation.getCurrentPosition(async p => {
+                const {latitude, longitude} = p.coords;
+                userCoords = {latitude, longitude};
+                const {label, country_code} = await fetchCityName(latitude, longitude);
+                weatherSettings.location = {label, latitude, longitude};
+                if(country_code === 'us') {
+                    userCountry='US';
+                    updateNWSAvailability(true);
+                } else {
+                    weatherSettings.dataSource = 'open-meteo';
+                    updateNWSAvailability(false);
+                }
+                document.getElementById('weatherLocationInput').value = weatherSettings.location.label;
+                saveSettings();
+                fetchWeather();
+                sModal.classList.remove('modal-open');
+                useCurrentLocationBtn.classList.remove('loading');
+                useCurrentLocationBtn.disabled = false;
+            }, () => {
+                useCurrentLocationBtn.classList.remove('loading');
+                useCurrentLocationBtn.disabled = false;
+            }, {enableHighAccuracy:true, timeout:10000});
+        });
         
         if(!loadSettings() && navigator.geolocation){
             navigator.geolocation.getCurrentPosition(async p=>{
