@@ -178,8 +178,8 @@
     #overviewSettingsModal .custom-select-trigger:hover { background-color: #f0f2f5; }
     .custom-select-trigger::after { content: "▼"; font-size: .7em; position: absolute; right: 15px; top: 50%; transform: translateY(-50%); transition: transform .2s; }
     .custom-select.open .custom-select-trigger::after { transform: translateY(-50%) rotate(180deg); }
-    .custom-options { position: absolute; top: 105%; left: 0; right: 0; background: rgba(40,40,40,.7); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,.2); border-radius: 12px; z-index: 10; max-height: 200px; overflow-y: auto; display: none; }
-    #overviewSettingsModal .custom-options { background: white; border: 1px solid #ddd; color: #333; }
+    .custom-options { position: absolute; top: 105%; left: 0; right: 0; background: rgba(40,40,40,.7); backdrop-filter: blur(8px); border: 1px solid rgba(255,255,255,.2); border-radius: 12px; z-index: 2002; max-height: 200px; overflow-y: auto; display: none; }
+    #overviewSettingsModal .custom-options { background: white; border: 1px solid #ddd; color: #333; z-index: 10001; }
     .custom-select.open .custom-options { display: block; }
     .custom-option, .custom-optgroup { display: block; padding: 12px 15px; cursor: pointer; transition: background-color 0.2s; white-space: normal; word-break: break-word; }
     .custom-optgroup { font-weight: bold; color: #888; background-color: #f8f9fa; cursor: default; }
@@ -501,7 +501,7 @@
     
     // --- FULLSCREEN CLOCK LOGIC ---
     const clockFsOverlay=document.getElementById('clock-fullscreen-overlay'),clockFsTime=document.getElementById('clock-fs-main-time'),clockFsDate=document.getElementById('clock-fs-main-date'),clockFsCountdownName=document.getElementById('clock-fs-countdown-name'),clockFsCountdownTimer=document.getElementById('clock-fs-countdown-timer');
-    let clockFsInterval, clockFsCountdownTimeout, inactivityTimer, originalTitle = document.title;
+    let clockFsTimeout, clockFsCountdownTimeout, inactivityTimer, originalTitle = document.title;
     let activeGroupId = null; // For countdown groups
 
     function resetInactivityTimer() {
@@ -515,7 +515,7 @@
             clockFsOverlay.classList.add('inactive-cursor');
             controls.forEach(c => c.classList.add('controls-hidden'));
             if (weatherDisplay.style.display !== 'none') weatherDisplay.style.right = '20px';
-        }, 2500);
+        }, 3000);
     }
 
     function openClockFullscreen(){
@@ -523,9 +523,14 @@
         const savedColor = localStorage.getItem(getStorageKey('clockFsColor'));
         if (savedColor) clockFsOverlay.style.background = savedColor;
         clockFsOverlay.classList.add('active');
-        clockFsInterval=setInterval(updateFullscreenClock, 1000);
+        updateFullscreenClock();
         clockFsOverlay.requestFullscreen().catch(err=>{console.error("Fullscreen request failed:",err);closeClockFullscreen()});
-        populateAndInitFullscreenCountdownDropdown();
+        
+        // Correctly initialize dropdown and load initial countdown
+        populateAndInitCountdownDropdown('fullscreen-countdown-select-wrapper', setActiveDisplay);
+        const savedId = localStorage.getItem(getStorageKey('selectedDashboardCountdownId'));
+        setActiveDisplay(savedId);
+
         updateFullscreenWeatherDisplay();
         clockFsOverlay.addEventListener('mousemove', resetInactivityTimer);
         resetInactivityTimer();
@@ -534,7 +539,7 @@
     function closeClockFullscreen(){
         document.title = originalTitle;
         clockFsOverlay.classList.remove('active');
-        clearInterval(clockFsInterval);
+        clearTimeout(clockFsTimeout);
         clearTimeout(clockFsCountdownTimeout);
         clearTimeout(inactivityTimer);
         clockFsOverlay.removeEventListener('mousemove', resetInactivityTimer);
@@ -546,13 +551,24 @@
     document.addEventListener('fullscreenchange', ()=>{if(!document.fullscreenElement)closeClockFullscreen()});
     
     function updateTitle() {
-        if (generalSettings.titleDisplay === 'none') return;
-        if (generalSettings.titleDisplay === 'time') { document.title = new Date().toLocaleTimeString(); }
-        else if (generalSettings.titleDisplay === 'countdown') {
+        if (generalSettings.titleDisplay === 'none') {
+            if (document.title !== originalTitle) document.title = originalTitle;
+            return;
+        }
+        if (generalSettings.titleDisplay === 'time') {
+            document.title = clockFsTime.textContent;
+        } else if (generalSettings.titleDisplay === 'countdown') {
             const name = clockFsCountdownName.textContent;
             const time = clockFsCountdownTimer.textContent;
-            if (name && time && !time.includes("Finished")) { document.title = `${name} - ${time}`; } 
-            else if (time) { document.title = time; }
+            if (name && time && !time.includes("Finished")) {
+                document.title = `${name} - ${time}`;
+            } else if (time) {
+                document.title = time;
+            } else if (name) {
+                document.title = name;
+            } else {
+                if (document.title !== originalTitle) document.title = originalTitle;
+            }
         }
     }
 
@@ -561,6 +577,9 @@
         clockFsTime.textContent=n.toLocaleTimeString();
         clockFsDate.textContent=n.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'});
         updateTitle();
+        
+        const msUntilNextSecond = 1000 - n.getMilliseconds();
+        clockFsTimeout = setTimeout(updateFullscreenClock, msUntilNextSecond);
     }
     
     function updateFullscreenWeatherDisplay() {
@@ -658,7 +677,7 @@
 
     function setActiveDisplay(id) {
         clearTimeout(clockFsCountdownTimeout);
-        localStorage.setItem(getStorageKey('selectedDashboardCountdownId'), id);
+        localStorage.setItem(getStorageKey('selectedDashboardCountdownId'), id || '');
         
         if (!id) {
             activeGroupId = null;
@@ -720,7 +739,7 @@
     }
 
     function populateAllCountdownDropdowns() {
-        populateAndInitCountdownDropdown('fullscreen-countdown-select-wrapper', setActiveDisplay);
+        // This function now only targets the dropdown in the settings modal
         populateAndInitCountdownDropdown('overview-countdown-select-wrapper', (value) => {
             localStorage.setItem(getStorageKey('selectedDashboardCountdownId'), value);
             if(window.updateDashboardCountdownDisplay) window.updateDashboardCountdownDisplay();
