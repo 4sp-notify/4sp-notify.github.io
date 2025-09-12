@@ -29,6 +29,11 @@ const urlChanger = {
             favicon: '../favicons/hac.png'
         },
         {
+            name: 'GMM',
+            title: 'Get More Math!',
+            favicon: '../favicons/gmm.png'
+        },
+        {
             name: 'Kahoot',
             title: 'Kahoot! | Learning games | Make learning awesome!',
             favicon: '../favicons/kahoot.png'
