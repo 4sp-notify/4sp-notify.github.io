@@ -187,6 +187,7 @@
     #overviewSettingsModal .custom-option:hover { background-color: #f0f2f5; }
     .custom-option.selected { background-color: rgba(138,43,226,.5); font-weight: bold; }
     #overviewSettingsModal .custom-option.selected { background-color: #e9ecef; }
+    .custom-option.disabled { color: #aaa; cursor: not-allowed; background-color: #f0f2f5 !important; } /* NEW STYLE */
     .fade-in { animation: fadeIn .6s ease-out forwards; } @keyframes fadeIn{from{opacity: 0;transform: translateY(20px)}to{opacity: 1;transform: translateY(0)}}
   </style>
 </head>
@@ -299,7 +300,7 @@
             <div class="tab-panels-container">
                 <div id="tab-general" class="tab-panel">
                     <div class="settings-section">
-                        <label>Fullscreen Title Display</label>
+                        <label>Tab Title Display</label>
                         <div class="custom-select-wrapper" id="title-display-select-wrapper">
                             <div class="custom-select">
                                 <div class="custom-select-trigger"><span>None</span></div>
@@ -499,9 +500,9 @@
         document.getElementById('forecastDetailModal').classList.add('modal-open');
     }
     
-    // --- FULLSCREEN CLOCK LOGIC ---
+    // --- FULLSCREEN CLOCK & TAB TITLE LOGIC ---
     const clockFsOverlay=document.getElementById('clock-fullscreen-overlay'),clockFsTime=document.getElementById('clock-fs-main-time'),clockFsDate=document.getElementById('clock-fs-main-date'),clockFsCountdownName=document.getElementById('clock-fs-countdown-name'),clockFsCountdownTimer=document.getElementById('clock-fs-countdown-timer');
-    let clockFsTimeout, clockFsCountdownTimeout, inactivityTimer, originalTitle = document.title;
+    let clockFsTimeout, clockFsCountdownTimeout, inactivityTimer, titleUpdateInterval, originalTitle = document.title;
     let activeGroupId = null; // For countdown groups
 
     function resetInactivityTimer() {
@@ -519,14 +520,12 @@
     }
 
     function openClockFullscreen(){
-        originalTitle = document.title;
         const savedColor = localStorage.getItem(getStorageKey('clockFsColor'));
         if (savedColor) clockFsOverlay.style.background = savedColor;
         clockFsOverlay.classList.add('active');
         updateFullscreenClock();
         clockFsOverlay.requestFullscreen().catch(err=>{console.error("Fullscreen request failed:",err);closeClockFullscreen()});
         
-        // Correctly initialize dropdown and load initial countdown
         populateAndInitCountdownDropdown('fullscreen-countdown-select-wrapper', setActiveDisplay);
         const savedId = localStorage.getItem(getStorageKey('selectedDashboardCountdownId'));
         setActiveDisplay(savedId);
@@ -537,7 +536,6 @@
     }
     
     function closeClockFullscreen(){
-        document.title = originalTitle;
         clockFsOverlay.classList.remove('active');
         clearTimeout(clockFsTimeout);
         clearTimeout(clockFsCountdownTimeout);
@@ -550,33 +548,33 @@
     
     document.addEventListener('fullscreenchange', ()=>{if(!document.fullscreenElement)closeClockFullscreen()});
     
-    function updateTitle() {
-        if (generalSettings.titleDisplay === 'none') {
-            if (document.title !== originalTitle) document.title = originalTitle;
-            return;
-        }
-        if (generalSettings.titleDisplay === 'time') {
-            document.title = clockFsTime.textContent;
-        } else if (generalSettings.titleDisplay === 'countdown') {
-            const name = clockFsCountdownName.textContent;
-            const time = clockFsCountdownTimer.textContent;
-            if (name && time && !time.includes("Finished")) {
-                document.title = `${name} - ${time}`;
-            } else if (time) {
-                document.title = time;
-            } else if (name) {
-                document.title = name;
-            } else {
-                if (document.title !== originalTitle) document.title = originalTitle;
-            }
+    function updateBrowserTabTitle() {
+        switch (generalSettings.titleDisplay) {
+            case 'time':
+                document.title = new Date().toLocaleTimeString();
+                break;
+            case 'countdown':
+                const name = clockFsCountdownName.textContent;
+                const time = clockFsCountdownTimer.textContent;
+                if (name && time && !time.includes("Finished")) {
+                    document.title = `${name} - ${time}`;
+                } else if (document.title !== originalTitle) {
+                    document.title = originalTitle;
+                }
+                break;
+            case 'none':
+            default:
+                if (document.title !== originalTitle) {
+                    document.title = originalTitle;
+                }
+                break;
         }
     }
 
     function updateFullscreenClock(){
         const n=new Date();
-        clockFsTime.textContent=n.toLocaleTimeString();
+        clockFsTime.textContent = n.toLocaleTimeString([], { hour12: true, hour: 'numeric', minute: '2-digit', second: '2-digit' });
         clockFsDate.textContent=n.toLocaleDateString(undefined,{weekday:'long',year:'numeric',month:'long',day:'numeric'});
-        updateTitle();
         
         const msUntilNextSecond = 1000 - n.getMilliseconds();
         clockFsTimeout = setTimeout(updateFullscreenClock, msUntilNextSecond);
@@ -674,10 +672,35 @@
         };
         tick();
     }
+    
+    function updateTitleCountdownOptionState() {
+        const countdownOption = document.querySelector('#title-display-select-wrapper .custom-option[data-value="countdown"]');
+        if (!countdownOption) return;
+
+        const selectedCountdownId = localStorage.getItem(getStorageKey('selectedDashboardCountdownId'));
+        const hasActiveCountdown = !!selectedCountdownId;
+
+        if (hasActiveCountdown) {
+            countdownOption.classList.remove('disabled');
+        } else {
+            countdownOption.classList.add('disabled');
+            // If the disabled option is currently selected, revert to 'none'
+            if (generalSettings.titleDisplay === 'countdown') {
+                generalSettings.titleDisplay = 'none';
+                saveGeneralSettings();
+                const titleWrapper = document.getElementById('title-display-select-wrapper');
+                const noneOption = titleWrapper.querySelector('.custom-option[data-value="none"]');
+                titleWrapper.querySelector('.selected')?.classList.remove('selected');
+                noneOption.classList.add('selected');
+                titleWrapper.querySelector('.custom-select-trigger span').textContent = noneOption.textContent;
+            }
+        }
+    }
 
     function setActiveDisplay(id) {
         clearTimeout(clockFsCountdownTimeout);
         localStorage.setItem(getStorageKey('selectedDashboardCountdownId'), id || '');
+        updateTitleCountdownOptionState(); // Update disabled state when countdown changes
         
         if (!id) {
             activeGroupId = null;
@@ -739,9 +762,9 @@
     }
 
     function populateAllCountdownDropdowns() {
-        // This function now only targets the dropdown in the settings modal
         populateAndInitCountdownDropdown('overview-countdown-select-wrapper', (value) => {
             localStorage.setItem(getStorageKey('selectedDashboardCountdownId'), value);
+            updateTitleCountdownOptionState(); // Update disabled state when countdown changes
             if(window.updateDashboardCountdownDisplay) window.updateDashboardCountdownDisplay();
         });
     }
@@ -759,7 +782,7 @@
             
             function updateClock() {
                 const now = new Date();
-                timeEl.textContent = now.toLocaleTimeString();
+                timeEl.textContent = now.toLocaleTimeString([], { hour12: true, hour: 'numeric', minute: '2-digit', second: '2-digit' });
                 dateEl.textContent = now.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
                 const start = new Date(now.getFullYear(), 0, 0);
                 const diff = (now - start) + ((start.getTimezoneOffset() - now.getTimezoneOffset()) * 60 * 1000);
@@ -879,16 +902,16 @@
                 loadGeneralSettings();
                 const settingsLoaded = localStorage.getItem(getStorageKey('weatherWidgetSettings'));
                 if (!settingsLoaded && navigator.geolocation) {
-                    navigator.geolocation.getCurrentPosition(
-                        async (pos) => { userCoords = { lat: pos.coords.latitude, lon: pos.coords.longitude }; const { label, country_code } = await fetchCityName(userCoords.lat, userCoords.lon); weatherSettings.location = { label, latitude: userCoords.lat, longitude: userCoords.lon }; weatherSettings.units = (country_code === 'us' || !country_code) ? 'imperial' : 'metric'; saveWeatherSettings(); await fetchWeather(); },
-                        async () => { showNotification(`Could not find you. Defaulting to NY.`, 'info'); await fetchWeather(); }
-                    );
+                     // Using the multi-layered location finding immediately
+                    const useCurrentBtn = document.getElementById('overviewUseCurrentLocationBtn'); // a dummy element to trigger the click logic
+                    useCurrentBtn.click(); // This will trigger the robust location finding logic
                 } else { await fetchWeather(); }
             }
             if (settingsBtn) settingsBtn.addEventListener('click', () => {
                 const modal = document.getElementById('overviewSettingsModal');
                 modal.classList.add('modal-open');
                 populateAllCountdownDropdowns();
+                updateTitleCountdownOptionState(); // Check disabled state when modal opens
                 
                 // General settings
                 const titleWrapper = document.getElementById('title-display-select-wrapper');
@@ -1024,7 +1047,7 @@
         const handleTriggerClick = (e) => { e.stopPropagation(); select.classList.toggle('open'); };
         const handleOptionClick = (e) => {
             const option = e.target.closest('.custom-option');
-            if (option) {
+            if (option && !option.classList.contains('disabled')) { // Prevent clicking disabled options
                 const value = option.dataset.value;
                 const text = option.textContent;
                 if (optionsContainer.querySelector('.selected')) {
@@ -1121,7 +1144,17 @@
 
     // --- INITIALIZATION ---
     document.addEventListener('DOMContentLoaded', () => {
-        firebase.auth().onAuthStateChanged(user => { if (!user) location.href = '../login.html'; else { loadGeneralSettings(); renderDashboardLayout(); }});
+        firebase.auth().onAuthStateChanged(user => { 
+            if (!user) {
+                location.href = '../login.html';
+            } else {
+                originalTitle = document.title;
+                loadGeneralSettings();
+                renderDashboardLayout(); 
+                if (titleUpdateInterval) clearInterval(titleUpdateInterval);
+                titleUpdateInterval = setInterval(updateBrowserTabTitle, 100);
+            }
+        });
         document.getElementById('logoutBtn').addEventListener('click', () => firebase.auth().signOut());
         document.getElementById('signOutLink').addEventListener('click', (e) => { e.preventDefault(); firebase.auth().signOut(); });
         document.getElementById('toggleSidebar').addEventListener('click', () => document.getElementById('sidebar').classList.toggle('collapsed'));
