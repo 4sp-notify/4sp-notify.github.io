@@ -1,8 +1,9 @@
 /**
  * panic-key.js
  * This script provides a user-configurable panic key functionality for a website using IndexedDB.
- * When activated, it redirects the user to a pre-configured URL stored locally in the browser.
+ * When activated, it redirects the user to a pre-configured destination.
  * The user can configure up to 3 separate panic keys.
+ * The destination can be an external URL (e.g., https://google.com) or an internal page path (e.g., /dashboard/games.html).
  * The key press must be a single key without any modifiers (Shift, Ctrl, Alt, etc.).
  *
  * This version uses IndexedDB for local storage, ensuring privacy and instantaneous redirection.
@@ -59,7 +60,7 @@ function getSettings(db) {
 
 /**
  * Attaches the 'keydown' event listener to the document with the user's specific settings.
- * @param {Array<object>} settingsArray - An array of the user's panic key settings objects { id, key, url }.
+ * @param {Array<object>} settingsArray - An array of panic key settings objects { id, key, type, value }.
  */
 function addPanicKeyListener(settingsArray) {
     if (!settingsArray || settingsArray.length === 0) {
@@ -89,8 +90,9 @@ function addPanicKeyListener(settingsArray) {
                 // This prevents the browser from performing the default action for the key press.
                 event.preventDefault();
                 
-                // Navigate to the user's personally chosen panic URL for the matched key.
-                window.location.href = matchedSetting.url;
+                // The 'value' can be a full URL or a relative page path. 
+                // window.location.href handles both types correctly.
+                window.location.href = matchedSetting.value;
             }
         }
     });
