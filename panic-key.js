@@ -90,9 +90,8 @@ function addPanicKeyListener(settingsArray) {
                 // This prevents the browser from performing the default action for the key press.
                 event.preventDefault();
                 
-                // The 'value' can be a full URL or a relative page path. 
-                // window.location.href handles both types correctly.
-                window.location.href = matchedSetting.value;
+                // The 'url' property holds the destination URL.
+                window.location.href = matchedSetting.url;
             }
         }
     });
