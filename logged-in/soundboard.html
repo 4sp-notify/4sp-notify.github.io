@@ -655,7 +655,6 @@
             <div class="modal-body">
                 <div class="settings-tabs">
                      <button class="tab-button active" data-tab="general">General</button>
-                     <button class="tab-button" data-tab="autoclicker">Autoclicker</button>
                      <button class="tab-button" data-tab="modes">Audio Modes</button>
                      <button class="tab-button" data-tab="equalizer">Equalizer</button>
                      <button class="tab-button" data-tab="effects">Effects</button>
@@ -699,29 +698,6 @@
                                         <span>Newest</span>
                                     </label>
                                 </div>
-                            </div>
-                        </div>
-
-                        <div id="autoclicker" class="tab-panel">
-                            <div class="control-group" data-search-terms="autoclicker enable">
-                                 <label class="checkbox-label-v4">Enable Autoclicker <input type="checkbox" id="autoclickerEnabled" data-setting="autoclickerEnabled"></label>
-                             </div>
-                             <div class="control-group" data-search-terms="autoclicker interval speed">
-                                 <label for="clickInterval">Click Interval (ms)</label>
-                                 <input type="number" id="clickInterval" value="200" min="50" data-setting="clickInterval">
-                             </div>
-                             <div class="control-group" data-search-terms="autoclicker activation method hover hold">
-                                 <label>Activation Method</label>
-                                 <div class="radio-group-container">
-                                     <label class="radio-label">
-                                         <input type="radio" name="autoclickerActivation" value="hover" data-setting="autoclickerActivation" checked>
-                                         <span>Hover</span>
-                                     </label>
-                                     <label class="radio-label">
-                                         <input type="radio" name="autoclickerActivation" value="hold" data-setting="autoclickerActivation">
-                                         <span>Hold</span>
-                                     </label>
-                                 </div>
                             </div>
                         </div>
 
@@ -944,124 +920,6 @@
             nightModeCompressor: new DynamicsCompressorNode(audioContext, {threshold: 0, knee: 30, ratio: 1, attack: 0.003, release: 0.25 }),
         };
         
-        // --- [REFACTORED] AUTOCLICKER MODULE ---
-        const autoClicker = {
-            intervalId: null,
-            isHoldActive: false, // Prevents mouseover from starting while holding mousedown
-            config: {
-                isEnabled: false,
-                delay: 200,
-                activationMode: 'hover'
-            },
-
-            // Set up all necessary event listeners for the auto-clicker
-            init() {
-                // Cache DOM elements for settings
-                this.enableCheckbox = document.getElementById('autoclickerEnabled');
-                this.delayInput = document.getElementById('clickInterval');
-                this.activationRadios = document.querySelectorAll('input[name="autoclickerActivation"]');
-                this.soundButtonContainer = document.getElementById('soundCategoriesContainerV4');
-
-                this.updateConfig(); // Initial config update from DOM
-
-                // Listen for changes in settings to keep config up-to-date
-                this.enableCheckbox.addEventListener('change', () => this.updateConfig());
-                this.delayInput.addEventListener('change', () => this.updateConfig());
-                this.activationRadios.forEach(radio => radio.addEventListener('change', () => this.updateConfig()));
-
-                // Use event delegation for sound buttons for better performance
-                this.soundButtonContainer.addEventListener('mouseover', this.handleMouseOver.bind(this));
-                this.soundButtonContainer.addEventListener('mouseout', this.handleMouseOut.bind(this));
-                this.soundButtonContainer.addEventListener('mousedown', this.handleMouseDown.bind(this));
-
-                console.log("AutoClicker module initialized.");
-            },
-
-            // Read settings from the UI and update the internal state
-            updateConfig() {
-                this.config.isEnabled = this.enableCheckbox.checked;
-                this.config.delay = parseInt(this.delayInput.value, 10) || 200;
-                const checkedRadio = document.querySelector('input[name="autoclickerActivation"]:checked');
-                this.config.activationMode = checkedRadio ? checkedRadio.value : 'hover';
-
-                // If the auto-clicker is disabled via checkbox, ensure it stops
-                if (!this.config.isEnabled) {
-                    this.stop();
-                }
-            },
-
-            // Central logic to start the clicking interval
-            start(targetButton) {
-                if (!this.config.isEnabled) return;
-                
-                this.stop(); // Stop any existing timer before starting a new one
-
-                const delay = this.config.delay;
-                if (isNaN(delay) || delay < 50) {
-                    showStatus('Interval must be 50ms or higher.', 'error');
-                    this.delayInput.classList.add('input-flash-deny');
-                    setTimeout(() => this.delayInput.classList.remove('input-flash-deny'), 700);
-                    return;
-                }
-
-                // Click immediately for responsiveness, then start the interval
-                targetButton.click(); 
-                this.intervalId = setInterval(() => {
-                    // Safety check: ensure the button still exists in the DOM
-                    if (document.body.contains(targetButton)) {
-                        targetButton.click();
-                    } else {
-                        this.stop(); // Stop if the button has been removed
-                    }
-                }, delay);
-            },
-
-            // Central logic to stop the clicking interval
-            stop() {
-                if (this.intervalId) {
-                    clearInterval(this.intervalId);
-                    this.intervalId = null;
-                }
-            },
-
-            // --- Event Handlers (using Delegation) ---
-            handleMouseOver(event) {
-                const button = event.target.closest('.sound-button-v4');
-                // Start only if in 'hover' mode and not currently in a 'hold' action
-                if (button && this.config.activationMode === 'hover' && !this.isHoldActive) {
-                    this.start(button);
-                }
-            },
-
-            handleMouseOut(event) {
-                const button = event.target.closest('.sound-button-v4');
-                // Stop only if in 'hover' mode
-                if (button && this.config.activationMode === 'hover') {
-                    this.stop();
-                }
-            },
-
-            handleMouseDown(event) {
-                const button = event.target.closest('.sound-button-v4');
-                // Start only if in 'hold' mode
-                if (button && this.config.activationMode === 'hold') {
-                    event.preventDefault(); // Prevent text selection while holding
-                    this.isHoldActive = true;
-                    this.start(button);
-
-                    // Add a one-time listener to the whole document. This ensures that
-                    // releasing the mouse button ANYWHERE will stop the auto-clicker.
-                    document.addEventListener('mouseup', this.handleMouseUp.bind(this), { once: true });
-                }
-            },
-            
-            // This handler is bound to the document only after a 'hold' mousedown
-            handleMouseUp(event) {
-                this.isHoldActive = false;
-                this.stop();
-            }
-        };
-        
         nodes.partyMode.gain.gain.value = 0;
         nodes.reverb.gain.gain.value = 0;
 
@@ -1100,14 +958,6 @@
         const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start() { if (this.isActive) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); showStatus('Could not access microphone. Please enable it in browser settings.', 'error'); const awarenessCheckbox = document.querySelector('[data-setting="modeAwareness"]'); if(awarenessCheckbox) awarenessCheckbox.checked = false; }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); let voiceEnergy = 0; for (let i = 5; i < 100; i++) voiceEnergy += dataArray[i]; voiceEnergy /= 95; const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; nodes.awarenessGain.gain.setTargetAtTime(newVolume, audioContext.currentTime, 0.1); } };
         
         const clearSounds = () => {
-            autoClicker.stop();
-            const autoclickerCheckbox = document.getElementById('autoclickerEnabled');
-            if (autoclickerCheckbox) {
-                autoclickerCheckbox.checked = false;
-                // Manually trigger config update after changing the UI
-                autoClicker.updateConfig();
-            }
-            
             const fadeOutTime = parseFloat(document.getElementById('fadeOut').value || 0.1);
             for (const [_, instances] of activeSounds.entries()) {
                 [...instances].forEach(sound => sound.stop(fadeOutTime));
@@ -1382,7 +1232,6 @@
             requestAnimationFrame(updateButtonVisuals);
             showWelcomePopupIfNeeded();
             makeDraggable(document.getElementById('devMenu'), document.getElementById('devMenuHeader'));
-            autoClicker.init(); // Initialize the new auto-clicker module
 
             // --- MODAL & TABS ---
             const settingsModal = document.getElementById('soundboardSettingsModal');
