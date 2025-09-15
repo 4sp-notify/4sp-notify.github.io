@@ -287,7 +287,7 @@
             padding: 10px;
             border: 1px solid transparent;
             border-radius: 12px;
-            transition: background-color 0.4s ease, border-color 0.4s ease;
+            transition: background-color: 0.4s ease, border-color: 0.4s ease;
         }
         .spatial-audio-control:has(input:checked) {
             background-color: #f8f9fa;
@@ -470,7 +470,7 @@
         .sound-button-v4.pulsating { animation: pulsePlayingSoundboardV4 1.5s infinite; }
         @keyframes pulsePlayingSoundboardV4 { 0% { box-shadow: 0 0 0 0px var(--v4-purple-accent); } 100% { box-shadow: 0 0 0 8px rgba(103, 32, 189, 0); } }
         
-        /* --- NEW: Auto-Clicker Selection Style --- */
+        /* --- Auto-Clicker Selection Style --- */
         .sound-button-v4.selected-for-autoclick {
             box-shadow: 0 0 0 3px #00dd88;
             border-color: #00dd88;
@@ -535,7 +535,7 @@
         .status-message-v4.error { background: linear-gradient(135deg, #8f262a, #721c24); }
         .status-message-v4.info { background: linear-gradient(135deg, #004085, #002752); }
         
-        /* --- NEW: Modal Styles --- */
+        /* --- Modal Styles --- */
         .modal-backdrop { 
             position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
             background: rgba(0,0,0,0.6); 
@@ -597,7 +597,7 @@
         .btn-secondary { background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 8px; text-transform: uppercase; cursor: pointer; transition: all 0.3s ease; }
         .btn-secondary:hover { background: #5a6268; }
 
-        /* --- NEW: Auto-clicker specific styles --- */
+        /* --- Auto-clicker specific styles --- */
         #autoClickerControls .button-container {
             display: flex;
             gap: 10px;
@@ -723,7 +723,7 @@
                             </div>
                             <div id="autoClickerControls" class="control-group" data-search-terms="auto clicker spammer interval">
                                 <label for="autoClickInterval">Auto Clicker</label>
-                                <small class="mode-description" style="margin-top:0; margin-bottom: 8px;">Right-click a sound to select it, then set the interval in milliseconds (ms).</small>
+                                <small class="mode-description" style="margin-top:0; margin-bottom: 8px;">Right-click to select up to 25 sounds. Use Shift+C to clear selections.</small>
                                 <input type="number" id="autoClickInterval" placeholder="Interval (ms)" value="100" min="50">
                                 <div class="button-container">
                                     <button id="startAutoClickerBtn" class="btn-primary" style="padding: 8px 12px;">Start</button>
@@ -867,7 +867,7 @@
                 <ul class="controls-list">
                     <li><span>Toggle Settings Panel</span><span class="key-combo">Shift + S</span></li>
                     <li><span>Mute/Unmute All Sounds</span><span class="key-combo">M</span></li>
-                    <li><span>Clear All Playing Sounds</span><span class="key-combo">Shift + C</span></li>
+                    <li><span>Clear All Playing Sounds & Selections</span><span class="key-combo">Shift + C</span></li>
                 </ul>
             </div>
             <div class="modal-footer">
@@ -908,9 +908,10 @@
         let lastVolumeBeforeMute = 1;
         let volumeBeforeNightMode = 1;
         
-        // --- NEW: Auto-clicker state variables ---
+        // --- Auto-clicker state variables ---
         let autoClickerIntervalId = null;
-        let selectedButtonForAutoClicker = null;
+        let selectedButtonsForAutoClicker = new Set();
+        const AUTO_CLICKER_SELECTION_LIMIT = 25;
 
         let spatialPadRect = null;
         let currentSnapAngle = null;
@@ -1049,14 +1050,12 @@
         async function playSound(fileName, button) {
             const fadeOutTime = parseFloat(document.getElementById('fadeOut').value || 0.1);
 
-            // If sound overlay is NOT allowed, stop all other currently playing sounds.
             if (!document.getElementById('allowMultipleSounds').checked) {
                 for (const instances of activeSounds.values()) {
                     [...instances].forEach(sound => sound.stop(fadeOutTime));
                 }
             }
 
-            // --- The rest of the function creates and plays a new sound instance every time ---
             let playVolume = 1.0;
             const masterVolume = masterGain.gain.value;
             const categoryKey = button.dataset.category;
@@ -1075,7 +1074,6 @@
             const sound = new Sound(fileName, onEnd);
             sound.toggleSpatial(document.getElementById('modeSpatial').checked);
             
-            // Add the new sound instance to the active sounds map
             activeSounds.set(fileName, [...(activeSounds.get(fileName) || []), sound]);
             
             await sound.play({ 
@@ -1123,21 +1121,25 @@
                         
                         button.addEventListener('click', () => playSound(fileName, button));
                         
-                        // --- NEW: Context menu listener for auto-clicker selection ---
+                        // --- Context menu listener for multi-selection auto-clicker ---
                         button.addEventListener('contextmenu', (e) => {
-                            e.preventDefault(); // Prevent the default right-click menu
+                            e.preventDefault(); 
                             
-                            // Remove selection from the previously selected button
-                            if (selectedButtonForAutoClicker) {
-                                selectedButtonForAutoClicker.classList.remove('selected-for-autoclick');
+                            if (selectedButtonsForAutoClicker.has(button)) {
+                                // Button is already selected, so deselect it
+                                selectedButtonsForAutoClicker.delete(button);
+                                button.classList.remove('selected-for-autoclick');
+                                showStatus(`'${displayName}' deselected. (${selectedButtonsForAutoClicker.size}/${AUTO_CLICKER_SELECTION_LIMIT})`, 'info');
+                            } else {
+                                // Button is not selected, so try to select it
+                                if (selectedButtonsForAutoClicker.size < AUTO_CLICKER_SELECTION_LIMIT) {
+                                    selectedButtonsForAutoClicker.add(button);
+                                    button.classList.add('selected-for-autoclick');
+                                    showStatus(`'${displayName}' selected. (${selectedButtonsForAutoClicker.size}/${AUTO_CLICKER_SELECTION_LIMIT})`, 'success');
+                                } else {
+                                    showStatus(`Selection limit of ${AUTO_CLICKER_SELECTION_LIMIT} reached.`, 'error');
+                                }
                             }
-                            
-                            // Update the selected button
-                            selectedButtonForAutoClicker = button;
-                            selectedButtonForAutoClicker.classList.add('selected-for-autoclick');
-                            
-                            // Notify the user
-                            showStatus(`'${displayName}' selected for auto-clicker.`, 'success');
                         });
                         
                         buttonsGrid.appendChild(button);
@@ -1321,14 +1323,14 @@
             document.getElementById('settingsSearch').addEventListener('input', handleSettingsSearch); 
             document.getElementById('soundSearchInput').addEventListener('input', debouncedSoundSearch); 
             
-            // --- NEW: Auto-Clicker Event Listeners ---
+            // --- Auto-Clicker Event Listeners ---
             const startAutoClickerBtn = document.getElementById('startAutoClickerBtn');
             const stopAutoClickerBtn = document.getElementById('stopAutoClickerBtn');
             const autoClickIntervalInput = document.getElementById('autoClickInterval');
 
             startAutoClickerBtn.addEventListener('click', () => {
-                if (!selectedButtonForAutoClicker) {
-                    showStatus('Right-click a sound to select it first!', 'error');
+                if (selectedButtonsForAutoClicker.size === 0) {
+                    showStatus('Right-click one or more sounds to select them first!', 'error');
                     return;
                 }
 
@@ -1342,14 +1344,14 @@
                 }
 
                 if (autoClickerIntervalId) {
-                    clearInterval(autoClickerIntervalId); // Clear any existing interval to be safe
+                    clearInterval(autoClickerIntervalId);
                 }
 
                 autoClickerIntervalId = setInterval(() => {
-                    if (selectedButtonForAutoClicker) {
-                        selectedButtonForAutoClicker.click();
+                    if (selectedButtonsForAutoClicker.size > 0) {
+                        selectedButtonsForAutoClicker.forEach(button => button.click());
                     } else {
-                        // Safety stop if the button is somehow removed from the DOM
+                        // Safety stop if all buttons get deselected while running
                         clearInterval(autoClickerIntervalId);
                         autoClickerIntervalId = null;
                         startAutoClickerBtn.disabled = false;
@@ -1359,7 +1361,7 @@
                 
                 startAutoClickerBtn.disabled = true;
                 stopAutoClickerBtn.disabled = false;
-                showStatus(`Auto-clicker started on '${selectedButtonForAutoClicker.textContent}' every ${interval}ms.`, 'info');
+                showStatus(`Auto-clicker started on ${selectedButtonsForAutoClicker.size} sounds every ${interval}ms.`, 'info');
             });
 
             stopAutoClickerBtn.addEventListener('click', () => {
@@ -1382,6 +1384,17 @@
                 
                 if (keysPressed['shift'] && key === 'c') {
                     event.preventDefault();
+                    
+                    // --- Clear auto-clicker selections ---
+                    if (selectedButtonsForAutoClicker.size > 0) {
+                        selectedButtonsForAutoClicker.forEach(button => {
+                            button.classList.remove('selected-for-autoclick');
+                        });
+                        selectedButtonsForAutoClicker.clear();
+                        showStatus('Auto-clicker selections cleared.', 'info');
+                    }
+
+                    // --- Original panic clear logic ---
                     const currentVolume = masterGain.gain.value;
                     const wasAlreadyMuted = currentVolume === 0;
                     if (!wasAlreadyMuted) {
