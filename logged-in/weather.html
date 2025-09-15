@@ -521,12 +521,31 @@
     #useCurrentLocationBtn.loading .btn-text { display: none; }
     #useCurrentLocationBtn.loading .btn-spinner { display: block; }
     
-    /* Custom Flatpickr Theme */
-    .flatpickr-calendar { font-family: 'PrimaryFont', sans-serif; background: #fff; border-radius: 8px; box-shadow: 0 5px 15px rgba(0,0,0,0.2);}
-    .flatpickr-day { font-size: 12px; padding: 0; width: 28px; height: 28px; line-height: 1; display: flex; justify-content: center; align-items: center; border-radius: 8px !important; }
-    .flatpickr-day.selected { background: #6720bd; border-color: #6720bd; }
-    .flatpickr-day:hover { background: #f0f2f5; }
-    span.flatpickr-weekday { font-family: 'PrimaryFont', sans-serif; font-weight: bold; color: #333; }
+    /* --- Custom Flatpickr Styles --- */
+    .flatpickr-time input.numInput {
+        font-family: 'PrimaryFont', sans-serif !important;
+    }
+    .flatpickr-day.selected, .flatpickr-day.startRange, .flatpickr-day.endRange { background: #d8c1ff !important; border-color: #9e78e8 !important; color: #333 !important; }
+    .flatpickr-day.today { border-color: #9e78e8 !important; color: #6720bd !important; }
+    .flatpickr-day:hover { background: #e9d9ff !important; border-color: #c7a4ff !important; }
+
+    /* Grid layout for calendar days to ensure 7-day rows, leaving weekdays to default flex behavior */
+    .dayContainer {
+        display: grid !important;
+        grid-template-columns: repeat(7, 1fr);
+        width: 100%;
+        padding: 0 !important;
+        box-sizing: border-box;
+    }
+
+    .flatpickr-day {
+        border-radius: 6px !important;
+        height: 32px !important;
+        line-height: 32px !important;
+        max-width: none !important; /* Remove max-width constraint */
+        width: 32px !important;     /* Keep the visual indicator a fixed size */
+        margin: 1px auto !important; /* Center the fixed-size day in the grid cell */
+    }
   </style>
 </head>
 
@@ -850,7 +869,7 @@
         if ((precipitation_sum != null && precipitation_sum > 0.1) || (precipitation_probability_max != null && precipitation_probability_max > 40)) { if ([61, 63, 65, 80, 81, 82].includes(weather_code)) advice.add("Rain is likely. Don't forget an umbrella or a raincoat."); else if ([71, 73, 75, 85, 86].includes(weather_code)) advice.add("Snow is expected! Wear a warm, waterproof coat and snow boots."); else if ([95, 96, 99].includes(weather_code)) advice.add("Thunderstorms are possible. It's best to stay indoors if you hear thunder."); else advice.add("There's a chance of precipitation, so an umbrella might be useful."); }
         if (windSpeedMph >= 15) advice.add("It could be quite windy. A windbreaker would be a good idea."); if (tempMinC <= 5 && windSpeedMph >= 10) advice.add("Wind chill will make it feel much colder than the actual temperature."); if (tempMaxC >= 28 && relative_humidity_2m_mean != null && relative_humidity_2m_mean >= 60) advice.add("High heat and humidity will make it feel very muggy. Take it easy outdoors."); if ([45, 48].includes(weather_code)) advice.add("Foggy conditions are expected. Be extra cautious if you're driving or walking.");
         if (uv_index_max != null) { if (uv_index_max >= 8) advice.add("UV index is very high. Seek shade and use strong sunscreen."); else if (uv_index_max >= 6) advice.add("High UV index today. Sunscreen is recommended."); }
-        if (advice.size === 0) { if ([0, 1].includes(weather_code)) return "<p>Looks like a beautiful, clear day. Perfect for outdoor activities!</p>"; if (tempMaxC > 18 && tempMaxC < 24 && precipitation_probability_max < 20) return "<p>Conditions look pleasant and mild. A great day to be outside!</p>"; return "<p>Enjoy your day! Check the details above for a full forecast.</p>"; }
+        if (advice.size === 0) { if ([0, 1].includes(weather_code)) return "<p>Looks like a beautiful, clear day. Perfect for outdoor activities!</p>"; if (tempMaxC > 18 && tempMaxC < 24 && precipitation_probability_max < 20) return "<p>Enjoy your day! Check the details above for a full forecast.</p>"; }
         return '<ul>' + [...advice].map(item => `<li>${item}</li>`).join('') + '</ul>';
     }
 
@@ -910,7 +929,26 @@
         return "<p>Weather conditions are currently stable. Enjoy!</p>";
     }
     
-    function initializeWeatherCalculator(){flatpickr("#weatherCalcPicker",{enableTime:!0,dateFormat:"Y-m-d H:i",minDate:fullWeatherData.daily.time[0],maxDate:new Date(new Date(fullWeatherData.daily.time[fullWeatherData.daily.time.length - 1]).setHours(23,59,59)),onChange:s=>{if(!s[0])return;let closest=fullWeatherData.hourly.time.reduce((p,c,i)=>Math.abs(new Date(c)-s[0])<Math.abs(new Date(fullWeatherData.hourly.time[p])-s[0])?i:p,0);renderCalculatorResult(closest)}})}
+    function initializeWeatherCalculator() {
+        flatpickr("#weatherCalcPicker", {
+            enableTime: true,
+            altInput: true,
+            altFormat: "F j, Y at h:i K",
+            minuteIncrement: 1,
+            dateFormat: "Y-m-d H:i",
+            minDate: fullWeatherData.daily.time[0],
+            maxDate: new Date(new Date(fullWeatherData.daily.time[fullWeatherData.daily.time.length - 1]).setHours(23, 59, 59)),
+            onChange: selectedDates => {
+                if (!selectedDates[0]) return;
+                let closestHourIndex = fullWeatherData.hourly.time.reduce((prevIndex, currentTime, currentIndex) => {
+                    const prevDiff = Math.abs(new Date(fullWeatherData.hourly.time[prevIndex]) - selectedDates[0]);
+                    const currentDiff = Math.abs(new Date(currentTime) - selectedDates[0]);
+                    return currentDiff < prevDiff ? currentIndex : prevIndex;
+                }, 0);
+                renderCalculatorResult(closestHourIndex);
+            }
+        });
+    }
     function renderCalculatorResult(i){const data=fullWeatherData.hourly,{units}=weatherSettings,tempS=units==='imperial'?'°F':'°C',speedS=units==='imperial'?'mph':'km/h',code=WMO_CODES[data.weather_code[i]]||{d:'?',i:'❓'},dateStr=new Date(data.time[i]).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});document.getElementById('calculatorResultDisplay').innerHTML=`<div class="current-weather-layout"><span class="weather-icon-large">${code.i}</span><div class="current-weather-main-info"><p class="temp-large">${Math.round(data.temperature_2m[i])}${tempS}</p><p class="condition-large">${code.d} on ${dateStr}</p></div><div class="current-weather-details-aside"><p>Feels like: <strong>${Math.round(data.apparent_temperature[i])}${tempS}</strong></p><p>Humidity: <strong>${data.relative_humidity_2m[i]}%</strong></p><p>Precip Chance: <strong>${data.precipitation_probability[i]}%</strong></p><p>UV Index: <strong>${data.uv_index[i] != null ? data.uv_index[i] : 'N/A'}</strong></p><p>Wind: <strong>${Math.round(data.wind_speed_10m[i])} ${speedS}</strong></p><p>Gusts: <strong>${Math.round(data.wind_gusts_10m[i])} ${speedS}</strong></p></div></div>`}
     function openSettingsModal(){
         const m=document.getElementById('weatherSettingsModal');
