@@ -469,6 +469,13 @@
         .sound-button-v4.playing { background-color: var(--v4-purple-accent); color: white; border: 2px solid var(--v4-purple-accent-darker); }
         .sound-button-v4.pulsating { animation: pulsePlayingSoundboardV4 1.5s infinite; }
         @keyframes pulsePlayingSoundboardV4 { 0% { box-shadow: 0 0 0 0px var(--v4-purple-accent); } 100% { box-shadow: 0 0 0 8px rgba(103, 32, 189, 0); } }
+        
+        /* --- NEW: Auto-Clicker Selection Style --- */
+        .sound-button-v4.selected-for-autoclick {
+            box-shadow: 0 0 0 3px #00dd88;
+            border-color: #00dd88;
+        }
+        
         .is-hidden { display: none !important; }
         .is-filtering { opacity: 0 !important; }
         #bottom-fixed-bar {
@@ -590,6 +597,21 @@
         .btn-secondary { background: #6c757d; color: white; border: none; padding: 10px 20px; border-radius: 8px; text-transform: uppercase; cursor: pointer; transition: all 0.3s ease; }
         .btn-secondary:hover { background: #5a6268; }
 
+        /* --- NEW: Auto-clicker specific styles --- */
+        #autoClickerControls .button-container {
+            display: flex;
+            gap: 10px;
+            margin-top: 8px;
+        }
+        #autoClickerControls button {
+            flex-grow: 1;
+        }
+        #autoClickerControls button:disabled {
+            background: #adb5bd;
+            cursor: not-allowed;
+        }
+
+
         .input-flash-accept { animation: flash-green 0.7s ease-out forwards; }
         .input-flash-deny { animation: shake-horizontal 0.5s ease-out, flash-red 0.7s ease-out; }
         @keyframes flash-green { 0% { box-shadow: 0 0 0 0 rgba(25, 135, 84, 0.5); } 100% { box-shadow: 0 0 0 8px rgba(25, 135, 84, 0); } }
@@ -699,7 +721,16 @@
                                     </label>
                                 </div>
                             </div>
-                        </div>
+                            <div id="autoClickerControls" class="control-group" data-search-terms="auto clicker spammer interval">
+                                <label for="autoClickInterval">Auto Clicker</label>
+                                <small class="mode-description" style="margin-top:0; margin-bottom: 8px;">Right-click a sound to select it, then set the interval in milliseconds (ms).</small>
+                                <input type="number" id="autoClickInterval" placeholder="Interval (ms)" value="100" min="50">
+                                <div class="button-container">
+                                    <button id="startAutoClickerBtn" class="btn-primary" style="padding: 8px 12px;">Start</button>
+                                    <button id="stopAutoClickerBtn" class="btn-secondary" style="padding: 8px 12px;" disabled>Stop</button>
+                                </div>
+                            </div>
+                            </div>
 
                         <div id="modes" class="tab-panel">
                              <div class="spatial-audio-control" data-search-terms="spatial audio 3d surround sound immersive">
@@ -789,15 +820,15 @@
                              <div class="control-group" data-search-terms="fade in">
                                  <label for="fadeIn">Fade In (sec): <span id="fadeInValue">0.1s</span></label>
                                  <div class="slider-input-container">
-                                   <input type="range" id="fadeIn" min="0" max="5" step="0.1" value="0.1" data-setting="fadeIn">
-                                   <input type="number" class="slider-value-input" data-slider-id="fadeIn" min="0" max="5" step="0.1">
+                                    <input type="range" id="fadeIn" min="0" max="5" step="0.1" value="0.1" data-setting="fadeIn">
+                                    <input type="number" class="slider-value-input" data-slider-id="fadeIn" min="0" max="5" step="0.1">
                                  </div>
                              </div>
                               <div class="control-group" data-search-terms="fade out">
                                    <label for="fadeOut">Fade Out (sec): <span id="fadeOutValue">0.1s</span></label>
                                    <div class="slider-input-container">
-                                     <input type="range" id="fadeOut" min="0" max="5" step="0.1" value="0.1" data-setting="fadeOut">
-                                     <input type="number" class="slider-value-input" data-slider-id="fadeOut" min="0" max="5" step="0.1">
+                                      <input type="range" id="fadeOut" min="0" max="5" step="0.1" value="0.1" data-setting="fadeOut">
+                                      <input type="number" class="slider-value-input" data-slider-id="fadeOut" min="0" max="5" step="0.1">
                                    </div>
                              </div>
                              <div class="control-group" data-search-terms="speed rate tempo">
@@ -877,6 +908,10 @@
         let lastVolumeBeforeMute = 1;
         let volumeBeforeNightMode = 1;
         
+        // --- NEW: Auto-clicker state variables ---
+        let autoClickerIntervalId = null;
+        let selectedButtonForAutoClicker = null;
+
         let spatialPadRect = null;
         let currentSnapAngle = null;
         let currentZ = 0;
@@ -930,15 +965,15 @@
         nodes.airAbsorptionFilter.connect(nodes.earlyReflections.input);
         nodes.earlyReflections.output.connect(masterGain);
         masterGain.connect(nodes.eqBass)
-                    .connect(nodes.bassWaveShaper)
-                    .connect(nodes.eqMid)
-                    .connect(nodes.eqTreble)
-                    .connect(nodes.vintageWarmer)
-                    .connect(nodes.stableVolume)
-                    .connect(nodes.vocalBoost)
-                    .connect(nodes.awarenessGain)
-                    .connect(nodes.nightModeCompressor)
-                    .connect(finalCompressor);
+                      .connect(nodes.bassWaveShaper)
+                      .connect(nodes.eqMid)
+                      .connect(nodes.eqTreble)
+                      .connect(nodes.vintageWarmer)
+                      .connect(nodes.stableVolume)
+                      .connect(nodes.vocalBoost)
+                      .connect(nodes.awarenessGain)
+                      .connect(nodes.nightModeCompressor)
+                      .connect(finalCompressor);
         masterGain.connect(nodes.partyMode.bass);
         nodes.partyMode.bass.connect(nodes.partyMode.reverb);
         nodes.partyMode.reverb.connect(nodes.partyMode.comp);
@@ -1085,7 +1120,26 @@
                         button.textContent = displayName;
                         button.dataset.soundFile = fileName;
                         button.dataset.category = categoryKey;
+                        
                         button.addEventListener('click', () => playSound(fileName, button));
+                        
+                        // --- NEW: Context menu listener for auto-clicker selection ---
+                        button.addEventListener('contextmenu', (e) => {
+                            e.preventDefault(); // Prevent the default right-click menu
+                            
+                            // Remove selection from the previously selected button
+                            if (selectedButtonForAutoClicker) {
+                                selectedButtonForAutoClicker.classList.remove('selected-for-autoclick');
+                            }
+                            
+                            // Update the selected button
+                            selectedButtonForAutoClicker = button;
+                            selectedButtonForAutoClicker.classList.add('selected-for-autoclick');
+                            
+                            // Notify the user
+                            showStatus(`'${displayName}' selected for auto-clicker.`, 'success');
+                        });
+                        
                         buttonsGrid.appendChild(button);
                     });
                     categoryDiv.appendChild(buttonsGrid);
@@ -1267,6 +1321,58 @@
             document.getElementById('settingsSearch').addEventListener('input', handleSettingsSearch); 
             document.getElementById('soundSearchInput').addEventListener('input', debouncedSoundSearch); 
             
+            // --- NEW: Auto-Clicker Event Listeners ---
+            const startAutoClickerBtn = document.getElementById('startAutoClickerBtn');
+            const stopAutoClickerBtn = document.getElementById('stopAutoClickerBtn');
+            const autoClickIntervalInput = document.getElementById('autoClickInterval');
+
+            startAutoClickerBtn.addEventListener('click', () => {
+                if (!selectedButtonForAutoClicker) {
+                    showStatus('Right-click a sound to select it first!', 'error');
+                    return;
+                }
+
+                const interval = parseInt(autoClickIntervalInput.value, 10);
+
+                if (isNaN(interval) || interval < 50) {
+                    showStatus('Interval must be a number and at least 50ms.', 'error');
+                    autoClickIntervalInput.classList.add('input-flash-deny');
+                    setTimeout(() => autoClickIntervalInput.classList.remove('input-flash-deny'), 700);
+                    return;
+                }
+
+                if (autoClickerIntervalId) {
+                    clearInterval(autoClickerIntervalId); // Clear any existing interval to be safe
+                }
+
+                autoClickerIntervalId = setInterval(() => {
+                    if (selectedButtonForAutoClicker) {
+                        selectedButtonForAutoClicker.click();
+                    } else {
+                        // Safety stop if the button is somehow removed from the DOM
+                        clearInterval(autoClickerIntervalId);
+                        autoClickerIntervalId = null;
+                        startAutoClickerBtn.disabled = false;
+                        stopAutoClickerBtn.disabled = true;
+                    }
+                }, interval);
+                
+                startAutoClickerBtn.disabled = true;
+                stopAutoClickerBtn.disabled = false;
+                showStatus(`Auto-clicker started on '${selectedButtonForAutoClicker.textContent}' every ${interval}ms.`, 'info');
+            });
+
+            stopAutoClickerBtn.addEventListener('click', () => {
+                if (autoClickerIntervalId) {
+                    clearInterval(autoClickerIntervalId);
+                    autoClickerIntervalId = null;
+                    startAutoClickerBtn.disabled = false;
+                    stopAutoClickerBtn.disabled = true;
+                    showStatus('Auto-clicker stopped.', 'info');
+                }
+            });
+
+
             const keysPressed = {};
             document.addEventListener('keydown', (event) => {
                 const key = event.key.toLowerCase();
