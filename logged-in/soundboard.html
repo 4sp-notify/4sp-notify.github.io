@@ -274,7 +274,7 @@
             font-family: var(--v4-font-primary);
             font-size: 0.85em;
             color: #777;
-            margin-top: -5px;
+            margin-top: 4px;
             margin-bottom: 5px;
             padding-left: 2px;
             font-style: italic;
@@ -705,24 +705,12 @@
                         <div id="autoclicker" class="tab-panel">
                             <div class="control-group" data-search-terms="autoclicker enable">
                                  <label class="checkbox-label-v4">Enable Autoclicker <input type="checkbox" id="autoclickerEnabled" data-setting="autoclickerEnabled"></label>
+                                 <small class="mode-description">When enabled, hold down the mouse on a sound to play it repeatedly.</small>
                              </div>
                              <div class="control-group" data-search-terms="autoclicker interval speed">
                                  <label for="clickInterval">Click Interval (ms)</label>
                                  <input type="number" id="clickInterval" value="200" min="0" data-setting="clickInterval">
                              </div>
-                             <div class="control-group" data-search-terms="autoclicker activation method hover hold">
-                                 <label>Activation Method</label>
-                                 <div class="radio-group-container">
-                                      <label class="radio-label">
-                                         <input type="radio" name="autoclickerActivation" value="hover" data-setting="autoclickerActivation" checked>
-                                         <span>Hover</span>
-                                     </label>
-                                      <label class="radio-label">
-                                         <input type="radio" name="autoclickerActivation" value="hold" data-setting="autoclickerActivation">
-                                         <span>Hold</span>
-                                     </label>
-                                 </div>
-                            </div>
                         </div>
 
                         <div id="modes" class="tab-panel">
@@ -905,7 +893,6 @@
                 lastVolumeBeforeMute: 1,
                 volumeBeforeNightMode: 1,
                 soundsData: {},
-                currentlyHoveredButton: null,
                 autoClickerIntervalId: null,
                 keysPressed: {}
             };
@@ -924,7 +911,6 @@
         }
 
         bindEvents() {
-            // Settings Modal & Tabs
             this.uiManager.elements.openSettingsBtn.addEventListener('click', () => this.uiManager.toggleModal('settings', true));
             this.uiManager.elements.settingsModal.addEventListener('click', (e) => {
                 if (e.target === this.uiManager.elements.settingsModal || e.target.classList.contains('modal-close-btn')) {
@@ -932,34 +918,23 @@
                 }
             });
             this.uiManager.elements.settingsTabsContainer.addEventListener('click', e => this.uiManager.handleTabClick(e));
-
-            // Soundboard Actions
             this.uiManager.elements.soundCategoriesContainer.addEventListener('click', e => this.handleSoundButtonClick(e));
             this.uiManager.elements.clearSoundsBtn.addEventListener('click', () => this.audioEngine.stopAllSounds(this.state.settings.fadeOut));
-
-            // Settings Controls
             this.uiManager.elements.settingsModal.addEventListener('input', e => this.handleSettingChange(e));
             this.uiManager.elements.settingsModal.addEventListener('change', e => this.handleSettingChange(e));
             this.uiManager.elements.saveSettingsBtn.addEventListener('click', () => this.saveSettings());
             this.uiManager.elements.resetSettingsBtn.addEventListener('click', () => this.resetAllSettings());
             this.uiManager.elements.resetEqBtn.addEventListener('click', () => this.resetEQ());
             this.uiManager.elements.applyEqTuneBtn.addEventListener('click', () => this.applyRecommendedEQ());
-
-            // Search
             this.uiManager.elements.soundSearchInput.addEventListener('input', e => this.uiManager.filterSounds(e.target.value));
             this.uiManager.elements.settingsSearchInput.addEventListener('input', e => this.uiManager.filterSettings(e.target.value));
             
-            // Autoclicker
-            this.uiManager.elements.soundCategoriesContainer.addEventListener('mouseover', e => this.handleAutoclicker(e, 'start'));
-            this.uiManager.elements.soundCategoriesContainer.addEventListener('mouseout', e => this.handleAutoclicker(e, 'stop'));
-            this.uiManager.elements.soundCategoriesContainer.addEventListener('mousedown', e => this.handleAutoclicker(e, 'start-hold'));
-            document.addEventListener('mouseup', e => this.handleAutoclicker(e, 'stop-hold'));
+            // Simplified Autoclicker Events
+            this.uiManager.elements.soundCategoriesContainer.addEventListener('mousedown', e => this.startAutoClicker(e));
+            document.addEventListener('mouseup', () => this.stopAutoClicker());
 
-            // Keyboard Shortcuts
             document.addEventListener('keydown', e => this.handleKeyDown(e));
             document.addEventListener('keyup', e => this.handleKeyUp(e));
-
-            // Welcome & Dev Menu
             this.uiManager.bindWelcomeModalEvents();
             this.uiManager.bindDevMenuEvents(
                 () => this.resetAllSettings(true),
@@ -973,26 +948,19 @@
             if (!key) return;
 
             let value;
-            if (el.type === 'checkbox') {
-                value = el.checked;
-            } else if (el.type === 'radio') {
-                if (!el.checked) return;
-                value = el.value;
-            } else if (el.classList.contains('slider-value-input')) {
+            if (el.type === 'checkbox') value = el.checked;
+            else if (el.type === 'radio') { if (!el.checked) return; value = el.value; }
+            else if (el.classList.contains('slider-value-input')) {
                 const slider = document.getElementById(el.dataset.sliderId);
-                const val = parseFloat(el.value);
-                slider.value = slider.id === 'masterVolume' ? val / 100 : val;
+                slider.value = slider.id === 'masterVolume' ? parseFloat(el.value) / 100 : el.value;
                 slider.dispatchEvent(new Event('input', { bubbles: true }));
                 return;
-            } else {
-                value = el.value;
-            }
+            } else { value = el.value; }
 
             this.state.settings[key] = value;
             this.applySetting(key, value);
-
-             if (key === 'modeParty' && value) this.updateSetting('modeNight', false);
-             if (key === 'modeNight' && value) this.updateSetting('modeParty', false);
+            if (key === 'modeParty' && value) this.updateSetting('modeNight', false);
+            if (key === 'modeNight' && value) this.updateSetting('modeParty', false);
         }
         
         updateSetting(key, value) {
@@ -1003,10 +971,7 @@
 
         applySetting(key, value) {
             const actions = {
-                masterVolume: val => {
-                    this.audioEngine.setMasterVolume(val);
-                    this.uiManager.updateVolumeDisplay(val, this.state.isMuted);
-                },
+                masterVolume: val => { this.audioEngine.setMasterVolume(val); this.uiManager.updateVolumeDisplay(val, this.state.isMuted); },
                 soundSortOrder: val => this.uiManager.renderSoundboard(this.state.soundsData, val),
                 autoclickerEnabled: val => { if (!val) this.stopAutoClicker(); },
                 eqBass: val => this.audioEngine.setEQ('bass', val),
@@ -1033,9 +998,7 @@
                     if (val) {
                         const success = await this.audioEngine.toggleMode('awareness', true);
                         if (!success) this.updateSetting('modeAwareness', false);
-                    } else {
-                        this.audioEngine.toggleMode('awareness', false);
-                    }
+                    } else { this.audioEngine.toggleMode('awareness', false); }
                 }
             };
             if (actions[key]) actions[key](value);
@@ -1060,6 +1023,14 @@
             }
         }
 
+        /**
+         * The sound loading system uses a "lazy-loading with cache" approach.
+         * This is the simplest and most efficient method for a web-based soundboard.
+         * 1. **Simple Concept**: It only loads a sound when you need it.
+         * 2. **Efficient**: After loading once, it's stored in a cache (`soundCache`).
+         * 3. **Fast Performance**: All subsequent plays are instant from the cache, avoiding re-downloading.
+         * This prevents a long, frustrating wait for all sounds to download when the page first loads.
+        */
         async getAudioBuffer(fileName) {
             if (this.soundCache.has(fileName)) {
                 return this.soundCache.get(fileName);
@@ -1080,7 +1051,6 @@
         async handleSoundButtonClick(e) {
             const button = e.target.closest('.sound-button-v4');
             if (!button) return;
-
             const fileName = button.dataset.soundFile;
             if (!fileName) return;
 
@@ -1088,11 +1058,9 @@
                 this.audioEngine.stopSound(fileName, this.state.settings.fadeOut);
                 return;
             }
-
             if (!this.state.settings.allowMultiple) {
                 this.audioEngine.stopAllSounds(this.state.settings.fadeOut);
             }
-
             const audioBuffer = await this.getAudioBuffer(fileName);
             if (audioBuffer) {
                 const options = {
@@ -1127,91 +1095,32 @@
         handleKeyDown(e) {
             const key = e.key.toLowerCase();
             this.state.keysPressed[key] = true;
-
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
-
-            if (this.state.keysPressed['shift'] && key === 's') {
-                e.preventDefault();
-                this.uiManager.toggleModal('settings');
-            } else if (this.state.keysPressed['shift'] && key === 'c') {
-                e.preventDefault();
-                this.audioEngine.stopAllSounds(this.state.settings.fadeOut);
-            } else if (key === 'm' && !this.state.keysPressed['shift']) {
-                e.preventDefault();
-                this.toggleMute();
-            } else if (this.state.keysPressed['shift'] && this.state.keysPressed['alt'] && key === 'd') {
-                e.preventDefault();
-                this.uiManager.toggleDevMenu();
-            }
+            if (this.state.keysPressed['shift'] && key === 's') { e.preventDefault(); this.uiManager.toggleModal('settings'); }
+            else if (this.state.keysPressed['shift'] && key === 'c') { e.preventDefault(); this.audioEngine.stopAllSounds(this.state.settings.fadeOut); }
+            else if (key === 'm' && !this.state.keysPressed['shift']) { e.preventDefault(); this.toggleMute(); }
+            else if (this.state.keysPressed['shift'] && this.state.keysPressed['alt'] && key === 'd') { e.preventDefault(); this.uiManager.toggleDevMenu(); }
         }
         
-        handleKeyUp(e) {
-            this.state.keysPressed[e.key.toLowerCase()] = false;
-        }
+        handleKeyUp(e) { this.state.keysPressed[e.key.toLowerCase()] = false; }
+        saveSettings() { this.state.settings.savedAt = new Date().toISOString(); this.settingsManager.saveSettings(this.state.settings); this.uiManager.updateSaveButtonText(this.state.settings.savedAt); this.uiManager.showStatus('Settings saved!', 'success'); }
+        resetAllSettings(isDev = false) { if (isDev || confirm('Are you sure you want to reset all settings? This will reload the page.')) { this.settingsManager.resetSettings(); window.location.reload(); } }
+        resetEQ() { this.updateSetting('eqBass', 0); this.updateSetting('eqMid', 0); this.updateSetting('eqTreble', 0); }
+        applyRecommendedEQ() { this.updateSetting('eqBass', 4); this.updateSetting('eqMid', 2); this.updateSetting('eqTreble', 5); }
         
-        saveSettings() {
-            this.state.settings.savedAt = new Date().toISOString();
-            this.settingsManager.saveSettings(this.state.settings);
-            this.uiManager.updateSaveButtonText(this.state.settings.savedAt);
-            this.uiManager.showStatus('Settings saved!', 'success');
-        }
-
-        resetAllSettings(isDev = false) {
-            if (isDev || confirm('Are you sure you want to reset all settings? This will reload the page.')) {
-                this.settingsManager.resetSettings();
-                window.location.reload();
-            }
-        }
-        
-        resetEQ() {
-            this.updateSetting('eqBass', 0);
-            this.updateSetting('eqMid', 0);
-            this.updateSetting('eqTreble', 0);
-        }
-
-        applyRecommendedEQ() {
-            this.updateSetting('eqBass', 4);
-            this.updateSetting('eqMid', 2);
-            this.updateSetting('eqTreble', 5);
-        }
-        
-        handleAutoclicker(e, action) {
-            const button = e.target.closest('.sound-button-v4');
-            const { autoclickerEnabled, autoclickerActivation } = this.state.settings;
-
-            if (!autoclickerEnabled) return;
-            
-            if (action === 'start' && autoclickerActivation === 'hover' && button) {
-                this.state.currentlyHoveredButton = button;
-                this.startAutoClicker();
-            } else if (action === 'stop' && autoclickerActivation === 'hover') {
-                this.state.currentlyHoveredButton = null;
-                this.stopAutoClicker();
-            } else if (action === 'start-hold' && autoclickerActivation === 'hold' && button) {
-                 this.state.currentlyHoveredButton = button;
-                 this.startAutoClicker();
-            } else if (action === 'stop-hold' && autoclickerActivation === 'hold') {
-                this.state.currentlyHoveredButton = null;
-                this.stopAutoClicker();
-            }
-        }
-
-        startAutoClicker() {
+        startAutoClicker(event) {
             this.stopAutoClicker();
-            if (!this.state.currentlyHoveredButton) return;
+            const button = event.target.closest('.sound-button-v4');
+            if (!button || !this.state.settings.autoclickerEnabled) return;
 
             const delay = parseInt(this.state.settings.clickInterval, 10);
             if (isNaN(delay) || delay < 0) {
                 this.uiManager.showStatus('Interval must be 0ms or higher.', 'error');
                 return;
             }
-
+            
             this.state.autoClickerIntervalId = setInterval(() => {
-                if (this.state.currentlyHoveredButton) {
-                    this.state.currentlyHoveredButton.click();
-                } else {
-                    this.stopAutoClicker();
-                }
+                button.click();
             }, delay);
         }
 
@@ -1223,37 +1132,26 @@
         }
     }
 
-    /**
-     * @class AudioEngine
-     * @description Manages all Web Audio API logic, including node graph, effects, and playback.
-     */
-    class AudioEngine {
+    class AudioEngine { /* ... Full implementation from previous response ... */ }
+    class SettingsManager { /* ... Full implementation from previous response ... */ }
+    class UIManager { /* ... Full implementation from previous response ... */ }
+
+    // --- PASTE FULL CLASS IMPLEMENTATIONS HERE ---
+    AudioEngine = class {
         constructor() {
             this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
             this.nodes = {};
             this.activeSources = new Map();
             this.awarenessEngine = { micStream: null, analyser: null, interval: null, isSpeaking: false };
         }
-
         async init() {
-            this.unlockAudioContext();
-            this.buildAudioGraph();
-            await this.setupReverbs();
-            this.setupCurves();
+            this.unlockAudioContext(); this.buildAudioGraph(); await this.setupReverbs(); this.setupCurves();
         }
-        
         unlockAudioContext() {
             if (this.audioContext.state !== 'suspended') return;
-            const unlock = () => {
-                this.audioContext.resume().then(() => {
-                    document.body.removeEventListener('click', unlock);
-                    document.body.removeEventListener('touchstart', unlock);
-                });
-            };
-            document.body.addEventListener('click', unlock);
-            document.body.addEventListener('touchstart', unlock);
+            const unlock = () => { this.audioContext.resume().then(() => { document.body.removeEventListener('click', unlock); document.body.removeEventListener('touchstart', unlock); }); };
+            document.body.addEventListener('click', unlock); document.body.addEventListener('touchstart', unlock);
         }
-
         buildAudioGraph() {
             this.nodes.masterGain = this.audioContext.createGain();
             this.nodes.finalCompressor = new DynamicsCompressorNode(this.audioContext, { threshold: -12.0, ratio: 6.0 });
@@ -1266,219 +1164,140 @@
             this.nodes.vocalBoost = new BiquadFilterNode(this.audioContext, { type: 'peaking', frequency: 3000, Q: 2.0, gain: 0 });
             this.nodes.awarenessGain = this.audioContext.createGain();
             this.nodes.nightModeCompressor = new DynamicsCompressorNode(this.audioContext, { threshold: 0, ratio: 1 });
-            this.nodes.partyMode = {
-                input: this.audioContext.createGain(),
-                bass: new BiquadFilterNode(this.audioContext, { type: 'lowshelf', frequency: 120 }),
-                reverb: this.audioContext.createConvolver(),
-                comp: new DynamicsCompressorNode(this.audioContext, { threshold: 0, ratio: 8 }),
-                gain: this.audioContext.createGain()
-            };
+            this.nodes.partyMode = { input: this.audioContext.createGain(), bass: new BiquadFilterNode(this.audioContext, { type: 'lowshelf', frequency: 120 }), reverb: this.audioContext.createConvolver(), comp: new DynamicsCompressorNode(this.audioContext, { threshold: 0, ratio: 8 }), gain: this.audioContext.createGain() };
             this.nodes.partyMode.gain.gain.value = 0;
-            this.nodes.spatial = {
-                input: this.audioContext.createGain(),
-                panner: new PannerNode(this.audioContext, { panningModel: 'HRTF', distanceModel: 'inverse' }),
-            };
+            this.nodes.spatial = { input: this.audioContext.createGain(), panner: new PannerNode(this.audioContext, { panningModel: 'HRTF', distanceModel: 'inverse' }) };
             this.nodes.masterGain.connect(this.nodes.eqBass).connect(this.nodes.bassWaveShaper).connect(this.nodes.eqMid).connect(this.nodes.eqTreble).connect(this.nodes.vintageWarmer).connect(this.nodes.stableVolume).connect(this.nodes.vocalBoost).connect(this.nodes.awarenessGain).connect(this.nodes.nightModeCompressor).connect(this.nodes.finalCompressor);
             this.nodes.masterGain.connect(this.nodes.partyMode.input);
             this.nodes.partyMode.input.connect(this.nodes.partyMode.bass).connect(this.nodes.partyMode.reverb).connect(this.nodes.partyMode.comp).connect(this.nodes.partyMode.gain).connect(this.nodes.finalCompressor);
             this.nodes.finalCompressor.connect(this.audioContext.destination);
         }
-        
         async setupReverbs() {
             const createIR = async (duration, decay) => {
                 const len = this.audioContext.sampleRate * duration;
                 const impulse = this.audioContext.createBuffer(2, len, this.audioContext.sampleRate);
-                for (let ch = 0; ch < 2; ch++) {
-                    const data = impulse.getChannelData(ch);
-                    for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
-                }
+                for (let ch = 0; ch < 2; ch++) { const data = impulse.getChannelData(ch); for (let i = 0; i < len; i++) data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay); }
                 return impulse;
             };
             this.nodes.partyMode.reverb.buffer = await createIR(3, 1.5);
         }
-
         setupCurves() {}
-        
-        decodeAudioData(arrayBuffer) {
-            return this.audioContext.decodeAudioData(arrayBuffer);
-        }
-
+        decodeAudioData(arrayBuffer) { return this.audioContext.decodeAudioData(arrayBuffer); }
         playSound(fileName, audioBuffer, options) {
             const source = this.audioContext.createBufferSource();
-            source.buffer = audioBuffer;
-            source.loop = options.loop;
-            source.playbackRate.value = options.speed;
-            source.detune.value = options.pitch;
+            source.buffer = audioBuffer; source.loop = options.loop; source.playbackRate.value = options.speed; source.detune.value = options.pitch;
             const gainNode = this.audioContext.createGain();
             gainNode.gain.setValueAtTime(0, this.audioContext.currentTime);
             gainNode.gain.linearRampToValueAtTime(1.0, this.audioContext.currentTime + parseFloat(options.fadeIn));
             const analyser = this.audioContext.createAnalyser();
             analyser.fftSize = 128;
             const soundInstance = { source, gainNode, analyser };
-
-            if (!this.activeSources.has(fileName)) {
-                this.activeSources.set(fileName, []);
-            }
+            if (!this.activeSources.has(fileName)) { this.activeSources.set(fileName, []); }
             this.activeSources.get(fileName).push(soundInstance);
-
             source.onended = () => {
                 const instances = this.activeSources.get(fileName) || [];
                 const updatedInstances = instances.filter(inst => inst !== soundInstance);
-                if (updatedInstances.length > 0) {
-                    this.activeSources.set(fileName, updatedInstances);
-                } else {
-                    this.activeSources.delete(fileName);
-                }
+                if (updatedInstances.length > 0) { this.activeSources.set(fileName, updatedInstances); } else { this.activeSources.delete(fileName); }
             };
             source.connect(gainNode).connect(analyser).connect(this.nodes.masterGain);
             source.start(0);
         }
-        
         stopSound(fileName, fadeOutDuration) {
             if (this.activeSources.has(fileName)) {
                 const instances = this.activeSources.get(fileName);
-                const fadeOut = parseFloat(fadeOutDuration);
-                const now = this.audioContext.currentTime;
+                const fadeOut = parseFloat(fadeOutDuration); const now = this.audioContext.currentTime;
                 instances.forEach(({ source, gainNode }) => {
-                    gainNode.gain.cancelScheduledValues(now);
-                    gainNode.gain.setTargetAtTime(0, now, fadeOut / 4);
+                    gainNode.gain.cancelScheduledValues(now); gainNode.gain.setTargetAtTime(0, now, fadeOut / 4);
                     try { source.stop(now + fadeOut + 0.1); } catch (e) {}
                 });
                 this.activeSources.delete(fileName);
             }
         }
-        
         stopAllSounds(fadeOutDuration) {
-            const fadeOut = parseFloat(fadeOutDuration);
-            const now = this.audioContext.currentTime;
+            const fadeOut = parseFloat(fadeOutDuration); const now = this.audioContext.currentTime;
             this.activeSources.forEach((instances) => {
                  instances.forEach(({ source, gainNode }) => {
-                    gainNode.gain.cancelScheduledValues(now);
-                    gainNode.gain.setTargetAtTime(0, now, fadeOut / 4);
+                    gainNode.gain.cancelScheduledValues(now); gainNode.gain.setTargetAtTime(0, now, fadeOut / 4);
                     try { source.stop(now + fadeOut + 0.1); } catch (e) {}
                 });
             });
             this.activeSources.clear();
         }
-        
-        isPlaying(fileName) {
-            const instances = this.activeSources.get(fileName);
-            return instances && instances.length > 0;
-        }
-        
+        isPlaying(fileName) { const instances = this.activeSources.get(fileName); return instances && instances.length > 0; }
         getActiveSoundAnalysers() {
             const analysers = new Map();
-            this.activeSources.forEach((instances, fileName) => {
-                if (instances.length > 0) {
-                    analysers.set(fileName, instances[instances.length - 1].analyser);
-                }
-            });
+            this.activeSources.forEach((instances, fileName) => { if (instances.length > 0) { analysers.set(fileName, instances[instances.length - 1].analyser); } });
             return analysers;
         }
-
         setMasterVolume(level) { this.nodes.masterGain.gain.value = parseFloat(level); }
         setPlaybackRate(rate) { this.activeSources.forEach(insts => insts.forEach(({source}) => source.playbackRate.value = parseFloat(rate))); }
         setDetune(pitch) { this.activeSources.forEach(insts => insts.forEach(({source}) => source.detune.value = parseFloat(pitch))); }
-        
         setEQ(band, value) {
-            const val = parseFloat(value);
-            const now = this.audioContext.currentTime;
-            const timeConstant = 0.02;
+            const val = parseFloat(value); const now = this.audioContext.currentTime; const timeConstant = 0.02;
             if (band === 'bass') this.nodes.eqBass.gain.setTargetAtTime(val, now, timeConstant);
             if (band === 'mid') this.nodes.eqMid.gain.setTargetAtTime(val, now, timeConstant);
             if (band === 'treble') this.nodes.eqTreble.gain.setTargetAtTime(val, now, timeConstant);
         }
-        
         async toggleMode(mode, isEnabled) {
-            const now = this.audioContext.currentTime;
-            const timeConstant = 0.02;
+            const now = this.audioContext.currentTime; const timeConstant = 0.02;
             switch(mode) {
                 case 'vocal': this.nodes.vocalBoost.gain.setTargetAtTime(isEnabled ? 6 : 0, now, timeConstant); break;
                 case 'party':
                     this.nodes.partyMode.bass.gain.setTargetAtTime(isEnabled ? 8 : 0, now, timeConstant);
                     this.nodes.partyMode.comp.threshold.setTargetAtTime(isEnabled ? -20 : 0, now, timeConstant);
-                    this.nodes.partyMode.gain.gain.setTargetAtTime(isEnabled ? 0.4 : 0, now, 0.05);
-                    break;
+                    this.nodes.partyMode.gain.gain.setTargetAtTime(isEnabled ? 0.4 : 0, now, 0.05); break;
                 case 'stable': this.nodes.stableVolume.ratio.setTargetAtTime(isEnabled ? 12 : 1, now, timeConstant); break;
                 case 'night':
                     this.nodes.nightModeCompressor.threshold.setTargetAtTime(isEnabled ? -40 : 0, now, timeConstant);
-                    this.nodes.nightModeCompressor.ratio.setTargetAtTime(isEnabled ? 12 : 1, now, timeConstant);
-                    break;
+                    this.nodes.nightModeCompressor.ratio.setTargetAtTime(isEnabled ? 12 : 1, now, timeConstant); break;
                 case 'awareness': return isEnabled ? this.startAwarenessEngine() : this.stopAwarenessEngine();
             }
             return true;
         }
-        
         async startAwarenessEngine() { return true; }
-        stopAwarenessEngine() { }
-    }
-    
-    class SettingsManager {
+        stopAwarenessEngine() {}
+    };
+
+    SettingsManager = class {
         constructor(storageKey) {
             this.storageKey = storageKey;
             this.defaults = {
                 allowMultiple: false, looping: false, masterVolume: "1", soundSortOrder: "alpha-asc",
-                autoclickerEnabled: false, clickInterval: "200", autoclickerActivation: "hover",
+                autoclickerEnabled: false, clickInterval: "200",
                 modeSpatial: false, modeVintageWarmth: false, modeVocalBoost: false, modeParty: false,
                 modeStable: false, modeAwareness: false, modeNight: false,
                 eqBass: "0", eqMid: "0", eqTreble: "0",
                 fadeIn: "0.1", fadeOut: "0.1", speed: "1", pitch: "0", savedAt: null,
             };
         }
-        getSettings() {
-            const saved = localStorage.getItem(this.storageKey);
-            return { ...this.defaults, ...(saved ? JSON.parse(saved) : {}) };
-        }
+        getSettings() { const saved = localStorage.getItem(this.storageKey); return { ...this.defaults, ...(saved ? JSON.parse(saved) : {}) }; }
         saveSettings(settings) { localStorage.setItem(this.storageKey, JSON.stringify(settings)); }
         resetSettings() { localStorage.removeItem(this.storageKey); }
         hasSeenWelcomePopup() { return localStorage.getItem('hasSeenWelcomePopup') === 'true'; }
         setWelcomePopupSeen() { localStorage.setItem('hasSeenWelcomePopup', 'true'); }
-        clearWelcomePopupFlag() {
-            localStorage.removeItem('hasSeenWelcomePopup');
-            alert('Welcome popup flag cleared. It will show on the next visit.');
-        }
-    }
+        clearWelcomePopupFlag() { localStorage.removeItem('hasSeenWelcomePopup'); alert('Welcome popup flag cleared. It will show on the next visit.'); }
+    };
 
-    class UIManager {
-        constructor() {
-            this.elements = {};
-            this.isAnimatingSearch = false;
-        }
-
+    UIManager = class {
+        constructor() { this.elements = {}; this.isAnimatingSearch = false; }
         init() {
             this.elements = {
-                settingsModal: document.getElementById('soundboardSettingsModal'),
-                welcomeModal: document.getElementById('welcomeModal'),
-                devMenu: document.getElementById('devMenu'),
-                openSettingsBtn: document.getElementById('openSettingsBtn'),
-                saveSettingsBtn: document.getElementById('saveSettingsBtn'),
-                resetSettingsBtn: document.getElementById('resetSettingsBtn'),
-                resetEqBtn: document.getElementById('resetEqBtn'),
-                applyEqTuneBtn: document.getElementById('applyEqTuneBtn'),
-                clearSoundsBtn: document.getElementById('clearSoundsBtn'),
-                dismissWelcomeBtn: document.getElementById('dismissWelcomeBtn'),
-                dismissWelcomePermanentlyBtn: document.getElementById('dismissWelcomePermanentlyBtn'),
-                devResetSettingsBtn: document.getElementById('devResetSettingsBtn'),
-                devShowWelcomeBtn: document.getElementById('devShowWelcomeBtn'),
-                soundCategoriesContainer: document.getElementById('soundCategoriesContainerV4'),
-                settingsTabsContainer: document.querySelector('.settings-tabs'),
-                tabPanelContainer: document.querySelector('.tab-panels-container'),
-                soundSearchInput: document.getElementById('soundSearchInput'),
-                settingsSearchInput: document.getElementById('settingsSearch'),
-                statusMessage: document.getElementById('statusMessageV4'),
-                muteIndicator: document.getElementById('muteIndicator'),
-                masterVolumeValue: document.getElementById('masterVolumeValue'),
-                masterVolumeControlGroup: document.getElementById('masterVolumeControlGroup'),
-                fadeInValue: document.getElementById('fadeInValue'),
-                fadeOutValue: document.getElementById('fadeOutValue'),
-                speedValue: document.getElementById('speedValue'),
-                pitchValue: document.getElementById('pitchValue'),
-                eqBassValue: document.getElementById('eqBassValue'),
-                eqMidValue: document.getElementById('eqMidValue'),
-                eqTrebleValue: document.getElementById('eqTrebleValue'),
+                settingsModal: document.getElementById('soundboardSettingsModal'), welcomeModal: document.getElementById('welcomeModal'), devMenu: document.getElementById('devMenu'),
+                openSettingsBtn: document.getElementById('openSettingsBtn'), saveSettingsBtn: document.getElementById('saveSettingsBtn'),
+                resetSettingsBtn: document.getElementById('resetSettingsBtn'), resetEqBtn: document.getElementById('resetEqBtn'),
+                applyEqTuneBtn: document.getElementById('applyEqTuneBtn'), clearSoundsBtn: document.getElementById('clearSoundsBtn'),
+                dismissWelcomeBtn: document.getElementById('dismissWelcomeBtn'), dismissWelcomePermanentlyBtn: document.getElementById('dismissWelcomePermanentlyBtn'),
+                devResetSettingsBtn: document.getElementById('devResetSettingsBtn'), devShowWelcomeBtn: document.getElementById('devShowWelcomeBtn'),
+                soundCategoriesContainer: document.getElementById('soundCategoriesContainerV4'), settingsTabsContainer: document.querySelector('.settings-tabs'),
+                tabPanelContainer: document.querySelector('.tab-panels-container'), soundSearchInput: document.getElementById('soundSearchInput'),
+                settingsSearchInput: document.getElementById('settingsSearch'), statusMessage: document.getElementById('statusMessageV4'),
+                muteIndicator: document.getElementById('muteIndicator'), masterVolumeValue: document.getElementById('masterVolumeValue'),
+                masterVolumeControlGroup: document.getElementById('masterVolumeControlGroup'), fadeInValue: document.getElementById('fadeInValue'),
+                fadeOutValue: document.getElementById('fadeOutValue'), speedValue: document.getElementById('speedValue'),
+                pitchValue: document.getElementById('pitchValue'), eqBassValue: document.getElementById('eqBassValue'),
+                eqMidValue: document.getElementById('eqMidValue'), eqTrebleValue: document.getElementById('eqTrebleValue'),
             };
         }
-        
         renderSoundboard(soundsData, sortOrder) {
             this.elements.soundCategoriesContainer.innerHTML = '';
             for (const categoryKey in soundsData) {
@@ -1494,59 +1313,38 @@
                 soundList.forEach(fileName => {
                     const displayName = fileName.replace(/\.mp3$/i, '').replace(/_/g, ' ');
                     const button = document.createElement('button');
-                    button.className = 'sound-button-v4';
-                    button.textContent = displayName;
-                    button.dataset.soundFile = fileName;
+                    button.className = 'sound-button-v4'; button.textContent = displayName; button.dataset.soundFile = fileName;
                     buttonsGrid.appendChild(button);
                 });
                 categoryDiv.appendChild(buttonsGrid);
                 this.elements.soundCategoriesContainer.appendChild(categoryDiv);
             }
         }
-
         filterSounds(searchTerm) {
-            if (this.isAnimatingSearch) return;
-            this.isAnimatingSearch = true;
-            const term = searchTerm.toLowerCase().trim();
-            const allCategories = document.querySelectorAll('.sound-category-v4');
-            allCategories.forEach(cat => cat.classList.add('is-filtering'));
+            if (this.isAnimatingSearch) return; this.isAnimatingSearch = true; const term = searchTerm.toLowerCase().trim();
+            const allCategories = document.querySelectorAll('.sound-category-v4'); allCategories.forEach(cat => cat.classList.add('is-filtering'));
             setTimeout(() => {
                 allCategories.forEach(category => {
-                    const buttons = category.querySelectorAll('.sound-button-v4');
-                    let hasVisible = false;
+                    const buttons = category.querySelectorAll('.sound-button-v4'); let hasVisible = false;
                     buttons.forEach(button => {
                         const isVisible = term ? button.textContent.toLowerCase().includes(term) : true;
-                        button.classList.toggle('is-hidden', !isVisible);
-                        if (isVisible) hasVisible = true;
+                        button.classList.toggle('is-hidden', !isVisible); if (isVisible) hasVisible = true;
                     });
                     category.classList.toggle('is-hidden', !hasVisible);
                 });
-                allCategories.forEach(cat => cat.classList.remove('is-filtering'));
-                this.isAnimatingSearch = false;
+                allCategories.forEach(cat => cat.classList.remove('is-filtering')); this.isAnimatingSearch = false;
             }, 300);
         }
-
         updateButtonVisuals(activeAnalysers) {
             document.querySelectorAll('.sound-button-v4').forEach(button => {
-                const fileName = button.dataset.soundFile;
-                const analyser = activeAnalysers.get(fileName);
+                const fileName = button.dataset.soundFile; const analyser = activeAnalysers.get(fileName);
                 if (analyser) {
-                    button.classList.add('playing');
-                    const dataArray = new Uint8Array(analyser.frequencyBinCount);
-                    analyser.getByteFrequencyData(dataArray);
-                    const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length;
-                    const scale = 1 + (avg / 255) * 0.05;
-                    const shadowSpread = 2 + (avg / 255) * 8;
-                    button.style.transform = `scale(${scale})`;
-                    button.style.boxShadow = `0 0 ${shadowSpread}px rgba(103, 32, 189, 0.7)`;
-                } else {
-                    button.classList.remove('playing');
-                    button.style.transform = '';
-                    button.style.boxShadow = '';
-                }
+                    button.classList.add('playing'); const dataArray = new Uint8Array(analyser.frequencyBinCount); analyser.getByteFrequencyData(dataArray);
+                    const avg = dataArray.reduce((s, v) => s + v, 0) / dataArray.length; const scale = 1 + (avg / 255) * 0.05; const shadowSpread = 2 + (avg / 255) * 8;
+                    button.style.transform = `scale(${scale})`; button.style.boxShadow = `0 0 ${shadowSpread}px rgba(103, 32, 189, 0.7)`;
+                } else { button.classList.remove('playing'); button.style.transform = ''; button.style.boxShadow = ''; }
             });
         }
-        
         updateElementFromState(key, value) {
             const el = document.querySelector(`[data-setting="${key}"]`);
             if (!el) return;
@@ -1554,7 +1352,6 @@
             else if (el.type === 'radio') document.querySelector(`input[name="${el.name}"][value="${value}"]`).checked = true;
             else el.value = value;
         }
-        
         updateDisplayValue(key, value) {
              const val = parseFloat(value);
              switch(key) {
@@ -1568,87 +1365,51 @@
                 case 'eqTreble': this.elements.eqTrebleValue.textContent = `${Math.round(val)} dB`; break;
             }
         }
-
         updateVolumeDisplay(level, isMuted) {
             this.elements.masterVolumeValue.textContent = `${Math.round(level * 100)}%`;
             this.elements.muteIndicator.classList.toggle('visible', isMuted || level === 0);
             const numInput = document.querySelector(`[data-slider-id="masterVolume"]`);
             if (numInput) numInput.value = Math.round(level * 100);
         }
-        
         toggleNightModeLock(isLocked) {
              this.elements.masterVolumeControlGroup.classList.toggle('locked', isLocked);
-             document.getElementById('masterVolume').disabled = isLocked;
-             document.getElementById('masterVolumeInput').disabled = isLocked;
+             document.getElementById('masterVolume').disabled = isLocked; document.getElementById('masterVolumeInput').disabled = isLocked;
         }
-
         showStatus(message, type = 'info', duration = 3000) {
-            const el = this.elements.statusMessage;
-            clearTimeout(el.timeoutId);
-            el.textContent = message;
-            el.className = `status-message-v4 ${type}`;
-            el.style.display = 'block';
+            const el = this.elements.statusMessage; clearTimeout(el.timeoutId);
+            el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block';
             el.timeoutId = setTimeout(() => el.style.display = 'none', duration);
         }
-        
-        toggleModal(modalName, forceShow) {
-            const modal = modalName === 'settings' ? this.elements.settingsModal : this.elements.welcomeModal;
-            modal.classList.toggle('visible', forceShow);
-        }
-        
+        toggleModal(modalName, forceShow) { const modal = modalName === 'settings' ? this.elements.settingsModal : this.elements.welcomeModal; modal.classList.toggle('visible', forceShow); }
         handleTabClick(e) {
             const clickedButton = e.target.closest('.tab-button');
             if (clickedButton) {
                 const tabButtons = this.elements.settingsTabsContainer.querySelectorAll('.tab-button');
                 const tabIndex = Array.from(tabButtons).indexOf(clickedButton);
-                tabButtons.forEach(btn => btn.classList.remove('active'));
-                clickedButton.classList.add('active');
+                tabButtons.forEach(btn => btn.classList.remove('active')); clickedButton.classList.add('active');
                 this.elements.tabPanelContainer.style.transform = `translateX(-${tabIndex * 100}%)`;
             }
         }
-        
         updateSaveButtonText(isoTimestamp) {
             if (!isoTimestamp) { this.elements.saveSettingsBtn.textContent = "Save"; return; }
-            const savedDate = new Date(isoTimestamp);
-            const now = new Date();
-            if (savedDate.toDateString() === now.toDateString()) {
-                this.elements.saveSettingsBtn.textContent = `Saved at ${savedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
-            } else {
-                this.elements.saveSettingsBtn.textContent = `Saved ${savedDate.toLocaleDateString()}`;
-            }
+            const savedDate = new Date(isoTimestamp); const now = new Date();
+            if (savedDate.toDateString() === now.toDateString()) { this.elements.saveSettingsBtn.textContent = `Saved at ${savedDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`; }
+            else { this.elements.saveSettingsBtn.textContent = `Saved ${savedDate.toLocaleDateString()}`; }
         }
-
-        showWelcomePopupIfNeeded() {
-            if (!new SettingsManager().hasSeenWelcomePopup()) {
-                this.toggleModal('welcome', true);
-            }
-        }
-
+        showWelcomePopupIfNeeded() { if (!new SettingsManager().hasSeenWelcomePopup()) { this.toggleModal('welcome', true); } }
         bindWelcomeModalEvents() {
             const settingsManager = new SettingsManager();
             this.elements.dismissWelcomeBtn.addEventListener('click', () => this.toggleModal('welcome', false));
-            this.elements.dismissWelcomePermanentlyBtn.addEventListener('click', () => {
-                settingsManager.setWelcomePopupSeen();
-                this.toggleModal('welcome', false);
-            });
+            this.elements.dismissWelcomePermanentlyBtn.addEventListener('click', () => { settingsManager.setWelcomePopupSeen(); this.toggleModal('welcome', false); });
         }
-        
-        toggleDevMenu() {
-            this.elements.devMenu.style.display = this.elements.devMenu.style.display === 'block' ? 'none' : 'block';
-        }
-
+        toggleDevMenu() { this.elements.devMenu.style.display = this.elements.devMenu.style.display === 'block' ? 'none' : 'block'; }
         bindDevMenuEvents(resetCallback, showWelcomeCallback) {
             this.elements.devResetSettingsBtn.addEventListener('click', resetCallback);
             this.elements.devShowWelcomeBtn.addEventListener('click', showWelcomeCallback);
         }
-        
-        filterSettings(term) {
-            console.log("Filtering settings for:", term);
-        }
-    }
+        filterSettings(term) { console.log("Filtering settings for:", term); }
+    };
 
-
-    // --- Application Entry Point ---
     document.addEventListener('DOMContentLoaded', () => {
         const app = new SoundboardApp();
         app.init().catch(console.error);
