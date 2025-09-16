@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>4SP - GN-GAMES</title>
+
+    <link rel="icon" type="image/png" href="../images/favicon.png">
+    <link rel="apple-touch-icon" href="../images/favicon.png">
+    <link rel="stylesheet" href="../css/style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Roboto&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css">
+
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="../firebase-config.js"></script>
+    <script src="../ban-enforcer.js"></script>
+    <script src="../panic-key.js"></script>
+    <script src="../url-changer.js"></script>
+    <script src="https://cdn.jsdelivr.net/gh/gn-math/gn-math.github.io@main/gnmath.js"></script>
+  
+    <style>
+        /* --- Base Dashboard Layout & Header --- */
+        body.dashboard-page {
+            display: flex; flex-direction: column; min-height: 100vh;
+            margin: 0; font-family: PrimaryFont, sans-serif;
+            background: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
+        }
+        .main-header .auth-buttons .btn-login {
+            border: 1px solid #ccc; background-color: #fff; color: #444;
+            padding: 8px 18px; border-radius: 12px; font-weight: 600;
+            transition: all 0.2s ease;
+        }
+        .main-header .auth-buttons .btn-login:hover { background-color: #eee; }
+        .dashboard-container { display: flex; flex: 1; overflow: hidden; }
+
+        /* --- Sidebar --- */
+        .sidebar {
+            width: 200px; background: linear-gradient(180deg, #333 0%, #2a2a2a 100%);
+            color: #fff; padding: 20px 10px; display: flex; flex-direction: column;
+            border-right: 1px solid #444; transition: width 0.5s ease-in-out;
+            position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+            flex-shrink: 0; z-index: 1001;
+        }
+        .sidebar.collapsed { width: 85px; }
+        #toggleSidebar {
+            position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+            background: none; border: none; color: #fff; font-size: 1.2em;
+            cursor: pointer; padding: 4px; transition: transform 0.5s ease-in-out;
+        }
+        .sidebar.collapsed #toggleSidebar { transform: translateX(-50%) rotate(180deg); }
+        .sidebar nav ul { list-style: none; padding: 0; margin: 60px 0 0; }
+        .sidebar nav li { margin-bottom: 10px; }
+        .sidebar nav a {
+            display: flex; align-items: center; padding: 12px 15px;
+            color: #fff; text-decoration: none; border-radius: 8px;
+            transition: all 0.3s ease; font-family: 'PrimaryFont', sans-serif;
+            text-transform: uppercase;
+        }
+        .sidebar nav a.active, .sidebar nav a:hover {
+            background: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+            transform: translateX(5px);
+        }
+        .sidebar nav a .icon { font-size: 1.2em; width: 24px; text-align: center; }
+        .sidebar nav a .label { 
+            margin-left: 10px; white-space: nowrap; opacity: 1; visibility: visible;
+            transition: opacity 0.2s ease-in-out; transition-delay: 0.4s;
+        }
+        .sidebar.collapsed nav a .label { opacity: 0; visibility: hidden; transition-delay: 0s; }
+        
+        /* --- Main Content Area --- */
+        .main-content {
+            flex: 1; padding: 30px; overflow-y: auto;
+            display: flex; flex-direction: column;
+        }
+        .page-header {
+            display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;
+            background: #ffffff; padding: 15px 25px; border-radius: 12px; 
+            box-shadow: 0 6px 25px rgba(0,0,0,0.06);
+        }
+        .page-header h2 {
+            margin: 0; font-size: 1.8em; font-weight: bold; color: #333;
+            font-family: 'PrimaryFont', sans-serif;
+        }
+        
+        /* --- Game Controls (Search, Sort, etc.) --- */
+        .game-controls {
+            display: flex; gap: 15px; align-items: center; margin-bottom: 20px; flex-wrap: wrap;
+            background: #fff; padding: 20px; border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+        }
+        .game-controls input[type="text"], .game-controls select {
+            font-family: PrimaryFont, sans-serif; background-color: #fff; 
+            border: 2px solid #e9ecef; border-radius: 8px; padding: 12px; 
+            width: 100%; box-sizing: border-box; 
+            transition: border-color 0.2s, box-shadow 0.2s;
+            height: 48px;
+        }
+        .game-controls input[type="text"]:focus, .game-controls select:focus {
+            border-color: #8a2be2; box-shadow: 0 0 0 3px rgba(138, 43, 226, 0.15); outline: none;
+        }
+        .search-container { flex-grow: 1; display: flex; gap: 15px; min-width: 250px; }
+        #showFavoritesBtn {
+            border: none; padding: 12px 20px; border-radius: 8px; font-weight: 600;
+            cursor: pointer; font-family: PrimaryFont, sans-serif; color: white;
+            background: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 15px rgba(103, 32, 189, 0.2);
+        }
+        #showFavoritesBtn:hover {
+            transform: translateY(-2px) scale(1.03);
+            box-shadow: 0 6px 20px rgba(103, 32, 189, 0.3);
+        }
+
+        /* --- Game Grid & Cards --- */
+        #zoneCount {
+            margin-bottom: 20px; font-family: SecondaryFont, sans-serif;
+            color: #555; font-size: 1em;
+        }
+        #container {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 25px; padding-bottom: 20px;
+        }
+        #container .zone-item {
+            background-color: #fff; border: 1px solid #e0e0e0;
+            border-radius: 12px; padding: 0;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.06);
+            cursor: pointer; 
+            transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+            display: flex; flex-direction: column;
+            overflow: hidden; position: relative;
+            opacity: 0; /* Initial state for animation */
+        }
+        #container .zone-item:hover {
+            transform: translateY(-6px) scale(1.04); /* Bubbly effect */
+            box-shadow: 0 8px 25px rgba(0,0,0,0.12);
+            border-color: #8a2be2;
+        }
+        #container .zone-item img.game-cover {
+            width: 100%; height: 160px; object-fit: cover;
+            border-bottom: 1px solid #eee; background-color: #f8f9fa;
+        }
+        .game-title {
+            padding: 15px; font-family: PrimaryFont, sans-serif;
+            font-weight: 600; font-size: 1em; color: #333;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            text-align: center;
+        }
+
+        /* --- Redesigned Card Buttons --- */
+        .card-actions {
+            position: absolute; top: 10px; right: 10px;
+            display: flex; gap: 8px; z-index: 10;
+        }
+        .card-action-btn {
+            background-color: rgba(255, 255, 255, 0.8);
+            backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+            border: 1px solid rgba(221, 221, 221, 0.5);
+            width: 36px; height: 36px; border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            cursor: pointer; font-size: 1em; color: #333;
+            transition: all 0.25s ease;
+        }
+        .card-action-btn:hover {
+            transform: scale(1.15); /* Bubbly effect */
+            background-color: #fff; box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+        .favorite-btn img {
+            width: 18px; height: 18px;
+            transition: filter 0.3s ease, transform 0.3s ease;
+            filter: grayscale(1) brightness(1.7) contrast(0.8); /* Light grey effect */
+        }
+        .favorite-btn:hover img {
+            filter: grayscale(0.5) brightness(1.2);
+        }
+        .favorite-btn.favorited img {
+            filter: none; /* Show original image color */
+            transform: scale(1.2); /* Bubbly pop effect when favorited */
+        }
+        
+        /* --- Game Viewer Modal --- */
+        #zoneViewer { 
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background-color: rgba(0,0,0,0.6); z-index: 2000;
+            flex-direction: column; align-items: center; justify-content: center;
+            opacity: 0; transition: opacity 0.3s ease; pointer-events: none;
+        }
+        #zoneViewer.show { opacity: 1; pointer-events: auto; }
+        .zone-viewer-content {
+            background: #1c1c1c; width: 95%; height: 95%; max-width: 1400px;
+            border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.3);
+            display: flex; flex-direction: column; overflow: hidden;
+            transform: scale(0.95); opacity: 0;
+            transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+        #zoneViewer.show .zone-viewer-content { transform: scale(1); opacity: 1; }
+        #zoneViewer .zone-header { 
+            background-color: #2a2a2a; padding: 12px 20px; display: flex; 
+            justify-content: space-between; align-items: center;
+            border-bottom: 1px solid #444; flex-shrink: 0;
+        }
+        #zoneViewer .zone-header .zone-title h2 { margin: 0; font-size: 1.2em; color: #fff; font-family: PrimaryFont, sans-serif; }
+        #zoneViewer .zone-header .zone-controls button { 
+            margin-left: 10px; padding: 8px 15px; color: #fff; border: 1px solid #555;
+            background-color: #333; border-radius: 6px; cursor: pointer;
+            font-family: PrimaryFont, sans-serif; font-size: 0.9em; transition: background-color 0.2s;
+        }
+        #zoneViewer .zone-header .zone-controls button:hover { background-color: #444; }
+        #zoneViewer iframe { flex-grow: 1; border: none; background-color: #000; }
+        .hidden { display: none !important; }
+
+        /* --- Animations --- */
+        @keyframes fadeInCard { 
+            from { opacity: 0; transform: translateY(15px) scale(0.98); } 
+            to { opacity: 1; transform: translateY(0) scale(1); } 
+        }
+
+    </style>
+</head>
+<body class="dashboard-page">
+
+    <header class="main-header light-bg">
+        <div class="container">
+            <div class="logo">
+                <a href="../index.html"><img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer;"></a>
+            </div>
+            <div class="auth-buttons">
+                <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="dashboard-container">
+        <aside class="sidebar" id="sidebar">
+            <button id="toggleSidebar">☰</button>
+            <nav>
+                <ul>
+                    <li><a href="../logged-in/dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
+                    <li><a href="../logged-in/soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
+                    <li><a href="../logged-in/games.html" class="active"><span class="icon">🎮</span><span class="label">Games</span></a></li>
+                    <li><a href="../logged-in/apps.html"><span class="icon">✨</span><span class="label">Apps</span></a></li>
+                    <li><a href="../logged-in/settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                    <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <div class="page-header">
+                <h2>GN-Math Games</h2>
+                <div id="headerUserInfo"></div>
+            </div>
+
+            <div class="game-controls">
+                <div class="search-container">
+                    <input type="text" id="searchBar" placeholder="Search for games..." aria-label="Search games">
+                    <select id="sortOptions" aria-label="Sort games by">
+                        <option value="popular">Sort by Popularity</option>
+                        <option value="name">Sort by Name (A-Z)</option>
+                        <option value="id">Sort by Date (Newest First)</option>
+                    </select>
+                </div>
+                <button id="showFavoritesBtn">Show Favorites</button>
+            </div>
+
+            <div id="zoneCount">Loading games...</div>
+            <div id="container"></div>
+        </main>
+    </div>
+
+    <div id="zoneViewer" aria-modal="true" role="dialog">
+        <div class="zone-viewer-content">
+            <div class="zone-header">
+                 <div class="zone-title">
+                    <h2 id="zoneNameEl">Game Title</h2>
+                 </div>
+                 <div class="zone-controls">
+                    <button id="fullscreenBtnZone">Fullscreen</button>
+                    <button id="newTabBtnZone">New Tab</button>
+                    <button id="closeBtnZone">Close</button>
+                 </div>
+            </div>
+            <iframe id="zoneFrame" title="Game Content" allowfullscreen></iframe>
+        </div>
+    </div>
+    
+    <script>
+    const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
+    const sidebarEl = document.getElementById('sidebar');
+    const toggleSidebarBtn = document.getElementById('toggleSidebar');
+
+    firebase.auth().onAuthStateChanged(async user => {
+        if (user) {
+            // User is signed in, initialize page
+            if (typeof listZones === 'function') listZones();
+        } else {
+            // User is not signed in, redirect to login
+            window.location.href = '../login.html';
+        }
+    });
+
+    document.getElementById('logoutBtn')?.addEventListener('click', () => firebase.auth().signOut());
+    document.getElementById('signOutLink')?.addEventListener('click', (e) => { 
+        e.preventDefault(); 
+        firebase.auth().signOut(); 
+    });
+    
+    firebase.auth().onAuthStateChanged(user => {
+        if (!user) {
+            window.location.href = '../login.html';
+        }
+    });
+    
+    if (toggleSidebarBtn && sidebarEl) {
+        toggleSidebarBtn.addEventListener('click', () => {
+            sidebarEl.classList.toggle('collapsed');
+        });
+    }
+
+    const gnContainer = document.getElementById('container');
+    const gnSearchBar = document.getElementById('searchBar');
+    const gnSortOptions = document.getElementById('sortOptions');
+    const gnZoneCount = document.getElementById('zoneCount');
+    const showFavoritesBtn = document.getElementById('showFavoritesBtn');
+    
+    const ZONES_URL = "https://cdn.jsdelivr.net/gh/gn-math/assets@main/zones.json";
+    const COVER_URL_BASE = "https://cdn.jsdelivr.net/gh/gn-math/covers@main";
+    const HTML_URL_BASE = "https://cdn.jsdelivr.net/gh/gn-math/html@main";
+    const FAVORITES_KEY = 'gnGameFavorites_v2';
+    
+    let masterZoneList = [];
+    let popularityData = {};
+    let isShowingFavorites = false;
+
+    const getFavorites = () => JSON.parse(localStorage.getItem(FAVORITES_KEY)) || [];
+    const saveFavorites = (favs) => localStorage.setItem(FAVORITES_KEY, JSON.stringify(favs));
+    function toggleFavorite(gameId, starButton) {
+        let favorites = getFavorites();
+        if (favorites.includes(gameId)) {
+            favorites = favorites.filter(id => id !== gameId);
+            starButton.classList.remove('favorited');
+        } else {
+            favorites.push(gameId);
+            starButton.classList.add('favorited');
+        }
+        saveFavorites(favorites);
+        if(isShowingFavorites) sortAndDisplayZones();
+    }
+
+    async function listZones() {
+        gnZoneCount.textContent = "Loading games, please wait...";
+        try {
+            const response = await fetch(`${ZONES_URL}?t=${Date.now()}`);
+            if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+            masterZoneList = await response.json();
+            
+            // Simulate popularity data
+            masterZoneList.forEach(zone => { popularityData[zone.id] = Math.floor(Math.random() * 1000) + 1; });
+            sortAndDisplayZones();
+        } catch (error) {
+            console.error("Error loading zones:", error);
+            gnContainer.innerHTML = `<p style="color:red;">Error loading games. Please try refreshing.</p>`;
+            gnZoneCount.textContent = "Failed to load games.";
+        }
+    }
+    
+    function sortAndDisplayZones() {
+        let zonesToProcess = [...masterZoneList];
+        const sortBy = gnSortOptions.value;
+
+        if (sortBy === 'name') zonesToProcess.sort((a, b) => a.name.localeCompare(b.name));
+        else if (sortBy === 'id') zonesToProcess.sort((a, b) => (parseInt(b.id) || 0) - (parseInt(a.id) || 0));
+        else if (sortBy === 'popular') zonesToProcess.sort((a, b) => (popularityData[b.id] || 0) - (popularityData[a.id] || 0));
+        
+        filterAndRenderZones(zonesToProcess);
+    }
+
+    function filterAndRenderZones(sortedZones) {
+        const query = gnSearchBar.value.toLowerCase().trim();
+        let finalZones = sortedZones;
+
+        if (isShowingFavorites) {
+            const favorites = getFavorites();
+            finalZones = finalZones.filter(zone => favorites.includes(zone.id));
+        }
+
+        if (query) {
+            finalZones = finalZones.filter(zone => zone.name.toLowerCase().includes(query) || (zone.tags && zone.tags.some(tag => tag.toLowerCase().includes(query))));
+        }
+        
+        renderGameCards(finalZones);
+    }
+
+    function renderGameCards(zonesToRender) {
+        gnContainer.innerHTML = "";
+        const favorites = getFavorites();
+        
+        if (zonesToRender.length === 0) {
+            gnContainer.innerHTML = "<p>No games found matching your criteria.</p>";
+            gnZoneCount.textContent = "0 Games Found";
+            return;
+        }
+
+        const fragment = document.createDocumentFragment();
+        zonesToRender.forEach((file, index) => {
+            const zoneItem = document.createElement("div");
+            zoneItem.className = "zone-item";
+            zoneItem.dataset.zoneId = file.id;
+            zoneItem.addEventListener('click', (e) => {
+                if (e.target.closest('button')) return;
+                openZone(file);
+            });
+            // Staggered fade-in animation
+            zoneItem.style.animation = `fadeInCard 0.5s ease-out ${index * 0.04}s forwards`;
+
+            const img = document.createElement("img");
+            img.className = "game-cover";
+            img.src = file.cover.replace("{COVER_URL}", COVER_URL_BASE).replace("{HTML_URL}", HTML_URL_BASE);
+            img.alt = file.name; 
+            img.loading = "lazy";
+            img.onerror = () => { img.src = '../images/favicon.png'; img.style.objectFit = 'contain'; };
+            
+            const cardActions = document.createElement("div");
+            cardActions.className = "card-actions";
+
+            const favoriteButton = document.createElement("button");
+            favoriteButton.className = "card-action-btn favorite-btn";
+            favoriteButton.title = "Add to Favorites";
+            favoriteButton.innerHTML = `<img src="../images/star-dark.png" alt="Favorite">`;
+            if (favorites.includes(file.id)) favoriteButton.classList.add('favorited');
+            favoriteButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                toggleFavorite(file.id, favoriteButton);
+            });
+
+            const playButton = document.createElement("button");
+            playButton.className = "card-action-btn play-btn";
+            playButton.title = "Play Game";
+            playButton.innerHTML = `<i class="fas fa-play"></i>`;
+            playButton.addEventListener('click', (e) => {
+                e.stopPropagation();
+                openZone(file);
+            });
+            
+            cardActions.appendChild(favoriteButton);
+            cardActions.appendChild(playButton);
+            
+            const titleDiv = document.createElement("div");
+            titleDiv.className = "game-title";
+            titleDiv.textContent = file.name;
+            titleDiv.title = file.name;
+
+            zoneItem.appendChild(img);
+            zoneItem.appendChild(cardActions);
+            zoneItem.appendChild(titleDiv);
+            fragment.appendChild(zoneItem);
+        });
+        gnContainer.appendChild(fragment);
+        gnZoneCount.textContent = `Showing: ${zonesToRender.length} Game(s)`;
+    }
+    
+    gnSearchBar.addEventListener('input', sortAndDisplayZones);
+    gnSortOptions.addEventListener('change', sortAndDisplayZones);
+    showFavoritesBtn.addEventListener('click', () => {
+        isShowingFavorites = !isShowingFavorites;
+        if (isShowingFavorites) {
+            showFavoritesBtn.textContent = "Show All";
+            showFavoritesBtn.style.background = '#6c757d'; // A neutral "active" color
+        } else {
+            showFavoritesBtn.textContent = "Show Favorites";
+            showFavoritesBtn.style.background = ''; // Revert to default gradient
+        }
+        sortAndDisplayZones();
+    });
+
+    function openZone(file) {
+        if (!file || !file.url) {
+            alert("Could not load game: Invalid game data provided.");
+            return;
+        }
+
+        const gameUrl = file.url.replace("{HTML_URL}", HTML_URL_BASE);
+        const zoneViewer = document.getElementById('zoneViewer');
+        const zoneFrame = document.getElementById('zoneFrame');
+        const zoneNameEl = document.getElementById('zoneNameEl');
+        
+        zoneNameEl.textContent = file.name;
+        zoneFrame.src = 'about:blank'; // Clear previous content
+
+        fetch(`${gameUrl}?t=${Date.now()}`)
+            .then(response => {
+                if (!response.ok) throw new Error(`HTTP error ${response.status}`);
+                return response.text();
+            })
+            .then(html => {
+                const doc = zoneFrame.contentWindow.document;
+                doc.open();
+                doc.write(html);
+                doc.close();
+                zoneViewer.style.display = "flex";
+                setTimeout(() => zoneViewer.classList.add('show'), 10); // Trigger transition
+            })
+            .catch(error => {
+                console.error("Failed to load zone:", file.name, error);
+                alert(`Failed to load game "${file.name}": ${error.message}.`);
+                closeZoneViewer();
+            });
+    }
+
+    function closeZoneViewer() {
+        const zoneViewer = document.getElementById('zoneViewer');
+        const zoneFrame = document.getElementById('zoneFrame');
+        zoneViewer.classList.remove('show');
+        setTimeout(() => {
+            zoneViewer.style.display = "none";
+            if (zoneFrame) {
+                zoneFrame.src = 'about:blank';
+            }
+        }, 300); // Match transition duration
+    }
+
+    document.getElementById('fullscreenBtnZone')?.addEventListener('click', () => {
+        const zoneFrame = document.getElementById('zoneFrame');
+        if (zoneFrame?.requestFullscreen) {
+            zoneFrame.requestFullscreen();
+        }
+    });
+
+    document.getElementById('newTabBtnZone')?.addEventListener('click', () => {
+        const zoneNameEl = document.getElementById('zoneNameEl');
+        const file = masterZoneList.find(z => z.name === zoneNameEl.textContent);
+        if (!file) return;
+
+        const gameUrl = file.url.replace("{HTML_URL}", HTML_URL_BASE);
+        const newWindow = window.open("about:blank", "_blank");
+        if (newWindow) {
+            fetch(`${gameUrl}?t=${Date.now()}`)
+                .then(response => response.text())
+                .then(html => {
+                    newWindow.document.open();
+                    newWindow.document.write(html);
+                    newWindow.document.close();
+                }).catch(err => {
+                    console.error("Error opening in new tab:", err);
+                    newWindow.close();
+                });
+        }
+    });
+    
+    document.getElementById('closeBtnZone')?.addEventListener('click', closeZoneViewer);
+    </script>
+</body>
+</html>
