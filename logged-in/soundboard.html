@@ -972,13 +972,6 @@
         const showStatus = (message, type = 'info', duration = 3000) => { const el = document.getElementById('statusMessageV4'); clearTimeout(el.timeoutId); el.textContent = message; el.className = `status-message-v4 ${type}`; el.style.display = 'block'; el.timeoutId = setTimeout(() => el.style.display = 'none', duration); };
         const awarenessEngine = { micStream: null, analyser: null, interval: null, isActive: false, isSpeaking: false, start() { if (this.isActive) return; this.isActive = true; navigator.mediaDevices.getUserMedia({ audio: { noiseSuppression: true, echoCancellation: true } }).then(stream => { this.micStream = stream; this.analyser = audioContext.createAnalyser(); this.analyser.fftSize = 512; audioContext.createMediaStreamSource(stream).connect(this.analyser); this.interval = setInterval(() => this.process(), 100); }).catch(err => { this.stop(); showStatus('Could not access microphone. Please enable it in browser settings.', 'error'); const awarenessCheckbox = document.querySelector('[data-setting="modeAwareness"]'); if(awarenessCheckbox) awarenessCheckbox.checked = false; }); }, stop() { if (this.interval) clearInterval(this.interval); if (this.micStream) this.micStream.getTracks().forEach(track => track.stop()); this.isActive = false; this.interval = this.micStream = this.analyser = null; this.setDucking(false); }, process() { if (!this.analyser) return; const dataArray = new Uint8Array(this.analyser.frequencyBinCount); this.analyser.getByteFrequencyData(dataArray); let voiceEnergy = 0; for (let i = 5; i < 100; i++) voiceEnergy += dataArray[i]; voiceEnergy /= 95; const currentlySpeaking = voiceEnergy > 20; if (currentlySpeaking !== this.isSpeaking) { this.isSpeaking = currentlySpeaking; this.setDucking(this.isSpeaking); } }, setDucking(isDucking) { const newVolume = isDucking ? 0.3 : 1.0; nodes.awarenessGain.gain.setTargetAtTime(newVolume, audioContext.currentTime, 0.1); } };
         
-        const clearSounds = () => {
-            const fadeOutTime = parseFloat(document.getElementById('fadeOut').value || 0.1);
-            for (const [_, instances] of activeSounds.entries()) {
-                [...instances].forEach(sound => sound.stop(fadeOutTime));
-            }
-        };
-
         // --- AUTO-CLICKER FUNCTIONS ---
         function fastClicker() {
             if (currentlyHoveredButton && document.getElementById('autoClickerCheckbox').checked) {
@@ -1035,6 +1028,14 @@
             // Settings are saved via the main "Save" button in the modal footer.
         }
         
+        const clearSounds = () => {
+            stopAutoClicker(); // Stop the auto-clicker
+            const fadeOutTime = parseFloat(document.getElementById('fadeOut').value || 0.1);
+            for (const [_, instances] of activeSounds.entries()) {
+                [...instances].forEach(sound => sound.stop(fadeOutTime));
+            }
+        };
+
         class Sound {
             constructor(fileName, onEnd) {
                 this.fileName = fileName;
@@ -1388,9 +1389,9 @@
                     if (!wasAlreadyMuted) {
                         masterGain.gain.setValueAtTime(0, audioContext.currentTime);
                     }
-                    for (let i = 0; i < 100; i++) {
-                        setTimeout(clearSounds, i * 1);
-                    }
+                    
+                    clearSounds(); // Correctly call clearSounds once
+
                     setTimeout(() => {
                         if (!wasAlreadyMuted) {
                              masterGain.gain.setValueAtTime(currentVolume, audioContext.currentTime);
