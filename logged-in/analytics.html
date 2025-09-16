@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <title>4SP - ANALYTICS</title>
+    <link rel="stylesheet" href="../css/style.css" />
+    <script src="../ban-enforcer.js"></script>
+    <script src="../panic-key.js"></script>
+    <script src="../url-changer.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+    <style>
+    /* --- Settings Layout (matching dashboard structure) --- */
+    body.settings-page {
+        display: flex;
+        flex-direction: column;
+        min-height: 100vh;
+        margin: 0;
+        font-family: 'PrimaryFont', sans-serif;
+    }
+    .settings-container {
+        display: flex;
+        flex: 1;
+    }
+
+    /* --- Sidebar --- */
+    .sidebar { width: 200px; background: linear-gradient(180deg, #333 0%, #2a2a2a 100%); color: #fff; padding: 20px 10px; display: flex; flex-direction: column; border-right: 1px solid #444; transition: width 0.5s ease-in-out; position: relative; box-shadow: 2px 0 10px rgba(0,0,0,0.1); }
+    .sidebar.collapsed { width: 85px; }
+    #toggleSidebar { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: none; border: none; color: #fff; font-size: 1.2em; cursor: pointer; padding: 4px; transition: transform 0.5s ease-in-out; }
+    .sidebar.collapsed #toggleSidebar { transform: translateX(-50%) rotate(180deg); }
+    .sidebar nav ul { list-style: none; padding: 0; margin: 60px 0 0; }
+    .sidebar nav li { margin-bottom: 10px; }
+    .sidebar nav a { display: flex; align-items: center; padding: 12px 15px; color: #fff; text-decoration: none; border-radius: 8px; transition: all 0.3s ease; font-family: 'PrimaryFont', sans-serif; text-transform: uppercase; }
+    .sidebar nav a.active, .sidebar nav a:hover { background: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%); transform: translateX(5px); }
+    .sidebar nav a .icon { font-size: 1.2em; width: 24px; text-align: center; }
+    .sidebar nav a .label { 
+        margin-left: 10px; 
+        white-space: nowrap; 
+        opacity: 1;
+        visibility: visible;
+        transition: opacity 0.2s ease-in-out;
+        transition-delay: 0.4s;
+    }
+    .sidebar.collapsed nav a .label { 
+        opacity: 0;
+        visibility: hidden;
+        transition-delay: 0s;
+    }
+
+    /* --- Main Content & Controls (Matched dashboard's styles) --- */
+    .main-content {
+        flex: 1;
+        padding: 40px;
+        background: linear-gradient(135deg, #f0f2f5 0%, #e8eaf0 100%);
+        overflow-y: auto;
+        position: relative;
+    }
+
+    .dashboard-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 40px;
+        background: white;
+        padding: 20px 30px;
+        border-radius: 15px;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+        border: 1px solid rgba(103, 32, 189, 0.1);
+    }
+
+    .dashboard-title {
+        margin: 0;
+        font-size: 2.2em;
+        font-weight: bold;
+        background: linear-gradient(135deg, #6720bd 0%, #8a2be2 100%);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        background-clip: text;
+    }
+    
+    /* --- NEW: Analytics Specific Styles --- */
+    .analytics-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 30px;
+    }
+
+    .stat-card, .chart-container {
+        background: #fff;
+        padding: 25px;
+        border-radius: 20px;
+        box-shadow: 0 6px 30px rgba(0,0,0,0.08);
+        border: 1px solid rgba(103, 32, 189, 0.1);
+        transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .stat-card:hover, .chart-container:hover {
+        transform: translateY(-8px) scale(1.02);
+        box-shadow: 0 15px 40px rgba(103, 32, 189, 0.15);
+        border-color: rgba(103, 32, 189, 0.3);
+    }
+
+    .stat-card h3 {
+        margin: 0 0 10px;
+        font-size: 1.1em;
+        color: #555;
+        font-family: 'PrimaryFont', sans-serif;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    .stat-card .stat-number {
+        font-size: 2.8em;
+        font-weight: bold;
+        color: #6720bd;
+        font-family: 'PrimaryFont', sans-serif;
+    }
+    
+    .stat-card .stat-number .loader {
+        font-size: 0.5em;
+        color: #999;
+    }
+    
+    .chart-container {
+        grid-column: 1 / -1; /* Make chart containers span full width */
+        padding: 30px;
+    }
+    
+    .chart-container h3 {
+        margin: 0 0 25px;
+        font-size: 1.5em;
+        color: #333;
+        font-family: 'PrimaryFont', sans-serif;
+        border-bottom: 2px solid rgba(103, 32, 189, 0.1);
+        padding-bottom: 10px;
+    }
+    
+    .fade-in { animation: fadeIn 0.6s ease-out; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
+    .slide-in { animation: slideIn 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
+    @keyframes slideIn { from { transform: translateX(-100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
+
+    @media (max-width: 768px) {
+        .settings-container { flex-direction: column; }
+        .sidebar { width: 100%; padding: 15px; }
+        .sidebar.collapsed { width: 100%; }
+        .main-content { padding: 20px; }
+        .analytics-grid { gap: 20px; }
+    }
+    </style>
+</head>
+<body class="settings-page">
+    <header class="main-header light-bg">
+        <div class="container">
+            <div class="logo">
+                <a href="../index.html">
+                    <img src="../images/logo-dark.png" alt="4SP Logo" style="cursor:pointer"/>
+                </a>
+            </div>
+            <div class="auth-buttons">
+                <button class="btn btn-login" onclick="window.location.href='../index.html'">HOME</button>
+                <button id="logoutBtn" class="btn btn-login">LOG OUT</button>
+            </div>
+        </div>
+    </header>
+
+    <div class="settings-container">
+        <aside class="sidebar slide-in" id="sidebar">
+            <button id="toggleSidebar">☰</button>
+            <nav>
+                <ul>
+                    <li><a href="dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
+                    <li><a href="soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
+                    <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
+                    <li><a href="apps.html"><span class="icon">✨</span><span class="label">Apps</span></a></li>
+                    <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
+                    <li id="analyticsLink" style="display: none;"><a href="analytics.html" class="active"><span class="icon">📊</span><span class="label">Analytics</span></a></li>
+                    <li><a href="#" id="signOutLink"><span class="icon">🔒</span><span class="label">LOG OUT</span></a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-content fade-in">
+            <div class="dashboard-header">
+                <h2 class="dashboard-title">Site Analytics</h2>
+            </div>
+
+            <div class="analytics-grid">
+                <div class="stat-card">
+                    <h3>Total Users</h3>
+                    <p class="stat-number" id="totalUsersStat"><span class="loader">Loading...</span></p>
+                </div>
+                <div class="stat-card">
+                    <h3>Daily Active Users (DAU)</h3>
+                    <p class="stat-number" id="dauStat"><span class="loader">Loading...</span></p>
+                </div>
+                 <div class="stat-card">
+                    <h3>Monthly Active Users (MAU)</h3>
+                    <p class="stat-number" id="mauStat"><span class="loader">Loading...</span></p>
+                </div>
+                <div class="stat-card">
+                    <h3>Banned Accounts</h3>
+                    <p class="stat-number" id="bannedCountStat"><span class="loader">Loading...</span></p>
+                </div>
+                
+                <div class="chart-container">
+                    <h3>New User Signups (Last 30 Days)</h3>
+                    <canvas id="userSignupsChart"></canvas>
+                </div>
+
+                <div class="chart-container">
+                    <h3>Account Type Distribution</h3>
+                    <canvas id="accountTypeChart" style="max-height: 350px;"></canvas>
+                </div>
+                 
+                <div class="chart-container">
+                    <h3>Top 5 Most Played Games</h3>
+                    <canvas id="topGamesChart"></canvas>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js"></script>
+    <script src="../firebase-config.js"></script>
+    <script>
+        // --- ADMIN EMAIL ---
+        const ADMIN_EMAIL = '4simpleproblems@gmail.com';
+
+        // --- AUTH & PAGE ACCESS CONTROL ---
+        firebase.auth().onAuthStateChanged(user => {
+            if (!user) {
+                // Not logged in, redirect to login page
+                return window.location.href = '../login.html';
+            }
+            
+            if (user.email !== ADMIN_EMAIL) {
+                // Logged in, but NOT an admin. Redirect to the main dashboard.
+                alert('Access Denied: This page is for administrators only.');
+                return window.location.href = 'dashboard.html';
+            }
+
+            // If we reach here, the user is an authenticated admin.
+            // Make admin-only UI elements visible and fetch data.
+            document.getElementById('analyticsLink').style.display = 'list-item';
+            fetchAllAnalytics();
+        });
+
+        // --- GENERAL UI ---
+        document.getElementById('logoutBtn').onclick = document.getElementById('signOutLink').onclick = () => {
+            firebase.auth().signOut().then(() => { location.href = '../login.html'; });
+        };
+        document.getElementById('toggleSidebar').addEventListener('click', () => {
+            document.getElementById('sidebar').classList.toggle('collapsed');
+        });
+
+        // --- CHART CONFIGURATION ---
+        Chart.defaults.font.family = "'PrimaryFont', sans-serif";
+        Chart.defaults.plugins.legend.position = 'bottom';
+        Chart.defaults.color = '#555';
+
+        // --- DATA FETCHING & RENDERING ---
+
+        /**
+         * Main function to orchestrate fetching all analytics data.
+         * Uses Promise.all to fetch data in parallel for better performance.
+         */
+        async function fetchAllAnalytics() {
+            const db = firebase.firestore();
+            try {
+                // These functions return promises that resolve with the calculated data.
+                const [
+                    totalUsers,
+                    { dau, mau },
+                    bannedCount,
+                    signupData,
+                    accountTypes,
+                    topGames
+                ] = await Promise.all([
+                    fetchTotalUsers(db),
+                    fetchActiveUsers(db),
+                    fetchBannedCount(db),
+                    fetchNewUserSignups(db),
+                    fetchAccountTypeDistribution(db),
+                    fetchTopGames(db)
+                ]);
+
+                // Update the UI with the fetched data
+                document.getElementById('totalUsersStat').textContent = totalUsers;
+                document.getElementById('dauStat').textContent = dau;
+                document.getElementById('mauStat').textContent = mau;
+                document.getElementById('bannedCountStat').textContent = bannedCount;
+                
+                renderUserSignupsChart(signupData);
+                renderAccountTypeChart(accountTypes);
+                renderTopGamesChart(topGames);
+
+            } catch (error) {
+                console.error("Error fetching analytics data:", error);
+                alert("An error occurred while fetching analytics data. Check the console for details.");
+            }
+        }
+
+        // --- Individual Data Fetching Functions ---
+
+        async function fetchTotalUsers(db) {
+            const snapshot = await db.collection('users').get();
+            return snapshot.size;
+        }
+        
+        async function fetchBannedCount(db) {
+            const snapshot = await db.collection('bans').get();
+            return snapshot.size;
+        }
+
+        async function fetchActiveUsers(db) {
+            // NOTE: This assumes you store a `lastLogin` timestamp in your user documents.
+            // This would typically be updated via a Cloud Function on user sign-in.
+            const now = new Date();
+            const twentyFourHoursAgo = new Date(now.getTime() - (24 * 60 * 60 * 1000));
+            const thirtyDaysAgo = new Date(now.getTime() - (30 * 24 * 60 * 60 * 1000));
+
+            const dauSnapshot = await db.collection('users').where('lastLogin', '>=', twentyFourHoursAgo).get();
+            const mauSnapshot = await db.collection('users').where('lastLogin', '>=', thirtyDaysAgo).get();
+
+            return { dau: dauSnapshot.size, mau: mauSnapshot.size };
+        }
+
+        async function fetchNewUserSignups(db) {
+            // NOTE: This reads all user documents. For very large user bases,
+            // this is inefficient and should be replaced with a summary document
+            // updated by a Cloud Function on user creation.
+            const thirtyDaysAgo = new Date();
+            thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+            
+            const snapshot = await db.collection('users').where('createdAt', '>=', thirtyDaysAgo).get();
+            const signupsByDay = {};
+
+            snapshot.forEach(doc => {
+                const createdAt = doc.data().createdAt?.toDate();
+                if (createdAt) {
+                    const day = createdAt.toISOString().split('T')[0]; // YYYY-MM-DD
+                    signupsByDay[day] = (signupsByDay[day] || 0) + 1;
+                }
+            });
+            return signupsByDay;
+        }
+        
+        async function fetchAccountTypeDistribution(db) {
+            // NOTE: Like user signups, this is inefficient at scale.
+            const snapshot = await db.collection('users').get();
+            const counts = { 'Email/Password': 0, 'Google': 0, 'GitHub': 0, 'Unknown': 0 };
+
+            for (const doc of snapshot.docs) {
+                const userRecord = await firebase.auth().getUser(doc.id).catch(() => null);
+                if (!userRecord || !userRecord.providerData) {
+                    counts.Unknown++;
+                    continue;
+                }
+                if (userRecord.providerData.some(p => p.providerId === 'google.com')) {
+                    counts.Google++;
+                } else if (userRecord.providerData.some(p => p.providerId === 'github.com')) {
+                    counts.GitHub++;
+                } else {
+                    counts['Email/Password']++;
+                }
+            }
+            return counts;
+        }
+        
+        async function fetchTopGames(db) {
+            // NOTE: This assumes a `gamePlays` collection where each document has a `gameId` field.
+            const snapshot = await db.collection('gamePlays').limit(5000).get(); // Limit to last 5000 plays to avoid huge reads
+            const playCounts = {};
+            
+            snapshot.forEach(doc => {
+                const gameId = doc.data().gameId;
+                if (gameId) {
+                    playCounts[gameId] = (playCounts[gameId] || 0) + 1;
+                }
+            });
+            
+            return Object.entries(playCounts)
+                .sort(([,a],[,b]) => b - a)
+                .slice(0, 5); // Get top 5
+        }
+
+        // --- Chart Rendering Functions ---
+
+        function renderUserSignupsChart(signupData) {
+            const ctx = document.getElementById('userSignupsChart').getContext('2d');
+            const labels = [];
+            const data = [];
+            
+            // Populate labels for the last 30 days, even if there were no signups
+            for (let i = 29; i >= 0; i--) {
+                const d = new Date();
+                d.setDate(d.getDate() - i);
+                const dayString = d.toISOString().split('T')[0];
+                labels.push(d);
+                data.push(signupData[dayString] || 0);
+            }
+
+            new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: [{
+                        label: 'New Users',
+                        data: data,
+                        borderColor: '#8a2be2',
+                        backgroundColor: 'rgba(138, 43, 226, 0.1)',
+                        fill: true,
+                        tension: 0.4
+                    }]
+                },
+                options: {
+                    scales: {
+                        x: { type: 'time', time: { unit: 'day' } },
+                        y: { beginAtZero: true, ticks: { precision: 0 } }
+                    }
+                }
+            });
+        }
+        
+        function renderAccountTypeChart(accountTypes) {
+            const ctx = document.getElementById('accountTypeChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels: Object.keys(accountTypes),
+                    datasets: [{
+                        label: 'Account Types',
+                        data: Object.values(accountTypes),
+                        backgroundColor: ['#6720bd', '#4285F4', '#333', '#ccc'],
+                        hoverOffset: 4
+                    }]
+                }
+            });
+        }
+        
+        function renderTopGamesChart(topGames) {
+            const ctx = document.getElementById('topGamesChart').getContext('2d');
+            new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: topGames.map(game => game[0]),
+                    datasets: [{
+                        label: 'Number of Plays',
+                        data: topGames.map(game => game[1]),
+                        backgroundColor: [
+                            'rgba(103, 32, 189, 0.7)',
+                            'rgba(125, 40, 205, 0.7)',
+                            'rgba(148, 43, 226, 0.7)',
+                            'rgba(170, 70, 230, 0.7)',
+                            'rgba(190, 100, 235, 0.7)'
+                        ],
+                        borderColor: '#6720bd',
+                        borderWidth: 1
+                    }]
+                },
+                options: {
+                    indexAxis: 'y', // Makes it a horizontal bar chart
+                    scales: {
+                         x: { ticks: { precision: 0 } }
+                    },
+                    plugins: {
+                        legend: { display: false }
+                    }
+                }
+            });
+        }
+
+    </script>
+</body>
+</html>
