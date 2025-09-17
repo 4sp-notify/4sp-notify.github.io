@@ -53,7 +53,7 @@
     .stat-card { background: #f8f9fa; border-radius: 12px; padding: 20px; text-align: center; border: 1px solid #e9ecef; }
     .stat-card-title { font-size: 1em; color: #555; margin: 0 0 10px; font-weight: 600; }
     .stat-card-value { font-size: 2.2em; font-weight: bold; color: #333; margin: 0; min-height: 40px; }
-    .chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 30px; }
+    .chart-grid, .tables-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 30px; }
     .chart-card { background: #fff; border: 1px solid #f0f0f0; padding: 20px; border-radius: 15px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); }
     h4 { margin: 0 0 15px; text-align: center; font-size: 1.2em; color: #444; }
     .chart-container { position: relative; height: 300px; }
@@ -177,12 +177,21 @@
                                 <div class="chart-card"><h4>Admin Status</h4><div class="chart-container"><canvas id="adminStatusChart"></canvas></div></div>
                                 <div class="chart-card"><h4>Sound Categories</h4><div class="chart-container"><canvas id="soundCategoriesChart"></canvas></div></div>
                             </div>
-                             <div class="table-container">
-                                <h4>Most Upvoted Submissions</h4>
-                                <div class="data-table-wrapper" style="max-height: 250px;"><table class="data-table" id="top-requests-table"><thead><tr><th>Title</th><th>Author</th><th>Score</th></tr></thead><tbody></tbody></table></div>
+                             <div class="tables-grid" style="margin-top: 30px;">
+                                <div class="table-container">
+                                    <h4>Most Upvoted</h4>
+                                    <div class="data-table-wrapper" style="max-height: 250px;"><table class="data-table" id="top-requests-table"><thead><tr><th>Title</th><th>Author</th><th>Score</th></tr></thead><tbody></tbody></table></div>
+                                </div>
+                                <div class="table-container">
+                                    <h4>Most Downvoted</h4>
+                                    <div class="data-table-wrapper" style="max-height: 250px;"><table class="data-table" id="bottom-requests-table"><thead><tr><th>Title</th><th>Author</th><th>Score</th></tr></thead><tbody></tbody></table></div>
+                                </div>
                             </div>
                         </div>
                         <div id="tab-health" class="tab-panel">
+                            <div class="stat-card-grid">
+                                <div class="stat-card"><h4 class="stat-card-title">Total Visits</h4><p class="stat-card-value" id="total-visits-value"></p></div>
+                            </div>
                              <div class="health-layout">
                                 <div class="health-score-container">
                                     <div class="health-score-circle" id="health-score-circle">
@@ -279,12 +288,18 @@
             refreshBtn.disabled = true; refreshBtn.classList.add('refreshing');
             const db = firebase.firestore();
             try {
-                const [usersSnapshot, requestsSnapshot] = await Promise.all([ db.collection('users').get(), db.collection('requests').get() ]);
+                const [usersSnapshot, requestsSnapshot, visitsSnapshot] = await Promise.all([
+                    db.collection('users').get(),
+                    db.collection('requests').get(),
+                    db.collection('site_metrics').doc('visitCounter').get()
+                ]);
                 allUsersData = usersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
                 allRequestsData = requestsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                const totalVisits = visitsSnapshot.exists ? visitsSnapshot.data().totalVisits : 0;
+
                 renderUserAnalytics();
                 renderSubmissionAnalytics();
-                renderSiteHealthAnalytics();
+                renderSiteHealthAnalytics(totalVisits);
             } catch (error) {
                 console.error("Fatal error fetching analytics data:", error);
                 alert("Could not load analytics data. Check Firestore rules and console for errors.");
@@ -331,29 +346,47 @@
             const soundCategoryCounts = allRequestsData.filter(r => r.type === 'sound').reduce((acc, r) => { const cat = r.soundCategory || 'N/A'; acc[cat] = (acc[cat] || 0) + 1; return acc; }, {});
             renderPieChart('soundCategoriesChart', Object.keys(soundCategoryCounts), Object.values(soundCategoryCounts));
             const topRequests = [...allRequestsData].sort((a, b) => ((b.upvotes||0)-(b.downvotes||0)) - ((a.upvotes||0)-(a.downvotes||0))).slice(0, 10);
-            renderTopRequestsTable(topRequests);
+            renderTopRequestsTable('top-requests-table', topRequests);
+            const bottomRequests = [...allRequestsData].sort((a, b) => ((a.upvotes||0)-(a.downvotes||0)) - ((b.upvotes||0)-(b.downvotes||0))).slice(0, 10);
+            renderTopRequestsTable('bottom-requests-table', bottomRequests);
         }
         
-        function renderSiteHealthAnalytics() {
+        function renderSiteHealthAnalytics(totalVisits) {
+            document.getElementById('total-visits-value').textContent = totalVisits.toLocaleString();
             let score = 100;
             const diagnostics = [];
+
+            const activeUserIds = new Set();
+            allRequestsData.forEach(r => {
+                activeUserIds.add(r.userId);
+                r.upvotedBy?.forEach(uid => activeUserIds.add(uid));
+                r.downvotedBy?.forEach(uid => activeUserIds.add(uid));
+            });
+            const engagementRate = allUsersData.length > 0 ? activeUserIds.size / allUsersData.length : 0;
+            score += Math.min(engagementRate * 20, 10) - 5; // Bonus up to 10 pts, penalty up to -5
+            diagnostics.push({label: 'User Engagement Rate', value: `${(engagementRate * 100).toFixed(1)}%`});
+            
             const pendingReqs = allRequestsData.filter(r => !r.adminStatus).length;
             const pendingRatio = allRequestsData.length > 0 ? pendingReqs / allRequestsData.length : 0;
             score -= pendingRatio * 25;
             diagnostics.push({label: 'Pending Submissions', value: `${pendingReqs} (${(pendingRatio * 100).toFixed(0)}%)`});
+            
             const bannedUsers = allUsersData.filter(u => u.isRequestsBanned).length;
             const bannedRatio = allUsersData.length > 0 ? bannedUsers / allUsersData.length : 0;
             score -= bannedRatio * 40;
             diagnostics.push({label: 'Banned User Ratio', value: `${bannedUsers} (${(bannedRatio * 100).toFixed(1)}%)`});
+            
             const respondedReqs = allRequestsData.filter(r => r.adminStatus && r.adminStatusUpdatedAt && r.timestamp);
             const responseTimes = respondedReqs.map(r => r.adminStatusUpdatedAt.toMillis() - r.timestamp.toMillis());
             const avgResponseTimeMs = responseTimes.length > 0 ? responseTimes.reduce((a, b) => a + b, 0) / responseTimes.length : 0;
             const avgResponseTimeDays = avgResponseTimeMs / (1000 * 60 * 60 * 24);
             score -= Math.min(avgResponseTimeDays * 5, 20);
             diagnostics.push({label: 'Avg. Admin Response', value: `${avgResponseTimeDays.toFixed(1)} days`});
+            
             const avgVoteScore = parseFloat(document.getElementById('avg-votes-value').textContent) || 0;
             score += Math.max(Math.min(avgVoteScore * 2, 15), -15);
             diagnostics.push({label: 'Average Submission Score', value: avgVoteScore.toFixed(1)});
+            
             score = Math.max(0, Math.min(100, score));
             const getGrade = s => { if (s >= 97) return {g:'A+',t:'Excellent',c:'#28a745'}; if (s >= 93) return {g:'A',t:'Excellent',c:'#28a745'}; if (s >= 90) return {g:'A-',t:'Great',c:'#20c997'}; if (s >= 87) return {g:'B+',t:'Good',c:'#ffc107'}; if (s >= 83) return {g:'B',t:'Good',c:'#ffc107'}; if (s >= 80) return {g:'B-',t:'Fair',c:'#fd7e14'}; if (s >= 70) return {g:'C',t:'Needs Improvement',c:'#dc3545'}; return {g:'F',t:'Critical',c:'#c82333'}; };
             const { g, t, c } = getGrade(score);
@@ -364,96 +397,7 @@
             document.getElementById('diagnostic-list').innerHTML = diagnostics.map(d => `<li class="diagnostic-item"><span class="diagnostic-item-label">${d.label}</span><span class="diagnostic-item-value">${d.value}</span></li>`).join('');
         }
         
-        // --- Helper Functions ---
-        function setupReauthUI() {
-            document.getElementById('reauth-section').style.display = 'block';
-            const emailForm = document.getElementById('email-reauth-form'),
-                reauthBtn = document.getElementById('reauthBtn'),
-                passInput = document.getElementById('reauthPassword');
-            const providerId = currentUser.providerData[0] ?.providerId;
-            authMethod = providerId === 'google.com' ? 'google' : (providerId === 'github.com' ? 'github' : 'password');
-            if (authMethod !== 'password') {
-                reauthBtn.textContent = `Reauthenticate with ${authMethod.charAt(0).toUpperCase() + authMethod.slice(1)}`;
-                reauthBtn.style.display = 'block';
-                emailForm.style.display = 'none';
-                reauthBtn.onclick = reauthenticateWithPopup;
-            } else {
-                emailForm.style.display = 'block';
-                reauthBtn.style.display = 'none';
-                passInput.addEventListener('keydown', e => {
-                    if (e.key === 'Enter') {
-                        e.preventDefault();
-                        reauthenticateWithPassword(passInput.value);
-                    }
-                });
-            }
-        }
-        async function reauthenticateWithPassword(password) {
-            try {
-                await currentUser.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(currentUser.email, password));
-                handleSuccessfulReauth();
-            } catch (error) {
-                alert(`Auth failed: ${error.message}`);
-            }
-        }
-        async function reauthenticateWithPopup() {
-            let provider = authMethod === 'google' ? new firebase.auth.GoogleAuthProvider() : new firebase.auth.GithubAuthProvider();
-            try {
-                await currentUser.reauthenticateWithPopup(provider);
-                handleSuccessfulReauth();
-            } catch (error) {
-                alert(`Reauthentication failed: ${error.message}`);
-            }
-        }
-
-        function initializeTabs() {
-            const tabContainer = document.querySelector('.settings-tabs'),
-                panelContainer = document.querySelector('.tab-panels-container'),
-                tabButtons = tabContainer.querySelectorAll('.tab-button');
-            tabContainer.addEventListener('click', e => {
-                const clickedButton = e.target.closest('.tab-button');
-                if (clickedButton) {
-                    const tabIndex = Array.from(tabButtons).indexOf(clickedButton);
-                    tabButtons.forEach(btn => btn.classList.remove('active'));
-                    clickedButton.classList.add('active');
-                    panelContainer.style.transform = `translateX(-${tabIndex * 100}%)`;
-                }
-            });
-        }
-
-        function initializeTableSorting() {
-            const tableHeaders = document.querySelectorAll('#users-table th[data-sort]');
-            tableHeaders.forEach(th => {
-                th.addEventListener('click', () => {
-                    const sortKey = th.dataset.sort;
-                    if (userSortState.key === sortKey) {
-                        userSortState.direction = userSortState.direction === 'asc' ? 'desc' : 'asc';
-                    } else {
-                        userSortState.key = sortKey;
-                        userSortState.direction = 'asc';
-                    }
-                    sortAndRenderUsers();
-                });
-            });
-        }
-
-        function initializeUserDetailsModal() {
-            const modal = document.getElementById('userDetailsModal'),
-                closeBtn = modal.querySelector('.modal-close-btn'),
-                closeModal = () => modal.classList.remove('modal-open');
-            closeBtn.addEventListener('click', closeModal);
-            modal.addEventListener('click', e => {
-                if (e.target === modal) closeModal();
-            });
-            document.querySelector('#users-table tbody').addEventListener('click', e => {
-                const row = e.target.closest('tr');
-                if (row && row.dataset.userid) {
-                    const user = allUsersData.find(u => u.id === row.dataset.userid);
-                    if (user) openUserDetailsModal(user);
-                }
-            });
-        }
-
+        // --- Table & Modal Functions ---
         function sortAndRenderUsers() {
             const { key, direction } = userSortState;
             const sortedUsers = [...allUsersData].sort((a, b) => {
@@ -488,8 +432,8 @@
                 </tr>`).join('');
         }
 
-        function renderTopRequestsTable(requests) {
-            const tbody = document.getElementById('top-requests-table').querySelector('tbody');
+        function renderTopRequestsTable(tableId, requests) {
+            const tbody = document.getElementById(tableId).querySelector('tbody');
             tbody.innerHTML = requests.map(req => `
                 <tr>
                     <td title="${req.title}">${req.title.substring(0, 35)}${req.title.length > 35 ? '...' : ''}</td>
@@ -497,53 +441,19 @@
                     <td>${(req.upvotes || 0) - (req.downvotes || 0)}</td>
                 </tr>`).join('');
         }
-
-        function openUserDetailsModal(user) {
-            document.getElementById('modal-username').textContent = user.username || 'No Username';
-            document.getElementById('modal-email').textContent = user.email || 'N/A';
-            document.getElementById('modal-uid').textContent = user.id;
-            document.getElementById('modal-createdAt').textContent = user.createdAt ? user.createdAt.toDate().toLocaleString() : 'N/A';
-            document.getElementById('modal-authMethod').textContent = user.authMethod || 'email';
-            document.getElementById('modal-dailyRequests').textContent = `${user.dailyRequestCount || 0}`;
-            document.getElementById('modal-dailyVotes').textContent = `${user.dailyVoteCount || 0}`;
-            document.getElementById('modal-limitsReset').textContent = user.limitsLastReset || 'Never';
-            const isBanned = user.isRequestsBanned === true;
-            const banStatusEl = document.getElementById('modal-banStatus');
-            banStatusEl.textContent = isBanned ? 'BANNED' : 'Not Banned';
-            banStatusEl.className = isBanned ? 'status-banned' : 'status-ok';
-            document.getElementById('modal-ban-expiry-item').style.display = isBanned ? 'block' : 'none';
-            document.getElementById('modal-ban-reason-item').style.display = isBanned ? 'block' : 'none';
-            if (isBanned) {
-                document.getElementById('modal-banExpiry').textContent = user.requestsBannedUntil ? user.requestsBannedUntil.toDate().toLocaleString() : 'Indefinite';
-                document.getElementById('modal-banReason').textContent = user.requestsBanReason || 'No reason provided.';
-            }
-            document.getElementById('userDetailsModal').classList.add('modal-open');
-        }
-
-        function renderPieChart(canvasId, labels, data) {
-            if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
-            const ctx = document.getElementById(canvasId).getContext('2d');
-            chartInstances[canvasId] = new Chart(ctx, {
-                type: 'doughnut',
-                data: { labels: labels, datasets: [{ data: data, backgroundColor: ['#6720bd', '#007bff', '#28a745', '#ffc107', '#dc3545', '#6c757d'], borderColor: '#ffffff', borderWidth: 2 }] },
-                options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { position: 'bottom' } } }
-            });
-        }
-
-        function renderLineChart(canvasId, labels, data) {
-            if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
-            const ctx = document.getElementById(canvasId).getContext('2d');
-            chartInstances[canvasId] = new Chart(ctx, {
-                type: 'line',
-                data: { labels: labels, datasets: [{ label: 'Count', data: data, backgroundColor: 'rgba(103, 32, 189, 0.2)', borderColor: '#6720bd', borderWidth: 2, fill: true, tension: 0.3 }] },
-                options: { responsive: true, maintainAspectRatio: false, scales: { y: { beginAtZero: true, ticks: { stepSize: 1 } } }, plugins: { legend: { display: false } } }
-            });
-        }
+        
+        // --- Unabridged Helper Functions ---
+        function setupReauthUI() { document.getElementById('reauth-section').style.display = 'block'; const e=document.getElementById('email-reauth-form'),t=document.getElementById('reauthBtn'),n=document.getElementById('reauthPassword'),o=currentUser.providerData[0]?.providerId;authMethod="google.com"===o?"google":"github.com"===o?"github":"password","password"!==authMethod?(t.textContent=`Reauthenticate with ${authMethod.charAt(0).toUpperCase()+authMethod.slice(1)}`,t.style.display="block",e.style.display="none",t.onclick=reauthenticateWithPopup):(e.style.display="block",t.style.display="none",n.addEventListener("keydown",(e=>{if("Enter"===e.key){e.preventDefault();reauthenticateWithPassword(n.value)}}))) }
+        async function reauthenticateWithPassword(e){try{await currentUser.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(currentUser.email,e));handleSuccessfulReauth()}catch(e){alert(`Auth failed: ${e.message}`)}}
+        async function reauthenticateWithPopup(){let e="google"===authMethod?new firebase.auth.GoogleAuthProvider:new firebase.auth.GithubAuthProvider;try{await currentUser.reauthenticateWithPopup(e);handleSuccessfulReauth()}catch(e){alert(`Reauthentication failed: ${e.message}`)}}
+        function initializeTabs(){const e=document.querySelector(".settings-tabs"),t=document.querySelector(".tab-panels-container"),n=e.querySelectorAll(".tab-button");e.addEventListener("click",(o=>{const a=o.target.closest(".tab-button");if(a){const o=Array.from(n).indexOf(a);n.forEach((e=>e.classList.remove("active"))),a.classList.add("active"),t.style.transform=`translateX(-${100*o}%)`}}))}
+        function initializeTableSorting(){document.querySelectorAll("#users-table th[data-sort]").forEach((e=>{e.addEventListener("click",(()=>{const t=e.dataset.sort;userSortState.key===t?userSortState.direction="asc"===userSortState.direction?"desc":"asc":(userSortState.key=t,userSortState.direction="asc"),sortAndRenderUsers()}))}))}
+        function initializeUserDetailsModal(){const e=document.getElementById("userDetailsModal"),t=e.querySelector(".modal-close-btn"),n=()=>{e.classList.remove("modal-open")};t.addEventListener("click",n),e.addEventListener("click",(t=>{t.target===e&&n()}));document.querySelector("#users-table tbody").addEventListener("click",(e=>{const t=e.target.closest("tr");if(t&&t.dataset.userid){const e=allUsersData.find((e=>e.id===t.dataset.userid));e&&openUserDetailsModal(e)}}))}
+        function openUserDetailsModal(e){document.getElementById("modal-username").textContent=e.username||"No Username",document.getElementById("modal-email").textContent=e.email||"N/A",document.getElementById("modal-uid").textContent=e.id,document.getElementById("modal-createdAt").textContent=e.createdAt?e.createdAt.toDate().toLocaleString():"N/A",document.getElementById("modal-authMethod").textContent=e.authMethod||"email",document.getElementById("modal-dailyRequests").textContent=`${e.dailyRequestCount||0}`,document.getElementById("modal-dailyVotes").textContent=`${e.dailyVoteCount||0}`,document.getElementById("modal-limitsReset").textContent=e.limitsLastReset||"Never";const t=e.isRequestsBanned===!0,n=document.getElementById("modal-banStatus");n.textContent=t?"BANNED":"Not Banned",n.className=t?"status-banned":"status-ok",document.getElementById("modal-ban-expiry-item").style.display=t?"block":"none",document.getElementById("modal-ban-reason-item").style.display=t?"block":"none",t&&(document.getElementById("modal-banExpiry").textContent=e.requestsBannedUntil?e.requestsBannedUntil.toDate().toLocaleString():"Indefinite",document.getElementById("modal-banReason").textContent=e.requestsBanReason||"No reason provided."),document.getElementById("userDetailsModal").classList.add("modal-open")}
+        function renderPieChart(e,t,n){if(chartInstances[e]&&chartInstances[e].destroy(),!document.getElementById(e))return;const o=document.getElementById(e).getContext("2d");chartInstances[e]=new Chart(o,{type:"doughnut",data:{labels:t,datasets:[{data:n,backgroundColor:["#6720bd","#007bff","#28a745","#ffc107","#dc3545","#6c757d"],borderColor:"#ffffff",borderWidth:2}]},options:{responsive:!0,maintainAspectRatio:!1,plugins:{legend:{position:"bottom"}}}})}
+        function renderLineChart(e,t,n){if(chartInstances[e]&&chartInstances[e].destroy(),!document.getElementById(e))return;const o=document.getElementById(e).getContext("2d");chartInstances[e]=new Chart(o,{type:"line",data:{labels:t,datasets:[{label:"Count",data:n,backgroundColor:"rgba(103, 32, 189, 0.2)",borderColor:"#6720bd",borderWidth:2,fill:!0,tension:.3}]},options:{responsive:!0,maintainAspectRatio:!1,scales:{y:{beginAtZero:!0,ticks:{stepSize:1}}},plugins:{legend:{display:!1}}}})}
         document.getElementById('logoutBtn').onclick = () => firebase.auth().signOut();
-        document.getElementById('signOutLink').onclick = (e) => {
-            e.preventDefault();
-            firebase.auth().signOut();
-        };
+        document.getElementById('signOutLink').onclick = (e) => { e.preventDefault(); firebase.auth().signOut(); };
         document.getElementById('toggleSidebar').addEventListener('click', () => document.getElementById('sidebar').classList.toggle('collapsed'));
     </script>
 </body>
