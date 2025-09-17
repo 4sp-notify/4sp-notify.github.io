@@ -1189,6 +1189,36 @@
         } catch (error) { console.error("Error fetching city name:", error); return { label: fallbackLabel, country_code: 'us' }; }
     }
 
+    // --- PAGE VISIT COUNTER LOGIC (NEW) ---
+    async function incrementVisitCounter() {
+        const db = firebase.firestore();
+        const counterRef = db.collection('site_metrics').doc('visitCounter');
+        
+        try {
+            // Use a transaction to safely increment the counter
+            await db.runTransaction(async (transaction) => {
+                const counterDoc = await transaction.get(counterRef);
+                
+                if (!counterDoc.exists) {
+                    // If the document doesn't exist, create it.
+                    // Set the start date to today's date (UTC)
+                    const startDate = new Date().toISOString().split('T')[0];
+                    transaction.set(counterRef, { 
+                        totalVisits: 1,
+                        startDate: startDate 
+                    });
+                } else {
+                    // If it exists, increment the count.
+                    const newCount = (counterDoc.data().totalVisits || 0) + 1;
+                    transaction.update(counterRef, { totalVisits: newCount });
+                }
+            });
+            console.log("Debug: Page visit silently counted.");
+        } catch (error) {
+            console.error("Error incrementing visit counter:", error);
+        }
+    }
+
     // --- INITIALIZATION ---
     document.addEventListener('DOMContentLoaded', () => {
         firebase.auth().onAuthStateChanged(user => { 
@@ -1200,6 +1230,14 @@
                 renderDashboardLayout(); 
                 if (titleUpdateInterval) clearInterval(titleUpdateInterval);
                 titleUpdateInterval = setInterval(updateBrowserTabTitle, 100);
+
+                // NEW: Trigger the silent counter
+                const adminEmails = ['4simpleproblems@gmail.com', 'belkwy30@minerva.sparcc.org'];
+                if (!adminEmails.includes(user.email)) {
+                    incrementVisitCounter();
+                } else {
+                    console.log("Debug: Admin visit, counter not incremented.");
+                }
             }
         });
         document.getElementById('logoutBtn').addEventListener('click', () => firebase.auth().signOut());
