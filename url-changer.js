@@ -1,208 +1,169 @@
 /**
  * url-changer.js
- * This script manages the dynamic changing of the website's title and favicon
- * based on user-selected presets. The user's choice is saved to localStorage
- * to persist across sessions. It properly scales favicons and disables image
- * smoothing to ensure low-resolution icons remain sharp and not blurry.
- *
- * To add more options, simply add a new object to the 'presets' array.
- * Each object needs:
- * - name: The display name in the settings dropdown.
- * - title: The text that will appear as the page title.
- * - favicon: The relative path to the favicon image (supports .png, .ico, .jpg, .jpeg).
- *
- * Final version as of: July 29, 2025
+ * Manages dynamic changing of the website's title and favicon.
+ * Supports presets, live data (like a clock), and custom user input.
+ * Settings are saved to localStorage to persist across sessions.
  */
 
 const urlChanger = {
-    // --- Configuration ---
-    // Add your new tab presets here. The 'None' option is required and will revert to the page's original state.
+    // --- Configuration: Add new presets here ---
     presets: [
-        {
-            name: 'None',
-            title: 'Default Title', // This will be replaced by the original page title
-            favicon: '../favicon.ico' // This will be replaced by the original favicon
-        },
-        {
-            name: 'HAC',
-            title: 'Login',
-            favicon: '../favicons/hac.png'
-        },
-        {
-            name: 'GMM',
-            title: 'Get More Math!',
-            favicon: '../favicons/gmm.png'
-        },
-        {
-            name: 'Kahoot',
-            title: 'Kahoot! | Learning games | Make learning awesome!',
-            favicon: '../favicons/kahoot.png'
-        },
-        {
-            name: 'Google Classroom',
-            title: 'Home',
-            favicon: '../favicons/google-classroom.png'
-        },
-        {
-            name: 'Google Docs',
-            title: 'Google Docs',
-            favicon: '../favicons/google-docs.png'
-        },
-        {
-            name: 'Google Slides',
-            title: 'Google Slides',
-            favicon: '../favicons/google-slides.png'
-        },
-        {
-            name: 'Google Drive',
-            title: 'Home - Google Drive',
-            favicon: '../favicons/google-drive.png'
-        },
-        {
-            name: 'Wikipedia',
-            title: 'Wikipedia',
-            favicon: '../favicons/wikipedia.png'
-        },
-        {
-            name: 'Clever',
-            title: 'Clever | Connect every student to a world of learning',
-            favicon: '../favicons/clever.png'
-        }
+        { name: 'HAC', title: 'Login', favicon: '../favicons/hac.png', category: 'websites' },
+        { name: 'GMM', title: 'Get More Math!', favicon: '../favicons/gmm.png', category: 'websites' },
+        { name: 'Kahoot', title: 'Kahoot! | Learning games | Make learning awesome!', favicon: '../favicons/kahoot.png', category: 'websites' },
+        { name: 'Google Classroom', title: 'Home', favicon: '../favicons/google-classroom.png', category: 'websites'},
+        { name: 'Google Docs', title: 'Google Docs', favicon: '../favicons/google-docs.png', category: 'websites'},
+        { name: 'Google Slides', title: 'Google Slides', favicon: '../favicons/google-slides.png', category: 'websites'},
+        { name: 'Google Drive', title: 'Home - Google Drive', favicon: '../favicons/google-drive.png', category: 'websites'},
+        { name: 'Wikipedia', title: 'Wikipedia', favicon: '../favicons/wikipedia.png', category: 'websites'},
+        { name: 'Clever', title: 'Clever | Connect every student to a world of learning', favicon: '../favicons/clever.png', category: 'websites'},
+        
+        // New 'Live' Category
+        { name: 'Current Time', title: '00:00:00 AM', favicon: '../favicon.ico', category: 'live', id: '_LIVE_CURRENT_TIME' }
     ],
 
     // --- Internal Properties ---
     originalTitle: '',
     originalFavicon: '',
+    liveUpdateInterval: null, // To hold the interval for the clock
 
     /**
-     * Initializes the script. It captures the original page title and favicon,
-     * then applies any saved preset from localStorage.
+     * Initializes the script, captures original page state, and applies saved settings.
      */
     init: function() {
         console.log("Debug: url-changer.js script has started.");
 
-        // Capture the original page state before making any changes.
         this.originalTitle = document.title;
         const faviconElement = document.querySelector("link[rel*='icon']");
-        this.originalFavicon = faviconElement ? faviconElement.href : '';
+        this.originalFavicon = faviconElement ? faviconElement.href : '../favicon.ico';
 
-        // Update the 'None' preset to use the captured original values.
-        const nonePreset = this.presets.find(p => p.name === 'None');
-        if (nonePreset) {
-            nonePreset.title = this.originalTitle;
-            nonePreset.favicon = this.originalFavicon;
+        const savedSettingsJSON = localStorage.getItem('selectedUrlPreset');
+        if (savedSettingsJSON) {
+            try {
+                const savedSettings = JSON.parse(savedSettingsJSON);
+                this.applyPreset(savedSettings);
+            } catch (e) {
+                console.error("Failed to parse saved tab settings, reverting to default.", e);
+                this.applyPreset({ type: 'none' });
+            }
         }
-
-        // Apply the saved preset, if one exists.
-        const savedPresetName = localStorage.getItem('selectedUrlPreset');
-        if (savedPresetName) {
-            this.applyPreset(savedPresetName);
+    },
+    
+    /**
+     * Clears any ongoing live updates, like the clock interval.
+     */
+    clearLiveUpdates: function() {
+        if (this.liveUpdateInterval) {
+            clearInterval(this.liveUpdateInterval);
+            this.liveUpdateInterval = null;
         }
     },
 
     /**
-     * Applies a given preset by changing the document title and favicon.
-     * For custom presets, it scales the favicon image to fit correctly using a canvas.
-     * @param {string} presetName - The name of the preset to apply.
+     * Applies a given preset configuration by changing the title and favicon.
+     * @param {object} settings - The settings object ({type, name, id, title, favicon}).
      */
-    applyPreset: function(presetName) {
-        const preset = this.presets.find(p => p.name === presetName);
-        if (!preset) {
-            console.warn(`URL Changer: Preset "${presetName}" not found. Reverting to default.`);
-            this.applyPreset('None');
+    applyPreset: function(settings) {
+        this.clearLiveUpdates(); // Stop any previous live updates first.
+
+        let presetToApply = {};
+
+        switch(settings.type) {
+            case 'preset':
+                const foundPreset = this.presets.find(p => p.id === settings.id || p.name === settings.name);
+                if (!foundPreset) {
+                    console.warn(`URL Changer: Preset "${settings.name}" not found.`);
+                    return this.applyPreset({ type: 'none' });
+                }
+                presetToApply = { ...foundPreset };
+                break;
+            
+            case 'custom':
+                if (!settings.title && !settings.favicon) {
+                     return this.applyPreset({ type: 'none' });
+                }
+                presetToApply = {
+                    title: settings.title || this.originalTitle,
+                    favicon: settings.favicon || this.originalFavicon
+                };
+                break;
+
+            case 'none':
+            default:
+                presetToApply = {
+                    title: this.originalTitle,
+                    favicon: this.originalFavicon
+                };
+                break;
+        }
+
+        // Handle special "Live" presets like the clock
+        if (presetToApply.id === '_LIVE_CURRENT_TIME') {
+            const updateClock = () => {
+                const now = new Date();
+                const timeString = now.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
+                document.title = timeString;
+            };
+            updateClock(); // Initial call to set time immediately
+            this.liveUpdateInterval = setInterval(updateClock, 1000);
+        } else {
+            document.title = presetToApply.title;
+        }
+
+        // Set the favicon
+        let faviconEl = document.querySelector("link[rel*='icon']");
+        if (!faviconEl) {
+            faviconEl = document.createElement('link');
+            faviconEl.rel = 'icon';
+            document.head.appendChild(faviconEl);
+        }
+
+        if (!presetToApply.favicon) {
+            faviconEl.href = this.originalFavicon;
             return;
         }
 
-        // Change the document title.
-        document.title = preset.title;
-
-        // Find the existing favicon link element, or create it if it doesn't exist.
-        let favicon = document.querySelector("link[rel*='icon']");
-        if (!favicon) {
-            favicon = document.createElement('link');
-            favicon.rel = 'icon';
-            document.head.appendChild(favicon);
-        }
-
-        // Handle the 'None' preset to revert to the original state directly.
-        if (preset.name === 'None') {
-            // preset.favicon was set to this.originalFavicon during init.
-            if (preset.favicon) {
-                favicon.href = preset.favicon;
-                favicon.style.display = '';
-            } else {
-                favicon.href = '';
-                favicon.style.display = 'none';
-            }
-            return; // End execution for the 'None' case.
-        }
-
-        // For all other presets, load the image and draw it on a canvas to ensure proper scaling.
         const img = new Image();
-        img.crossOrigin = "Anonymous"; // Use if loading images from a different domain.
+        img.crossOrigin = "Anonymous";
 
         img.onload = () => {
             const canvas = document.createElement('canvas');
-            const size = 32; // A standard favicon size (e.g., 32x32 pixels).
+            const size = 32;
             canvas.width = size;
             canvas.height = size;
             const ctx = canvas.getContext('2d');
+            
+            ctx.imageSmoothingEnabled = false; // Keep low-res icons sharp
 
-            // --- ✨ NEW CODE START ✨ ---
-            // Disable image smoothing to prevent blurriness on scaled-down favicons.
-            // This provides a sharp, pixelated look which is ideal for low-res icons.
-            ctx.imageSmoothingEnabled = false;
-            ctx.mozImageSmoothingEnabled = false;
-            ctx.webkitImageSmoothingEnabled = false;
-            ctx.msImageSmoothingEnabled = false;
-            // --- ✨ NEW CODE END ✨ ---
-
-            // Calculate dimensions to fit the image within the canvas while maintaining aspect ratio.
             const scale = Math.min(size / img.width, size / img.height);
             const scaledWidth = img.width * scale;
             const scaledHeight = img.height * scale;
-
-            // Calculate coordinates to center the scaled image on the canvas.
             const x = (size - scaledWidth) / 2;
             const y = (size - scaledHeight) / 2;
             
-            // Draw the scaled image onto the canvas.
             ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
-
-            // Update the favicon link's href with the canvas data URL.
-            favicon.href = canvas.toDataURL('image/png');
-            favicon.style.display = '';
+            faviconEl.href = canvas.toDataURL('image/png');
         };
 
         img.onerror = () => {
-            console.error(`URL Changer: Failed to load favicon image at "${preset.favicon}". Reverting to original.`);
-            // Fallback to the original favicon if the new one fails to load.
-            if (this.originalFavicon) {
-                favicon.href = this.originalFavicon;
-            } else {
-                // If there was no original favicon, just hide it.
-                favicon.href = '';
-                favicon.style.display = 'none';
-            }
+            console.error(`URL Changer: Failed to load favicon image at "${presetToApply.favicon}". Reverting to original.`);
+            faviconEl.href = this.originalFavicon;
         };
 
-        // Set the image source to start loading. This must be done after setting up onload/onerror.
-        img.src = preset.favicon;
+        img.src = presetToApply.favicon;
     },
 
     /**
-     * Saves the user's preset choice to localStorage and applies it.
-     * @param {string} presetName - The name of the preset to save.
+     * Saves the user's settings to localStorage and applies them.
+     * @param {object} settings - The settings object to save.
      */
-    savePreset: function(presetName) {
-        localStorage.setItem('selectedUrlPreset', presetName);
-        this.applyPreset(presetName);
-        console.log(`Debug: Saved preset "${presetName}" to localStorage.`);
+    savePreset: function(settings) {
+        localStorage.setItem('selectedUrlPreset', JSON.stringify(settings));
+        this.applyPreset(settings);
+        console.log(`Debug: Saved settings to localStorage:`, settings);
     }
 };
 
-// Add an event listener to run the init function once the DOM is fully loaded.
-// This ensures that all HTML elements are available before the script tries to manipulate them.
 document.addEventListener('DOMContentLoaded', () => {
     urlChanger.init();
 });
