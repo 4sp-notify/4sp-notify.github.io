@@ -8,18 +8,19 @@
 const urlChanger = {
     // --- Configuration: Add new presets here ---
     presets: [
-        { name: 'HAC', title: 'Login', favicon: '../favicons/hac.png', category: 'websites' },
-        { name: 'GMM', title: 'Get More Math!', favicon: '../favicons/gmm.png', category: 'websites' },
-        { name: 'Kahoot', title: 'Kahoot! | Learning games | Make learning awesome!', favicon: '../favicons/kahoot.png', category: 'websites' },
-        { name: 'Google Classroom', title: 'Home', favicon: '../favicons/google-classroom.png', category: 'websites'},
-        { name: 'Google Docs', title: 'Google Docs', favicon: '../favicons/google-docs.png', category: 'websites'},
-        { name: 'Google Slides', title: 'Google Slides', favicon: '../favicons/google-slides.png', category: 'websites'},
-        { name: 'Google Drive', title: 'Home - Google Drive', favicon: '../favicons/google-drive.png', category: 'websites'},
-        { name: 'Wikipedia', title: 'Wikipedia', favicon: '../favicons/wikipedia.png', category: 'websites'},
-        { name: 'Clever', title: 'Clever | Connect every student to a world of learning', favicon: '../favicons/clever.png', category: 'websites'},
+        { name: 'HAC', title: 'Login', favicon: '../favicons/hac.png', category: 'websites', id: 'hac' },
+        { name: 'GMM', title: 'Get More Math!', favicon: '../favicons/gmm.png', category: 'websites', id: 'gmm' },
+        { name: 'Kahoot', title: 'Kahoot! | Learning games | Make learning awesome!', favicon: '../favicons/kahoot.png', category: 'websites', id: 'kahoot' },
+        { name: 'Google Classroom', title: 'Home', favicon: '../favicons/google-classroom.png', category: 'websites', id: 'g_classroom'},
+        { name: 'Google Docs', title: 'Google Docs', favicon: '../favicons/google-docs.png', category: 'websites', id: 'g_docs'},
+        { name: 'Google Slides', title: 'Google Slides', favicon: '../favicons/google-slides.png', category: 'websites', id: 'g_slides'},
+        { name: 'Google Drive', title: 'Home - Google Drive', favicon: '../favicons/google-drive.png', category: 'websites', id: 'g_drive'},
+        { name: 'Wikipedia', title: 'Wikipedia', favicon: '../favicons/wikipedia.png', category: 'websites', id: 'wikipedia'},
+        { name: 'Clever', title: 'Clever | Connect every student to a world of learning', favicon: '../favicons/clever.png', category: 'websites', id: 'clever'},
         
         // New 'Live' Category
-        { name: 'Current Time', title: '00:00:00 AM', favicon: '../favicon.ico', category: 'live', id: '_LIVE_CURRENT_TIME' }
+        // Favicon is intentionally blank; it will be dynamically set to the original favicon.
+        { name: 'Current Time', title: '00:00:00 AM', favicon: '', category: 'live', id: '_LIVE_CURRENT_TIME' }
     ],
 
     // --- Internal Properties ---
@@ -36,6 +37,12 @@ const urlChanger = {
         this.originalTitle = document.title;
         const faviconElement = document.querySelector("link[rel*='icon']");
         this.originalFavicon = faviconElement ? faviconElement.href : '../favicon.ico';
+
+        // Set the favicon for the live preset dynamically
+        const livePreset = this.presets.find(p => p.id === '_LIVE_CURRENT_TIME');
+        if (livePreset) {
+            livePreset.favicon = this.originalFavicon;
+        }
 
         const savedSettingsJSON = localStorage.getItem('selectedUrlPreset');
         if (savedSettingsJSON) {
@@ -70,9 +77,9 @@ const urlChanger = {
 
         switch(settings.type) {
             case 'preset':
-                const foundPreset = this.presets.find(p => p.id === settings.id || p.name === settings.name);
+                const foundPreset = this.presets.find(p => p.id === settings.id);
                 if (!foundPreset) {
-                    console.warn(`URL Changer: Preset "${settings.name}" not found.`);
+                    console.warn(`URL Changer: Preset with ID "${settings.id}" not found.`);
                     return this.applyPreset({ type: 'none' });
                 }
                 presetToApply = { ...foundPreset };
@@ -167,3 +174,4 @@ const urlChanger = {
 document.addEventListener('DOMContentLoaded', () => {
     urlChanger.init();
 });
+
