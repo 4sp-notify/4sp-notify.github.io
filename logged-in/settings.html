@@ -450,7 +450,6 @@
                                 <button type="button" id="fetchFaviconBtn">Fetch</button>
                                 <div class="favicon-fetch-preview" id="favicon-fetch-preview-container"><img src="" alt="Preview" style="display: none;"></div>
                              </div>
-                             <input type="hidden" id="customTabFaviconUrl">
                         </div>
                          <div class="form-group">
                             <label>... or Choose a Preset Favicon</label>
@@ -596,13 +595,60 @@
             const customTitleInput = document.getElementById('customTabTitle');
             const faviconFetchInput = document.getElementById('faviconFetchInput');
             const fetchFaviconBtn = document.getElementById('fetchFaviconBtn');
-            const fetchedFaviconUrlInput = document.getElementById('customTabFaviconUrl');
             const previewImg = document.querySelector('#favicon-fetch-preview-container img');
+
+            function createFaviconPickerItem(url, isCustom) {
+                const item = document.createElement('div');
+                item.className = 'favicon-picker-item';
+                item.dataset.faviconUrl = url;
+                item.innerHTML = `<img src="${url}" alt="Favicon" onerror="this.parentElement.style.display='none'">`;
+                if (isCustom) {
+                    item.dataset.custom = 'true';
+                    item.addEventListener('contextmenu', e => {
+                        e.preventDefault();
+                        if (confirm('Are you sure you want to remove this custom favicon?')) {
+                            if (item.classList.contains('selected')) {
+                                urlChanger.applyCustomFavicon(urlChanger.originalFavicon);
+                            }
+                            urlChanger.removeCustomFavicon(url);
+                            item.remove();
+                        }
+                    });
+                }
+                item.addEventListener('click', () => {
+                    faviconFetchInput.value = '';
+                    previewImg.src = '';
+                    previewImg.style.display = 'none';
+
+                    if (item.classList.contains('selected')) {
+                        item.classList.remove('selected');
+                        urlChanger.applyCustomFavicon(urlChanger.originalFavicon);
+                    } else {
+                        const currentSelected = faviconPicker.querySelector('.selected');
+                        if (currentSelected) currentSelected.classList.remove('selected');
+                        item.classList.add('selected');
+                        urlChanger.applyCustomFavicon(item.dataset.faviconUrl);
+                    }
+                });
+                return item;
+            }
+            
+            function populateFaviconPicker() {
+                faviconPicker.innerHTML = '';
+                const websites = urlChanger.presets.filter(p => p.category === 'websites');
+                websites.forEach(preset => {
+                    faviconPicker.appendChild(createFaviconPickerItem(preset.favicon, false));
+                });
+                if (urlChanger.customFavicons && urlChanger.customFavicons.length > 0) {
+                    urlChanger.customFavicons.forEach(url => {
+                        faviconPicker.appendChild(createFaviconPickerItem(url, true));
+                    });
+                }
+            }
 
             // --- Populate Dropdown ---
             optionsContainer.innerHTML = '';
             optionsContainer.appendChild(createDropdownOption({ name: 'None', favicon: urlChanger.originalFavicon, type: 'none' }));
-
             const websites = urlChanger.presets.filter(p => p.category === 'websites');
             if (websites.length > 0) {
                 optionsContainer.appendChild(createHeader('Websites'));
@@ -616,32 +662,8 @@
             optionsContainer.appendChild(createHeader('Other'));
             optionsContainer.appendChild(createDropdownOption({ name: 'Custom', favicon: 'https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png', type: 'custom' }));
             
-            // --- Populate Favicon Picker ---
-            faviconPicker.innerHTML = '';
-            websites.forEach(preset => {
-                const item = document.createElement('div');
-                item.className = 'favicon-picker-item';
-                item.dataset.faviconUrl = preset.favicon;
-                item.innerHTML = `<img src="${preset.favicon}" alt="${preset.name} icon" onerror="this.style.display='none'">`;
-                item.addEventListener('click', () => handlePickerClick(item));
-                faviconPicker.appendChild(item);
-            });
+            populateFaviconPicker();
             
-            function handlePickerClick(item) {
-                fetchedFaviconUrlInput.value = '';
-                previewImg.src = '';
-                previewImg.style.display = 'none';
-                faviconFetchInput.value = '';
-
-                if (item.classList.contains('selected')) {
-                    item.classList.remove('selected');
-                } else {
-                    const currentSelected = faviconPicker.querySelector('.selected');
-                    if (currentSelected) currentSelected.classList.remove('selected');
-                    item.classList.add('selected');
-                }
-            }
-
             function createHeader(text) { const header = document.createElement('div'); header.className = 'dropdown-options-header'; header.textContent = text; return header; }
             function createDropdownOption(data) { 
                 const option = document.createElement('div'); 
@@ -681,23 +703,61 @@
                 try {
                     const url = new URL(domain);
                     const faviconUrl = `https://www.google.com/s2/favicons?sz=64&domain_url=${url.hostname}`;
-                    previewImg.src = faviconUrl;
-                    previewImg.style.display = 'block';
-                    fetchedFaviconUrlInput.value = faviconUrl;
+                    
+                    urlChanger.applyCustomFavicon(faviconUrl);
+                    if (!urlChanger.customFavicons.includes(faviconUrl)) {
+                        urlChanger.addCustomFavicon(faviconUrl);
+                        faviconPicker.appendChild(createFaviconPickerItem(faviconUrl, true));
+                    }
+                    
                     const currentSelected = faviconPicker.querySelector('.selected');
                     if (currentSelected) currentSelected.classList.remove('selected');
-                    showNotification('info', `Favicon for ${url.hostname} fetched.`);
+                    const itemToSelect = faviconPicker.querySelector(`[data-favicon-url="${faviconUrl}"]`);
+                    if(itemToSelect) itemToSelect.classList.add('selected');
+                    
+                    previewImg.src = faviconUrl;
+                    previewImg.style.display = 'block';
+                    showNotification('info', `Favicon for ${url.hostname} fetched and applied.`);
+
                 } catch (e) {
                     showNotification('error', 'Invalid URL. Please enter a valid website address.');
                     previewImg.style.display = 'none';
-                    fetchedFaviconUrlInput.value = '';
                 }
             });
 
-            saveBtn.addEventListener('click', () => { const activeOption = optionsContainer.querySelector('.dropdown-option.selected'); const type = activeOption.dataset.type; let settingsToSave = { type }; if (type === 'preset') { settingsToSave.id = activeOption.dataset.id; } else if (type === 'custom') { const pickedFaviconEl = faviconPicker.querySelector('.selected'); settingsToSave.title = customTitleInput.value; settingsToSave.favicon = fetchedFaviconUrlInput.value || (pickedFaviconEl ? pickedFaviconEl.dataset.faviconUrl : null); } urlChanger.savePreset(settingsToSave); showNotification('success', 'Tab disguise settings applied!'); });
+            saveBtn.addEventListener('click', () => { 
+                const activeOption = optionsContainer.querySelector('.dropdown-option.selected'); 
+                const type = activeOption.dataset.type; 
+                let settingsToSave = { type }; 
+                if (type === 'preset') { 
+                    settingsToSave.id = activeOption.dataset.id; 
+                } else if (type === 'custom') { 
+                    const pickedFaviconEl = faviconPicker.querySelector('.selected');
+                    settingsToSave.title = customTitleInput.value;
+                    settingsToSave.favicon = pickedFaviconEl ? pickedFaviconEl.dataset.faviconUrl : null;
+                } 
+                urlChanger.savePreset(settingsToSave); 
+                showNotification('success', 'Tab disguise settings saved!'); 
+            });
             
             // --- Load Initial State ---
-            const savedSettingsJSON = localStorage.getItem('selectedUrlPreset'); let savedSettings = { type: 'none' }; if (savedSettingsJSON) { try { savedSettings = JSON.parse(savedSettingsJSON); } catch (e) {} } let initialData; if (savedSettings.type === 'preset') { initialData = urlChanger.presets.find(p => p.id === savedSettings.id) || { name: 'None', favicon: urlChanger.originalFavicon, type: 'none' }; initialData.type = 'preset'; } else if (savedSettings.type === 'custom') { initialData = { name: 'Custom', favicon: savedSettings.favicon || 'https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png', type: 'custom' }; customPanel.style.display = 'block'; customTitleInput.value = savedSettings.title || ''; const pickerItem = faviconPicker.querySelector(`[data-favicon-url="${savedSettings.favicon}"]`); if (pickerItem) { pickerItem.classList.add('selected'); } else if (savedSettings.favicon) { fetchedFaviconUrlInput.value = savedSettings.favicon; previewImg.src = savedSettings.favicon; previewImg.style.display = 'block'; } } else { initialData = { name: 'None', favicon: urlChanger.originalFavicon, type: 'none' }; } selectOption(null, initialData);
+            const savedSettingsJSON = localStorage.getItem('selectedUrlPreset'); 
+            let savedSettings = { type: 'none' }; 
+            if (savedSettingsJSON) { try { savedSettings = JSON.parse(savedSettingsJSON); } catch (e) {} } 
+            let initialData; 
+            if (savedSettings.type === 'preset') { 
+                initialData = urlChanger.presets.find(p => p.id === savedSettings.id) || { name: 'None', favicon: urlChanger.originalFavicon, type: 'none' }; 
+                initialData.type = 'preset'; 
+            } else if (savedSettings.type === 'custom') { 
+                initialData = { name: 'Custom', favicon: savedSettings.favicon || 'https://ssl.gstatic.com/docs/doclist/images/drive_2022q3_32dp.png', type: 'custom' }; 
+                customPanel.style.display = 'block'; 
+                customTitleInput.value = savedSettings.title || ''; 
+                const pickerItem = faviconPicker.querySelector(`[data-favicon-url="${savedSettings.favicon}"]`); 
+                if (pickerItem) { pickerItem.classList.add('selected'); } 
+            } else { 
+                initialData = { name: 'None', favicon: urlChanger.originalFavicon, type: 'none' }; 
+            } 
+            selectOption(null, initialData);
         }
 
         // --- OTHER SETTINGS SECTIONS ---
