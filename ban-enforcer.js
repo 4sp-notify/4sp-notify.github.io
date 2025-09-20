@@ -1,5 +1,5 @@
 /**
- * ban-enforcer.js (v3.0 - Real-Time Enforcement)
+ * ban-enforcer.js (v3.1 - UI & Privacy Update)
  *
  * This script is the primary enforcement mechanism for website bans, now with real-time updates.
  * It uses a Firestore onSnapshot listener to immediately detect changes to a user's ban status.
@@ -10,7 +10,7 @@
  * real-time connection to their document in the 'bans' collection.
  * 3. The listener will fire instantly and again any time the user's ban status is changed on the server.
  * - If BANNED: The shield becomes a visible, persistent overlay with the ban reason. A guard
- * interval prevents tampering via developer tools.
+ * interval prevents tampering via developer tools. The message and home button appear above the shield.
  * - If NOT BANNED (or unbanned): The shield, message, and guard are all removed, and scrolling is
  * re-enabled, allowing normal interaction.
  *
@@ -19,7 +19,7 @@
  * 2. It should be included on EVERY page you want to protect.
  */
 
-console.log("Debug: ban-enforcer.js v3.0 (Real-Time) script has started.");
+console.log("Debug: ban-enforcer.js v3.1 (UI & Privacy) script has started.");
 
 // --- Global variable for the persistence guard interval ---
 let banGuardInterval = null;
@@ -39,7 +39,8 @@ let banGuardInterval = null;
     shield.style.left = '0';
     shield.style.width = '100vw';
     shield.style.height = '100vh';
-    shield.style.zIndex = '2147483647'; // Max z-index to cover everything.
+    // **MODIFICATION**: Set z-index to be high, but lower than the message and button.
+    shield.style.zIndex = '2147483646';
     shield.style.backgroundColor = 'transparent'; // Invisible by default.
 
     // Append to the root <html> element to ensure it loads before the body is interactive.
@@ -99,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
             const db = firebase.firestore();
             const banDocRef = db.collection('bans').doc(user.uid);
 
-            // **MODIFICATION**: Use onSnapshot for real-time ban enforcement.
+            // Use onSnapshot for real-time ban enforcement.
             // This listener will fire immediately and then again whenever the ban status changes.
             const unsubscribe = banDocRef.onSnapshot(doc => {
                 if (doc.exists) {
@@ -150,7 +151,8 @@ function showBanScreen(banData) {
             shield.style.left = '0';
             shield.style.width = '100vw';
             shield.style.height = '100vh';
-            shield.style.zIndex = '2147483647';
+            // **MODIFICATION**: Set z-index to be high, but lower than the message and button.
+            shield.style.zIndex = '2147483646';
             document.documentElement.appendChild(shield);
         }
 
@@ -168,13 +170,22 @@ function showBanScreen(banData) {
 
             // --- Sanitize data to prevent potential HTML injection ---
             const reason = banData.reason ? String(banData.reason).replace(/</g, "&lt;").replace(/>/g, "&gt;") : 'No reason provided.';
-            const banDate = banData.bannedAt && banData.bannedAt.toDate ? `on ${banData.bannedAt.toDate().toLocaleDateString()}` : '';
+            
+            // **MODIFICATION**: Format the ban timestamp as requested.
+            let banTimestamp = '';
+            if (banData.bannedAt && banData.bannedAt.toDate) {
+                const date = banData.bannedAt.toDate();
+                const formattedDate = date.toLocaleDateString(); // e.g., 9/20/2025
+                const formattedTime = date.toLocaleTimeString(); // e.g., 2:17:00 AM
+                banTimestamp = `on ${formattedDate} at ${formattedTime}`;
+            }
 
+            // **MODIFICATION**: Update the innerHTML with the new message format.
             messageBox.innerHTML = `
                 <h1 style="font-size: 2.3em; color: #fc0324; margin: 0 0 10px 0; font-weight: bold;">Access Denied</h1>
                 <p style="font-size: 1.1em; margin: 0 0 15px 0; line-height: 1.4; color: #e0e0e0;">Your account has been suspended from this service.</p>
                 <p style="font-size: 1em; margin: 0 0 20px 0; color: #bdbdbd;"><strong>Reason:</strong> ${reason}</p>
-                <p style="font-size: 0.8em; color: #9e9e9e;">This action was taken ${banDate}. If you believe this is an error, please contact 4simpleproblems+support@gmail.com</p>
+                <p style="font-size: 0.8em; color: #9e9e9e;">An administrator has banned you ${banTimestamp}. If you believe this is an error, please contact 4simpleproblems+support@gmail.com</p>
             `;
             document.body.appendChild(messageBox);
         }
@@ -187,6 +198,7 @@ function showBanScreen(banData) {
         messageBox.style.textAlign = 'right';
         messageBox.style.color = '#ffffff';
         messageBox.style.fontFamily = "'PrimaryFont', Arial, sans-serif"; // Assumes font is loaded elsewhere or is a fallback
+        // **MODIFICATION**: Ensure z-index is higher than the shield.
         messageBox.style.zIndex = '2147483647';
         messageBox.style.textShadow = '0 2px 8px rgba(0,0,0,0.7)';
 
@@ -214,6 +226,7 @@ function showBanScreen(banData) {
             homeButton.style.position = 'fixed';
             homeButton.style.top = '10px';
             homeButton.style.right = '10px';
+            // **MODIFICATION**: Ensure z-index is higher than the shield.
             homeButton.style.zIndex = '2147483647';
             homeButton.style.width = '45px';
             homeButton.style.height = '45px';
@@ -268,8 +281,9 @@ function showBanScreen(banData) {
     // Run the enforcement function for the first time.
     enforceBanVisuals();
 
-    // **MODIFICATION**: Start or re-confirm the persistence guard interval.
+    // Start or re-confirm the persistence guard interval.
     // Clear any previous interval to prevent multiple running guards.
     if (banGuardInterval) clearInterval(banGuardInterval);
     banGuardInterval = setInterval(enforceBanVisuals, 200);
 }
+
