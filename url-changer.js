@@ -142,7 +142,12 @@ const urlChanger = {
             favicon.href = this.originalFavicon; // Fallback
         };
 
-        img.src = targetIconUrl;
+        // Add a cache-busting parameter to external favicon URLs to prevent loading stale/failed images from the cache.
+        let finalUrlToLoad = targetIconUrl;
+        if (finalUrlToLoad.startsWith('https://www.google.com/s2/favicons')) {
+            finalUrlToLoad += (finalUrlToLoad.includes('?') ? '&' : '?') + '_=' + new Date().getTime();
+        }
+        img.src = finalUrlToLoad;
     },
 
     /**
