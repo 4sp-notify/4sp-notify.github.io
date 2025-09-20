@@ -1,21 +1,28 @@
 /**
- * ban-enforcer.js (v2.1 - Enhanced Persistence with Home Button)
+ * ban-enforcer.js (v3.0 - Real-Time Enforcement)
  *
- * This script is the primary enforcement mechanism for website bans. It has been updated
- * for more aggressive and persistent enforcement and includes a home button on the ban screen.
+ * This script is the primary enforcement mechanism for website bans, now with real-time updates.
+ * It uses a Firestore onSnapshot listener to immediately detect changes to a user's ban status.
  *
- * It immediately injects a transparent "shield" and disables page scrolling to block all interaction.
- * It then checks if the user's ID exists in the 'bans' collection in Firestore.
- * - If BANNED, the shield becomes a visible, persistent overlay with the ban reason and a home button.
- * A new interval guard prevents tampering via developer tools.
- * - If NOT BANNED, the shield is removed and scrolling is re-enabled, allowing normal interaction.
+ * How it works:
+ * 1. It immediately injects a transparent "shield" and disables page scrolling to block all interaction.
+ * 2. It listens for authentication state changes. Once a user is logged in, it establishes a
+ * real-time connection to their document in the 'bans' collection.
+ * 3. The listener will fire instantly and again any time the user's ban status is changed on the server.
+ * - If BANNED: The shield becomes a visible, persistent overlay with the ban reason. A guard
+ * interval prevents tampering via developer tools.
+ * - If NOT BANNED (or unbanned): The shield, message, and guard are all removed, and scrolling is
+ * re-enabled, allowing normal interaction.
  *
  * IMPORTANT:
  * 1. This script must be placed AFTER the Firebase SDK scripts in your HTML.
  * 2. It should be included on EVERY page you want to protect.
  */
 
-console.log("Debug: ban-enforcer.js script has started.");
+console.log("Debug: ban-enforcer.js v3.0 (Real-Time) script has started.");
+
+// --- Global variable for the persistence guard interval ---
+let banGuardInterval = null;
 
 // --- 1. Immediately create shield and lock scrolling ---
 // This IIFE (Immediately Invoked Function Expression) runs as soon as the script is parsed.
@@ -38,7 +45,7 @@ console.log("Debug: ban-enforcer.js script has started.");
     // Append to the root <html> element to ensure it loads before the body is interactive.
     document.documentElement.appendChild(shield);
 
-    // **MODIFICATION**: Immediately disable scrolling on the entire page to prevent any interaction
+    // Immediately disable scrolling on the entire page to prevent any interaction
     // during the ban check.
     document.documentElement.style.overflow = 'hidden';
 
@@ -47,17 +54,29 @@ console.log("Debug: ban-enforcer.js script has started.");
 
 
 /**
- * Helper function to remove the shield and restore scrolling.
- * This is called when the user is verified as not banned.
+ * Helper function to remove all ban-related elements and restore page functionality.
+ * This is called when the user is verified as not banned or is unbanned in real-time.
  */
-function removeShieldAndUnlockScroll() {
-    const shield = document.getElementById('ban-enforcer-shield');
-    if (shield) {
-        shield.remove();
+function removeBanScreenAndUnlock() {
+    // Clear the persistence guard interval to stop it from re-creating the ban screen.
+    if (banGuardInterval) {
+        clearInterval(banGuardInterval);
+        banGuardInterval = null;
     }
-    // **MODIFICATION**: Restore scrolling.
+
+    // Remove all visual elements of the ban screen.
+    const shield = document.getElementById('ban-enforcer-shield');
+    if (shield) shield.remove();
+
+    const messageBox = document.getElementById('ban-enforcer-message');
+    if (messageBox) messageBox.remove();
+    
+    const homeButton = document.getElementById('ban-enforcer-home-button');
+    if (homeButton) homeButton.remove();
+
+    // Restore scrolling.
     document.documentElement.style.overflow = '';
-    console.log("Debug: Shield removed and page scrolling unlocked.");
+    console.log("Debug: All ban elements and guard removed. Page unlocked.");
 }
 
 
@@ -67,40 +86,43 @@ document.addEventListener('DOMContentLoaded', () => {
     // Check for the Firebase library, which is a critical dependency.
     if (typeof firebase === 'undefined' || typeof firebase.auth === 'undefined' || typeof firebase.firestore === 'undefined') {
         console.error("FATAL ERROR: Firebase is not loaded correctly. Check the script order. Ban enforcement is disabled.");
-        removeShieldAndUnlockScroll(); // Failsafe
+        removeBanScreenAndUnlock(); // Failsafe
         return;
     }
 
     // firebase.auth().onAuthStateChanged is the entry point.
     firebase.auth().onAuthStateChanged(user => {
         if (user) {
-            // A user is logged in. We now need to check if they are banned.
-            console.log("Debug: User is logged in. Checking ban status for UID:", user.uid);
+            // A user is logged in. Establish a real-time listener for their ban status.
+            console.log("Debug: User is logged in. Attaching real-time ban listener for UID:", user.uid);
 
             const db = firebase.firestore();
             const banDocRef = db.collection('bans').doc(user.uid);
 
-            banDocRef.get().then(doc => {
+            // **MODIFICATION**: Use onSnapshot for real-time ban enforcement.
+            // This listener will fire immediately and then again whenever the ban status changes.
+            const unsubscribe = banDocRef.onSnapshot(doc => {
                 if (doc.exists) {
                     // --- USER IS BANNED ---
                     const banData = doc.data();
                     console.warn(`User ${user.uid} is BANNED. Reason: ${banData.reason}. Locking page permanently.`);
-                    // Call the function to make the shield visible and display the ban message.
                     showBanScreen(banData);
                 } else {
                     // --- USER IS NOT BANNED ---
-                    console.log("Debug: User is not banned.");
-                    removeShieldAndUnlockScroll();
+                    console.log("Debug: User is not banned. Real-time listener confirmed.");
+                    removeBanScreenAndUnlock();
                 }
-            }).catch(error => {
-                console.error("Debug: An error occurred while checking ban status. Removing shield to prevent lockout.", error);
-                removeShieldAndUnlockScroll(); // Failsafe
+            }, error => {
+                console.error("Debug: An error occurred while listening for ban status. Removing shield to prevent lockout.", error);
+                removeBanScreenAndUnlock(); // Failsafe in case of permission errors, etc.
             });
+            // NOTE: For a multi-page app, this listener is naturally torn down on page navigation.
+            // In a Single Page App (SPA), you would need to call `unsubscribe()` when the user logs out.
 
         } else {
             // --- NO USER LOGGED IN ---
             console.log("Debug: No user is logged in.");
-            removeShieldAndUnlockScroll();
+            removeBanScreenAndUnlock();
         }
     });
 });
@@ -112,7 +134,6 @@ document.addEventListener('DOMContentLoaded', () => {
 function showBanScreen(banData) {
     const shieldId = 'ban-enforcer-shield';
     const messageId = 'ban-enforcer-message';
-    // **NEW**: ID for the home button
     const homeButtonId = 'ban-enforcer-home-button';
 
     // This function contains the logic to create/update all visual ban elements.
@@ -178,7 +199,7 @@ function showBanScreen(banData) {
             document.body.style.overflow = 'hidden';
         }
 
-        // --- 6. **NEW**: Find or create the Home button ---
+        // --- 6. Find or create the Home button ---
         let homeButton = document.getElementById(homeButtonId);
         if (!homeButton) {
             console.warn("Debug [Guard]: Home button was removed. Re-creating...");
@@ -219,13 +240,13 @@ function showBanScreen(banData) {
         }
     };
 
-    // --- **NEW**: Inject Font Awesome for the home button icon ---
+    // --- Inject Font Awesome for the home button icon ---
     // This is safe to run multiple times; the browser won't load the same stylesheet twice.
     if (!document.querySelector('link[href*="font-awesome"]')) {
-         const faLink = document.createElement('link');
-         faLink.rel = 'stylesheet';
-         faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css';
-         document.head.appendChild(faLink);
+      const faLink = document.createElement('link');
+      faLink.rel = 'stylesheet';
+      faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css';
+      document.head.appendChild(faLink);
     }
 
     // Inject the custom font (if not already loaded globally)
@@ -247,7 +268,8 @@ function showBanScreen(banData) {
     // Run the enforcement function for the first time.
     enforceBanVisuals();
 
-    // **MODIFICATION**: Start the persistence guard interval.
-    // This will continuously check and re-apply the ban if the user tampers with the elements.
-    setInterval(enforceBanVisuals, 200);
+    // **MODIFICATION**: Start or re-confirm the persistence guard interval.
+    // Clear any previous interval to prevent multiple running guards.
+    if (banGuardInterval) clearInterval(banGuardInterval);
+    banGuardInterval = setInterval(enforceBanVisuals, 200);
 }
