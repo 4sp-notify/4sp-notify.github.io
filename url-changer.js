@@ -7,9 +7,7 @@
 
 const urlChanger = {
     // --- Configuration ---
-    // Presets are organized with unique IDs and categories for the custom dropdown.
     presets: [
-        // Note: The 'None' preset is handled dynamically in the init() function.
         { id: 'hac', name: 'HAC', title: 'Login', favicon: '../favicons/hac.png', category: 'websites' },
         { id: 'gmm', name: 'GMM', title: 'Get More Math!', favicon: '../favicons/gmm.png', category: 'websites' },
         { id: 'kahoot', name: 'Kahoot', title: 'Kahoot! | Learning games | Make learning awesome!', favicon: '../favicons/kahoot.png', category: 'websites' },
@@ -29,7 +27,6 @@ const urlChanger = {
     customFavicons: [],
     CUSTOM_FAVICONS_KEY: 'tabDisguiseCustomFavicons',
 
-
     /**
      * Initializes the script. Captures original page state and applies any saved preset.
      */
@@ -41,14 +38,9 @@ const urlChanger = {
         this.loadCustomFavicons();
 
         const savedSettingsJSON = localStorage.getItem('selectedUrlPreset');
-        let savedSettings = { type: 'none' }; // Default to 'none'
+        let savedSettings = { type: 'none' };
         if (savedSettingsJSON) {
-            try {
-                savedSettings = JSON.parse(savedSettingsJSON);
-            } catch (e) {
-                console.error("Failed to parse saved tab settings, reverting to default.", e);
-                // savedSettings is already { type: 'none' }
-            }
+            try { savedSettings = JSON.parse(savedSettingsJSON); } catch (e) { console.error("Failed to parse saved tab settings, reverting to default.", e); }
         }
         this.applyPreset(savedSettings);
     },
@@ -90,14 +82,10 @@ const urlChanger = {
                     }
                     break;
                 case 'custom':
-                    // Explicitly handle custom settings, falling back to originals if not provided
                     titleToSet = settings.title || this.originalTitle;
                     iconToSet = settings.favicon || this.originalFavicon;
                     break;
-                case 'none':
-                default:
-                    // Title and icon are already set to defaults, so no action is needed.
-                    break;
+                case 'none': default: break;
             }
         }
 
@@ -122,70 +110,80 @@ const urlChanger = {
 
         const img = new Image();
         img.crossOrigin = "Anonymous";
-
         img.onload = () => {
             const canvas = document.createElement('canvas');
             const size = 32;
-            canvas.width = size;
-            canvas.height = size;
+            canvas.width = size; canvas.height = size;
             const ctx = canvas.getContext('2d');
             ctx.imageSmoothingEnabled = false;
-            
             ctx.clearRect(0, 0, size, size);
             ctx.drawImage(img, 0, 0, size, size);
-
             favicon.href = canvas.toDataURL('image/png');
         };
-
         img.onerror = () => {
             console.error(`URL Changer: Failed to load favicon from "${targetIconUrl}".`);
-            favicon.href = this.originalFavicon; // Fallback
+            favicon.href = this.originalFavicon;
         };
-
-        // Add a cache-busting parameter to external favicon URLs to prevent loading stale/failed images from the cache.
+        
         let finalUrlToLoad = targetIconUrl;
-        if (finalUrlToLoad.startsWith('https://www.google.com/s2/favicons')) {
+        if (finalUrlToLoad.startsWith('https://')) { // Add cache-busting only to external URLs
             finalUrlToLoad += (finalUrlToLoad.includes('?') ? '&' : '?') + '_=' + new Date().getTime();
         }
         img.src = finalUrlToLoad;
     },
+    
+    // --- NEW: Robust Favicon Fetching ---
+    _faviconServices: [
+        hostname => `https://www.google.com/s2/favicons?sz=64&domain_url=${hostname}`,
+        hostname => `https://icons.duckduckgo.com/ip3/${hostname}.ico`,
+    ],
 
-    /**
-     * Saves the user's settings to localStorage and applies them.
-     * @param {object} settings - The settings object to save.
-     */
+    _checkImage: function(url) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(url);
+            img.onerror = () => reject(new Error(`Image failed to load: ${url}`));
+            img.src = url + (url.includes('?') ? '&' : '?') + '_=' + new Date().getTime(); // Cache bust
+        });
+    },
+
+    fetchFavicon: async function(domain) {
+        let hostname;
+        try {
+            hostname = new URL(domain).hostname;
+        } catch (e) {
+            return Promise.reject(new Error("Invalid URL provided."));
+        }
+
+        const urlsToTry = this._faviconServices.map(service => service(hostname));
+        for (const url of urlsToTry) {
+            try {
+                const workingUrl = await this._checkImage(url);
+                return workingUrl; // Return the first URL that loads successfully
+            } catch (error) {
+                console.warn(error.message); // Log failure and try next service
+            }
+        }
+        return Promise.reject(new Error(`Could not find a favicon for ${hostname}.`));
+    },
+    
+    // --- Settings Persistence ---
     savePreset: function(settings) {
         localStorage.setItem('selectedUrlPreset', JSON.stringify(settings));
         this.applyPreset(settings);
     },
     
-    /**
-     * Loads custom favicons from local storage.
-     */
     loadCustomFavicons: function() {
         const stored = localStorage.getItem(this.CUSTOM_FAVICONS_KEY);
         if (stored) {
-            try {
-                this.customFavicons = JSON.parse(stored);
-            } catch (e) {
-                console.error("Could not parse custom favicons from localStorage.", e);
-                this.customFavicons = [];
-            }
+            try { this.customFavicons = JSON.parse(stored); } catch (e) { this.customFavicons = []; }
         }
     },
     
-    /**
-     * Saves the current list of custom favicons to local storage.
-     * @private
-     */
     _saveCustomFavicons: function() {
         localStorage.setItem(this.CUSTOM_FAVICONS_KEY, JSON.stringify(this.customFavicons));
     },
 
-    /**
-     * Adds a new custom favicon URL to the list if it doesn't already exist.
-     * @param {string} url - The URL of the favicon to add.
-     */
     addCustomFavicon: function(url) {
         if (url && !this.customFavicons.includes(url)) {
             this.customFavicons.push(url);
@@ -193,10 +191,6 @@ const urlChanger = {
         }
     },
 
-    /**
-     * Removes a custom favicon URL from the list.
-     * @param {string} url - The URL of the favicon to remove.
-     */
     removeCustomFavicon: function(url) {
         this.customFavicons = this.customFavicons.filter(iconUrl => iconUrl !== url);
         this._saveCustomFavicons();
