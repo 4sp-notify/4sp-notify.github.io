@@ -7,9 +7,7 @@
 
 const urlChanger = {
     // --- Configuration ---
-    // Presets are organized with unique IDs and categories for the custom dropdown.
     presets: [
-        // Note: The 'None' preset is handled dynamically in the init() function.
         { id: 'hac', name: 'HAC', title: 'Login', favicon: '../favicons/hac.png', category: 'websites' },
         { id: 'gmm', name: 'GMM', title: 'Get More Math!', favicon: '../favicons/gmm.png', category: 'websites' },
         { id: 'kahoot', name: 'Kahoot', title: 'Kahoot! | Learning games | Make learning awesome!', favicon: '../favicons/kahoot.png', category: 'websites' },
@@ -29,7 +27,6 @@ const urlChanger = {
     customFavicons: [],
     CUSTOM_FAVICONS_KEY: 'tabDisguiseCustomFavicons',
 
-
     /**
      * Initializes the script. Captures original page state and applies any saved preset.
      */
@@ -41,14 +38,9 @@ const urlChanger = {
         this.loadCustomFavicons();
 
         const savedSettingsJSON = localStorage.getItem('selectedUrlPreset');
-        let savedSettings = { type: 'none' }; // Default to 'none'
+        let savedSettings = { type: 'none' };
         if (savedSettingsJSON) {
-            try {
-                savedSettings = JSON.parse(savedSettingsJSON);
-            } catch (e) {
-                console.error("Failed to parse saved tab settings, reverting to default.", e);
-                // savedSettings is already { type: 'none' }
-            }
+            try { savedSettings = JSON.parse(savedSettingsJSON); } catch (e) { console.error("Failed to parse saved tab settings, reverting to default.", e); }
         }
         this.applyPreset(savedSettings);
     },
@@ -90,14 +82,10 @@ const urlChanger = {
                     }
                     break;
                 case 'custom':
-                    // Explicitly handle custom settings, falling back to originals if not provided
                     titleToSet = settings.title || this.originalTitle;
                     iconToSet = settings.favicon || this.originalFavicon;
                     break;
-                case 'none':
-                default:
-                    // Title and icon are already set to defaults, so no action is needed.
-                    break;
+                case 'none': default: break;
             }
         }
 
@@ -106,7 +94,8 @@ const urlChanger = {
     },
 
     /**
-     * Sets just the favicon, drawing it to a canvas to handle scaling and CORS.
+     * Sets the favicon. It intelligently chooses between directly linking to external URLs
+     * (to avoid CORS issues) and using a canvas for local URLs (to handle scaling).
      * @param {string} iconUrl - The URL of the icon to apply.
      */
     applyCustomFavicon: function(iconUrl) {
@@ -120,36 +109,32 @@ const urlChanger = {
             document.head.appendChild(favicon);
         }
 
-        const img = new Image();
-        img.crossOrigin = "Anonymous";
-
-        img.onload = () => {
-            const canvas = document.createElement('canvas');
-            const size = 32;
-            canvas.width = size;
-            canvas.height = size;
-            const ctx = canvas.getContext('2d');
-            ctx.imageSmoothingEnabled = false;
-            
-            ctx.clearRect(0, 0, size, size);
-            ctx.drawImage(img, 0, 0, size, size);
-
-            favicon.href = canvas.toDataURL('image/png');
-        };
-
-        img.onerror = () => {
-            console.error(`URL Changer: Failed to load favicon from "${targetIconUrl}".`);
-            favicon.href = this.originalFavicon; // Fallback
-        };
-        
-        let finalUrlToLoad = targetIconUrl;
-        if (finalUrlToLoad.startsWith('https://')) { // Add cache-busting only to external URLs
-            finalUrlToLoad += (finalUrlToLoad.includes('?') ? '&' : '?') + '_=' + new Date().getTime();
+        // ** NEW LOGIC TO PREVENT CORS ERRORS **
+        // If the URL is external (from a fetcher), link it directly.
+        if (targetIconUrl.startsWith('http')) {
+            favicon.href = targetIconUrl;
+        } else {
+            // Otherwise, use the canvas method for local files to ensure proper scaling.
+            const img = new Image();
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const size = 32;
+                canvas.width = size; canvas.height = size;
+                const ctx = canvas.getContext('2d');
+                ctx.imageSmoothingEnabled = false;
+                ctx.clearRect(0, 0, size, size);
+                ctx.drawImage(img, 0, 0, size, size);
+                favicon.href = canvas.toDataURL('image/png');
+            };
+            img.onerror = () => {
+                console.error(`URL Changer: Failed to load local favicon from "${targetIconUrl}".`);
+                favicon.href = this.originalFavicon;
+            };
+            img.src = targetIconUrl;
         }
-        img.src = finalUrlToLoad;
     },
     
-    // --- NEW: Robust Favicon Fetching ---
+    // --- Robust Favicon Fetching Logic ---
     _faviconServices: [
         hostname => `https://www.google.com/s2/favicons?sz=64&domain_url=${hostname}`,
         hostname => `https://icons.duckduckgo.com/ip3/${hostname}.ico`,
@@ -160,7 +145,8 @@ const urlChanger = {
             const img = new Image();
             img.onload = () => resolve(url);
             img.onerror = () => reject(new Error(`Image failed to load: ${url}`));
-            img.src = url + (url.includes('?') ? '&' : '?') + '_=' + new Date().getTime(); // Cache bust
+            // Add a cache-busting parameter to avoid loading a failed image from cache
+            img.src = url + (url.includes('?') ? '&' : '?') + '_=' + new Date().getTime();
         });
     },
 
@@ -172,13 +158,14 @@ const urlChanger = {
             return Promise.reject(new Error("Invalid URL provided."));
         }
 
-        const urlsToTry = this._faviconServices.map(service => service(hostname));
-        for (const url of urlsToTry) {
+        for (const service of this._faviconServices) {
+            const url = service(hostname);
             try {
                 const workingUrl = await this._checkImage(url);
-                return workingUrl; // Return the first URL that loads successfully
+                // Return the clean URL without the cache-busting param
+                return service(hostname);
             } catch (error) {
-                console.warn(error.message); // Log failure and try next service
+                console.warn(error.message); // Log failure and try the next service
             }
         }
         return Promise.reject(new Error(`Could not find a favicon for ${hostname}.`));
@@ -217,3 +204,4 @@ const urlChanger = {
 document.addEventListener('DOMContentLoaded', () => {
     urlChanger.init();
 });
+
