@@ -24,7 +24,7 @@ const urlChanger = {
 
     // --- Internal Properties ---
     originalTitle: '',
-    originalFavicon: '',
+    originalFavicon: '../favicon.ico',
     liveInterval: null,
     customFavicons: [],
     CUSTOM_FAVICONS_KEY: 'tabDisguiseCustomFavicons',
