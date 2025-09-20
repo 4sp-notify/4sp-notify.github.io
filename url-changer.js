@@ -26,6 +26,9 @@ const urlChanger = {
     originalTitle: '',
     originalFavicon: '',
     liveInterval: null,
+    customFavicons: [],
+    CUSTOM_FAVICONS_KEY: 'tabDisguiseCustomFavicons',
+
 
     /**
      * Initializes the script. Captures original page state and applies any saved preset.
@@ -34,6 +37,8 @@ const urlChanger = {
         this.originalTitle = document.title;
         const faviconElement = document.querySelector("link[rel*='icon']");
         this.originalFavicon = faviconElement ? faviconElement.href : '';
+        
+        this.loadCustomFavicons();
 
         const savedSettingsJSON = localStorage.getItem('selectedUrlPreset');
         if (savedSettingsJSON) {
@@ -143,6 +148,49 @@ const urlChanger = {
     savePreset: function(settings) {
         localStorage.setItem('selectedUrlPreset', JSON.stringify(settings));
         this.applyPreset(settings);
+    },
+    
+    /**
+     * Loads custom favicons from local storage.
+     */
+    loadCustomFavicons: function() {
+        const stored = localStorage.getItem(this.CUSTOM_FAVICONS_KEY);
+        if (stored) {
+            try {
+                this.customFavicons = JSON.parse(stored);
+            } catch (e) {
+                console.error("Could not parse custom favicons from localStorage.", e);
+                this.customFavicons = [];
+            }
+        }
+    },
+    
+    /**
+     * Saves the current list of custom favicons to local storage.
+     * @private
+     */
+    _saveCustomFavicons: function() {
+        localStorage.setItem(this.CUSTOM_FAVICONS_KEY, JSON.stringify(this.customFavicons));
+    },
+
+    /**
+     * Adds a new custom favicon URL to the list if it doesn't already exist.
+     * @param {string} url - The URL of the favicon to add.
+     */
+    addCustomFavicon: function(url) {
+        if (url && !this.customFavicons.includes(url)) {
+            this.customFavicons.push(url);
+            this._saveCustomFavicons();
+        }
+    },
+
+    /**
+     * Removes a custom favicon URL from the list.
+     * @param {string} url - The URL of the favicon to remove.
+     */
+    removeCustomFavicon: function(url) {
+        this.customFavicons = this.customFavicons.filter(iconUrl => iconUrl !== url);
+        this._saveCustomFavicons();
     }
 };
 
