@@ -7,7 +7,9 @@
 
 const urlChanger = {
     // --- Configuration ---
+    // Presets are organized with unique IDs and categories for the custom dropdown.
     presets: [
+        // Note: The 'None' preset is handled dynamically in the init() function.
         { id: 'hac', name: 'HAC', title: 'Login', favicon: '../favicons/hac.png', category: 'websites' },
         { id: 'gmm', name: 'GMM', title: 'Get More Math!', favicon: '../favicons/gmm.png', category: 'websites' },
         { id: 'kahoot', name: 'Kahoot', title: 'Kahoot! | Learning games | Make learning awesome!', favicon: '../favicons/kahoot.png', category: 'websites' },
@@ -27,6 +29,7 @@ const urlChanger = {
     customFavicons: [],
     CUSTOM_FAVICONS_KEY: 'tabDisguiseCustomFavicons',
 
+
     /**
      * Initializes the script. Captures original page state and applies any saved preset.
      */
@@ -38,9 +41,14 @@ const urlChanger = {
         this.loadCustomFavicons();
 
         const savedSettingsJSON = localStorage.getItem('selectedUrlPreset');
-        let savedSettings = { type: 'none' };
+        let savedSettings = { type: 'none' }; // Default to 'none'
         if (savedSettingsJSON) {
-            try { savedSettings = JSON.parse(savedSettingsJSON); } catch (e) { console.error("Failed to parse saved tab settings, reverting to default.", e); }
+            try {
+                savedSettings = JSON.parse(savedSettingsJSON);
+            } catch (e) {
+                console.error("Failed to parse saved tab settings, reverting to default.", e);
+                // savedSettings is already { type: 'none' }
+            }
         }
         this.applyPreset(savedSettings);
     },
@@ -82,10 +90,14 @@ const urlChanger = {
                     }
                     break;
                 case 'custom':
+                    // Explicitly handle custom settings, falling back to originals if not provided
                     titleToSet = settings.title || this.originalTitle;
                     iconToSet = settings.favicon || this.originalFavicon;
                     break;
-                case 'none': default: break;
+                case 'none':
+                default:
+                    // Title and icon are already set to defaults, so no action is needed.
+                    break;
             }
         }
 
@@ -110,19 +122,24 @@ const urlChanger = {
 
         const img = new Image();
         img.crossOrigin = "Anonymous";
+
         img.onload = () => {
             const canvas = document.createElement('canvas');
             const size = 32;
-            canvas.width = size; canvas.height = size;
+            canvas.width = size;
+            canvas.height = size;
             const ctx = canvas.getContext('2d');
             ctx.imageSmoothingEnabled = false;
+            
             ctx.clearRect(0, 0, size, size);
             ctx.drawImage(img, 0, 0, size, size);
+
             favicon.href = canvas.toDataURL('image/png');
         };
+
         img.onerror = () => {
             console.error(`URL Changer: Failed to load favicon from "${targetIconUrl}".`);
-            favicon.href = this.originalFavicon;
+            favicon.href = this.originalFavicon; // Fallback
         };
         
         let finalUrlToLoad = targetIconUrl;
@@ -200,4 +217,3 @@ const urlChanger = {
 document.addEventListener('DOMContentLoaded', () => {
     urlChanger.init();
 });
-
