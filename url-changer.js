@@ -41,15 +41,16 @@ const urlChanger = {
         this.loadCustomFavicons();
 
         const savedSettingsJSON = localStorage.getItem('selectedUrlPreset');
+        let savedSettings = { type: 'none' }; // Default to 'none'
         if (savedSettingsJSON) {
             try {
-                const savedSettings = JSON.parse(savedSettingsJSON);
-                this.applyPreset(savedSettings);
+                savedSettings = JSON.parse(savedSettingsJSON);
             } catch (e) {
                 console.error("Failed to parse saved tab settings, reverting to default.", e);
-                this.applyPreset({ type: 'none' });
+                // savedSettings is already { type: 'none' }
             }
         }
+        this.applyPreset(savedSettings);
     },
 
     /**
@@ -72,33 +73,36 @@ const urlChanger = {
             this.liveInterval = null;
         }
 
-        let title = this.originalTitle;
-        let iconUrl = this.originalFavicon;
+        let titleToSet = this.originalTitle;
+        let iconToSet = this.originalFavicon;
 
-        switch (settings.type) {
-            case 'preset':
-                const preset = this.presets.find(p => p.id === settings.id);
-                if (preset) {
-                    title = preset.title;
-                    iconUrl = preset.live ? this.originalFavicon : preset.favicon;
-                    if (preset.live) {
-                        this._updateLiveTime();
-                        this.liveInterval = setInterval(() => this._updateLiveTime(), 1000);
+        if (settings && settings.type) {
+            switch (settings.type) {
+                case 'preset':
+                    const preset = this.presets.find(p => p.id === settings.id);
+                    if (preset) {
+                        titleToSet = preset.title;
+                        iconToSet = preset.live ? this.originalFavicon : preset.favicon;
+                        if (preset.live) {
+                            this._updateLiveTime();
+                            this.liveInterval = setInterval(() => this._updateLiveTime(), 1000);
+                        }
                     }
-                }
-                break;
-            case 'custom':
-                title = settings.title || this.originalTitle;
-                iconUrl = settings.favicon || this.originalFavicon;
-                break;
-            case 'none':
-            default:
-                // Revert to original, title and iconUrl are already set
-                break;
+                    break;
+                case 'custom':
+                    // Explicitly handle custom settings, falling back to originals if not provided
+                    titleToSet = settings.title || this.originalTitle;
+                    iconToSet = settings.favicon || this.originalFavicon;
+                    break;
+                case 'none':
+                default:
+                    // Title and icon are already set to defaults, so no action is needed.
+                    break;
+            }
         }
 
-        document.title = title;
-        this.applyCustomFavicon(iconUrl);
+        document.title = titleToSet;
+        this.applyCustomFavicon(iconToSet);
     },
 
     /**
