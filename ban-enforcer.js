@@ -1,4 +1,4 @@
-/**
+ /**
  * ban-enforcer.js (v3.1 - UI & Privacy Update)
  *
  * This script is the primary enforcement mechanism for website bans, now with real-time updates.
