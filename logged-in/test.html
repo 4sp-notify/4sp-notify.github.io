@@ -294,6 +294,9 @@
     }
 
     /* --- Custom Dropdown --- */
+    #panic-key-section, #tab-disguise-section { position: relative; z-index: 2; }
+    #panic-key-section.dropdown-open { z-index: 3; }
+
     .custom-dropdown-container { position: relative; width: 100%; }
     .custom-dropdown-selected {
         display: flex; align-items: center; width: 100%; text-align: left;
@@ -488,26 +491,6 @@
     .category-title:first-of-type {
         margin-top: 0;
     }
-
-    /* --- Modal styles --- */
-    .modal {
-        display: none; position: fixed; z-index: 1000; left: 0; top: 0;
-        width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5);
-        align-items: center; justify-content: center;
-    }
-    .modal.show { display: flex; }
-    .modal-content {
-        background-color: #fefefe; margin: auto; padding: 25px;
-        border: 1px solid #888; width: 80%; max-width: 500px;
-        border-radius: 15px; box-shadow: 0 5px 15px rgba(0,0,0,0.3);
-        position: relative; animation: modalopen 0.3s;
-    }
-    @keyframes modalopen { from { opacity: 0; transform: translateY(-50px); } to { opacity: 1; transform: translateY(0); } }
-    .close-btn {
-        color: #aaa; float: right; font-size: 28px; font-weight: bold;
-        position: absolute; top: 10px; right: 20px;
-    }
-    .close-btn:hover, .close-btn:focus { color: black; text-decoration: none; cursor: pointer; }
     
     @media (max-width: 768px) {
         .settings-container { flex-direction: column; }
@@ -819,13 +802,17 @@
             const container = document.getElementById(containerId);
             if (!container || container.dataset.initialized) return;
 
+            const section = container.closest('.settings-section');
             const selectedDisplay = container.querySelector('.custom-dropdown-selected');
             const selectedTextEl = selectedDisplay.querySelector('span');
             const optionsContainer = container.querySelector('.custom-dropdown-options');
 
             selectedDisplay.addEventListener('click', (e) => {
                 e.stopPropagation();
-                container.classList.toggle('open');
+                const isOpen = container.classList.toggle('open');
+                if (section) {
+                    section.classList.toggle('dropdown-open', isOpen);
+                }
             });
 
             optionsContainer.addEventListener('click', (e) => {
@@ -841,6 +828,9 @@
                     option.classList.add('selected');
                     selectedTextEl.textContent = text;
                     container.classList.remove('open');
+                     if (section) {
+                        section.classList.remove('dropdown-open');
+                    }
                     if (onChangeCallback) {
                         onChangeCallback(value);
                     }
@@ -850,6 +840,9 @@
             document.addEventListener('click', () => {
                 if (container.classList.contains('open')) {
                     container.classList.remove('open');
+                     if (section) {
+                        section.classList.remove('dropdown-open');
+                    }
                 }
             });
 
@@ -1246,7 +1239,7 @@
         function setupDeleteAccountSection() { const deleteSection = document.getElementById('delete-section'); const deleteForm = document.getElementById('delete-form'); const emailReauthForm = document.getElementById('email-reauth-form'); const reauthBtn = document.getElementById('reauthBtn'); isReauthenticatedForDelete = false; deleteForm.style.display = 'none'; emailReauthForm.style.display = 'none'; reauthBtn.style.display = 'none'; deleteSection.classList.remove('disabled', 'fadeout'); if (authMethod === 'google' || authMethod === 'github') { deleteSection.classList.add('disabled'); const providerName = authMethod.charAt(0).toUpperCase() + authMethod.slice(1); deleteSection.setAttribute('data-disabled-message', `Reauthenticate with your ${providerName} account to enable account deletion`); reauthBtn.textContent = `Reauthenticate with ${providerName}`; reauthBtn.style.display = 'block'; reauthBtn.onclick = () => reauthenticate('delete'); } else { emailReauthForm.style.display = 'flex'; } }
         async function updateUsername() { if (document.getElementById('newUsername').disabled) { return; } const newNameRaw = document.getElementById('newUsername').value.trim(); const currentName = document.getElementById('displayUsername').textContent; if (newNameRaw === currentName) { return showNotification('info', 'This is already your username.'); } if (newNameRaw.length < 4 || newNameRaw.length > 16) return showNotification('error', 'Username must be 4-16 characters.'); if (!/^[a-zA-Z0-9.\?\!@#$%&*-]+$/.test(newNameRaw)) return showNotification('error', 'Username contains invalid characters.'); try { const userDoc = await dbRef().get(); const userData = userDoc.data() || {}; const { usernameChangeCount = 0, usernameChangePeriodStart = null, lastUsernameChange = null } = userData; if(lastUsernameChange && (Date.now() - lastUsernameChange.toDate().getTime() < 60000)) { await updateLimitDisplays(); return; } const isNewPeriod = !usernameChangePeriodStart || (Date.now() - usernameChangePeriodStart.toDate().getTime() > 30 * 24 * 60 * 60 * 1000); if (!isNewPeriod && usernameChangeCount >= 10) { await updateLimitDisplays(); return; } const response = await fetch(`https://www.purgomalum.com/service/json?text=${encodeURIComponent(newNameRaw)}`); if (!response.ok) throw new Error('Profanity filter unavailable.'); const data = await response.json(); const filteredName = data.result; if (filteredName.includes('*')) { showNotification('info', 'Your username contained inappropriate words and has been filtered. This still counts as a change.'); } const updatePayload = isNewPeriod ? { username: filteredName, usernameChangeCount: 1, usernameChangePeriodStart: firebase.firestore.FieldValue.serverTimestamp(), lastUsernameChange: firebase.firestore.FieldValue.serverTimestamp() } : { username: filteredName, usernameChangeCount: firebase.firestore.FieldValue.increment(1), lastUsernameChange: firebase.firestore.FieldValue.serverTimestamp() }; await dbRef().update(updatePayload); document.getElementById('displayUsername').textContent = filteredName; document.getElementById('newUsername').value = filteredName; showNotification('success', 'Username updated successfully!'); await updateLimitDisplays(); } catch (error) { showNotification('error', `Failed to update username: ${error.message}`); } }
         async function changePassword() { if (document.getElementById('newPassword').disabled) return; const user = firebase.auth().currentUser; const oldPassword = document.getElementById('oldPassword').value; const newPassword = document.getElementById('newPassword').value; if (!oldPassword || newPassword.length < 6 || oldPassword === newPassword) { return showNotification('error', 'Please check your passwords. The new password must be at least 6 characters and different from the old one.'); } try { await user.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(user.email, oldPassword)); await user.updatePassword(newPassword); await dbRef().update({ lastPasswordChange: firebase.firestore.FieldValue.serverTimestamp() }); document.getElementById('oldPassword').value = ''; document.getElementById('newPassword').value = ''; showNotification('success', 'Password changed successfully!'); await updateLimitDisplays(); } catch (error) { showNotification('error', `Failed to change password: ${error.code === 'auth/wrong-password' ? 'Current password is incorrect.' : error.message}`); } }
-        async function deleteAccount() { if (!isReauthenticatedForDelete) { return showNotification('error', 'Please re-authenticate before deleting your account.'); } if (!confirm('Are you absolutely certain? This cannot be undone.') || !confirm('Last chance! This will permanently delete everything. Proceed?')) { return; } const user = firebase.auth().currentUser; try { await dbRef().delete(); await user.delete(); alert('Account permanently deleted. Redirecting...'); location.href = '../signup.html'; } catch (error) { let msg = 'Failed to delete account: '; if (error.code === 'auth/requires-recent-login') { msg += 'Your session has expired. Please re-authenticate and try again.'; setupDeleteAccountSection(); } else { msg += error.message; } showNotification('error', msg); } }
+        async function deleteAccount() { if (!isReauthenticatedForDelete) { return showNotification('error', 'Please re-authenticate before deleting your account.'); } if (!confirm('Are you absolutely certain? This cannot be undone.') || !confirm('Last chance! This will permanently delete everything. Proceed?')) { return; } const user = firebase.auth().currentUser; try { await dbRef().delete(); await user.delete(); showNotification('info', 'Account permanently deleted. Redirecting...'); setTimeout(() => { location.href = '../signup.html'; }, 3000); } catch (error) { let msg = 'Failed to delete account: '; if (error.code === 'auth/requires-recent-login') { msg += 'Your session has expired. Please re-authenticate and try again.'; setupDeleteAccountSection(); } else { msg += error.message; } showNotification('error', msg); } }
         document.querySelectorAll('.password-toggle-btn').forEach(btn => { btn.addEventListener('click', () => { const targetInput = document.getElementById(btn.dataset.target); const isPassword = targetInput.type === 'password'; targetInput.type = isPassword ? 'text' : 'password'; btn.querySelector('.eye-icon').style.display = isPassword ? 'none' : 'inline'; btn.querySelector('.eye-off-icon').style.display = isPassword ? 'inline' : 'none'; }); });
     </script>
 </body>
