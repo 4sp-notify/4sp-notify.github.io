@@ -336,9 +336,12 @@
             
             const isUsernameTaken = async (username) => {
                 try {
-                    const querySnapshot = await db.collection('users').where('username', '==', username).limit(1).get();
-                    return !querySnapshot.empty;
-                } catch (error) { console.error("Error checking username uniqueness:", error); return true; }
+                    const doc = await db.collection('usernames').doc(username).get();
+                    return doc.exists;
+                } catch (error) { 
+                    console.error("Error checking username uniqueness:", error); 
+                    return true;
+                }
             };
 
             const updateUserAuthMethods = async (user, newProviderId) => {
@@ -365,16 +368,24 @@
             const createUserDocument = async (user, authMethod, username, explicitEmail = null) => {
                 const emailToStore = explicitEmail || (user && user.email) || null;
                 const isVerified = (authMethod !== 'password') ? true : !!(user && user.emailVerified);
+                const userRef = db.collection('users').doc(user.uid);
+                const usernameRef = db.collection('usernames').doc(username);
                 try {
-                    await db.collection('users').doc(user.uid).set({
+                    const batch = db.batch();
+                    batch.set(userRef, {
                         email: emailToStore, 
                         authMethods: [authMethod], 
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                         username: username, 
                         emailVerified: isVerified
                     });
+                    batch.set(usernameRef, { uid: user.uid });
+                    await batch.commit();
                     return true;
-                } catch (error) { console.error("Error creating user document:", error); return false; }
+                } catch (error) { 
+                    console.error("Error creating user documents:", error); 
+                    return false; 
+                }
             };
             
             const handleSuccessfulLogin = async (user, isNewOrRepaired = false, newUsername = '') => {
@@ -483,14 +494,34 @@
                 }
             });
 
-            const handleProviderLogin = async (provider) => {
+            const handleProviderLogin = async (provider, isLinkingFlow = false) => {
                 loginMessageDiv.innerHTML = '';
                 try {
                     const result = await auth.signInWithPopup(provider);
                     const user = result.user;
+
+                    if (isLinkingFlow) {
+                        const pendingCredString = sessionStorage.getItem('pendingCred');
+                        if (pendingCredString) {
+                            // Reconstruct the credential from the stored JSON string.
+                            const pendingCred = firebase.auth.OAuthCredential.fromJSON(pendingCredString);
+                            sessionStorage.removeItem('pendingCred');
+
+                            try {
+                                await user.linkWithCredential(pendingCred);
+                                await updateUserAuthMethods(user, pendingCred.providerId);
+                                showMessage(loginMessageDiv, 'Accounts successfully linked! Redirecting...', 'success');
+                                setTimeout(() => handleSuccessfulLogin(user), 1500);
+                                return;
+                            } catch (linkError) {
+                                console.error("Final link error:", linkError);
+                                showMessage(loginMessageDiv, 'Could not link accounts. The other provider may already be linked to a different user.');
+                                return;
+                            }
+                        }
+                    }
                     
                     const userDoc = await db.collection('users').doc(user.uid).get();
-
                     if (userDoc.exists) {
                         await handleSuccessfulLogin(user);
                     } else {
@@ -503,52 +534,43 @@
                     if (error.code === 'auth/account-exists-with-different-credential') {
                         const pendingCred = error.credential;
                         const email = error.email;
+                        
+                        // Store the credential of the provider the user is trying to link.
+                        sessionStorage.setItem('pendingCred', JSON.stringify(pendingCred));
+                        
                         const methods = await auth.fetchSignInMethodsForEmail(email);
                         
-                        if (!methods || methods.length === 0) {
-                            showMessage(loginMessageDiv, 'An account with this email exists, but we could not determine the sign-in method. Please contact support.');
-                            return;
-                        }
-
-                        const firstProviderId = methods[0];
-                        const providerName = firstProviderId.split('.')[0].replace(/^\w/, c => c.toUpperCase());
-                        
-                        if (!pendingCred || !pendingCred.providerId) {
-                            showMessage(loginMessageDiv, `An account with this email already exists via ${providerName}. Please sign in using that method.`);
-                            return;
-                        }
-
-                        const newProviderName = pendingCred.providerId.split('.')[0].replace(/^\w/, c => c.toUpperCase());
-                        
-                        if (firstProviderId === 'password') {
-                            showMessage(loginMessageDiv, `This email is registered with a password. Please sign in with your password to link your ${newProviderName} account.`, 'warning');
-                            return;
-                        }
-
-                        let providerToLink;
-                        if (firstProviderId === 'google.com') providerToLink = new firebase.auth.GoogleAuthProvider();
-                        else if (firstProviderId === 'github.com') providerToLink = new firebase.auth.GithubAuthProvider();
-                        else if (firstProviderId === 'microsoft.com') providerToLink = new firebase.auth.OAuthProvider('microsoft.com');
-
-                        if (providerToLink) {
-                            showMessage(loginMessageDiv, `Linking your ${newProviderName} account to your existing ${providerName} account...`, 'warning');
-                            try {
-                                const result = await auth.signInWithPopup(providerToLink);
-                                await result.user.linkWithCredential(pendingCred);
-                                await updateUserAuthMethods(result.user, pendingCred.providerId);
-                                await handleSuccessfulLogin(result.user);
-                            } catch (linkError) {
-                                console.error("Link error:", linkError);
-                                let linkMessage = 'Could not link accounts. Please try logging in directly with your original method.';
-                                if (linkError.code === 'auth/popup-closed-by-user') {
-                                    linkMessage = 'Account linking cancelled.';
-                                } else if (linkError.code === 'auth/credential-already-in-use') {
-                                    linkMessage = 'This provider is already linked to a different account.';
-                                }
-                                showMessage(loginMessageDiv, linkMessage);
+                        if (methods && methods.length > 0) {
+                            const firstProviderId = methods[0];
+                            const providerName = firstProviderId.split('.')[0].replace(/^\w/, c => c.toUpperCase());
+                            
+                            let providerToLink;
+                            if (firstProviderId === 'google.com') providerToLink = new firebase.auth.GoogleAuthProvider();
+                            else if (firstProviderId === 'github.com') providerToLink = new firebase.auth.GithubAuthProvider();
+                            else if (firstProviderId === 'microsoft.com') providerToLink = new firebase.auth.OAuthProvider('microsoft.com');
+                            else if (firstProviderId === 'password') {
+                                 const newProviderName = pendingCred.providerId.split('.')[0].replace(/^\w/, c => c.toUpperCase());
+                                 showMessage(loginMessageDiv, `This email is registered with a password. Please sign in with your password, then link your ${newProviderName} account from your profile settings.`, 'warning');
+                                 sessionStorage.removeItem('pendingCred');
+                                 return;
                             }
+
+                            if(providerToLink){
+                                const newProviderName = pendingCred.providerId.split('.')[0].replace(/^\w/, c => c.toUpperCase());
+                                showMessage(loginMessageDiv, `This email is connected to ${providerName}. Please sign in with ${providerName} to link your ${newProviderName} account.`, 'warning');
+                                
+                                // Automatically trigger the sign-in for the original provider to start the linking process.
+                                setTimeout(() => {
+                                    handleProviderLogin(providerToLink, true);
+                                }, 2500);
+                            } else {
+                                 showMessage(loginMessageDiv, `An account exists with an unknown provider (${providerName}). Please log in with that method.`);
+                                 sessionStorage.removeItem('pendingCred');
+                            }
+
                         } else {
-                            showMessage(loginMessageDiv, `An account exists with an unknown provider (${providerName}). Please log in with that method.`);
+                            showMessage(loginMessageDiv, 'An account with this email exists, but we could not determine the sign-in method. Please contact support.');
+                            sessionStorage.removeItem('pendingCred');
                         }
                         return;
                     }
