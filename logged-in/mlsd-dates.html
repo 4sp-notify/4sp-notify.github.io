@@ -162,7 +162,6 @@
     .tab-panels-wrapper {
         overflow: hidden;
         transition: height 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-        /* UPDATED: Needed for positioning the fade effect */
         position: relative;
     }
     .tab-panels-container {
@@ -178,7 +177,7 @@
         overflow-y: auto;
     }
 
-    /* NEW: Scroll fade effect */
+    /* --- Scroll fade effect --- */
     .tab-panels-wrapper::after {
         content: '';
         position: absolute;
@@ -208,27 +207,37 @@
       gap: 20px;
       border-radius: 6px;
       cursor: pointer;
-      transition: background-color 0.2s ease-in-out;
-    }
-    #pinned-events-panel li {
-        cursor: default;
-    }
-    #pinned-events-panel li:hover {
-        background-color: transparent;
+      transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
     }
     .month-card li:hover {
         background-color: #f7f7f7;
     }
+
+    /* UPDATED: Styles for clickable pinned events */
+    #pinned-events-panel li:not(.no-events) {
+        cursor: pointer;
+    }
+    #pinned-events-panel li:not(.no-events):hover {
+        background-color: #ffebee; /* Light red background */
+        color: #B71C1C;
+    }
+    #pinned-events-panel li:not(.no-events):hover .date-event,
+    #pinned-events-panel li:not(.no-events):hover .date-day {
+        text-decoration: line-through;
+    }
+
     .month-card li:last-child { border-bottom: none; }
     .date-day {
       font-weight: bold;
       color: #333;
       flex: 0 0 100px;
+      transition: text-decoration 0.2s ease-in-out;
     }
     .date-event {
       color: #555;
       text-align: left;
       flex: 1;
+      transition: text-decoration 0.2s ease-in-out;
     }
     .today-event {
         background-color: #ffebee !important;
@@ -343,7 +352,7 @@
       <nav>
         <ul>
           <li><a href="dashboard.html"><span class="icon">🏠</span><span class="label">Dashboard</span></a></li>
-          <li><a href="soundboard.html"><span class="icon">🎵</span><span class="label">Soundboard</span></a></li>
+          <li><a href="soundboard.html"><span class="icon">🎵</span><label>Soundboard</label></a></li>
           <li><a href="games.html"><span class="icon">🎮</span><span class="label">Games</span></a></li>
           <li><a href="apps.html" class="active"><span class="icon">✨</span><span class="label">Apps</span></a></li>
           <li><a href="settings.html"><span class="icon">⚙️</span><span class="label">Settings</span></a></li>
@@ -416,7 +425,7 @@
       };
       
       let pinnedEvents = [];
-      const now = new Date('2025-10-20T12:00:00'); // Hardcoded to October to demonstrate scrolling
+      const now = new Date('2025-10-20T12:00:00'); 
       const currentDay = now.getDate();
       const currentMonthName = now.toLocaleString('default', { month: 'long' });
 
@@ -455,6 +464,7 @@
           }
       };
 
+      // UPDATED: Now adds a data-attribute for unpinning
       const renderPinnedEvents = () => {
           const panel = document.getElementById('pinned-events-panel');
           if (!panel) return;
@@ -463,8 +473,8 @@
           if (pinnedEvents.length === 0) {
               listHtml = `<li class="no-events">No events pinned yet.</li>`;
           } else {
-              listHtml = pinnedEvents.map(item => 
-                  `<li><span class="date-day">${item.day}, ${item.month}</span> <span class="date-event">${item.event}</span></li>`
+              listHtml = pinnedEvents.map((item, index) => 
+                  `<li data-pinned-index="${index}"><span class="date-day">${item.day}, ${item.month}</span> <span class="date-event">${item.event}</span></li>`
               ).join('');
           }
           panel.innerHTML = `<ul>${listHtml}</ul>`;
@@ -488,22 +498,21 @@
           hideEventDetail();
       };
 
-      // UPDATED: Fixes extra space and adds/removes scroll fade effect
+      // NEW: Unpins an event by its index in the array
+      const unpinEvent = (index) => {
+          pinnedEvents.splice(index, 1); // Remove the event
+          savePinnedEvents();
+          renderPinnedEvents();
+      };
+
       const adjustWrapperHeight = (activeIndex) => {
         const wrapper = document.querySelector('.tab-panels-wrapper');
         const activePanel = document.querySelectorAll('.tab-panel')[activeIndex];
-        
         if (activePanel) {
             const contentHeight = activePanel.scrollHeight;
-            // Get the max-height value from CSS and convert it to a number
             const maxHeight = parseInt(window.getComputedStyle(activePanel).maxHeight, 10);
-            
-            // The new height is the smaller of the content height or the max height
             const newHeight = Math.min(contentHeight, maxHeight);
-            
             wrapper.style.height = `${newHeight}px`;
-
-            // Add class for fade effect if content is taller than the visible area
             if (contentHeight > newHeight) {
                 wrapper.classList.add('is-scrollable');
             } else {
@@ -609,9 +618,19 @@
         }
       });
       
+      // UPDATED: This single listener now handles both opening the modal AND unpinning events
       document.querySelector('.tab-panels-container').addEventListener('click', e => {
+          // Check for an unpin click first
+          const pinnedLi = e.target.closest('#pinned-events-panel li:not(.no-events)');
+          if (pinnedLi && pinnedLi.dataset.pinnedIndex) {
+              const indexToUnpin = parseInt(pinnedLi.dataset.pinnedIndex, 10);
+              unpinEvent(indexToUnpin);
+              return; // Action complete, do nothing else
+          }
+
+          // If not an unpin click, check to see if we should open the modal
           const eventLi = e.target.closest('.month-card li');
-          if (eventLi && eventLi.dataset.event) {
+          if (eventLi && eventLi.dataset.event && !eventLi.closest('#pinned-events-panel')) {
               showEventDetail(eventLi.dataset);
           }
       });
@@ -645,7 +664,7 @@
 
     firebase.auth().onAuthStateChanged(async user => {
       if (!user) {
-       location.href = '../login.html'; // Uncomment to enforce login
+        location.href = '../login.html'; // Uncomment to enforce login
       }
     });
   </script>
