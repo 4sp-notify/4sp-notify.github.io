@@ -491,6 +491,75 @@
     .data-table tbody tr:hover { background-color: #e8deff; cursor: pointer; }
     .data-table td { font-size: 0.9em; color: #555; font-family: 'SecondaryFont', sans-serif; }
 
+    /* START: Styles for New Sign-In Methods Section */
+    .provider-list {
+        list-style: none;
+        padding: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 15px;
+    }
+    .provider-item {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        padding: 15px 20px;
+        border-radius: 12px;
+        transition: all 0.2s ease-in-out;
+    }
+    .provider-item:hover {
+        border-color: #d1d9e2;
+        background: #fff;
+    }
+    .provider-info {
+        display: flex;
+        align-items: center;
+        gap: 15px;
+    }
+    .provider-info img {
+        width: 28px;
+        height: 28px;
+        object-fit: contain;
+    }
+    .provider-info .provider-name {
+        font-family: 'PrimaryFont', sans-serif;
+        font-weight: 600;
+        font-size: 1.1em;
+        color: #333;
+    }
+    .provider-info .provider-status {
+        font-size: 0.85em;
+        font-weight: bold;
+        padding: 4px 8px;
+        border-radius: 6px;
+        color: white;
+        text-transform: uppercase;
+    }
+    .provider-status.primary { background-color: #6720bd; }
+    .provider-status.linked { background-color: #28a745; }
+    .btn.btn-link {
+        background-color: #007bff;
+        color: white;
+        box-shadow: 0 4px 15px rgba(0, 123, 255, 0.2);
+    }
+    .btn.btn-link:hover {
+        background-color: #0069d9;
+        box-shadow: 0 6px 20px rgba(0, 123, 255, 0.3);
+    }
+    .btn.btn-unlink {
+        background-color: #6c757d;
+        color: white;
+        box-shadow: 0 4px 15px rgba(108, 117, 125, 0.2);
+    }
+    .btn.btn-unlink:hover {
+        background-color: #5a6268;
+        box-shadow: 0 6px 20px rgba(108, 117, 125, 0.3);
+    }
+    /* END: Styles for New Sign-In Methods Section */
+
+
     @media (max-width: 768px) {
         .settings-container { flex-direction: column; }
         .sidebar { width: 100%; padding: 15px; }
@@ -627,6 +696,12 @@
 
             <div class="settings-group" id="account-details-group">
                 <h2 class="settings-group-title">🔒 Account Details</h2>
+                <section class="settings-section" id="linking-section">
+                    <h3>Sign-In Methods</h3>
+                    <p>Link multiple providers to your account for more ways to sign in. You cannot unlink your only remaining sign-in method.</p>
+                    <ul class="provider-list" id="provider-list-container">
+                        </ul>
+                </section>
                 <section class="settings-section" id="username-section">
                     <h3>Edit Username</h3>
                     <p>You can change your username up to 10 times every 30 days, with a 1-minute cooldown between each change.</p>
@@ -711,10 +786,10 @@
                             </div>
                         </div>
                         <div class="data-table-wrapper" id="bmd-user-list-wrapper">
-                             <table class="data-table" id="bmd-users-table">
+                           <table class="data-table" id="bmd-users-table">
                                 <thead><tr><th>Username</th><th>Email</th><th>Auth</th><th>Created</th></tr></thead>
                                 <tbody><tr><td colspan="4" style="text-align: center; padding: 20px;">Loading users...</td></tr></tbody>
-                             </table>
+                           </table>
                         </div>
                         
                         <h4 style="margin-top: 30px;">Ban User by UID</h4>
@@ -764,13 +839,19 @@
             const adminEmails = ['4simpleproblems@gmail.com', 'belkwy30@minerva.sparcc.org'];
             
             // Determine auth method first
-            const isGoogle = user.providerData.some(p => p.providerId === 'google.com');
-            const isGithub = user.providerData.some(p => p.providerId === 'github.com');
+            const providerIds = user.providerData.map(p => p.providerId);
+            let primaryProviderId = providerIds[0]; // Firebase lists the first one used as primary
+            
             let accountTypeText = 'Email/Password Account';
-            if (isGoogle) { authMethod = 'google'; accountTypeText = 'Google Account';
-            } else if (isGithub) { authMethod = 'github'; accountTypeText = 'GitHub Account';
+            if (primaryProviderId === 'google.com') { authMethod = 'google'; accountTypeText = 'Google Account';
+            } else if (primaryProviderId === 'github.com') { authMethod = 'github'; accountTypeText = 'GitHub Account';
+            } else if (primaryProviderId === 'microsoft.com') { authMethod = 'microsoft'; accountTypeText = 'Microsoft Account';
             } else { authMethod = 'password'; }
             document.getElementById('displayAccountType').textContent = accountTypeText;
+
+            // START: New Account Linking Logic
+            renderSignInMethods(user);
+            // END: New Account Linking Logic
 
             if (adminEmails.includes(user.email)) {
                 isAdmin = true;
@@ -788,7 +869,7 @@
             
             const passwordSection = document.getElementById('password-section');
             const changePasswordBtn = document.getElementById('changePasswordBtn');
-            if (authMethod !== 'password') {
+            if (!providerIds.includes('password')) { // More robust check
                 passwordSection.style.display = 'none';
                 changePasswordBtn.style.display = 'none';
             } else {
@@ -800,6 +881,122 @@
             setupDeleteAccountSection();
             initializeTabDisguise();
         });
+
+        // --- START: NEW ACCOUNT LINKING FUNCTIONS ---
+        function renderSignInMethods(user) {
+            const container = document.getElementById('provider-list-container');
+            container.innerHTML = ''; // Clear existing items
+
+            const linkedProviderIds = user.providerData.map(p => p.providerId);
+            const canUnlink = linkedProviderIds.length > 1;
+
+            // Define all possible providers
+            const allProviders = [
+                { id: 'password', name: 'Email/Password', icon: '../images/email-icon.png', instance: null }, // You'll need an email icon
+                { id: 'google.com', name: 'Google', icon: '../images/google-icon.png', instance: new firebase.auth.GoogleAuthProvider() },
+                { id: 'github.com', name: 'GitHub', icon: '../images/github-mark.png', instance: new firebase.auth.GithubAuthProvider() },
+                { id: 'microsoft.com', name: 'Microsoft', icon: '../images/microsoft.png', instance: new firebase.auth.OAuthProvider('microsoft.com') }
+            ];
+
+            allProviders.forEach(provider => {
+                const isLinked = linkedProviderIds.includes(provider.id);
+                const isPrimary = user.providerData[0].providerId === provider.id;
+
+                // Create the list item element
+                const li = document.createElement('li');
+                li.className = 'provider-item';
+
+                let statusHTML = '';
+                if(isLinked) {
+                    statusHTML = isPrimary 
+                        ? `<span class="provider-status primary">Primary</span>`
+                        : `<span class="provider-status linked">Linked</span>`;
+                }
+
+                let actionButtonHTML = '';
+                if(isLinked) {
+                    const disabledAttr = !canUnlink ? 'disabled title="You cannot unlink your only sign-in method."' : '';
+                    actionButtonHTML = `<button class="btn btn-unlink" onclick="unlinkProvider('${provider.id}')" ${disabledAttr}>Unlink</button>`;
+                } else {
+                    // Don't show the "Link" button for a provider if it's already the primary method
+                    // (e.g., don't show "Link Google" for a Google account)
+                    if (provider.id !== linkedProviderIds[0]) {
+                         actionButtonHTML = `<button class="btn btn-link" onclick="linkProvider('${provider.id}')">Link</button>`;
+                    }
+                }
+                
+                // For email/password, you can't link it to a social account, only the other way around.
+                // So, if the account is not an email account, don't show the email/password option at all.
+                if(provider.id === 'password' && !linkedProviderIds.includes('password')) {
+                    return; // Skip rendering this item
+                }
+                // Don't allow a user to link a provider they are already signed in with
+                if(isLinked && !canUnlink && actionButtonHTML === '') {
+                     actionButtonHTML = ''
+                }
+
+                li.innerHTML = `
+                    <div class="provider-info">
+                        <img src="${provider.icon}" alt="${provider.name} icon">
+                        <span class="provider-name">${provider.name}</span>
+                        ${statusHTML}
+                    </div>
+                    <div class="provider-action">
+                        ${actionButtonHTML}
+                    </div>
+                `;
+                container.appendChild(li);
+            });
+        }
+
+        async function linkProvider(providerId) {
+            const user = firebase.auth().currentUser;
+            if (!user) return;
+
+            let provider;
+            if (providerId === 'google.com') provider = new firebase.auth.GoogleAuthProvider();
+            else if (providerId === 'github.com') provider = new firebase.auth.GithubAuthProvider();
+            else if (providerId === 'microsoft.com') provider = new firebase.auth.OAuthProvider('microsoft.com');
+            else return showNotification('error', 'Unknown provider specified.');
+
+            try {
+                await user.linkWithPopup(provider);
+                showNotification('success', 'Account successfully linked!');
+                renderSignInMethods(user); // Refresh the UI
+            } catch (error) {
+                console.error("Error linking provider:", error);
+                let msg = "Failed to link provider.";
+                if (error.code === 'auth/credential-already-in-use') {
+                    msg = "This provider account is already linked to another user.";
+                } else if (error.code === 'auth/popup-closed-by-user') {
+                    return; // Don't show an error if user just closes popup
+                }
+                showNotification('error', msg);
+            }
+        }
+        
+        async function unlinkProvider(providerId) {
+            const user = firebase.auth().currentUser;
+            if (!user) return;
+
+            if (user.providerData.length <= 1) {
+                return showNotification('error', "You cannot unlink your only sign-in method.");
+            }
+            if (!confirm(`Are you sure you want to unlink this sign-in method? You will no longer be able to log in using it.`)) {
+                return;
+            }
+
+            try {
+                await user.unlink(providerId);
+                showNotification('success', 'Account successfully unlinked!');
+                // A full reload is better after unlinking to refresh the user token completely
+                window.location.reload();
+            } catch (error) {
+                console.error("Error unlinking provider:", error);
+                showNotification('error', `Failed to unlink provider: ${error.message}`);
+            }
+        }
+        // --- END: NEW ACCOUNT LINKING FUNCTIONS ---
 
         // --- NOTIFICATION SYSTEM & GENERAL UTILS ---
         function showNotification(type, text) { const DURATION = 10000; const container = document.getElementById('notification-container'); const key = `${type}-${text}`; if (activeNotifications.has(key)) { const existing = activeNotifications.get(key); let count = parseInt(existing.counter.textContent) || 1; count++; existing.counter.textContent = count > 10 ? '10+' : count; existing.counter.style.display = 'flex'; clearTimeout(existing.timerId); existing.timerId = setTimeout(() => removeNotification(key), DURATION); return; } const notification = document.createElement('div'); notification.className = `notification-popup ${type}`; notification.textContent = text; const counter = document.createElement('span'); counter.className = 'notification-counter'; counter.style.display = 'none'; notification.appendChild(counter); const timerId = setTimeout(() => removeNotification(key), DURATION); activeNotifications.set(key, { element: notification, timerId: timerId, counter: counter }); container.appendChild(notification); }
@@ -889,7 +1086,7 @@
         
         function setupBMDReauth() {
             const emailReauthForm = document.getElementById('bmd-email-reauth-form'),
-                reauthBtn = document.getElementById('bmdReauthBtn');
+                  reauthBtn = document.getElementById('bmdReauthBtn');
 
             reauthBtn.onclick = () => reauthenticate('bmd');
             emailReauthForm.addEventListener('submit', (e) => {
