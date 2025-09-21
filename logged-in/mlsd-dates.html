@@ -138,7 +138,9 @@
         padding: 6px;
         gap: 6px;
         border-bottom: 1px solid #e0e0e0;
-        overflow-x: auto; /* Allow scrolling on small screens */
+        overflow-x: auto;
+        /* UPDATED: Ensures tabs start from the left */
+        justify-content: flex-start;
     }
     .tab-button {
         flex-shrink: 0; 
@@ -151,7 +153,6 @@
         font-size: 1em;
         color: #555;
         transition: all 0.2s ease;
-        /* UPDATED: Uses PrimaryFont */
         font-family: 'PrimaryFont', 'Roboto', sans-serif;
     }
     .tab-button.active {
@@ -162,7 +163,6 @@
     .tab-panels-wrapper {
         position: relative;
         overflow: hidden;
-        /* UPDATED: Added transition for smooth height animation */
         transition: height 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
     }
     .tab-panels-container {
@@ -174,7 +174,6 @@
         width: 100%;
         box-sizing: border-box;
         padding: 25px 30px;
-        /* UPDATED: Added max-height and scrolling for overflow */
         max-height: 45vh;
         overflow-y: auto;
     }
@@ -190,9 +189,15 @@
       border-bottom: 1px solid #f0f2f5;
       gap: 20px;
       border-radius: 6px;
-      /* UPDATED: Added interactivity indication */
       cursor: pointer;
       transition: background-color 0.2s ease-in-out;
+    }
+    /* Pinned events should not be clickable again */
+    #pinned-events-panel li {
+        cursor: default;
+    }
+    #pinned-events-panel li:hover {
+        background-color: transparent;
     }
     .month-card li:hover {
         background-color: #f7f7f7;
@@ -213,7 +218,7 @@
         border-radius: 8px;
     }
     
-    /* --- Event Detail Modal (NEW) --- */
+    /* --- Event Detail Modal --- */
     .modal-overlay {
         position: fixed;
         top: 0;
@@ -274,6 +279,8 @@
         font-weight: bold;
         font-size: 1em;
         transition: all 0.2s ease;
+        /* UPDATED: Uses PrimaryFont */
+        font-family: 'PrimaryFont', sans-serif;
     }
     .pin-button {
         background: linear-gradient(135deg, #D32F2F 0%, #B71C1C 100%);
@@ -349,13 +356,6 @@
         </ul>
       </div>
       
-      <div id="pinned-card" class="info-card fade-in" style="animation-delay: 0.15s;">
-        <h3>📌 Pinned Events</h3>
-        <ul id="pinned-events-list" class="info-card-list">
-            <li class="no-events">No events pinned yet.</li>
-        </ul>
-      </div>
-
       <div id="dates-content" class="fade-in" style="animation-delay: 0.2s;">
         <div class="dates-tabs"></div>
         <div class="tab-panels-wrapper">
@@ -386,7 +386,6 @@
   <script src="../firebase-config.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
-      // --- DATA SOURCE ---
       const schoolYearEvents = {
         'August': [{ day: '18th', event: 'Back to School Bash 5-7pm' },{ day: '20th', event: 'First Day 6th Grade' },{ day: '21st', event: 'First Day 7th & 8th Grade' }],
         'September': [{ day: '1st', event: 'No School (Labor Day)' },{ day: '10th', event: 'Pep Rally' },{ day: '12th', event: 'Kona Ice & Class Trip Roommates' },{ day: '19th', event: 'Interims' },{ day: '22nd-26th', event: 'Book Fair' }],
@@ -401,14 +400,10 @@
       };
       
       let pinnedEvents = [];
-
-      // --- DATE LOGIC ---
-      const now = new Date('2025-09-20T12:00:00'); // Hardcoded for demonstration
-      // const now = new Date(); // Use this for the actual current date
+      const now = new Date('2025-09-20T12:00:00'); 
       const currentDay = now.getDate();
       const currentMonthName = now.toLocaleString('default', { month: 'long' });
 
-      // --- GENERAL FUNCTIONS ---
       const displayCurrentDate = () => {
         const dateOptions = { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' };
         document.getElementById('current-date-info').textContent = now.toLocaleDateString('en-US', dateOptions);
@@ -426,7 +421,6 @@
                 return parseInt(dayString, 10) === currentDay;
             }
         });
-
         if (todaysEvents.length > 0) {
             listElement.innerHTML = todaysEvents.map(item => `<li>${item.event}</li>`).join('');
         } else {
@@ -434,7 +428,6 @@
         }
       };
 
-      // --- PINNED EVENTS LOGIC (NEW) ---
       const savePinnedEvents = () => {
           localStorage.setItem('pinnedMlsdEvents', JSON.stringify(pinnedEvents));
       };
@@ -446,15 +439,27 @@
           }
       };
 
+      // UPDATED: Renders pinned events into its own tab panel
       const renderPinnedEvents = () => {
-          const list = document.getElementById('pinned-events-list');
+          const panel = document.getElementById('pinned-events-panel');
+          if (!panel) return;
+
+          let listHtml;
           if (pinnedEvents.length === 0) {
-              list.innerHTML = `<li class="no-events">No events pinned yet.</li>`;
-              return;
+              listHtml = `<li class="no-events">No events pinned yet.</li>`;
+          } else {
+              listHtml = pinnedEvents.map(item => 
+                  `<li><span class="date-day">${item.day}, ${item.month}</span> <span class="date-event">${item.event}</span></li>`
+              ).join('');
           }
-          list.innerHTML = pinnedEvents.map(item => 
-              `<li><span class="date-day">${item.day}, ${item.month}</span> <span class="date-event">${item.event}</span></li>`
-          ).join('');
+          panel.innerHTML = `<ul>${listHtml}</ul>`;
+
+          // If the pinned tab is active, we need to resize the container
+          const pinnedTabIndex = Object.keys(schoolYearEvents).length;
+          const activeTab = document.querySelector('.tab-button.active');
+          if (activeTab && parseInt(activeTab.dataset.tabIndex) === pinnedTabIndex) {
+              adjustWrapperHeight(pinnedTabIndex);
+          }
       };
 
       const pinEvent = (eventData) => {
@@ -469,7 +474,6 @@
           hideEventDetail();
       };
 
-      // --- TAB RENDERING AND FUNCTIONALITY ---
       const adjustWrapperHeight = (activeIndex) => {
         const wrapper = document.querySelector('.tab-panels-wrapper');
         const activePanel = document.querySelectorAll('.tab-panel')[activeIndex];
@@ -487,25 +491,22 @@
         tab.classList.add('active');
         panelContainer.style.transform = `translateX(-${tabIndex * 100}%)`;
         tab.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-
-        // Adjust height on tab switch
         adjustWrapperHeight(tabIndex);
       };
 
+      // UPDATED: Now renders the Pinned tab and panel as well
       const renderTabsAndPanels = () => {
         const tabsContainer = document.querySelector('.dates-tabs');
         const panelsContainer = document.querySelector('.tab-panels-container');
         const monthNames = Object.keys(schoolYearEvents);
         
         monthNames.forEach((monthName, index) => {
-            // Create Tab
             const tab = document.createElement('button');
             tab.className = 'tab-button';
             tab.textContent = monthName;
             tab.dataset.tabIndex = index;
             tabsContainer.appendChild(tab);
 
-            // Create Panel
             const panel = document.createElement('div');
             panel.className = 'tab-panel month-card';
             const eventsHtml = schoolYearEvents[monthName].map(item => {
@@ -519,7 +520,6 @@
                         isToday = parseInt(dayString, 10) === currentDay;
                     }
                 }
-                // Add data attributes for click handling
                 return `<li class="${isToday ? 'today-event' : ''}" data-month="${monthName}" data-day="${item.day}" data-event="${item.event}">
                             <span class="date-day">${item.day}</span> 
                             <span class="date-event">${item.event}</span>
@@ -529,7 +529,21 @@
             panelsContainer.appendChild(panel);
         });
         
-        // REVISED: Activate the current month's tab reliably
+        // Add the Pinned Events Tab
+        const pinnedTabIndex = monthNames.length;
+        const pinnedTab = document.createElement('button');
+        pinnedTab.className = 'tab-button';
+        pinnedTab.textContent = '📌 Pinned';
+        pinnedTab.dataset.tabIndex = pinnedTabIndex;
+        tabsContainer.appendChild(pinnedTab);
+
+        // Add the Pinned Events Panel
+        const pinnedPanel = document.createElement('div');
+        pinnedPanel.className = 'tab-panel month-card';
+        pinnedPanel.id = 'pinned-events-panel';
+        panelsContainer.appendChild(pinnedPanel);
+        
+        // Activate the initial tab
         const currentMonthTabIndex = monthNames.indexOf(currentMonthName);
         const initialTabIndex = currentMonthTabIndex !== -1 ? currentMonthTabIndex : 0;
         const initialTab = tabsContainer.querySelector(`.tab-button[data-tab-index='${initialTabIndex}']`);
@@ -538,39 +552,29 @@
         }
       };
 
-      // --- MODAL FUNCTIONALITY (NEW) ---
       const modal = document.getElementById('event-detail-modal');
       const showEventDetail = (data) => {
           const { month, day, event } = data;
-          
           document.getElementById('modal-event-title').textContent = event;
-
-          // Determine year (2025 for Aug-Dec, 2026 for Jan-May)
           const monthIndexInYear = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].indexOf(month);
-          const year = monthIndexInYear >= 7 ? 2025 : 2026; // August (index 7) or later is 2025
-          
-          const dayNumber = parseInt(day); // Get the first number from day string like "22nd-26th"
+          const year = monthIndexInYear >= 7 ? 2025 : 2026;
+          const dayNumber = parseInt(day);
           const fullEventDate = new Date(year, monthIndexInYear, dayNumber);
-
           const dateOptions = { year: 'numeric', month: 'long', day: 'numeric' };
           const weekdayOptions = { weekday: 'long' };
-
           document.getElementById('modal-event-date').textContent = fullEventDate.toLocaleDateString('en-US', dateOptions);
           document.getElementById('modal-event-weekday').textContent = fullEventDate.toLocaleDateString('en-US', weekdayOptions);
           
-          // Set up pin button with a fresh listener to capture the current event's data
           const pinButton = document.getElementById('modal-pin-button');
-          const newPinButton = pinButton.cloneNode(true); // Clone to remove old listeners
+          const newPinButton = pinButton.cloneNode(true);
           pinButton.parentNode.replaceChild(newPinButton, pinButton);
           newPinButton.addEventListener('click', () => pinEvent(data));
-
           modal.classList.add('visible');
       };
 
       const hideEventDetail = () => {
           modal.classList.remove('visible');
       };
-      
 
       // --- EVENT LISTENERS ---
       document.querySelector('.dates-tabs').addEventListener('click', e => {
@@ -579,7 +583,6 @@
         }
       });
       
-      // Event listener for clicking on an event (delegation)
       document.querySelector('.tab-panels-container').addEventListener('click', e => {
           const eventLi = e.target.closest('.month-card li');
           if (eventLi && eventLi.dataset.event) {
@@ -587,10 +590,9 @@
           }
       });
       
-      // Modal close listeners
       document.getElementById('modal-close-button').addEventListener('click', hideEventDetail);
       modal.addEventListener('click', e => {
-          if (e.target === modal) { // Only close if clicking on the overlay itself
+          if (e.target === modal) {
               hideEventDetail();
           }
       });
@@ -611,13 +613,13 @@
       displayCurrentDate();
       checkForTodaysEvents();
       loadPinnedEvents();
-      renderPinnedEvents();
-      renderTabsAndPanels();
+      renderTabsAndPanels(); // This now creates the panel for pinned events
+      renderPinnedEvents();  // This now populates that panel
     });
 
     firebase.auth().onAuthStateChanged(async user => {
       if (!user) {
-        location.href = '../login.html'; // Uncomment to enforce login
+         location.href = '../login.html'; // Uncomment to enforce login
       }
     });
   </script>
