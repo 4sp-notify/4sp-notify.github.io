@@ -294,8 +294,6 @@
     }
 
     /* --- Custom Dropdown --- */
-     #tab-disguise-section { z-index: 20; }
-     #panic-key-section { z-index: 21; }
     .custom-dropdown-container { position: relative; width: 100%; }
     .custom-dropdown-selected {
         display: flex; align-items: center; width: 100%; text-align: left;
@@ -716,7 +714,18 @@
                     </div>
     
                     <div id="admin-controls-container">
-                        <h4>Ban User by UID</h4>
+                        <h4 style="margin-top: 30px;">All Users</h4>
+                        <p>View all registered users below. Click on any user row to copy their UID to your clipboard for banning.</p>
+                        <div class="user-list-container">
+                            <div class="user-list-header">
+                               <input type="text" id="user-search-input" placeholder="Search by username, email, or UID...">
+                            </div>
+                            <div id="user-list">
+                                <p style="text-align: center; color: #888; padding: 20px;">Loading user list...</p>
+                            </div>
+                        </div>
+
+                        <h4 style="margin-top: 30px;">Ban User by UID</h4>
                         <p style="font-size: 0.9em; color: #777; font-family: 'SecondaryFont', sans-serif;">Bans an existing user account, locking them out immediately. Find the UID on their profile or in the Firestore 'users' collection.</p>
                         <form class="settings-form" id="uid-ban-form">
                             <div class="form-group"><label for="banUserId">User ID to Ban</label><input type="text" id="banUserId" placeholder="Enter the full User ID (UID) of the user" required /></div>
@@ -754,6 +763,7 @@
         const activeNotifications = new Map();
         const pressedKeys = new Set();
         const dbRef = () => firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
+        let allUsersCache = []; // Cache for user search
 
         // --- AUTH & UI INITIALIZATION ---
         firebase.auth().onAuthStateChanged(async user => {
@@ -1099,6 +1109,7 @@
             document.getElementById('viewAnalyticsBtn').style.display = 'flex'; 
             document.getElementById('admin-panel').style.display = 'block';
             document.getElementById('admin-reauth-btn').addEventListener('click', () => reauthenticate('admin'));
+            document.getElementById('user-search-input').addEventListener('input', (e) => renderUserList(e.target.value)); 
         }
         
         async function reauthenticate(purpose) {
@@ -1126,6 +1137,7 @@
                      isReauthenticatedForAdmin = true;
                      document.getElementById('admin-reauth-prompt').style.display = 'none';
                      document.getElementById('admin-controls-container').style.display = 'block';
+                     fetchAllUsers();
                      listenForUidBans();
                      listenForEmailBans();
                 }
@@ -1154,6 +1166,71 @@
                     isReauthenticatedForAdmin = false;
                 }
             }
+        }
+
+        async function fetchAllUsers() {
+             if (!isAdmin || !isReauthenticatedForAdmin) return;
+             const userListEl = document.getElementById('user-list');
+             userListEl.innerHTML = `<p style="text-align: center; color: #888; padding: 20px;">Fetching all users...</p>`;
+             try {
+                const usersCollection = await firebase.firestore().collection('users').get();
+                allUsersCache = usersCollection.docs.map(doc => ({
+                    uid: doc.id,
+                    ...doc.data()
+                }));
+                renderUserList();
+             } catch (error) {
+                console.error("Error fetching users:", error);
+                userListEl.innerHTML = `<p style="text-align: center; color: red; padding: 20px;">Failed to fetch users.</p>`;
+             }
+        }
+        
+        function renderUserList(searchTerm = '') {
+            const userListEl = document.getElementById('user-list');
+            const lowercasedFilter = searchTerm.toLowerCase();
+
+            const filteredUsers = allUsersCache.filter(user => {
+                const username = user.username?.toLowerCase() || '';
+                const email = user.email?.toLowerCase() || '';
+                const uid = user.uid.toLowerCase();
+                return username.includes(lowercasedFilter) || email.includes(lowercasedFilter) || uid.includes(lowercasedFilter);
+            });
+
+            if (filteredUsers.length === 0) {
+                 userListEl.innerHTML = `<p style="text-align: center; color: #888; padding: 20px;">No users found.</p>`;
+                 return;
+            }
+
+            userListEl.innerHTML = ''; // Clear previous list
+            filteredUsers.forEach(user => {
+                const creationDate = user.createdAt && user.createdAt.toDate ? user.createdAt.toDate().toLocaleDateString() : 'N/A';
+                const userItem = document.createElement('div');
+                userItem.className = 'user-list-item';
+                userItem.dataset.uid = user.uid;
+                userItem.innerHTML = `
+                    <div>
+                        <span class="label">Username & UID</span>
+                        <span class="value">${user.username || 'N/A'}</span>
+                        <span class="value" style="font-size: 0.8em; color: #666;">${user.uid}</span>
+                    </div>
+                    <div>
+                        <span class="label">Email</span>
+                        <span class="value">${user.email || 'N/A'}</span>
+                    </div>
+                    <div>
+                        <span class="label">Created On</span>
+                        <span class="value">${creationDate}</span>
+                    </div>
+                `;
+                userItem.addEventListener('click', () => {
+                    navigator.clipboard.writeText(user.uid).then(() => {
+                        showNotification('success', `Copied UID: ${user.uid}`);
+                    }).catch(err => {
+                         showNotification('error', 'Failed to copy UID.');
+                    });
+                });
+                userListEl.appendChild(userItem);
+            });
         }
         
         function listenForUidBans() { const uidBansRef = firebase.firestore().collection('bans'); const bannedUidsList = document.getElementById('banned-uids-list'); uidBansRef.orderBy('bannedAt', 'desc').onSnapshot(snapshot => { bannedUidsList.innerHTML = snapshot.empty ? '<p style="text-align: center; color: #888; padding: 20px;">No users are currently banned by UID.</p>' : ''; snapshot.forEach(doc => renderBanItem(doc, bannedUidsList, 'UID', 'removeUidBan')); }, error => console.error("Error listening to UID ban collection:", error)); }
