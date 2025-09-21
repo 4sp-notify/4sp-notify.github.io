@@ -298,7 +298,8 @@
     .custom-dropdown-container { position: relative; width: 100%; }
     .custom-dropdown-selected {
         display: flex; align-items: center; width: 100%; text-align: left;
-        background: #fff; border: 2px solid #e9ecef; border-radius: 8px;
+        background: #fff; border: 2px solid #e9ecef;
+        border-radius: 15px !important; /* <-- MODIFICATION: Increased roundness */
         padding: 12px; font-size: 1em; cursor: pointer;
         font-family: 'SecondaryFont', sans-serif; transition: all 0.3s ease;
     }
@@ -313,7 +314,8 @@
 
     .custom-dropdown-options {
         position: absolute; top: 110%; left: 0; right: 0;
-        background: #fff; border: 1px solid #ddd; border-radius: 12px;
+        background: #fff; border: 1px solid #ddd;
+        border-radius: 15px; /* <-- MODIFICATION: Increased roundness */
         box-shadow: 0 4px 15px rgba(0,0,0,0.1);
         max-height: 300px; overflow-y: auto;
         opacity: 0; visibility: hidden;
@@ -333,6 +335,9 @@
     .dropdown-option img { width: 20px; height: 20px; margin-right: 12px; object-fit: contain; }
     .dropdown-option span { font-family: 'SecondaryFont', sans-serif; color: #333; }
     .dropdown-option.selected { background-color: #e8deff; font-weight: bold; }
+    .dropdown-option.special-option { /* <-- MODIFICATION: Added shading for special options */
+        background-color: #f8f9fa;
+    }
     
     /* --- NEW: Panic Key Tab Styles --- */
     .settings-tabs-wrapper {
@@ -362,6 +367,13 @@
     .tab-panels-container { display: flex; transition: transform 0.4s cubic-bezier(0.25, 0.8, 0.25, 1); }
     .tab-panel.panic-key-panel { flex-shrink: 0; width: 100%; box-sizing: border-box; display: block !important; opacity: 1; visibility: visible; transition: none; max-height: none; }
     
+    /* --- Tab Disguise Customizations --- */
+    .favicon-picker-item.special-favicon { /* <-- MODIFICATION: Added shading for 4SP light icon */
+        background-color: #f8f9fa;
+        border: 1px solid #eee;
+        border-radius: 6px;
+    }
+
     /* --- NEW: Section Categories --- */
     .category-title {
         font-family: 'PrimaryFont', sans-serif;
@@ -784,8 +796,6 @@
             const panelsContainer = document.getElementById('panic-key-panels');
             tabsContainer.innerHTML = '';
             
-            // Since max keys is 5, the scrollable class logic is kept for future-proofing
-            // but will not be triggered with the current MAX_KEYS setting.
             if (count > 5) {
                 tabsContainer.classList.add('scrollable');
             } else {
@@ -869,53 +879,45 @@
 
         // <-- MODIFICATION: This entire function has been replaced with improved logic.
         async function savePanicKeySettingsLocal() {
-            const MAX_KEYS = 5; // The new limit
+            const count = parseInt(document.getElementById('panicKeyCountSelector').value, 10);
             const settingsToSave = [];
             const keys = new Set();
             
-            // Loop through all possible input fields up to the max limit
-            for (let i = 1; i <= MAX_KEYS; i++) {
+            // Loop through the input fields up to the number selected in the dropdown.
+            // This fulfills the request to remove excess keys when a lower number is chosen.
+            for (let i = 1; i <= count; i++) {
                 const keyInput = document.getElementById(`panicKey${i}`);
                 const urlInput = document.getElementById(`panicUrl${i}`);
 
-                if (!keyInput || !urlInput) continue; // Should not happen, but safe check
+                if (!keyInput || !urlInput) continue;
 
                 const key = keyInput.value.trim().toLowerCase();
                 let url = urlInput.value.trim();
 
-                // If the key or url is missing for this row, skip it entirely.
-                // This fulfills the "auto removes the empty panic keys" request.
+                // If the key or url is missing for this row, skip it. This still auto-removes empty keys.
                 if (!key || !url) {
                     continue;
                 }
 
                 // --- Validation for the keys we are actually going to save ---
-
-                // Check for invalid key format
                 if (key.length !== 1 || /[^a-z0-9`\-=\[\];',.\/\\ ]/.test(key)) {
-                    // Provide context for the error
-                    return showNotification('error', `The key in slot ${i} ("${key}") is invalid. Keys must be a single letter, number, or basic symbol.`);
+                    return showNotification('error', `The key in slot ${i} ("${key}") is invalid. Keys must be a single character.`);
                 }
 
-                // Check for duplicate keys. This fulfills the "detects duplicate keys, and stops the saving" request.
                 if (keys.has(key)) {
                     return showNotification('error', `Duplicate key "${key}" found. All keys must be unique.`);
                 }
 
-                // Check for invalid URL format
                 if (!/^(https?:\/\/)?((www\.)?[-a-zA-Z0-9@:%._\+~#=]{2,256}\.[a-z]{2,6}\b)([-a-zA-Z0-9@:%_\+.~#?&//=]*)$/i.test(url)) {
                     return showNotification('error', `The URL for key "${key}" appears to be invalid.`);
                 }
 
-                // If all checks pass, add the key to our set for duplicate tracking
                 keys.add(key);
 
-                // Prepend protocol if missing
                 if (!/^https?:\/\//i.test(url)) {
                     url = 'https://' + url;
                 }
 
-                // Add the valid setting to our array to be saved, re-indexing the ID.
                 settingsToSave.push({ id: `panicKey${settingsToSave.length + 1}`, key, url });
             }
 
@@ -925,14 +927,12 @@
                 const transaction = db.transaction(LOCAL_STORE_NAME, 'readwrite');
                 const store = transaction.objectStore(LOCAL_STORE_NAME);
                 
-                // Clear old settings and put the new, filtered ones.
-                store.clear();
-                settingsToSave.forEach(setting => store.put(setting));
+                store.clear(); // Clear all old settings
+                settingsToSave.forEach(setting => store.put(setting)); // Save the new, potentially smaller, set
                 
                 transaction.oncomplete = () => {
                     showNotification('success', 'Panic key settings saved successfully!');
                     db.close();
-                    // Reload to reflect the new number of saved keys in the UI
                     setTimeout(() => location.reload(), 100);
                 };
                 transaction.onerror = (event) => {
@@ -1044,6 +1044,7 @@
             fourSPIcons.forEach(icon => {
                 const item = createFaviconPickerItem(icon.url, false);
                 if (icon.name === '4SP Light') {
+                    item.classList.add('special-favicon'); // <-- MODIFICATION: Add class for shading
                     item.querySelector('img').classList.add('favicon-with-shadow');
                 }
                 faviconPicker4SP.appendChild(item);
@@ -1062,6 +1063,7 @@
                 let displayFavicon = data.favicon;
                 if (data.type === 'none' || data.id === '_LIVE_CURRENT_TIME') {
                     displayFavicon = '../images/logo.png';
+                    option.classList.add('special-option'); // <-- MODIFICATION: Add class for shading
                 }
 
                 option.innerHTML = `<img src="${displayFavicon}" alt="${data.name} icon" onerror="this.src='https://placehold.co/32x32/transparent/transparent?text=?'"><span>${data.name}</span>`; 
@@ -1070,8 +1072,7 @@
                 if (data.type === 'none' || data.id === '_LIVE_CURRENT_TIME') {
                     img.classList.add('favicon-with-shadow');
                 }
-                // The main click listener is now handled by initializeCustomDropdown
-                // but this specific one for selectOption needs to remain.
+                
                 option.addEventListener('click', (e) => { e.stopPropagation(); selectOption(option, data); }); 
                 return option; 
             }
