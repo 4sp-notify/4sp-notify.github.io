@@ -234,6 +234,7 @@
         @media (max-width: 768px) {
             .auth-split-container { flex-direction: column; margin: 20px; }
             .auth-col.left-col { border-right: none; border-bottom: 1px solid #eee; }
+            .right-col { display: none; } /* Hide right panel on mobile during linking */
         }
     </style>
 </head>
@@ -266,14 +267,31 @@
             </div>
 
             <div id="resetPasswordContainer" style="display: none;">
-                    <h2>Reset Your Password</h2>
-                    <p style="text-align: center; max-width: 350px;">Enter your email address and we'll send you a link to reset your password.</p>
-                    <form id="resetPasswordForm" novalidate>
-                        <div class="input-group"> <label for="resetEmail">Email</label> <input type="email" id="resetEmail" placeholder="Enter your registered email" required> </div>
-                        <button type="submit" class="btn-primary">SEND RESET LINK</button>
-                    </form>
-                    <div id="resetMessage" class="message-area"></div>
-                    <div class="back-to-login-link"> <a id="backToLoginLink">&larr; Back to Login</a> </div>
+                <h2>Reset Your Password</h2>
+                <p style="text-align: center; max-width: 350px;">Enter your email address and we'll send you a link to reset your password.</p>
+                <form id="resetPasswordForm" novalidate>
+                    <div class="input-group"> <label for="resetEmail">Email</label> <input type="email" id="resetEmail" placeholder="Enter your registered email" required> </div>
+                    <button type="submit" class="btn-primary">SEND RESET LINK</button>
+                </form>
+                <div id="resetMessage" class="message-area"></div>
+                <div class="back-to-login-link"> <a id="backToLoginLink">&larr; Back to Login</a> </div>
+            </div>
+
+            <div id="linkingContainer" style="display: none; width: 100%; max-width: 350px; text-align: center; align-items: center;">
+                <h2>Link Your Accounts</h2>
+                <p id="linkingMessage" style="margin-bottom: 25px;"></p>
+                <div id="linkingProviderButtonContainer" style="width: 100%;"></div>
+                <div id="linkingPasswordContainer" style="display: none; width: 100%;">
+                    <div class="input-group">
+                        <label for="linkingPassword">Password</label>
+                        <input type="password" id="linkingPassword" placeholder="Enter your password" required>
+                    </div>
+                    <button id="linkingPasswordBtn" class="btn-primary">Sign In & Link</button>
+                </div>
+                <div id="linkingErrorMessage" class="message-area"></div>
+                <div class="switch-link" style="margin-top: 15px;">
+                    <a id="cancelLinkingBtn">Cancel</a>
+                </div>
             </div>
 
         </div>
@@ -297,14 +315,43 @@
         document.addEventListener('DOMContentLoaded', () => {
             const db = firebase.firestore();
             const auth = firebase.auth();
+
+            // Main UI Containers
             const loginContainer = document.getElementById('loginContainer');
             const resetPasswordContainer = document.getElementById('resetPasswordContainer');
+            const rightPanel = document.querySelector('.auth-col.right-col');
+            
+            // Linking UI Containers
+            const linkingContainer = document.getElementById('linkingContainer');
+            const linkingMessage = document.getElementById('linkingMessage');
+            const linkingProviderButtonContainer = document.getElementById('linkingProviderButtonContainer');
+            const linkingPasswordContainer = document.getElementById('linkingPasswordContainer');
+            const linkingPasswordInput = document.getElementById('linkingPassword');
+            const linkingPasswordBtn = document.getElementById('linkingPasswordBtn');
+            const cancelLinkingBtn = document.getElementById('cancelLinkingBtn');
+            const linkingErrorMessage = document.getElementById('linkingErrorMessage');
+
+            // Message Divs
             const loginMessageDiv = document.getElementById('loginMessage');
             const resetMessageDiv = document.getElementById('resetMessage');
+
+            // Buttons
             const googleLoginBtn = document.getElementById('googleLoginBtn');
             const githubLoginBtn = document.getElementById('githubLoginBtn');
             const microsoftLoginBtn = document.getElementById('microsoftLoginBtn');
 
+            function showMainLoginUI() {
+                loginContainer.style.display = 'flex';
+                rightPanel.style.display = 'flex';
+                resetPasswordContainer.style.display = 'none';
+                linkingContainer.style.display = 'none';
+
+                loginMessageDiv.innerHTML = '';
+                linkingErrorMessage.innerHTML = '';
+                sessionStorage.removeItem('pendingCred');
+            }
+
+            // --- Event Listeners for UI toggling ---
             document.getElementById('forgotPasswordLink').addEventListener('click', () => {
                 loginContainer.style.display = 'none';
                 resetPasswordContainer.style.display = 'flex';
@@ -312,12 +359,9 @@
                 loginMessageDiv.innerHTML = '';
             });
 
-            document.getElementById('backToLoginLink').addEventListener('click', () => {
-                resetPasswordContainer.style.display = 'none';
-                loginContainer.style.display = 'flex';
-                loginContainer.style.flexDirection = 'column';
-                resetMessageDiv.innerHTML = '';
-            });
+            document.getElementById('backToLoginLink').addEventListener('click', showMainLoginUI);
+            cancelLinkingBtn.addEventListener('click', showMainLoginUI);
+
 
             const showMessage = (element, text, type = 'error') => {
                 element.innerHTML = text;
@@ -494,32 +538,12 @@
                 }
             });
 
-            const handleProviderLogin = async (provider, isLinkingFlow = false) => {
+            const handleProviderLogin = async (provider) => {
                 loginMessageDiv.innerHTML = '';
+                linkingErrorMessage.innerHTML = '';
                 try {
                     const result = await auth.signInWithPopup(provider);
                     const user = result.user;
-
-                    if (isLinkingFlow) {
-                        const pendingCredString = sessionStorage.getItem('pendingCred');
-                        if (pendingCredString) {
-                            // Reconstruct the credential from the stored JSON string.
-                            const pendingCred = firebase.auth.OAuthCredential.fromJSON(pendingCredString);
-                            sessionStorage.removeItem('pendingCred');
-
-                            try {
-                                await user.linkWithCredential(pendingCred);
-                                await updateUserAuthMethods(user, pendingCred.providerId);
-                                showMessage(loginMessageDiv, 'Accounts successfully linked! Redirecting...', 'success');
-                                setTimeout(() => handleSuccessfulLogin(user), 1500);
-                                return;
-                            } catch (linkError) {
-                                console.error("Final link error:", linkError);
-                                showMessage(loginMessageDiv, 'Could not link accounts. The other provider may already be linked to a different user.');
-                                return;
-                            }
-                        }
-                    }
                     
                     const userDoc = await db.collection('users').doc(user.uid).get();
                     if (userDoc.exists) {
@@ -534,43 +558,88 @@
                     if (error.code === 'auth/account-exists-with-different-credential') {
                         const pendingCred = error.credential;
                         const email = error.email;
-                        
-                        // Store the credential of the provider the user is trying to link.
                         sessionStorage.setItem('pendingCred', JSON.stringify(pendingCred));
                         
                         const methods = await auth.fetchSignInMethodsForEmail(email);
                         
                         if (methods && methods.length > 0) {
-                            const firstProviderId = methods[0];
-                            const providerName = firstProviderId.split('.')[0].replace(/^\w/, c => c.toUpperCase());
+                            const originalProviderId = methods[0];
+                            const newProviderName = pendingCred.providerId.split('.')[0].replace(/^\w/, c => c.toUpperCase());
                             
-                            let providerToLink;
-                            if (firstProviderId === 'google.com') providerToLink = new firebase.auth.GoogleAuthProvider();
-                            else if (firstProviderId === 'github.com') providerToLink = new firebase.auth.GithubAuthProvider();
-                            else if (firstProviderId === 'microsoft.com') providerToLink = new firebase.auth.OAuthProvider('microsoft.com');
-                            else if (firstProviderId === 'password') {
-                                 const newProviderName = pendingCred.providerId.split('.')[0].replace(/^\w/, c => c.toUpperCase());
-                                 showMessage(loginMessageDiv, `This email is registered with a password. Please sign in with your password, then link your ${newProviderName} account from your profile settings.`, 'warning');
-                                 sessionStorage.removeItem('pendingCred');
-                                 return;
-                            }
+                            loginContainer.style.display = 'none';
+                            rightPanel.style.display = 'none';
+                            linkingContainer.style.display = 'flex';
+                            linkingContainer.style.flexDirection = 'column';
 
-                            if(providerToLink){
-                                const newProviderName = pendingCred.providerId.split('.')[0].replace(/^\w/, c => c.toUpperCase());
-                                showMessage(loginMessageDiv, `This email is connected to ${providerName}. Please sign in with ${providerName} to link your ${newProviderName} account.`, 'warning');
-                                
-                                // Automatically trigger the sign-in for the original provider to start the linking process.
-                                setTimeout(() => {
-                                    handleProviderLogin(providerToLink, true);
-                                }, 2500);
+                            if (originalProviderId === 'password') {
+                                linkingMessage.textContent = `This email is registered with a password. Please sign in with your password to link your ${newProviderName} account.`;
+                                linkingProviderButtonContainer.innerHTML = '';
+                                linkingPasswordContainer.style.display = 'block';
+                                linkingPasswordInput.value = '';
+
+                                linkingPasswordBtn.onclick = async () => {
+                                    const password = linkingPasswordInput.value;
+                                    if (!password) {
+                                        showMessage(linkingErrorMessage, 'Please enter your password.');
+                                        return;
+                                    }
+                                    try {
+                                        const userCredential = await auth.signInWithEmailAndPassword(email, password);
+                                        const user = userCredential.user;
+                                        const pendingCredString = sessionStorage.getItem('pendingCred');
+                                        if (pendingCredString) {
+                                            const reconstructedCred = firebase.auth.OAuthCredential.fromJSON(pendingCredString);
+                                            await user.linkWithCredential(reconstructedCred);
+                                            await updateUserAuthMethods(user, reconstructedCred.providerId);
+                                            showMessage(linkingErrorMessage, 'Accounts successfully linked! Redirecting...', 'success');
+                                            setTimeout(() => handleSuccessfulLogin(user), 1500);
+                                        }
+                                    } catch (linkError) {
+                                        showMessage(linkingErrorMessage, 'Incorrect password. Please try again.');
+                                    }
+                                };
                             } else {
-                                 showMessage(loginMessageDiv, `An account exists with an unknown provider (${providerName}). Please log in with that method.`);
-                                 sessionStorage.removeItem('pendingCred');
-                            }
+                                const originalProviderName = originalProviderId.split('.')[0].replace(/^\w/, c => c.toUpperCase());
+                                linkingMessage.textContent = `This email is already connected to an account with ${originalProviderName}. Please sign in with ${originalProviderName} to link your ${newProviderName} account.`;
+                                linkingPasswordContainer.style.display = 'none';
 
+                                const providerBtn = document.createElement('button');
+                                providerBtn.className = 'btn-google';
+                                let iconSrc = '';
+                                if (originalProviderId.includes('google')) iconSrc = 'images/google-icon.png';
+                                else if (originalProviderId.includes('github')) iconSrc = 'images/github-mark.png';
+                                else if (originalProviderId.includes('microsoft')) iconSrc = '../images/microsoft.png';
+
+                                providerBtn.innerHTML = `<img src="${iconSrc}" alt="${originalProviderName} Icon"> Sign in with ${originalProviderName} & Link`;
+                                linkingProviderButtonContainer.innerHTML = '';
+                                linkingProviderButtonContainer.appendChild(providerBtn);
+
+                                providerBtn.onclick = async () => {
+                                    let providerToLink;
+                                    if (originalProviderId === 'google.com') providerToLink = new firebase.auth.GoogleAuthProvider();
+                                    else if (originalProviderId === 'github.com') providerToLink = new firebase.auth.GithubAuthProvider();
+                                    else if (originalProviderId === 'microsoft.com') providerToLink = new firebase.auth.OAuthProvider('microsoft.com');
+
+                                    if (providerToLink) {
+                                        try {
+                                            const result = await auth.signInWithPopup(providerToLink);
+                                            const user = result.user;
+                                            const pendingCredString = sessionStorage.getItem('pendingCred');
+                                            if (pendingCredString) {
+                                                const reconstructedCred = firebase.auth.OAuthCredential.fromJSON(pendingCredString);
+                                                await user.linkWithCredential(reconstructedCred);
+                                                await updateUserAuthMethods(user, reconstructedCred.providerId);
+                                                showMessage(linkingErrorMessage, 'Accounts successfully linked! Redirecting...', 'success');
+                                                setTimeout(() => handleSuccessfulLogin(user), 1500);
+                                            }
+                                        } catch (linkError) {
+                                            showMessage(linkingErrorMessage, 'Failed to sign in with the original provider. Please try again.');
+                                        }
+                                    }
+                                };
+                            }
                         } else {
                             showMessage(loginMessageDiv, 'An account with this email exists, but we could not determine the sign-in method. Please contact support.');
-                            sessionStorage.removeItem('pendingCred');
                         }
                         return;
                     }
@@ -585,9 +654,7 @@
             githubLoginBtn.addEventListener('click', () => handleProviderLogin(new firebase.auth.GithubAuthProvider()));
             microsoftLoginBtn.addEventListener('click', () => handleProviderLogin(new firebase.auth.OAuthProvider('microsoft.com')));
 
-            loginContainer.style.display = 'flex';
-            loginContainer.style.flexDirection = 'column';
-            resetPasswordContainer.style.display = 'none';
+            showMainLoginUI();
         });
     </script>
 </body>
