@@ -520,10 +520,6 @@
                     <img src="images/github-mark.png" alt="GitHub Icon"> Sign up with GitHub
                 </button>
 
-                <button id="microsoftSignupBtn" class="btn-google">
-                    <img src="../images/microsoft.png" alt="Microsoft Icon"> Sign up with Microsoft
-                </button>
-
                 <p class="oauth-agreement-text">
                     By signing up with third-party providers you agree to this website's 
                     <a href="legal.html" target="_blank">Terms of Service</a> and 
@@ -561,7 +557,6 @@
             const emailSignupBtn = document.getElementById('emailSignupBtn');
             const googleSignupBtn = document.getElementById('googleSignupBtn');
             const githubSignupBtn = document.getElementById('githubSignupBtn');
-            const microsoftSignupBtn = document.getElementById('microsoftSignupBtn');
             const signupForm = document.getElementById('signupForm');
             const signupMessageDiv = document.getElementById('signupMessage');
             const signupPasswordInput = document.getElementById('signupPassword');
@@ -627,7 +622,8 @@
             const createUserDocument = async (user, authMethod, username, explicitEmail = null) => {
                 const emailToStore = explicitEmail || (user && user.email) || null;
                 
-                const isVerified = (authMethod === 'google' || authMethod === 'github' || authMethod === 'microsoft') 
+                // UPDATED: Explicitly set emailVerified to true for OAuth providers.
+                const isVerified = (authMethod === 'google' || authMethod === 'github') 
                     ? true 
                     : !!(user && user.emailVerified);
 
@@ -637,7 +633,7 @@
                         authMethod: authMethod,
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                         username: username,
-                        emailVerified: isVerified
+                        emailVerified: isVerified // Use the determined status
                     });
                     return true;
                 } catch (error) {
@@ -715,20 +711,7 @@
             };
 
             const showOAuthSuccessScreen = (username, email, providerName) => {
-                let iconPath;
-                switch(providerName.toLowerCase()) {
-                    case 'google':
-                        iconPath = 'images/google-icon.png';
-                        break;
-                    case 'github':
-                        iconPath = 'images/github-mark.png';
-                        break;
-                    case 'microsoft':
-                        iconPath = '../images/microsoft.png';
-                        break;
-                    default:
-                        iconPath = '';
-                }
+                const iconPath = providerName.toLowerCase() === 'google' ? 'images/google-icon.png' : 'images/github-mark.png';
                 
                 const successHtml = `
                     <div class="auth-col" style="flex: 1 1 100%; text-align: center;">
@@ -920,12 +903,7 @@
                     } else if (providerName === 'GitHub') {
                         provider = new firebase.auth.GithubAuthProvider();
                         provider.addScope('user:email');
-                    } else if (providerName === 'Microsoft') {
-                        provider = new firebase.auth.OAuthProvider('microsoft.com');
-                        provider.addScope('email');
-                        provider.addScope('profile');
-                    }
-                    else return;
+                    } else return;
 
                     const result = await auth.signInWithPopup(provider);
                     localStorage.removeItem('oauthRedirectInProgress');
@@ -944,11 +922,7 @@
                         }
                     }
                 } finally {
-                    let buttonToReset;
-                    if (providerName === 'Google') buttonToReset = googleSignupBtn;
-                    else if (providerName === 'GitHub') buttonToReset = githubSignupBtn;
-                    else if (providerName === 'Microsoft') buttonToReset = microsoftSignupBtn;
-                    if(buttonToReset) setButtonLoading(buttonToReset, false);
+                    setButtonLoading(providerName === 'Google' ? googleSignupBtn : githubSignupBtn, false);
                 }
             };
 
@@ -964,12 +938,7 @@
                     } else if (providerName === 'GitHub') {
                         provider = new firebase.auth.GithubAuthProvider();
                         provider.addScope('user:email');
-                    } else if (providerName === 'Microsoft') {
-                        provider = new firebase.auth.OAuthProvider('microsoft.com');
-                        provider.addScope('email');
-                        provider.addScope('profile');
-                    }
-                    else return;
+                    } else return;
                     await auth.signInWithRedirect(provider);
                 } catch (err) {
                     console.error('redirect start error', err);
@@ -980,7 +949,7 @@
             const handlePendingRedirectResult = async () => {
                 try {
                     const result = await auth.getRedirectResult();
-                    const providerName = localStorage.getItem('oauthRedirectInProgress') || (result && result.additionalUserInfo && result.additionalUserInfo.providerId && (result.additionalUserInfo.providerId.includes('github') ? 'GitHub' : (result.additionalUserInfo.providerId.includes('microsoft') ? 'Microsoft' : 'Google')));
+                    const providerName = localStorage.getItem('oauthRedirectInProgress') || (result && result.additionalUserInfo && result.additionalUserInfo.providerId && result.additionalUserInfo.providerId.includes('github') ? 'GitHub' : 'Google');
                     if (result && result.user) {
                         await processOAuthResult(result, providerName);
                     }
@@ -1002,11 +971,6 @@
                 startOAuthPopup('GitHub');
             });
 
-            microsoftSignupBtn.addEventListener('click', () => {
-                setButtonLoading(microsoftSignupBtn, true);
-                startOAuthPopup('Microsoft');
-            });
-
             setTimeout(() => {
                 if (localStorage.getItem('oauthRedirectInProgress')) {
                     handlePendingRedirectResult();
@@ -1014,9 +978,7 @@
                     auth.getRedirectResult().then(res => {
                         if (res && res.user) {
                             const providerId = (res && res.additionalUserInfo && res.additionalUserInfo.providerId) || '';
-                            let providerName = 'Google'; // Default
-                            if (providerId.includes('github')) providerName = 'GitHub';
-                            else if (providerId.includes('microsoft')) providerName = 'Microsoft';
+                            const providerName = providerId.includes('github') ? 'GitHub' : 'Google';
                             processOAuthResult(res, providerName);
                         }
                     }).catch(() => {});
