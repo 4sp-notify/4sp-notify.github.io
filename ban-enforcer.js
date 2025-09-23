@@ -1,5 +1,5 @@
- /**
- * ban-enforcer.js (v3.1 - UI & Privacy Update)
+/**
+ * ban-enforcer.js (v3.2 - Fullscreen & UI Update)
  *
  * This script is the primary enforcement mechanism for website bans, now with real-time updates.
  * It uses a Firestore onSnapshot listener to immediately detect changes to a user's ban status.
@@ -11,6 +11,7 @@
  * 3. The listener will fire instantly and again any time the user's ban status is changed on the server.
  * - If BANNED: The shield becomes a visible, persistent overlay with the ban reason. A guard
  * interval prevents tampering via developer tools. The message and home button appear above the shield.
+ * **It will also force the browser to exit any active fullscreen mode.**
  * - If NOT BANNED (or unbanned): The shield, message, and guard are all removed, and scrolling is
  * re-enabled, allowing normal interaction.
  *
@@ -19,7 +20,7 @@
  * 2. It should be included on EVERY page you want to protect.
  */
 
-console.log("Debug: ban-enforcer.js v3.1 (UI & Privacy) script has started.");
+console.log("Debug: ban-enforcer.js v3.2 (Fullscreen & UI) script has started.");
 
 // --- Global variable for the persistence guard interval ---
 let banGuardInterval = null;
@@ -140,6 +141,16 @@ function showBanScreen(banData) {
     // This function contains the logic to create/update all visual ban elements.
     // It is called once and then used by the interval guard.
     const enforceBanVisuals = () => {
+        // --- NEW (v3.2): Force exit from any active fullscreen mode ---
+        // This check runs continuously to prevent the user from re-entering fullscreen.
+        if (document.fullscreenElement) {
+            console.warn("Debug [Guard]: User is in fullscreen mode. Forcing exit.");
+            document.exitFullscreen().catch(err => {
+                // This catch block handles potential errors, though they are unlikely here.
+                console.error("Debug [Guard]: Error trying to exit fullscreen:", err.message);
+            });
+        }
+
         // --- 1. Find or create the main shield ---
         let shield = document.getElementById(shieldId);
         if (!shield) {
@@ -256,10 +267,10 @@ function showBanScreen(banData) {
     // --- Inject Font Awesome for the home button icon ---
     // This is safe to run multiple times; the browser won't load the same stylesheet twice.
     if (!document.querySelector('link[href*="font-awesome"]')) {
-      const faLink = document.createElement('link');
-      faLink.rel = 'stylesheet';
-      faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css';
-      document.head.appendChild(faLink);
+        const faLink = document.createElement('link');
+        faLink.rel = 'stylesheet';
+        faLink.href = 'https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css';
+        document.head.appendChild(faLink);
     }
 
     // Inject the custom font (if not already loaded globally)
@@ -286,4 +297,3 @@ function showBanScreen(banData) {
     if (banGuardInterval) clearInterval(banGuardInterval);
     banGuardInterval = setInterval(enforceBanVisuals, 200);
 }
-
