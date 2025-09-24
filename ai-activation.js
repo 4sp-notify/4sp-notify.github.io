@@ -222,7 +222,11 @@
         const selection = window.getSelection();
         if (selection.rangeCount > 0 && selection.isCollapsed) {
             const range = selection.getRangeAt(0);
-            const nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
+            if (range.startOffset === 0) return;
+            let nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
+            if (nodeBefore && nodeBefore.nodeType === 3 && nodeBefore.textContent === '\u00A0') {
+                 nodeBefore = range.startContainer.childNodes[range.startOffset - 2];
+            }
             if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
                 nodeBefore.classList.add('focused');
             }
@@ -318,15 +322,33 @@
         e.stopPropagation();
         const editor = e.target;
 
-        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) { 
-            const lines = editor.innerHTML.split(/<br.*?>|<div>/);
-            if (lines.length <= 1) {
-                const tempDiv = document.createElement('div');
-                tempDiv.innerHTML = lines[0] || '';
-                const firstLineText = tempDiv.textContent || tempDiv.innerText;
-                if (firstLineText.length >= FIRST_LINE_CHAR_LIMIT) {
-                    e.preventDefault();
-                    return;
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0) {
+                const range = selection.getRangeAt(0);
+                const container = range.startContainer;
+                let isFirstLine = true;
+                
+                let parent = container.nodeType === 3 ? container.parentNode : container;
+                while (parent && parent !== editor) {
+                    if (parent.previousSibling) {
+                        isFirstLine = false;
+                        break;
+                    }
+                    parent = parent.parentNode;
+                }
+                
+                if (isFirstLine) {
+                    const tempDiv = document.createElement('div');
+                    const firstLineNode = editor.childNodes[0];
+                    if (firstLineNode) {
+                        tempDiv.appendChild(firstLineNode.cloneNode(true));
+                         const firstLineText = tempDiv.innerText;
+                        if (firstLineText.length >= FIRST_LINE_CHAR_LIMIT) {
+                            e.preventDefault();
+                            document.execCommand('insertLineBreak');
+                        }
+                    }
                 }
             }
         }
@@ -335,7 +357,12 @@
             const selection = window.getSelection();
             if (selection.rangeCount > 0 && selection.isCollapsed) {
                 const range = selection.getRangeAt(0);
-                const nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
+                 if (range.startOffset === 0 && range.startContainer === editor) return;
+                
+                let nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
+                if (range.startOffset === 0) {
+                    nodeBefore = range.startContainer.previousSibling;
+                }
 
                 if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
                     e.preventDefault();
@@ -494,24 +521,6 @@
                 font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box;
             }
             #ai-container.active { opacity: 1; }
-            #ai-brand-title {
-                position: absolute; top: 25px; left: 30px; font-family: 'PrimaryFont', sans-serif;
-                font-size: 24px; font-weight: bold;
-                background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
-                -webkit-background-clip: text; background-clip: text; color: transparent;
-                animation: brand-slide 10s linear infinite; background-size: 400% 100%;
-                opacity: 1; transform: translateY(0); transition: opacity 0.5s 0.2s, transform 0.5s 0.2s;
-            }
-            #ai-container.chat-active #ai-brand-title { opacity: 0; pointer-events: none; }
-            #ai-brand-title span { animation: brand-pulse 2s ease-in-out infinite; display: inline-block; }
-            #ai-persistent-title {
-                position: absolute; top: 28px; left: 30px; font-family: 'secondaryfont', sans-serif;
-                font-size: 18px; font-weight: bold;
-                color: white;
-                opacity: 0; pointer-events: none; transition: opacity 0.5s 0.2s;
-                animation: title-pulse 4s linear infinite;
-            }
-            #ai-container.chat-active #ai-persistent-title { opacity: 1; pointer-events: auto; }
             #ai-welcome-message {
                 position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                 text-align: center; color: rgba(255,255,255,0.5);
@@ -555,7 +564,7 @@
                 backdrop-filter: blur(20px);
                 -webkit-backdrop-filter: blur(20px);
                 animation: glow 2.5s infinite;
-                animation-play-state: paused;
+                animation-play-state: running;
                 cursor: text;
                 border: 1px solid rgba(255, 255, 255, 0.2);
             }
@@ -606,8 +615,6 @@
             @keyframes brand-slide { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
             @keyframes brand-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
             @keyframes welcome-fade { 0% { opacity: 1; } 100% { opacity: 0; } }
-            @keyframes glisten { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
-            @keyframes title-pulse { 0%, 100% { text-shadow: 0 0 7px var(--ai-blue); } 25% { text-shadow: 0 0 7px var(--ai-green); } 50% { text-shadow: 0 0 7px var(--ai-yellow); } 75% { text-shadow: 0 0 7px var(--ai-red); } }
         `;
         document.head.appendChild(style);
     }
