@@ -4,24 +4,21 @@
  * Injects a fully-featured AI chat interface into the current page.
  *
  * Activation:
- * - Press Shift + Ctrl + A to toggle the AI interface.
+ * - Chromebook: Search + A
+ * - Other OS: Ctrl + A
  *
  * Features:
  * - A dark, heavily blurred overlay for focus mode with enhanced animations.
  * - Fading effect on the top and bottom of the scrollable chat view.
- * - An introductory welcome message that fades out, now with location-sharing notice.
- * - Animated "4SP - AI MODE" branding, now centered.
+ * - An introductory welcome message that fades out, with location-sharing notice.
+ * - Animated "4SP - AI MODE" branding in the top-left corner.
  * - Chat history for contextual conversations within a session.
  * - Automatically sends user's general location (state/country) with the first message.
  * - A dynamic, WYSIWYG contenteditable input for visual math editing.
  * - A "math mode" touchpad for easy input of formatted symbols and functions.
  * - AI responses render Markdown, LaTeX-style math ($...$), and code blocks.
- * - AI response bubbles feature a Gemini-style animated gradient glow.
  * - Communicates with the Google AI API (Gemini) to get answers.
- * - A 5-second cooldown between requests to prevent spamming.
- * - A character cap of 500 characters per user message.
  * - An 'X' button to easily exit the AI mode.
- * - All styles and HTML are injected dynamically, requiring no external files.
  */
 
 (function() {
@@ -46,16 +43,15 @@
             navigator.geolocation.getCurrentPosition(async (position) => {
                 const { latitude, longitude } = position.coords;
                 try {
-                    // Using a free, no-key-required reverse geocoding service
                     const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
                     if (!response.ok) return;
                     const data = await response.json();
                     if (data && data.address) {
                         let locationString = '';
                         if (data.address.country_code === 'us') {
-                            locationString = data.address.state; // e.g., "Ohio"
+                            locationString = data.address.state;
                         } else {
-                            locationString = data.address.country; // e.g., "Canada"
+                            locationString = data.address.country;
                         }
                         localStorage.setItem('ai-user-location', locationString);
                     }
@@ -67,7 +63,6 @@
             });
         }
     }
-    // Get location as soon as the script is injected and ready.
     getLocationOnLoad();
 
 
@@ -75,7 +70,23 @@
      * Handles the keyboard shortcut for activating/deactivating the AI.
      */
     function handleKeyDown(e) {
-        if (e.shiftKey && e.ctrlKey && e.key.toLowerCase() === 'a') {
+        const isChromebook = /CrOS/.test(navigator.userAgent);
+        let comboPressed = false;
+
+        if (isChromebook) {
+            // Search key on Chromebooks is the meta key.
+            if (e.metaKey && e.key.toLowerCase() === 'a') {
+                comboPressed = true;
+            }
+        } else {
+            // Ctrl for other computers.
+            if (e.ctrlKey && e.key.toLowerCase() === 'a') {
+                comboPressed = true;
+            }
+        }
+        
+        // Prevent default browser actions like "Select All".
+        if (comboPressed) {
             e.preventDefault();
             toggleAIInterface();
         }
@@ -100,10 +111,20 @@
         const container = document.createElement('div');
         container.id = 'ai-container';
         
+        const brandTitle = document.createElement('div');
+        brandTitle.id = 'ai-brand-title';
+        const brandText = "4SP - AI MODE";
+        brandText.split('').forEach(char => {
+            const span = document.createElement('span');
+            span.textContent = char;
+            span.style.animationDelay = `${Math.random() * 2}s`;
+            brandTitle.appendChild(span);
+        });
+
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
         welcomeMessage.innerHTML = `
-            <div id="ai-brand-title"></div>
+            <h2>Welcome to AI Mode</h2>
             <p>This is a beta feature. To improve your experience, your general location (state or country) will be shared with your first message. You may be subject to message limits.</p>
         `;
 
@@ -143,22 +164,13 @@
         inputWrapper.appendChild(mathModeToggle);
         inputWrapper.appendChild(createMathPad());
         
+        container.appendChild(brandTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
 
         document.body.appendChild(container);
-        
-        // Add animated text to the brand title after it's in the DOM
-        const brandTitle = document.getElementById('ai-brand-title');
-        const brandText = "4SP - AI MODE";
-        brandText.split('').forEach(char => {
-            const span = document.createElement('span');
-            span.textContent = char;
-            span.style.animationDelay = `${Math.random() * 2}s`;
-            brandTitle.appendChild(span);
-        });
 
         setTimeout(() => {
             container.classList.add('active');
@@ -239,7 +251,6 @@
             const now = Date.now();
             if (now - lastRequestTime < COOLDOWN_PERIOD) return;
 
-            // If it's the first message, prepend location info.
             if (chatHistory.length === 0) {
                 const location = localStorage.getItem('ai-user-location');
                 if (location) {
@@ -380,20 +391,23 @@
                 font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box;
             }
             #ai-container.active { opacity: 1; }
+            #ai-brand-title {
+                position: absolute; top: 25px; left: 30px; font-family: 'PrimaryFont', sans-serif;
+                font-size: 24px; font-weight: bold;
+                background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
+                -webkit-background-clip: text; background-clip: text; color: transparent;
+                animation: brand-slide 10s linear infinite; background-size: 400% 100%;
+                opacity: 0; transform: translateY(-20px); transition: opacity 0.5s 0.2s, transform 0.5s 0.2s;
+            }
+            #ai-container.active #ai-brand-title { opacity: 1; transform: translateY(0); }
+            #ai-brand-title span { animation: brand-pulse 2s ease-in-out infinite; display: inline-block; }
             #ai-welcome-message {
                 position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                 text-align: center; color: rgba(255,255,255,0.5);
                 opacity: 0; animation: welcome-fade 6s forwards; transition: opacity 0.5s;
                 width: 100%;
             }
-            #ai-brand-title {
-                font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; font-weight: bold;
-                background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
-                -webkit-background-clip: text; background-clip: text; color: transparent;
-                animation: brand-slide 10s linear infinite; background-size: 400% 100%;
-                margin-bottom: 10px;
-            }
-            #ai-brand-title span { animation: brand-pulse 2s ease-in-out infinite; display: inline-block; }
+            #ai-welcome-message h2 { font-size: 2.5em; margin: 0; color: #fff; }
             #ai-welcome-message.faded { opacity: 0 !important; pointer-events: none; }
             #ai-welcome-message p { font-size: 0.9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s ease, transform 0.3s ease; }
