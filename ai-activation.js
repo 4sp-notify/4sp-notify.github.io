@@ -35,6 +35,8 @@
     let lastRequestTime = 0;
     const COOLDOWN_PERIOD = 5000; // 5 seconds in milliseconds
     let chatHistory = [];
+    let typingTimeout = null;
+    let lastKeystrokeTime = 0;
     const latexSymbolMap = {
         '\\pi': 'π', '\\theta': 'θ', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
         '\\delta': 'δ', '\\epsilon': 'ε', '\\infty': '∞', '\\pm': '±',
@@ -186,6 +188,7 @@
     function deactivateAI() {
         const container = document.getElementById('ai-container');
         if (container) {
+            clearTimeout(typingTimeout);
             container.classList.remove('active');
             setTimeout(() => {
                 container.remove();
@@ -225,8 +228,27 @@
         fadeOutWelcomeMessage();
         const editor = e.target;
         
-        editor.querySelectorAll('div:not(:last-child)').forEach(div => {
-            if (div.innerHTML.trim() === '' || div.innerHTML === '<br>') {
+        const wrapper = document.getElementById('ai-input-wrapper');
+        const now = Date.now();
+        const timeDiff = now - (lastKeystrokeTime || now);
+        lastKeystrokeTime = now;
+
+        wrapper.style.animationPlayState = 'running';
+        if (timeDiff < 150) { // Fast typing
+            wrapper.style.animationDuration = '0.7s';
+        } else { // Slower typing
+            wrapper.style.animationDuration = '1.8s';
+        }
+        clearTimeout(typingTimeout);
+        typingTimeout = setTimeout(() => {
+            const activeWrapper = document.getElementById('ai-input-wrapper');
+            if (activeWrapper) {
+                activeWrapper.style.animationPlayState = 'paused';
+            }
+        }, 1500);
+
+        editor.querySelectorAll('div').forEach(div => {
+            if (!div.querySelector('.ai-frac') && (div.innerHTML.trim() === '' || div.innerHTML === '<br>')) {
                 div.remove();
             }
         });
@@ -290,7 +312,13 @@
             const selection = window.getSelection();
             if (selection.rangeCount > 0 && selection.isCollapsed) {
                 const range = selection.getRangeAt(0);
-                const nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
+                let nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
+                if (nodeBefore && nodeBefore.nodeType === 3 && nodeBefore.textContent === '\u00A0') {
+                    // It's a non-breaking space, often used to position cursor after an element.
+                    // Look before this space.
+                    nodeBefore = range.startContainer.childNodes[range.startOffset - 2];
+                }
+
                 if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
                     e.preventDefault();
                     nodeBefore.remove();
@@ -412,7 +440,7 @@
         bar.id = 'ai-options-bar';
         const buttons = [
             { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
-            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>' }, 
+            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>&nbsp;' }, 
             { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
             { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' },
             { t: '<', v: '<' }, { t: '>', v: '>' }, { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
@@ -478,8 +506,8 @@
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite, message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
             .ai-response-content pre { background: #0c0d10; border: 1px solid #222; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: monospace; }
             .ai-math-inline, .user-message { color: #a5d6ff; font-family: monospace; font-size: 1.1em; }
-            .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em; border-radius: 5px; transition: box-shadow 0.2s; }
-            .ai-frac.focused { box-shadow: 0 0 0 2px var(--ai-blue); }
+            .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em; border-radius: 5px; transition: box-shadow 0.2s, transform 0.2s; }
+            .ai-frac.focused { box-shadow: 0 0 0 2px var(--ai-blue); transform: scale(1.05); }
             .ai-frac > sup, .ai-frac > sub { display: block; min-width: 1ch; }
             .ai-frac > sup { border-bottom: 1px solid currentColor; padding-bottom: 0.15em; }
             .ai-frac > sub { padding-top: 0.15em; }
@@ -498,20 +526,19 @@
                 backdrop-filter: blur(20px);
                 -webkit-backdrop-filter: blur(20px);
                 animation: glow 2.5s infinite;
+                animation-play-state: paused;
                 cursor: text;
                 border: 1px solid rgba(255, 255, 255, 0.2);
             }
             #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
             #ai-input {
                 min-height: 50px;
-                max-height: 200px;
                 color: white;
                 font-size: 1.1em;
                 padding: 12px 50px 12px 20px;
                 box-sizing: border-box;
                 word-wrap: break-word;
                 outline: none;
-                overflow-y: hidden;
             }
             #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; }
             #ai-math-toggle { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
