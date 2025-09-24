@@ -396,7 +396,8 @@
             });
             processedMath = processedMath
                 .replace(/(\w+)\^(\w+)/g, '$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g, '&radic;($1)')
-                .replace(/\\frac\{(.+?)\}\{(.+?)\}/g, '<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');
+                .replace(/\\frac\{(.+?)\}\{(.+?)\}/g, '<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>')
+                .replace(/\\boxed\{(.+?)\}/g, '<span class="ai-boxed-math">$1</span>');
             return `<span class="ai-math-inline">${processedMath}</span>`;
         });
         html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*([^\n\*]+)\*/g, '<strong>$1</strong>')
@@ -524,7 +525,9 @@
             .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em; border-radius: 5px; transition: box-shadow 0.2s, transform 0.2s; }
             .ai-frac.focused { box-shadow: 0 0 0 2px var(--ai-blue); transform: scale(1.1); }
             .ai-frac > sup { border-bottom: 1px solid currentColor; }
+            .ai-boxed-math { border: 1px solid currentColor; padding: 2px 5px; border-radius: 4px; display: inline-block; }
             #ai-input sup, #ai-input sub { outline: none; }
+            #ai-input > *:first-child { margin-top: 0; }
             #ai-input-wrapper {
                 flex-shrink: 0; position: relative; opacity: 0; transform: translateY(100px);
                 transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.5s ease-in-out;
