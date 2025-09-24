@@ -9,9 +9,10 @@
  * Features:
  * - A dark, heavily blurred overlay for focus mode with enhanced animations.
  * - Fading effect on the top and bottom of the scrollable chat view.
- * - An introductory welcome message that fades out.
- * - Animated "4SP - AI MODE" branding in the top-left corner.
+ * - An introductory welcome message that fades out, now with location-sharing notice.
+ * - Animated "4SP - AI MODE" branding, now centered.
  * - Chat history for contextual conversations within a session.
+ * - Automatically sends user's general location (state/country) with the first message.
  * - A dynamic, WYSIWYG contenteditable input for visual math editing.
  * - A "math mode" touchpad for easy input of formatted symbols and functions.
  * - AI responses render Markdown, LaTeX-style math ($...$), and code blocks.
@@ -36,6 +37,39 @@
     let lastRequestTime = 0;
     const COOLDOWN_PERIOD = 5000; // 5 seconds in milliseconds
     let chatHistory = [];
+
+    /**
+     * Tries to get the user's location on script load and stores it.
+     */
+    function getLocationOnLoad() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(async (position) => {
+                const { latitude, longitude } = position.coords;
+                try {
+                    // Using a free, no-key-required reverse geocoding service
+                    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    if (data && data.address) {
+                        let locationString = '';
+                        if (data.address.country_code === 'us') {
+                            locationString = data.address.state; // e.g., "Ohio"
+                        } else {
+                            locationString = data.address.country; // e.g., "Canada"
+                        }
+                        localStorage.setItem('ai-user-location', locationString);
+                    }
+                } catch (error) {
+                    console.error("AI location feature: Reverse geocoding failed.", error);
+                }
+            }, () => {
+                console.warn("AI location feature: User denied geolocation permission.");
+            });
+        }
+    }
+    // Get location as soon as the script is injected and ready.
+    getLocationOnLoad();
+
 
     /**
      * Handles the keyboard shortcut for activating/deactivating the AI.
@@ -65,22 +99,12 @@
 
         const container = document.createElement('div');
         container.id = 'ai-container';
-
-        const brandTitle = document.createElement('div');
-        brandTitle.id = 'ai-brand-title';
-        const brandText = "4SP - AI MODE";
-        brandText.split('').forEach(char => {
-            const span = document.createElement('span');
-            span.textContent = char;
-            span.style.animationDelay = `${Math.random() * 2}s`;
-            brandTitle.appendChild(span);
-        });
         
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
         welcomeMessage.innerHTML = `
-            <h2>4SP AI MODE</h2>
-            <p>This is a beta feature. You may be subject to message limits.</p>
+            <div id="ai-brand-title"></div>
+            <p>This is a beta feature. To improve your experience, your general location (state or country) will be shared with your first message. You may be subject to message limits.</p>
         `;
 
         const closeButton = document.createElement('div');
@@ -119,13 +143,22 @@
         inputWrapper.appendChild(mathModeToggle);
         inputWrapper.appendChild(createMathPad());
         
-        container.appendChild(brandTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
 
         document.body.appendChild(container);
+        
+        // Add animated text to the brand title after it's in the DOM
+        const brandTitle = document.getElementById('ai-brand-title');
+        const brandText = "4SP - AI MODE";
+        brandText.split('').forEach(char => {
+            const span = document.createElement('span');
+            span.textContent = char;
+            span.style.animationDelay = `${Math.random() * 2}s`;
+            brandTitle.appendChild(span);
+        });
 
         setTimeout(() => {
             container.classList.add('active');
@@ -201,10 +234,18 @@
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             fadeOutWelcomeMessage();
-            const query = parseInputForAPI(editor.innerHTML);
+            let query = parseInputForAPI(editor.innerHTML);
             if (!query || isRequestPending) return;
             const now = Date.now();
             if (now - lastRequestTime < COOLDOWN_PERIOD) return;
+
+            // If it's the first message, prepend location info.
+            if (chatHistory.length === 0) {
+                const location = localStorage.getItem('ai-user-location');
+                if (location) {
+                    query = `(User is located in ${location}) ${query}`;
+                }
+            }
 
             isRequestPending = true;
             lastRequestTime = now;
@@ -339,24 +380,22 @@
                 font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box;
             }
             #ai-container.active { opacity: 1; }
-            #ai-brand-title {
-                position: absolute; top: 25px; left: 30px; font-family: 'PrimaryFont', sans-serif;
-                font-size: 24px; font-weight: bold;
-                background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
-                -webkit-background-clip: text; background-clip: text; color: transparent;
-                animation: brand-slide 10s linear infinite; background-size: 400% 100%;
-                opacity: 0; transform: translateY(-20px); transition: opacity 0.5s 0.2s, transform 0.5s 0.2s;
-            }
-            #ai-container.active #ai-brand-title { opacity: 1; transform: translateY(0); }
-            #ai-brand-title span { animation: brand-pulse 2s ease-in-out infinite; display: inline-block; }
             #ai-welcome-message {
                 position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                 text-align: center; color: rgba(255,255,255,0.5);
                 opacity: 0; animation: welcome-fade 6s forwards; transition: opacity 0.5s;
+                width: 100%;
             }
-            #ai-welcome-message.faded { opacity: 0 !important; }
-            #ai-welcome-message h2 { font-size: 2.5em; margin: 0; color: #fff; }
-            #ai-welcome-message p { font-size: 1.1em; margin-top: 10px; }
+            #ai-brand-title {
+                font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; font-weight: bold;
+                background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
+                -webkit-background-clip: text; background-clip: text; color: transparent;
+                animation: brand-slide 10s linear infinite; background-size: 400% 100%;
+                margin-bottom: 10px;
+            }
+            #ai-brand-title span { animation: brand-pulse 2s ease-in-out infinite; display: inline-block; }
+            #ai-welcome-message.faded { opacity: 0 !important; pointer-events: none; }
+            #ai-welcome-message p { font-size: 0.9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s ease, transform 0.3s ease; }
             #ai-close-button:hover { color: white; transform: scale(1.1); }
             #ai-response-container {
@@ -390,7 +429,7 @@
             @keyframes glow { 0%, 100% { box-shadow: 0 0 5px rgba(255, 255, 255, 0.2), 0 0 10px rgba(255, 255, 255, 0.1); } 50% { box-shadow: 0 0 15px rgba(255, 255, 255, 0.5), 0 0 25px rgba(255, 255, 255, 0.3); } }
             @keyframes gemini-glow { 0%, 100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
             @keyframes spin { to { transform: rotate(360deg); } }
-            @keyframes message-pop-in { 0% { opacity: 0; transform: scale(0.95); } 100% { opacity: 1; transform: scale(1); } }
+            @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(0.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
             @keyframes brand-slide { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
             @keyframes brand-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
             @keyframes welcome-fade { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.95); } 15% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 85% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -50%) scale(0.95); } }
