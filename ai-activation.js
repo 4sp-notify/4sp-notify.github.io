@@ -11,6 +11,7 @@
  *
  * Features:
  * - A dark, heavily blurred overlay for focus mode with enhanced animations.
+ * - Dynamic input box glow that pulses based on typing speed.
  * - Fading effect on the top and bottom of the scrollable chat view.
  * - An introductory welcome message that fades out, with location-sharing notice.
  * - Animated "4SP - AI MODE" branding in the top-left corner.
@@ -247,8 +248,8 @@
             }
         }, 1500);
 
-        editor.querySelectorAll('div').forEach(div => {
-            if (!div.querySelector('.ai-frac') && (div.innerHTML.trim() === '' || div.innerHTML === '<br>')) {
+        editor.querySelectorAll('div:not(:last-child)').forEach(div => {
+            if (div.innerHTML.trim() === '' || div.innerHTML === '<br>') {
                 div.remove();
             }
         });
@@ -312,12 +313,7 @@
             const selection = window.getSelection();
             if (selection.rangeCount > 0 && selection.isCollapsed) {
                 const range = selection.getRangeAt(0);
-                let nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
-                if (nodeBefore && nodeBefore.nodeType === 3 && nodeBefore.textContent === '\u00A0') {
-                    // It's a non-breaking space, often used to position cursor after an element.
-                    // Look before this space.
-                    nodeBefore = range.startContainer.childNodes[range.startOffset - 2];
-                }
+                const nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
 
                 if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
                     e.preventDefault();
