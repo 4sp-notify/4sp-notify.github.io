@@ -213,10 +213,12 @@
         const editor = e.target;
         const charCounter = document.getElementById('ai-char-counter');
         const placeholder = document.getElementById('ai-input-placeholder');
-        const rawText = editor.innerText;
+        
+        // Use textContent for a more reliable character count that ignores formatting.
+        let rawText = editor.textContent;
 
         if (charCounter) charCounter.textContent = `${rawText.length} / ${USER_CHAR_LIMIT}`;
-        if (placeholder) placeholder.style.display = rawText.length > 0 || editor.innerHTML.includes('<img') || editor.innerHTML.includes('<sup>') ? 'none' : 'block';
+        if (placeholder) placeholder.style.display = rawText.length > 0 ? 'none' : 'block';
     }
 
     /**
@@ -359,7 +361,7 @@
         pad.id = 'ai-math-pad';
         const buttons = [
             { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '&times;', v: '&times;' }, { t: '&divide;', v: '&divide;' },
-            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup>&nbsp;</sup><span>&frasl;</span><sub>&nbsp;</sub></span>' }, 
+            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><span>&frasl;</span><sub contenteditable="true"></sub></span>' }, 
             { t: '&radic;', v: '&radic;()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
             { t: '&pi;', v: '&pi;' }, { t: '(', v: '(' }, { t: ')', v: ')' }, { t: '=', v: '=' },
         ];
@@ -425,7 +427,7 @@
             .ai-response-content pre { background: #0c0d10; border: 1px solid #222; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: monospace; }
             .ai-math-inline, .user-message { color: #a5d6ff; font-family: monospace; font-size: 1.1em; }
             .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0 5px; border-radius: 3px; }
-            .ai-frac > sup, .ai-frac > sub { display: block; }
+            .ai-frac > sup, .ai-frac > sub { display: block; min-width: 1ch; }
             .ai-frac > sup { border-bottom: 1px solid currentColor; }
             #ai-input sup, #ai-input sub { font-family: 'secondaryfont', sans-serif; }
             #ai-input-wrapper { flex-shrink: 0; position: relative; opacity: 0; transform: translateY(100px); transition: opacity 0.6s 0.3s, transform 0.6s 0.3s cubic-bezier(0.4, 0, 0.2, 1); margin: 15px auto 30px; width: 90%; max-width: 800px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 25px; background: rgba(10, 10, 10, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 2.5s infinite; cursor: text; }
