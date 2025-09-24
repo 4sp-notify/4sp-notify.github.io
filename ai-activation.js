@@ -9,8 +9,8 @@
  * Features:
  * - A dark, heavily blurred overlay for focus mode.
  * - A dynamic, multi-line textarea at the bottom with a white glow effect.
- * - AI responses appear in a scrollable area above, with support for Markdown (bold, lists).
- * - AI response bubbles feature a Gemini-style animated gradient glow.
+ * - AI responses appear in a top-aligned, scrollable area with support for Markdown.
+ * - AI response bubbles feature a Gemini-style animated gradient glow that respects borders.
  * - Communicates with the Google AI API (Gemini) to get answers.
  * - A 5-second cooldown between requests to prevent spamming.
  * - A character cap of 500 characters per user message.
@@ -90,7 +90,7 @@
 
         setTimeout(() => {
             container.style.opacity = '1';
-            inputWrapper.style.transform = 'translate(-50%, 0)';
+            inputWrapper.style.transform = 'translateY(0)';
             inputWrapper.style.opacity = '1';
         }, 10);
 
@@ -262,7 +262,8 @@
                 transition: opacity 0.5s cubic-bezier(0.25, 1, 0.5, 1);
                 font-family: 'secondaryfont', sans-serif;
                 display: flex; flex-direction: column;
-                justify-content: flex-end;
+                padding-top: 70px;
+                box-sizing: border-box;
             }
 
             #ai-close-button {
@@ -273,12 +274,11 @@
             #ai-close-button:hover { color: white; transform: scale(1.1); }
 
             #ai-response-container {
+                flex: 1 1 auto;
+                overflow-y: auto;
                 width: 100%; max-width: 800px; margin: 0 auto;
-                max-height: calc(100vh - 150px);
-                overflow-y: auto; display: flex; flex-direction: column;
+                display: flex; flex-direction: column;
                 gap: 15px; padding: 20px;
-                -webkit-mask-image: linear-gradient(transparent 0%, black 5%);
-                mask-image: linear-gradient(transparent 0%, black 5%);
             }
 
             .ai-message-bubble {
@@ -292,24 +292,24 @@
                 overflow-wrap: break-word;
             }
             .user-message { align-self: flex-end; background: rgba(40, 45, 50, 0.8); }
-            .gemini-response { align-self: flex-start; max-height: 40vh; overflow-y: auto; }
+            .gemini-response { align-self: flex-start; }
             
             .gemini-response.loading {
-                border-image: linear-gradient(90deg, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue)) 1;
-                animation: gemini-glow 3s linear infinite, fadeIn 0.5s ease forwards;
-                background-size: 200% 200%;
+                border: 1px solid transparent;
+                animation: gemini-glow 4s linear infinite, fadeIn 0.5s ease forwards;
             }
 
             .ai-response-content ul { padding-left: 20px; margin: 10px 0; }
             .ai-response-content li { margin-bottom: 5px; }
 
             #ai-input-wrapper {
-                position: relative; bottom: 30px; left: 50%;
-                transform: translate(-50%, 100px);
+                flex-shrink: 0;
+                position: relative;
+                transform: translateY(150px);
+                margin: 15px auto 30px;
                 width: 90%; max-width: 800px;
-                padding: 5px; opacity: 0;
+                opacity: 0;
                 transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.6s ease;
-                animation: glow 2.5s infinite;
             }
 
             #ai-input {
@@ -321,6 +321,7 @@
                 color: white; font-size: 1.1em;
                 padding: 12px 20px; box-sizing: border-box; resize: none;
                 overflow-y: auto; outline: none;
+                animation: glow 2.5s infinite;
             }
             
             #ai-char-counter {
@@ -343,9 +344,11 @@
                 100% { box-shadow: 0 0 5px rgba(255, 255, 255, 0.2), 0 0 10px rgba(255, 255, 255, 0.1); }
             }
             @keyframes gemini-glow {
-                0% { background-position: 0% 50%; }
-                50% { background-position: 100% 50%; }
-                100% { background-position: 0% 50%; }
+                0% { box-shadow: 0 0 8px 2px var(--ai-blue); }
+                25% { box-shadow: 0 0 8px 2px var(--ai-green); }
+                50% { box-shadow: 0 0 8px 2px var(--ai-yellow); }
+                75% { box-shadow: 0 0 8px 2px var(--ai-red); }
+                100% { box-shadow: 0 0 8px 2px var(--ai-blue); }
             }
             @keyframes spin { to { transform: rotate(360deg); } }
             @keyframes fadeIn { to { opacity: 1; } }
