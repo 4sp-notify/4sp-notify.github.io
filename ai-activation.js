@@ -16,9 +16,9 @@
  * - Animated "4SP - AI MODE" branding in the top-left corner.
  * - Chat history for contextual conversations within a session.
  * - Automatically sends user's general location (state/country) with the first message.
- * - A dynamic, WYSIWYG contenteditable input for visual math editing.
- * - A "math mode" touchpad for easy input of formatted symbols and functions.
- * - AI responses render Markdown, LaTeX-style math ($...$), and code blocks.
+ * - A dynamic, WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
+ * - A horizontal, scrollable math options bar with symbols and inequalities.
+ * - AI responses render Markdown, LaTeX-style math, and code blocks.
  * - Communicates with the Google AI API (Gemini) to get answers.
  */
 
@@ -35,6 +35,14 @@
     let lastRequestTime = 0;
     const COOLDOWN_PERIOD = 5000; // 5 seconds in milliseconds
     let chatHistory = [];
+    const latexSymbolMap = {
+        '\\pi': 'π', '\\theta': 'θ', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
+        '\\delta': 'δ', '\\epsilon': 'ε', '\\infty': '∞', '\\pm': '±',
+        '\\times': '×', '\\div': '÷', '\\cdot': '·', '\\degree': '°',
+        '\\le': '≤', '\\ge': '≥', '\\ne': '≠',
+        '\\approx': '≈', '\\equiv': '≡',
+        '\\therefore': '∴', '\\because': '∵',
+    };
 
     /**
      * Tries to get the user's location on script load and stores it.
@@ -76,27 +84,17 @@
 
             if (isAIActive) {
                 const editor = document.getElementById('ai-input');
-                // If AI is active and the input is empty (and no text is selected), Ctrl+C closes it.
                 if (editor && editor.innerText.trim().length === 0 && selection.length === 0) {
                     e.preventDefault();
                     deactivateAI();
                 }
-                // Otherwise, let the default copy action proceed.
             } else {
-                // If AI is not active and no text on the page is selected, Ctrl+C opens it.
                 if (selection.length === 0) {
                     e.preventDefault();
                     activateAI();
                 }
             }
         }
-    }
-
-    /**
-     * Toggles the visibility of the AI interface.
-     */
-    function toggleAIInterface() {
-        isAIActive ? deactivateAI() : activateAI();
     }
 
     /**
@@ -162,7 +160,7 @@
         inputWrapper.appendChild(placeholder);
         inputWrapper.appendChild(charCounter);
         inputWrapper.appendChild(mathModeToggle);
-        inputWrapper.appendChild(createMathPad());
+        inputWrapper.appendChild(createOptionsBar());
         
         container.appendChild(brandTitle);
         container.appendChild(welcomeMessage);
@@ -211,15 +209,39 @@
     function handleContentEditableInput(e) {
         fadeOutWelcomeMessage();
         const editor = e.target;
+        
+        // --- Live LaTeX to Symbol Conversion ---
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            const node = range.startContainer;
+            if (node.nodeType === 3) { // Text node
+                const textContent = node.textContent;
+                const textBeforeCursor = textContent.slice(0, range.startOffset);
+                const match = textBeforeCursor.match(/(\\[a-zA-Z]+)\s$/);
+                if (match) {
+                    const command = match[1];
+                    const symbol = latexSymbolMap[command];
+                    if (symbol) {
+                        const commandStartIndex = textBeforeCursor.lastIndexOf(command);
+                        node.textContent = textContent.slice(0, commandStartIndex) + symbol + textContent.slice(range.startOffset);
+                        
+                        // Restore cursor position
+                        range.setStart(node, commandStartIndex + 1);
+                        range.collapse(true);
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                    }
+                }
+            }
+        }
+        
+        // --- Update UI ---
         const charCounter = document.getElementById('ai-char-counter');
         const placeholder = document.getElementById('ai-input-placeholder');
-        
         const rawText = editor.innerText.trim();
-
         if (charCounter) charCounter.textContent = `${rawText.length} / ${USER_CHAR_LIMIT}`;
-        if (placeholder) {
-             placeholder.style.display = (rawText.length > 0 || editor.querySelector('.ai-frac')) ? 'none' : 'block';
-        }
+        if (placeholder) placeholder.style.display = (rawText.length > 0 || editor.querySelector('.ai-frac')) ? 'none' : 'block';
     }
 
     /**
@@ -291,10 +313,13 @@
         let html = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
         html = html.replace(/```([\s\S]*?)```/g, (match, code) => `<pre><code>${code.trim()}</code></pre>`);
         html = html.replace(/\$([^\$]+)\$/g, (match, math) => {
-            const processedMath = math
-                .replace(/\\times/g, '&times;').replace(/\\pi/g, '&pi;')
+            let processedMath = math;
+            Object.keys(latexSymbolMap).forEach(key => {
+                processedMath = processedMath.replace(new RegExp(key.replace(/\\/g, '\\\\'), 'g'), latexSymbolMap[key]);
+            });
+            processedMath = processedMath
                 .replace(/(\w+)\^(\w+)/g, '$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g, '&radic;($1)')
-                .replace(/\\frac\{(.+?)\}\{(.+?)\}/g, '<span class="ai-frac"><sup>$1</sup><span>&frasl;</span><sub>$2</sub></span>');
+                .replace(/\\frac\{(.+?)\}\{(.+?)\}/g, '<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');
             return `<span class="ai-math-inline">${processedMath}</span>`;
         });
         html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*([^\n\*]+)\*/g, '<strong>$1</strong>')
@@ -336,17 +361,10 @@
     
     function toggleMathMode() {
         isMathModeActive = !isMathModeActive;
-        const mathPad = document.getElementById('ai-math-pad');
+        const inputWrapper = document.getElementById('ai-input-wrapper');
         const toggleBtn = document.getElementById('ai-math-toggle');
-        if (isMathModeActive) {
-            mathPad.style.display = 'grid';
-            toggleBtn.classList.add('active');
-            setTimeout(() => mathPad.style.opacity = '1', 10);
-        } else {
-            mathPad.style.opacity = '0';
-            toggleBtn.classList.remove('active');
-            setTimeout(() => mathPad.style.display = 'none', 300);
-        }
+        inputWrapper.classList.toggle('options-active', isMathModeActive);
+        toggleBtn.classList.toggle('active', isMathModeActive);
     }
     
     function insertAtCursor(html) {
@@ -357,22 +375,32 @@
         handleContentEditableInput({target: editor});
     }
 
-    function createMathPad() {
-        const pad = document.createElement('div');
-        pad.id = 'ai-math-pad';
-        const buttons = [
-            { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '&times;', v: '&times;' }, { t: '&divide;', v: '&divide;' },
-            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true">&nbsp;</sup><sub contenteditable="true">&nbsp;</sub></span>' }, 
-            { t: '&radic;', v: '&radic;()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
-            { t: '&pi;', v: '&pi;' }, { t: '(', v: '(' }, { t: ')', v: ')' }, { t: '=', v: '=' },
-        ];
-        buttons.forEach(btn => {
-            const buttonEl = document.createElement('button');
-            buttonEl.innerHTML = btn.t;
-            buttonEl.onclick = (e) => { e.stopPropagation(); insertAtCursor(btn.v); };
-            pad.appendChild(buttonEl);
+    function createOptionsBar() {
+        const bar = document.createElement('div');
+        bar.id = 'ai-options-bar';
+        const categories = {
+            'Operations': [
+                { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
+                { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true">&nbsp;</sup><sub contenteditable="true">&nbsp;</sub></span>' }, 
+                { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
+            ],
+            'Symbols': [
+                 { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' },
+            ],
+            'Inequalities': [
+                { t: '<', v: '<' }, { t: '>', v: '>' }, { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
+            ]
+        };
+        
+        Object.keys(categories).forEach(catName => {
+            categories[catName].forEach(btn => {
+                const buttonEl = document.createElement('button');
+                buttonEl.innerHTML = btn.t;
+                buttonEl.onclick = (e) => { e.stopPropagation(); insertAtCursor(btn.v); };
+                bar.appendChild(buttonEl);
+            });
         });
-        return pad;
+        return bar;
     }
 
     function injectStyles() {
@@ -432,15 +460,18 @@
             .ai-frac > sup { border-bottom: 1px solid currentColor; padding-bottom: 0.15em; }
             .ai-frac > sub { padding-top: 0.15em; }
             #ai-input sup, #ai-input sub { font-family: 'secondaryfont', sans-serif; outline: none; }
-            #ai-input-wrapper { flex-shrink: 0; position: relative; opacity: 0; transform: translateY(100px); transition: opacity 0.6s 0.3s, transform 0.6s 0.3s cubic-bezier(0.4, 0, 0.2, 1); margin: 15px auto 30px; width: 90%; max-width: 800px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 25px; background: rgba(10, 10, 10, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 2.5s infinite; cursor: text; }
+            #ai-input-wrapper { flex-shrink: 0; position: relative; opacity: 0; transform: translateY(100px); transition: all 0.6s cubic-bezier(0.4, 0, 0.2, 1); margin: 15px auto 30px; width: 90%; max-width: 800px; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 25px; background: rgba(10, 10, 10, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 2.5s infinite; cursor: text; overflow: hidden; }
             #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
+            #ai-input-wrapper.options-active { border-radius: 25px 25px 0 0; }
             #ai-input { width: 100%; min-height: 50px; max-height: 200px; color: white; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; overflow-y: auto; word-wrap: break-word; outline: none; }
             #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; }
-            #ai-math-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s; z-index: 2; }
+            #ai-math-toggle { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
             #ai-math-toggle:hover, #ai-math-toggle.active { color: white; }
-            #ai-math-pad { position: absolute; bottom: 100%; right: 0; margin-bottom: 10px; display: none; opacity: 0; transition: opacity 0.3s ease; grid-template-columns: repeat(4, 1fr); gap: 5px; background: rgba(25, 25, 28, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); border-radius: 15px; padding: 10px; }
-            #ai-math-pad button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.2em; cursor: pointer; padding: 8px 12px; transition: background 0.2s; }
-            #ai-math-pad button:hover { background: rgba(255,255,255,0.2); }
+            #ai-math-toggle.active { transform: translateY(-50%) rotate(180deg); }
+            #ai-options-bar { display: flex; overflow-x: auto; padding: 8px 15px; background: rgba(0,0,0,0.3); transform: translateY(100%); transition: transform 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+            #ai-input-wrapper.options-active #ai-options-bar { transform: translateY(0); }
+            #ai-options-bar button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.1em; cursor: pointer; padding: 5px 10px; transition: background 0.2s; flex-shrink: 0; margin-right: 8px; }
+            #ai-options-bar button:hover { background: rgba(255,255,255,0.2); }
             #ai-char-counter { position: absolute; right: 55px; bottom: 10px; font-size: 0.8em; color: rgba(255, 255, 255, 0.4); z-index: 2;}
             .ai-error, .ai-temp-message { text-align: center; color: rgba(255, 255, 255, 0.7); }
             .ai-loader { width: 25px; height: 25px; border: 3px solid rgba(255, 255, 255, 0.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
