@@ -211,6 +211,7 @@
 
     function updateFractionFocus() {
         const editor = document.getElementById('ai-input');
+        if (!editor) return;
         editor.querySelectorAll('.ai-frac').forEach(f => f.classList.remove('focused'));
         const selection = window.getSelection();
         if (selection.rangeCount > 0 && selection.isCollapsed) {
@@ -234,6 +235,8 @@
         const timeDiff = now - (lastKeystrokeTime || now);
         lastKeystrokeTime = now;
 
+        if (wrapper.classList.contains('waiting')) return;
+
         wrapper.style.animationPlayState = 'running';
         if (timeDiff < 150) { // Fast typing
             wrapper.style.animationDuration = '0.7s';
@@ -243,7 +246,7 @@
         clearTimeout(typingTimeout);
         typingTimeout = setTimeout(() => {
             const activeWrapper = document.getElementById('ai-input-wrapper');
-            if (activeWrapper) {
+            if (activeWrapper && !activeWrapper.classList.contains('waiting')) {
                 activeWrapper.style.animationPlayState = 'paused';
             }
         }, 1500);
@@ -342,6 +345,8 @@
             isRequestPending = true;
             lastRequestTime = now;
             editor.contentEditable = false;
+            document.getElementById('ai-input-wrapper').classList.add('waiting');
+
             chatHistory.push({ role: "user", parts: [{ text: query }] });
 
             const responseContainer = document.getElementById('ai-response-container');
@@ -404,6 +409,7 @@
             responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`;
         } finally {
             responseBubble.classList.remove('loading');
+            document.getElementById('ai-input-wrapper').classList.remove('waiting');
             const editor = document.getElementById('ai-input');
             if(editor) {
                 editor.contentEditable = true;
@@ -503,7 +509,7 @@
             .ai-response-content pre { background: #0c0d10; border: 1px solid #222; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: monospace; }
             .ai-math-inline, .user-message { color: #a5d6ff; font-family: monospace; font-size: 1.1em; }
             .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em; border-radius: 5px; transition: box-shadow 0.2s, transform 0.2s; }
-            .ai-frac.focused { box-shadow: 0 0 0 2px var(--ai-blue); transform: scale(1.05); }
+            .ai-frac.focused { box-shadow: 0 0 0 2px var(--ai-blue); transform: scale(1.1); }
             .ai-frac > sup, .ai-frac > sub { display: block; min-width: 1ch; }
             .ai-frac > sup { border-bottom: 1px solid currentColor; padding-bottom: 0.15em; }
             .ai-frac > sub { padding-top: 0.15em; }
@@ -525,6 +531,10 @@
                 animation-play-state: paused;
                 cursor: text;
                 border: 1px solid rgba(255, 255, 255, 0.2);
+            }
+            #ai-input-wrapper.waiting {
+                animation: gemini-glow 4s linear infinite !important;
+                animation-play-state: running !important;
             }
             #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
             #ai-input {
