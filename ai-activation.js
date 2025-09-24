@@ -8,6 +8,7 @@
  *
  * Features:
  * - A dark, heavily blurred overlay for focus mode with enhanced animations.
+ * - Fading effect on the top and bottom of the scrollable chat view.
  * - An introductory welcome message that fades out.
  * - Animated "4SP - AI MODE" branding in the top-left corner.
  * - Chat history for contextual conversations within a session.
@@ -358,7 +359,12 @@
             #ai-welcome-message p { font-size: 1.1em; margin-top: 10px; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s ease, transform 0.3s ease; }
             #ai-close-button:hover { color: white; transform: scale(1.1); }
-            #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 20px; }
+            #ai-response-container {
+                flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto;
+                display: flex; flex-direction: column; gap: 15px; padding: 20px;
+                -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%);
+                mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%);
+            }
             .ai-message-bubble { background: rgba(15, 15, 18, 0.8); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
             .user-message { align-self: flex-end; background: rgba(40, 45, 50, 0.8); }
             .gemini-response { align-self: flex-start; }
