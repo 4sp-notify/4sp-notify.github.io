@@ -139,8 +139,8 @@
         const visualInput = document.getElementById('ai-input');
         visualInput.onkeydown = handleInputSubmission;
         visualInput.oninput = handleContentEditableInput;
-        visualInput.onkeyup = updateFractionFocus;
-        visualInput.onclick = updateFractionFocus;
+        visualInput.onkeyup = () => {}; // No longer needed for fraction focus
+        visualInput.onclick = () => {}; // No longer needed for fraction focus
         visualInput.onpaste = handlePaste;
         document.getElementById('ai-math-toggle').onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
         document.getElementById('ai-file-upload-btn').onclick = () => document.getElementById('ai-file-input').click();
@@ -196,23 +196,6 @@
         const welcomeMessage = document.getElementById('ai-welcome-message');
         if (welcomeMessage && !welcomeMessage.classList.contains('faded')) {
             welcomeMessage.classList.add('faded');
-        }
-    }
-    
-    function updateFractionFocus() {
-        const editor = document.getElementById('ai-input');
-        if (!editor) return;
-        editor.querySelectorAll('.ai-frac').forEach(f => f.classList.remove('focused'));
-        const selection = window.getSelection();
-        if (selection.rangeCount > 0 && selection.isCollapsed) {
-            const range = selection.getRangeAt(0);
-            if (range.startOffset === 0 && range.startContainer === editor) return;
-            let nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
-             if (range.startOffset === 0) nodeBefore = range.startContainer.previousSibling;
-            if (nodeBefore && nodeBefore.nodeType === 3 && nodeBefore.textContent === '\u00A0') nodeBefore = nodeBefore.previousSibling;
-            if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
-                nodeBefore.classList.add('focused');
-            }
         }
     }
 
@@ -560,9 +543,16 @@
             .gemini-response { align-self: flex-start; }
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite, message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; display: flex; align-items: center; }
             .ai-math-inline, .user-message { color: #a5d6ff; }
-            .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em; border-radius: 5px; transition: box-shadow 0.2s, transform 0.2s; }
-            .ai-frac.focused { box-shadow: 0 0 0 2px var(--ai-blue); transform: scale(1.1); }
-            .ai-frac > sup { border-bottom: 1px solid currentColor; }
+            .ai-frac {
+                display: inline-flex;
+                flex-direction: column;
+                text-align: center;
+                vertical-align: middle;
+                padding: 0 0.4em;
+            }
+            .ai-frac > sup {
+                border-bottom: 1px solid currentColor;
+            }
             .ai-boxed-math { border: 1px solid currentColor; padding: 2px 5px; border-radius: 4px; display: inline-block; }
             #ai-input sup, #ai-input sub { outline: none; }
             #ai-input > *:first-child { margin-top: 0; }
