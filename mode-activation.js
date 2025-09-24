@@ -305,7 +305,7 @@
             const d = frac.querySelector('sub')?.innerText.trim() || '';
             frac.replaceWith(`(${n})/(${d})`);
         });
-        tempDiv.querySelectorAll('sup').forEach(sup => sup.replaceWith(`^${sup.innerText}`));
+        tempDiv.querySelectorAll('sup').forEach(sup => sup.replaceWith(`^(${sup.innerText})`));
         let text = tempDiv.innerText;
         text = text.replace(/√\((.*?)\)/g, 'sqrt($1)').replace(/∛\((.*?)\)/g, 'cbrt($1)')
                    .replace(/×/g, '*').replace(/÷/g, '/').replace(/π/g, 'pi');
@@ -325,7 +325,7 @@
                 let nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
                 if(range.startOffset === 0) nodeBefore = range.startContainer.previousSibling;
                 if (nodeBefore && nodeBefore.nodeType === 3 && nodeBefore.textContent === '\u00A0') nodeBefore = nodeBefore.previousSibling;
-                if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
+                if (nodeBefore && nodeBefore.nodeType === 1 && (nodeBefore.classList.contains('ai-frac') || nodeBefore.tagName === 'SUP')) {
                     e.preventDefault();
                     nodeBefore.remove();
                     handleContentEditableInput({target: editor});
@@ -395,7 +395,7 @@
                 processedMath = processedMath.replace(new RegExp(key.replace(/\\/g, '\\\\'), 'g'), latexSymbolMap[key]);
             });
             processedMath = processedMath
-                .replace(/(\w+)\^(\w+)/g, '$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g, '&radic;($1)')
+                .replace(/(\w+)\^(\w+|\{(.*?)\})/g, '$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g, '&radic;($1)')
                 .replace(/\\frac\{(.+?)\}\{(.+?)\}/g, '<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>')
                 .replace(/\\boxed\{(.+?)\}/g, '<span class="ai-boxed-math">$1</span>');
             return `<span class="ai-math-inline">${processedMath}</span>`;
@@ -449,6 +449,39 @@
         handleContentEditableInput();
     }
 
+    function insertSuperscript() {
+        const editor = document.getElementById('ai-input');
+        editor.focus();
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            const sup = document.createElement('sup');
+            sup.setAttribute('contenteditable', 'true');
+            sup.innerHTML = '&#8203;'; // Zero-width space for cursor placement
+            range.deleteContents();
+            range.insertNode(sup);
+            
+            // Move the cursor inside the new sup element
+            range.selectNodeContents(sup);
+            range.collapse(false);
+            selection.removeAllRanges();
+            selection.addRange(range);
+
+            // Add a non-breaking space after the sup to make it easy to exit
+            const spaceNode = document.createTextNode('\u00A0');
+            sup.after(spaceNode);
+            // Move cursor after the space
+            range.setStartAfter(spaceNode);
+            range.collapse(true);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            // Now move it back into the sup
+            range.selectNodeContents(sup);
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+    }
+
     function createOptionsBar() {
         const bar = document.createElement('div');
         bar.id = 'ai-options-bar';
@@ -456,13 +489,18 @@
             { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
             { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>&nbsp;' }, 
             { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
+            { t: 'xⁿ', action: insertSuperscript },
             { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' },
             { t: '<', v: '<' }, { t: '>', v: '>' }, { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
         ];
         buttons.forEach(btn => {
             const buttonEl = document.createElement('button');
             buttonEl.innerHTML = btn.t;
-            buttonEl.onclick = (e) => { e.stopPropagation(); insertAtCursor(btn.v); };
+            if (btn.action) {
+                buttonEl.onclick = (e) => { e.stopPropagation(); btn.action(); };
+            } else {
+                buttonEl.onclick = (e) => { e.stopPropagation(); insertAtCursor(btn.v); };
+            }
             bar.appendChild(buttonEl);
         });
         return bar;
