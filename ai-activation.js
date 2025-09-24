@@ -10,13 +10,12 @@
  * - 'X' button or Ctrl + C when the input box is empty.
  *
  * Features:
- * - A dark, heavily blurred overlay for focus mode with enhanced animations.
- * - Input box glow that pulses steadily while waiting for a response.
+ * - A dark, heavily blurred overlay with a new two-column layout.
+ * - A persistent Chat History panel on the right with locally saved sessions.
  * - Fading effect on the top and bottom of the scrollable chat view.
  * - An introductory welcome message that fades out.
- * - Chat history for contextual conversations within a session.
  * - Automatically sends user's general location (state/country) with the first message.
- * - A dynamic, WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
+ * - A dynamic, WYSIWYG contenteditable input with a 60-character limit on the first line.
  * - A horizontal, scrollable math options bar with symbols and inequalities.
  * - AI responses render Markdown, LaTeX-style math, and code blocks.
  * - Communicates with the Google AI API (Gemini) to get answers.
@@ -27,14 +26,15 @@
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA';
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
+    const FIRST_LINE_CHAR_LIMIT = 60;
 
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
     let isRequestPending = false;
     let isMathModeActive = false;
     let lastRequestTime = 0;
-    const COOLDOWN_PERIOD = 5000; // 5 seconds in milliseconds
-    let chatHistory = [];
+    const COOLDOWN_PERIOD = 5000;
+    let activeChatId = null;
     const latexSymbolMap = {
         '\\pi': 'π', '\\theta': 'θ', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
         '\\delta': 'δ', '\\epsilon': 'ε', '\\infty': '∞', '\\pm': '±',
@@ -44,9 +44,78 @@
         '\\therefore': '∴', '\\because': '∵',
     };
 
-    /**
-     * Tries to get the user's location on script load and stores it.
-     */
+    // --- LOCAL STORAGE & CHAT MANAGEMENT ---
+    function getSavedChats() {
+        try {
+            return JSON.parse(localStorage.getItem('ai-chat-history')) || {};
+        } catch (e) {
+            return {};
+        }
+    }
+
+    function saveChat() {
+        if (!activeChatId) return;
+        const chats = getSavedChats();
+        const editor = document.getElementById('ai-input');
+        const firstMessage = editor ? parseInputForAPI(editor.innerHTML) : (chats[activeChatId]?.title || 'New Chat');
+        
+        const currentChatHistory = chats[activeChatId]?.history || [];
+        
+        const chatContent = document.getElementById('ai-response-container').innerHTML;
+
+        chats[activeChatId] = {
+            id: activeChatId,
+            title: firstMessage.substring(0, 30) || 'New Chat',
+            history: currentChatHistory,
+            htmlContent: chatContent,
+            lastUpdated: Date.now()
+        };
+        localStorage.setItem('ai-chat-history', JSON.stringify(chats));
+    }
+    
+    function loadChat(chatId) {
+        const chats = getSavedChats();
+        const chat = chats[chatId];
+        if (!chat) return;
+
+        activeChatId = chatId;
+        document.getElementById('ai-response-container').innerHTML = chat.htmlContent || '';
+        document.querySelectorAll('#ai-history-list .chat-item').forEach(item => {
+            item.classList.toggle('active', item.dataset.chatId === chatId);
+        });
+        fadeOutWelcomeMessage();
+    }
+
+    function startNewChat() {
+        saveChat(); // Save the current chat before starting a new one
+        activeChatId = `chat_${Date.now()}`;
+        document.getElementById('ai-response-container').innerHTML = '';
+        document.getElementById('ai-input').innerHTML = '';
+        handleContentEditableInput(); // Update UI
+        populateHistoryPanel();
+        fadeOutWelcomeMessage();
+    }
+
+    function populateHistoryPanel() {
+        const chats = getSavedChats();
+        const historyList = document.getElementById('ai-history-list');
+        historyList.innerHTML = '';
+        
+        Object.values(chats)
+            .sort((a, b) => b.lastUpdated - a.lastUpdated)
+            .forEach(chat => {
+                const item = document.createElement('div');
+                item.className = 'chat-item';
+                item.textContent = chat.title;
+                item.dataset.chatId = chat.id;
+                if (chat.id === activeChatId) {
+                    item.classList.add('active');
+                }
+                item.onclick = () => loadChat(chat.id);
+                historyList.appendChild(item);
+            });
+    }
+
     function getLocationOnLoad() {
         if (navigator.geolocation) {
             navigator.geolocation.getCurrentPosition(async (position) => {
@@ -56,12 +125,7 @@
                     if (!response.ok) return;
                     const data = await response.json();
                     if (data && data.address) {
-                        let locationString = '';
-                        if (data.address.country_code === 'us') {
-                            locationString = data.address.state;
-                        } else {
-                            locationString = data.address.country;
-                        }
+                        let locationString = data.address.country_code === 'us' ? data.address.state : data.address.country;
                         localStorage.setItem('ai-user-location', locationString);
                     }
                 } catch (error) {
@@ -74,117 +138,85 @@
     }
     getLocationOnLoad();
 
-
-    /**
-     * Handles the keyboard shortcut for activating/deactivating the AI.
-     */
     function handleKeyDown(e) {
         if (e.ctrlKey && e.key.toLowerCase() === 'c') {
             const selection = window.getSelection().toString();
-
             if (isAIActive) {
                 const editor = document.getElementById('ai-input');
                 if (editor && editor.innerText.trim().length === 0 && selection.length === 0) {
                     e.preventDefault();
                     deactivateAI();
                 }
-            } else {
-                if (selection.length === 0) {
-                    e.preventDefault();
-                    activateAI();
-                }
+            } else if (selection.length === 0) {
+                e.preventDefault();
+                activateAI();
             }
         }
     }
 
-    /**
-     * Creates and injects the AI interface into the page.
-     */
     function activateAI() {
         if (document.getElementById('ai-container')) return;
         
-        chatHistory = [];
         injectStyles();
 
         const container = document.createElement('div');
         container.id = 'ai-container';
         
-        const welcomeMessage = document.createElement('div');
-        welcomeMessage.id = 'ai-welcome-message';
-        welcomeMessage.innerHTML = `
-            <h2>AI Mode</h2>
-            <p>This is a beta feature. To improve your experience, your general location (state or country) will be shared with your first message. You may be subject to message limits.</p>
+        container.innerHTML = `
+            <div id="ai-main-content">
+                <div id="ai-welcome-message">
+                    <h2>AI Mode</h2>
+                    <p>This is a beta feature. Your general location will be shared with your first message. You may be subject to message limits.</p>
+                </div>
+                <div id="ai-response-container"></div>
+                <div id="ai-input-wrapper">
+                    <div id="ai-input" contenteditable="true"></div>
+                    <div id="ai-input-placeholder">Ask a question...</div>
+                    <div id="ai-char-counter">0 / ${USER_CHAR_LIMIT}</div>
+                    <button id="ai-math-toggle">&#8942;</button>
+                </div>
+            </div>
+            <div id="ai-history-panel">
+                <h3>Chat History</h3>
+                <button id="ai-new-chat-btn">New Chat</button>
+                <div id="ai-history-list"></div>
+            </div>
+            <div id="ai-close-button">&times;</div>
         `;
 
-        const closeButton = document.createElement('div');
-        closeButton.id = 'ai-close-button';
-        closeButton.innerHTML = '&times;';
-        closeButton.onclick = deactivateAI;
+        document.body.appendChild(container);
 
-        const responseContainer = document.createElement('div');
-        responseContainer.id = 'ai-response-container';
-
-        const inputWrapper = document.createElement('div');
-        inputWrapper.id = 'ai-input-wrapper';
-        
-        const visualInput = document.createElement('div');
-        visualInput.id = 'ai-input';
-        visualInput.contentEditable = true;
+        // Attach events after elements are in the DOM
+        document.getElementById('ai-close-button').onclick = deactivateAI;
+        document.getElementById('ai-new-chat-btn').onclick = startNewChat;
+        const visualInput = document.getElementById('ai-input');
         visualInput.onkeydown = handleInputSubmission;
         visualInput.oninput = handleContentEditableInput;
         visualInput.onkeyup = updateFractionFocus;
         visualInput.onclick = updateFractionFocus;
-
-        const placeholder = document.createElement('div');
-        placeholder.id = 'ai-input-placeholder';
-        placeholder.textContent = 'Ask a question...';
-
-        const charCounter = document.createElement('div');
-        charCounter.id = 'ai-char-counter';
-        charCounter.textContent = `0 / ${USER_CHAR_LIMIT}`;
-
-        const mathModeToggle = document.createElement('button');
-        mathModeToggle.id = 'ai-math-toggle';
-        mathModeToggle.innerHTML = '&#8942;';
-        mathModeToggle.onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
+        document.getElementById('ai-math-toggle').onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
+        document.getElementById('ai-input-wrapper').appendChild(createOptionsBar());
         
-        inputWrapper.appendChild(visualInput);
-        inputWrapper.appendChild(placeholder);
-        inputWrapper.appendChild(charCounter);
-        inputWrapper.appendChild(mathModeToggle);
-        inputWrapper.appendChild(createOptionsBar());
-        
-        container.appendChild(welcomeMessage);
-        container.appendChild(closeButton);
-        container.appendChild(responseContainer);
-        container.appendChild(inputWrapper);
+        startNewChat(); // Initialize first chat session
 
-        document.body.appendChild(container);
-
-        setTimeout(() => {
-            container.classList.add('active');
-        }, 10);
-
+        setTimeout(() => container.classList.add('active'), 10);
         visualInput.focus();
         isAIActive = true;
     }
 
-    /**
-     * Removes the AI interface from the page.
-     */
     function deactivateAI() {
+        saveChat(); // Save final state on close
         const container = document.getElementById('ai-container');
         if (container) {
             container.classList.remove('active');
             setTimeout(() => {
                 container.remove();
-                const styles = document.getElementById('ai-dynamic-styles');
-                if (styles) styles.remove();
+                document.getElementById('ai-dynamic-styles')?.remove();
             }, 500);
         }
         isAIActive = false;
         isMathModeActive = false;
-        chatHistory = [];
+        activeChatId = null;
     }
 
     function fadeOutWelcomeMessage() {
@@ -193,7 +225,7 @@
             welcomeMessage.classList.add('faded');
         }
     }
-
+    
     function updateFractionFocus() {
         const editor = document.getElementById('ai-input');
         if (!editor) return;
@@ -215,17 +247,12 @@
         }
     }
 
-    /**
-     * Handles input on the contenteditable div, updating placeholder and counter.
-     */
     function handleContentEditableInput() {
         fadeOutWelcomeMessage();
         const editor = document.getElementById('ai-input');
         
         editor.querySelectorAll('div:not(:last-child)').forEach(div => {
-            if (div.innerHTML.trim() === '' || div.innerHTML === '<br>') {
-                div.remove();
-            }
+            if (div.innerHTML.trim() === '' || div.innerHTML === '<br>') div.remove();
         });
 
         const selection = window.getSelection();
@@ -258,9 +285,6 @@
         if (placeholder) placeholder.style.display = (rawText.length > 0 || editor.querySelector('.ai-frac')) ? 'none' : 'block';
     }
 
-    /**
-     * Parses the visually formatted HTML from the input into plain text for the API.
-     */
     function parseInputForAPI(innerHTML) {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = innerHTML.replace(/<div><br><\/div>/g, '\n').replace(/<br>/g, '\n');
@@ -276,12 +300,24 @@
         return text;
     }
 
-    /**
-     * Handles the submission of a question via the 'Enter' key.
-     */
     function handleInputSubmission(e) {
         e.stopPropagation();
         const editor = e.target;
+        
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
+            const lines = editor.innerHTML.split(/<br.*?>|<div>/);
+            if (lines.length <= 1) {
+                const tempDiv = document.createElement('div');
+                const firstLineNode = editor.childNodes[0];
+                if (firstLineNode) {
+                    tempDiv.appendChild(firstLineNode.cloneNode(true));
+                    if ((tempDiv.textContent || tempDiv.innerText).length >= FIRST_LINE_CHAR_LIMIT) {
+                        e.preventDefault();
+                        document.execCommand('insertLineBreak');
+                    }
+                }
+            }
+        }
         
         if (e.key === 'Backspace') {
             const selection = window.getSelection();
@@ -290,12 +326,8 @@
                 if (range.startOffset === 0 && range.startContainer === editor) return;
                 
                 let nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
-                if(range.startOffset === 0) {
-                    nodeBefore = range.startContainer.previousSibling;
-                }
-                if (nodeBefore && nodeBefore.nodeType === 3 && nodeBefore.textContent === '\u00A0') {
-                    nodeBefore = nodeBefore.previousSibling;
-                }
+                if(range.startOffset === 0) nodeBefore = range.startContainer.previousSibling;
+                if (nodeBefore && nodeBefore.nodeType === 3 && nodeBefore.textContent === '\u00A0') nodeBefore = nodeBefore.previousSibling;
                 if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
                     e.preventDefault();
                     nodeBefore.remove();
@@ -313,11 +345,9 @@
             const now = Date.now();
             if (now - lastRequestTime < COOLDOWN_PERIOD) return;
 
-            if (chatHistory.length === 0) {
+            if ((getSavedChats()[activeChatId]?.history || []).length === 0) {
                 const location = localStorage.getItem('ai-user-location');
-                if (location) {
-                    query = `(User is located in ${location}) ${query}`;
-                }
+                if (location) query = `(User is located in ${location}) ${query}`;
             }
 
             isRequestPending = true;
@@ -325,7 +355,11 @@
             editor.contentEditable = false;
             document.getElementById('ai-input-wrapper').classList.add('waiting');
 
-            chatHistory.push({ role: "user", parts: [{ text: query }] });
+            const chats = getSavedChats();
+            const currentHistory = chats[activeChatId]?.history || [];
+            currentHistory.push({ role: "user", parts: [{ text: query }] });
+            chats[activeChatId] = { ...(chats[activeChatId] || {}), history: currentHistory };
+            localStorage.setItem('ai-chat-history', JSON.stringify(chats));
 
             const responseContainer = document.getElementById('ai-response-container');
             const userBubble = document.createElement('div');
@@ -340,14 +374,11 @@
             responseContainer.scrollTop = responseContainer.scrollHeight;
 
             editor.innerHTML = '';
-            handleContentEditableInput({ target: editor });
+            handleContentEditableInput();
             callGoogleAI(query, responseBubble);
         }
     }
 
-    /**
-     * Parses Gemini's response, handling Markdown, math, and code blocks.
-     */
     function parseGeminiResponse(text) {
         let html = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
         html = html.replace(/```([\s\S]*?)```/g, (match, code) => `<pre><code>${code.trim()}</code></pre>`);
@@ -367,20 +398,25 @@
         return html.replace(/\n/g, '<br>');
     }
 
-    /**
-     * Calls the Google AI API and populates the response bubble.
-     */
     async function callGoogleAI(query, responseBubble) {
+        const chats = getSavedChats();
+        const currentHistory = chats[activeChatId]?.history || [];
+
         try {
             const response = await fetch(API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: chatHistory })
+                body: JSON.stringify({ contents: currentHistory })
             });
             if (!response.ok) throw new Error('Network response was not ok.');
             const data = await response.json();
             const text = data.candidates[0].content.parts[0].text;
-            chatHistory.push({ role: "model", parts: [{ text: text }] });
+            
+            currentHistory.push({ role: "model", parts: [{ text: text }] });
+            chats[activeChatId].history = currentHistory;
+            chats[activeChatId].htmlContent = document.getElementById('ai-response-container').innerHTML + `<div class="ai-message-bubble gemini-response">${parseGeminiResponse(text)}</div>`;
+            localStorage.setItem('ai-chat-history', JSON.stringify(chats));
+
             responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
         } catch (error) {
             console.error('AI API Error:', error);
@@ -394,25 +430,21 @@
                 editor.focus();
             }
             isRequestPending = false;
-            const responseContainer = document.getElementById('ai-response-container');
-            if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
+            document.getElementById('ai-response-container').scrollTop = document.getElementById('ai-response-container').scrollHeight;
         }
     }
     
     function toggleMathMode() {
         isMathModeActive = !isMathModeActive;
         const inputWrapper = document.getElementById('ai-input-wrapper');
-        const toggleBtn = document.getElementById('ai-math-toggle');
         inputWrapper.classList.toggle('options-active', isMathModeActive);
-        toggleBtn.classList.toggle('active', isMathModeActive);
+        document.getElementById('ai-math-toggle').classList.toggle('active', isMathModeActive);
     }
     
     function insertAtCursor(html) {
-        const editor = document.getElementById('ai-input');
-        if (!editor) return;
-        editor.focus();
+        document.getElementById('ai-input').focus();
         document.execCommand('insertHTML', false, html);
-        handleContentEditableInput({target: editor});
+        handleContentEditableInput();
     }
 
     function createOptionsBar() {
@@ -450,104 +482,86 @@
                 position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
                 background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
                 z-index: 2147483647; opacity: 0; transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-                font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box;
+                font-family: 'secondaryfont', sans-serif; display: flex; box-sizing: border-box;
             }
             #ai-container.active { opacity: 1; }
+            #ai-main-content { flex-grow: 1; display: flex; flex-direction: column; height: 100%; }
+            #ai-history-panel {
+                width: 250px; flex-shrink: 0; background: rgba(10,10,10,0.5); border-left: 1px solid rgba(255,255,255,0.1);
+                display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
+                transform: translateX(100%); transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+            #ai-container.active #ai-history-panel { transform: translateX(0); }
+            #ai-history-panel h3 { margin: 0 0 15px 0; color: white; text-align: center; }
+            #ai-new-chat-btn {
+                background: var(--ai-blue); color: white; border: none; border-radius: 8px;
+                padding: 10px; font-size: 1em; cursor: pointer; transition: background 0.2s; margin-bottom: 15px;
+            }
+            #ai-new-chat-btn:hover { background: #5a95f5; }
+            #ai-history-list { overflow-y: auto; flex-grow: 1; }
+            .chat-item {
+                padding: 10px; margin-bottom: 5px; border-radius: 5px; cursor: pointer;
+                color: rgba(255,255,255,0.7); transition: background 0.2s, color 0.2s;
+                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+            }
+            .chat-item:hover { background: rgba(255,255,255,0.1); color: white; }
+            .chat-item.active { background: rgba(255,255,255,0.2); color: white; }
+
             #ai-welcome-message {
                 position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                 text-align: center; color: rgba(255,255,255,0.5);
                 opacity: 1; transition: opacity 0.5s;
                 width: 100%;
             }
-            #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; }
+            #ai-container.chat-active #ai-welcome-message, .faded { opacity: 0 !important; pointer-events: none; }
             #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
             #ai-welcome-message p { font-size: 0.9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
-            #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s ease, transform 0.3s ease; }
-            #ai-close-button:hover { color: white; transform: scale(1.1); }
+            #ai-close-button { position: absolute; top: 20px; right: 280px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s, right 0.5s; z-index: 10; }
+            #ai-close-button:hover { color: white; }
             #ai-response-container {
                 flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto;
                 display: flex; flex-direction: column; gap: 15px; padding: 20px;
                 -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%);
-                mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%);
             }
             .ai-message-bubble { background: rgba(15, 15, 18, 0.8); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
             .user-message { align-self: flex-end; background: rgba(40, 45, 50, 0.8); }
             .gemini-response { align-self: flex-start; }
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite, message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
-            .ai-response-content pre { background: #0c0d10; border: 1px solid #222; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: monospace; }
-            .ai-math-inline, .user-message { color: #a5d6ff; font-family: monospace; font-size: 1.1em; }
+            .ai-math-inline, .user-message { color: #a5d6ff; }
             .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em; border-radius: 5px; transition: box-shadow 0.2s, transform 0.2s; }
             .ai-frac.focused { box-shadow: 0 0 0 2px var(--ai-blue); transform: scale(1.1); }
-            .ai-frac > sup, .ai-frac > sub { display: block; min-width: 1ch; }
-            .ai-frac > sup { border-bottom: 1px solid currentColor; padding-bottom: 0.15em; }
-            .ai-frac > sub { padding-top: 0.15em; }
-            #ai-input sup, #ai-input sub { font-family: 'secondaryfont', sans-serif; outline: none; }
+            .ai-frac > sup { border-bottom: 1px solid currentColor; }
+            #ai-input sup, #ai-input sub { outline: none; }
             #ai-input-wrapper {
-                flex-shrink: 0;
-                position: relative;
-                opacity: 0;
-                transform: translateY(100px);
+                flex-shrink: 0; position: relative; opacity: 0; transform: translateY(100px);
                 transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-                margin: 15px auto 30px;
-                width: 90%;
-                max-width: 800px;
-                border-radius: 25px;
-                background: rgba(10, 10, 10, 0.7);
-                backdrop-filter: blur(20px);
-                -webkit-backdrop-filter: blur(20px);
-                animation: glow 2.5s infinite;
-                animation-play-state: running;
-                cursor: text;
+                margin: 15px auto 30px; width: 90%; max-width: 800px;
+                border-radius: 25px; background: rgba(10, 10, 10, 0.7); backdrop-filter: blur(20px);
+                animation: glow 2.5s infinite; animation-play-state: running; cursor: text;
                 border: 1px solid rgba(255, 255, 255, 0.2);
-                display: flex;
-                flex-direction: column;
+                display: flex; flex-direction: column;
             }
-            #ai-input-wrapper.waiting {
-                animation: gemini-glow 4s linear infinite !important;
-                animation-play-state: running !important;
-            }
+            #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite !important; }
             #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
-            #ai-input {
-                min-height: 50px;
-                color: white;
-                font-size: 1.1em;
-                padding: 12px 50px 12px 20px;
-                box-sizing: border-box;
-                word-wrap: break-word;
-                outline: none;
-            }
+            #ai-input { min-height: 50px; color: white; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; outline: none; }
             #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; z-index: 1; }
             #ai-math-toggle { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
-            #ai-math-toggle:hover, #ai-math-toggle.active { color: white; }
             #ai-math-toggle.active { transform: translateY(-50%) rotate(180deg); }
             #ai-options-bar {
-                display: flex;
-                overflow-x: auto;
-                background: rgba(0,0,0,0.3);
+                display: flex; overflow-x: auto; background: rgba(0,0,0,0.3);
                 transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-                border-top: 1px solid transparent;
-                max-height: 0;
-                opacity: 0;
-                visibility: hidden;
+                border-top: 1px solid transparent; max-height: 0; opacity: 0; visibility: hidden;
             }
             #ai-input-wrapper.options-active #ai-options-bar {
-                max-height: 50px;
-                opacity: 1;
-                visibility: visible;
-                padding: 8px 15px;
-                border-top: 1px solid rgba(255,255,255,0.1);
+                max-height: 50px; opacity: 1; visibility: visible;
+                padding: 8px 15px; border-top: 1px solid rgba(255,255,255,0.1);
             }
             #ai-options-bar button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.1em; cursor: pointer; padding: 5px 10px; transition: background 0.2s; flex-shrink: 0; margin-right: 8px; }
-            #ai-options-bar button:hover { background: rgba(255,255,255,0.2); }
             #ai-char-counter { position: absolute; right: 55px; top: 15px; font-size: 0.8em; color: rgba(255, 255, 255, 0.4); z-index: 2;}
-            .ai-error, .ai-temp-message { text-align: center; color: rgba(255, 255, 255, 0.7); }
-            .ai-loader { width: 25px; height: 25px; border: 3px solid rgba(255, 255, 255, 0.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
             @keyframes glow { 0%, 100% { box-shadow: 0 0 5px rgba(255, 255, 255, 0.2), 0 0 10px rgba(255, 255, 255, 0.1); } 50% { box-shadow: 0 0 15px rgba(255, 255, 255, 0.5), 0 0 25px rgba(255, 255, 255, 0.3); } }
             @keyframes gemini-glow { 0%, 100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
             @keyframes spin { to { transform: rotate(360deg); } }
             @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(0.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
-            @keyframes brand-slide { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
-            @keyframes brand-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
             @keyframes welcome-fade { 0% { opacity: 1; } 100% { opacity: 0; } }
         `;
         document.head.appendChild(style);
