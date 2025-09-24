@@ -7,9 +7,9 @@
  * - Press Shift + Ctrl + A to toggle the AI interface.
  *
  * Features:
- * - A dark, blurred overlay for focus mode.
- * - A translucent, round input box at the top of the screen with a white pulsing effect.
- * - After a question is submitted, the input box smoothly glides to the bottom to display the response.
+ * - A dark, heavily blurred overlay for focus mode.
+ * - A translucent, static black input box at the bottom of the screen with a white glow effect.
+ * - AI responses appear in a scrollable area above the input box.
  * - Communicates with the Google AI API (Gemini) to get answers.
  * - A 5-second cooldown between requests to prevent spamming.
  * - An 'X' button to easily exit the AI mode.
@@ -70,9 +70,13 @@
         closeButton.innerHTML = '&times;';
         closeButton.onclick = deactivateAI;
 
-        // Create the main chat bubble
-        const chatBubble = document.createElement('div');
-        chatBubble.id = 'ai-chat-bubble';
+        // Create the response container
+        const responseContainer = document.createElement('div');
+        responseContainer.id = 'ai-response-container';
+
+        // Create the input container (the static box at the bottom)
+        const inputContainer = document.createElement('div');
+        inputContainer.id = 'ai-input-container';
 
         // Create the input field
         const input = document.createElement('input');
@@ -82,23 +86,17 @@
         input.autocomplete = 'off';
         input.onkeydown = handleInputSubmission;
 
-        // Create the response area (initially hidden)
-        const responseArea = document.createElement('div');
-        responseArea.id = 'ai-response-area';
-        responseArea.innerHTML = '<div class="ai-placeholder">The AI response will appear here.</div>';
-
-
-        chatBubble.appendChild(input);
-        chatBubble.appendChild(responseArea);
+        inputContainer.appendChild(input);
         container.appendChild(closeButton);
-        container.appendChild(chatBubble);
+        container.appendChild(responseContainer);
+        container.appendChild(inputContainer);
         document.body.appendChild(container);
 
         // Trigger fade-in animation
         setTimeout(() => {
             container.style.opacity = '1';
-            chatBubble.style.transform = 'translateX(-50%) scale(1)';
-            chatBubble.style.opacity = '1';
+            inputContainer.style.transform = 'translate(-50%, 0)';
+            inputContainer.style.opacity = '1';
         }, 10);
 
         input.focus();
@@ -135,7 +133,14 @@
 
             const now = Date.now();
             if (now - lastRequestTime < COOLDOWN_PERIOD) {
-                showTemporaryMessage(`Please wait ${Math.ceil((COOLDOWN_PERIOD - (now - lastRequestTime)) / 1000)}s.`);
+                // This is a temporary visual cue for cooldown, shown in the response area
+                const responseContainer = document.getElementById('ai-response-container');
+                const coolDownMsg = document.createElement('div');
+                coolDownMsg.className = 'ai-message-bubble ai-temp-message';
+                coolDownMsg.textContent = `Please wait ${Math.ceil((COOLDOWN_PERIOD - (now - lastRequestTime)) / 1000)}s.`;
+                responseContainer.appendChild(coolDownMsg);
+                responseContainer.scrollTop = responseContainer.scrollHeight;
+                setTimeout(() => coolDownMsg.remove(), 2000);
                 return;
             }
 
@@ -143,53 +148,27 @@
             lastRequestTime = now;
             input.disabled = true;
 
-            const chatBubble = document.getElementById('ai-chat-bubble');
-            const responseArea = document.getElementById('ai-response-area');
+            const responseContainer = document.getElementById('ai-response-container');
             
-            // Animate bubble to the bottom
-            chatBubble.classList.add('glided-down');
-            
-            // Show loading state
-            responseArea.style.display = 'block';
-            responseArea.innerHTML = '<div class="ai-loader"></div>';
+            // Create a new bubble for the response
+            const responseBubble = document.createElement('div');
+            responseBubble.className = 'ai-message-bubble';
+            responseBubble.innerHTML = '<div class="ai-loader"></div>';
+            responseContainer.appendChild(responseBubble);
 
-            // Hide input, show response area
-            input.style.display = 'none';
+            // Auto-scroll to the bottom
+            responseContainer.scrollTop = responseContainer.scrollHeight;
 
-            callGoogleAI(query);
+            callGoogleAI(query, responseBubble);
         }
-    }
-    
-    /**
-     * Displays a temporary message in the response area.
-     * @param {string} message - The message to display.
-     */
-    function showTemporaryMessage(message) {
-        const responseArea = document.getElementById('ai-response-area');
-        if(!responseArea) return;
-
-        const originalContent = responseArea.innerHTML;
-        responseArea.innerHTML = `<div class="ai-temp-message">${message}</div>`;
-        responseArea.style.display = 'block';
-
-        const input = document.getElementById('ai-input');
-        if (input) input.style.display = 'none';
-        
-        setTimeout(() => {
-            responseArea.innerHTML = originalContent;
-            if(!document.getElementById('ai-chat-bubble').classList.contains('glided-down')) {
-                 responseArea.style.display = 'none';
-                 if (input) input.style.display = 'block';
-            }
-        }, 2000);
     }
 
     /**
      * Calls the Google AI API with the user's query.
      * @param {string} query - The user's question.
+     * @param {HTMLElement} responseBubble - The element to populate with the response.
      */
-    async function callGoogleAI(query) {
-        const responseArea = document.getElementById('ai-response-area');
+    async function callGoogleAI(query, responseBubble) {
         try {
             const response = await fetch(API_URL, {
                 method: 'POST',
@@ -214,23 +193,23 @@
             const text = data.candidates[0].content.parts[0].text;
             // A simple way to format the response text
             const formattedText = text.replace(/\n/g, '<br>');
-            responseArea.innerHTML = `<div class="ai-response-content">${formattedText}</div>`;
+            responseBubble.innerHTML = `<div class="ai-response-content">${formattedText}</div>`;
 
         } catch (error) {
             console.error('AI API Error:', error);
-            responseArea.innerHTML = `<div class="ai-error">Sorry, I couldn't get a response. Please check the API key and console for errors.</div>`;
+            responseBubble.innerHTML = `<div class="ai-error">Sorry, I couldn't get a response. Please check the API key and console for errors.</div>`;
         } finally {
-            // After getting a response, show the input again at the bottom for follow-up questions.
             const input = document.getElementById('ai-input');
-            input.style.display = 'block';
             input.disabled = false;
             input.value = '';
             input.placeholder = 'Ask a follow-up...';
             input.focus();
             isRequestPending = false;
+            
+            const responseContainer = document.getElementById('ai-response-container');
+            responseContainer.scrollTop = responseContainer.scrollHeight;
         }
     }
-
 
     /**
      * Injects all necessary CSS into a <style> tag in the document's <head>.
@@ -254,12 +233,12 @@
                 left: 0;
                 width: 100vw;
                 height: 100vh;
-                background-color: rgba(0, 0, 0, 0.5);
-                backdrop-filter: blur(8px);
-                -webkit-backdrop-filter: blur(8px);
+                background-color: rgba(0, 0, 0, 0.75);
+                backdrop-filter: blur(12px);
+                -webkit-backdrop-filter: blur(12px);
                 z-index: 2147483647;
                 opacity: 0;
-                transition: opacity 0.3s ease;
+                transition: opacity 0.5s cubic-bezier(0.25, 1, 0.5, 1);
                 font-family: 'secondaryfont', sans-serif;
             }
 
@@ -270,65 +249,78 @@
                 color: rgba(255, 255, 255, 0.7);
                 font-size: 40px;
                 cursor: pointer;
-                transition: color 0.2s ease;
+                transition: color 0.2s ease, transform 0.3s ease;
             }
 
             #ai-close-button:hover {
                 color: white;
+                transform: scale(1.1);
             }
 
-            #ai-chat-bubble {
-                position: absolute;
-                top: 20%;
+            #ai-input-container {
+                position: fixed;
+                bottom: 30px;
                 left: 50%;
-                transform: translateX(-50%) scale(0.9);
+                transform: translate(-50%, 100px); /* Initial position for slide-in */
                 width: 90%;
-                max-width: 600px;
-                background: rgba(25, 25, 30, 0.5);
+                max-width: 800px;
+                background: rgba(10, 10, 10, 0.7);
                 border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 40px;
-                padding: 10px;
+                border-radius: 30px;
+                padding: 5px;
                 box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
-                backdrop-filter: blur(15px);
-                -webkit-backdrop-filter: blur(15px);
-                animation: pulse 2s infinite;
-                transition: top 0.8s cubic-bezier(0.68, -0.55, 0.27, 1.55), opacity 0.4s ease, transform 0.4s ease;
+                backdrop-filter: blur(20px);
+                -webkit-backdrop-filter: blur(20px);
+                animation: glow 2.5s infinite;
+                transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.6s ease;
                 opacity: 0;
             }
             
-            #ai-chat-bubble.glided-down {
-                top: 85%;
-                transform: translateX(-50%) translateY(-100%);
-                animation: none; /* Stop pulsing when it's showing a response */
-            }
-
             #ai-input {
                 width: 100%;
-                height: 60px;
+                height: 50px;
                 border: none;
                 outline: none;
                 background: transparent;
                 color: white;
-                font-size: 1.2em;
-                padding: 0 25px;
+                font-size: 1.1em;
+                padding: 0 20px;
                 box-sizing: border-box;
             }
             
             #ai-input::placeholder {
                 color: rgba(255, 255, 255, 0.5);
             }
-
-            #ai-response-area {
-                display: none;
-                padding: 20px 30px;
-                color: #e0e0e0;
-                max-height: 50vh;
+            
+            #ai-response-container {
+                position: absolute;
+                bottom: 110px;
+                left: 50%;
+                transform: translateX(-50%);
+                width: 90%;
+                max-width: 800px;
+                max-height: calc(100vh - 150px);
                 overflow-y: auto;
+                display: flex;
+                flex-direction: column;
+                gap: 15px;
             }
 
-            .ai-placeholder, .ai-error, .ai-temp-message {
+            .ai-message-bubble {
+                background: rgba(25, 25, 30, 0.6);
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 20px;
+                padding: 15px 20px;
+                color: #e0e0e0;
+                backdrop-filter: blur(15px);
+                -webkit-backdrop-filter: blur(15px);
+                animation: fadeIn 0.5s ease forwards;
+                opacity: 0;
+            }
+
+            .ai-error, .ai-temp-message {
                 text-align: center;
-                color: rgba(255, 255, 255, 0.6);
+                color: rgba(255, 255, 255, 0.7);
             }
             
             .ai-error {
@@ -340,31 +332,27 @@
             }
 
             .ai-loader {
-                width: 30px;
-                height: 30px;
+                width: 25px;
+                height: 25px;
                 border: 3px solid rgba(255, 255, 255, 0.3);
                 border-top-color: #fff;
                 border-radius: 50%;
                 animation: spin 1s linear infinite;
-                margin: 20px auto;
+                margin: 0 auto;
             }
 
-            @keyframes pulse {
-                0% {
-                    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0.4);
-                }
-                70% {
-                    box-shadow: 0 0 0 15px rgba(255, 255, 255, 0);
-                }
-                100% {
-                    box-shadow: 0 0 0 0 rgba(255, 255, 255, 0);
-                }
+            @keyframes glow {
+                0% { box-shadow: 0 0 5px rgba(255, 255, 255, 0.2), 0 0 10px rgba(255, 255, 255, 0.1); }
+                50% { box-shadow: 0 0 15px rgba(255, 255, 255, 0.5), 0 0 25px rgba(255, 255, 255, 0.3); }
+                100% { box-shadow: 0 0 5px rgba(255, 255, 255, 0.2), 0 0 10px rgba(255, 255, 255, 0.1); }
             }
             
             @keyframes spin {
-                to {
-                    transform: rotate(360deg);
-                }
+                to { transform: rotate(360deg); }
+            }
+
+            @keyframes fadeIn {
+                to { opacity: 1; }
             }
         `;
         document.head.appendChild(style);
@@ -374,3 +362,4 @@
     document.addEventListener('keydown', handleKeyDown);
 
 })();
+
