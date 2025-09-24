@@ -182,6 +182,10 @@
      * Handles the submission of a question via the 'Enter' key.
      */
     function handleInputSubmission(e) {
+        // FIX: Stop the keydown event from bubbling up to the document.
+        // This prevents conflicts with other global listeners, like a panic key script.
+        e.stopPropagation();
+
         const editor = e.target;
 
         if (e.key === 'Enter' && !e.shiftKey) {
