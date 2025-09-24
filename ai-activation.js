@@ -210,11 +210,18 @@
         fadeOutWelcomeMessage();
         const editor = e.target;
         
+        // Clean up empty divs that browsers might add, which can cause issues.
+        editor.querySelectorAll('div:not(:last-child)').forEach(div => {
+            if (div.innerHTML.trim() === '' || div.innerHTML === '<br>') {
+                div.remove();
+            }
+        });
+
         const selection = window.getSelection();
         if (selection.rangeCount > 0) {
             const range = selection.getRangeAt(0);
             const node = range.startContainer;
-            if (node.nodeType === 3) {
+            if (node.nodeType === 3) { // Text node
                 const textContent = node.textContent;
                 const textBeforeCursor = textContent.slice(0, range.startOffset);
                 const match = textBeforeCursor.match(/(\\[a-zA-Z]+)\s$/);
@@ -245,7 +252,7 @@
      */
     function parseInputForAPI(innerHTML) {
         const tempDiv = document.createElement('div');
-        tempDiv.innerHTML = innerHTML;
+        tempDiv.innerHTML = innerHTML.replace(/<div><br><\/div>/g, '\n').replace(/<br>/g, '\n');
         tempDiv.querySelectorAll('.ai-frac').forEach(frac => {
             const n = frac.querySelector('sup')?.innerText.trim() || '';
             const d = frac.querySelector('sub')?.innerText.trim() || '';
@@ -391,7 +398,7 @@
         bar.id = 'ai-options-bar';
         const buttons = [
             { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
-            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>' }, 
+            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>&nbsp;' }, 
             { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
             { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' },
             { t: '<', v: '<' }, { t: '>', v: '>' }, { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
@@ -464,14 +471,14 @@
             #ai-input sup, #ai-input sub { font-family: 'secondaryfont', sans-serif; outline: none; }
             #ai-input-wrapper { flex-shrink: 0; position: relative; opacity: 0; transform: translateY(100px); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); margin: 15px auto 30px; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10, 10, 10, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 2.5s infinite; cursor: text; }
             #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
-            #ai-input-wrapper.options-active { padding-bottom: 45px; }
-            #ai-input { width: 100%; min-height: 50px; max-height: 200px; color: white; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; overflow-y: auto; word-wrap: break-word; outline: none; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 25px; }
+            #ai-input { width: 100%; min-height: 50px; color: white; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; overflow-y: auto; word-wrap: break-word; outline: none; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 25px; }
+            #ai-input-wrapper.options-active #ai-input { border-bottom-left-radius: 0; border-bottom-right-radius: 0; border-bottom-color: transparent; }
             #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; }
             #ai-math-toggle { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
             #ai-math-toggle:hover, #ai-math-toggle.active { color: white; }
             #ai-math-toggle.active { transform: translateY(-50%) rotate(180deg); }
-            #ai-options-bar { position: absolute; bottom: 0; left: 0; right: 0; display: flex; overflow-x: auto; padding: 8px 15px; background: rgba(0,0,0,0.3); height: 0px; opacity: 0; transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); border-top: 1px solid rgba(255,255,255,0.1); }
-            #ai-input-wrapper.options-active #ai-options-bar { height: 45px; opacity: 1; }
+            #ai-options-bar { position: absolute; bottom: 0; left: 0; right: 0; display: flex; overflow-x: auto; padding: 8px 15px; background: rgba(0,0,0,0.3); transform: translateY(100%); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); border-top: 1px solid rgba(255,255,255,0.1); border-radius: 0 0 25px 25px; }
+            #ai-input-wrapper.options-active #ai-options-bar { transform: translateY(0); }
             #ai-options-bar button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.1em; cursor: pointer; padding: 5px 10px; transition: background 0.2s; flex-shrink: 0; margin-right: 8px; }
             #ai-options-bar button:hover { background: rgba(255,255,255,0.2); }
             #ai-char-counter { position: absolute; right: 55px; top: 15px; font-size: 0.8em; color: rgba(255, 255, 255, 0.4); z-index: 2;}
