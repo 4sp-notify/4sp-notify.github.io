@@ -13,8 +13,8 @@
  * - A dark, heavily blurred overlay for focus mode with enhanced animations.
  * - Dynamic input box glow that pulses based on typing speed.
  * - Fading effect on the top and bottom of the scrollable chat view.
- * - An introductory welcome message that fades out, with location-sharing notice.
- * - Animated "4SP - AI MODE" branding in the top-left corner.
+ * - An introductory welcome message that fades out.
+ * - A persistent, glistening "AI Mode" title appears after interaction begins.
  * - Chat history for contextual conversations within a session.
  * - Automatically sends user's general location (state/country) with the first message.
  * - A dynamic, auto-expanding WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
@@ -121,6 +121,10 @@
             span.style.animationDelay = `${Math.random() * 2}s`;
             brandTitle.appendChild(span);
         });
+        
+        const persistentTitle = document.createElement('div');
+        persistentTitle.id = 'ai-persistent-title';
+        persistentTitle.textContent = "AI Mode";
 
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
@@ -168,6 +172,7 @@
         inputWrapper.appendChild(createOptionsBar());
         
         container.appendChild(brandTitle);
+        container.appendChild(persistentTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
@@ -203,9 +208,9 @@
     }
 
     function fadeOutWelcomeMessage() {
-        const welcomeMessage = document.getElementById('ai-welcome-message');
-        if (welcomeMessage && !welcomeMessage.classList.contains('faded')) {
-            welcomeMessage.classList.add('faded');
+        const container = document.getElementById('ai-container');
+        if (container && !container.classList.contains('chat-active')) {
+            container.classList.add('chat-active');
         }
     }
 
@@ -442,7 +447,7 @@
         bar.id = 'ai-options-bar';
         const buttons = [
             { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
-            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>' }, 
+            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>&nbsp;' }, 
             { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
             { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' },
             { t: '<', v: '<' }, { t: '>', v: '>' }, { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
@@ -481,18 +486,32 @@
                 background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
                 -webkit-background-clip: text; background-clip: text; color: transparent;
                 animation: brand-slide 10s linear infinite; background-size: 400% 100%;
-                opacity: 0; transform: translateY(-20px); transition: opacity 0.5s 0.2s, transform 0.5s 0.2s;
+                opacity: 1; transform: translateY(0); transition: opacity 0.5s 0.2s, transform 0.5s 0.2s;
             }
-            #ai-container.active #ai-brand-title { opacity: 1; transform: translateY(0); }
+            #ai-container.chat-active #ai-brand-title { opacity: 0; pointer-events: none; }
             #ai-brand-title span { animation: brand-pulse 2s ease-in-out infinite; display: inline-block; }
+            #ai-persistent-title {
+                position: absolute; top: 28px; left: 30px; font-family: 'secondaryfont', sans-serif;
+                font-size: 18px; font-weight: bold;
+                background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
+                -webkit-background-clip: text; background-clip: text; color: transparent;
+                opacity: 0; pointer-events: none; transition: opacity 0.5s 0.2s;
+                overflow: hidden;
+            }
+            #ai-persistent-title::before {
+                content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
+                background: linear-gradient(100deg, rgba(255,255,255,0) 20%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 80%);
+                transform: translateX(-100%); animation: glisten 3s infinite;
+            }
+            #ai-container.chat-active #ai-persistent-title { opacity: 1; pointer-events: auto; }
             #ai-welcome-message {
                 position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                 text-align: center; color: rgba(255,255,255,0.5);
-                opacity: 0; animation: welcome-fade 6s forwards; transition: opacity 0.5s;
+                opacity: 1; transition: opacity 0.5s;
                 width: 100%;
             }
+            #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; }
             #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
-            #ai-welcome-message.faded { opacity: 0 !important; pointer-events: none; }
             #ai-welcome-message p { font-size: 0.9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s ease, transform 0.3s ease; }
             #ai-close-button:hover { color: white; transform: scale(1.1); }
@@ -578,7 +597,8 @@
             @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(0.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
             @keyframes brand-slide { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
             @keyframes brand-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
-            @keyframes welcome-fade { 0% { opacity: 0; transform: translate(-50%, -50%) scale(0.95); } 15% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 85% { opacity: 1; transform: translate(-50%, -50%) scale(1); } 100% { opacity: 0; transform: translate(-50%, -50%) scale(0.95); } }
+            @keyframes welcome-fade { 0% { opacity: 1; } 100% { opacity: 0; } }
+            @keyframes glisten { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
         `;
         document.head.appendChild(style);
     }
