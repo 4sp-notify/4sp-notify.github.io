@@ -6,6 +6,9 @@
  * Activation:
  * - Ctrl + C (only when no text is selected)
  *
+ * Deactivation:
+ * - 'X' button or Ctrl + C when the input box is empty.
+ *
  * Features:
  * - A dark, heavily blurred overlay for focus mode with enhanced animations.
  * - Fading effect on the top and bottom of the scrollable chat view.
@@ -17,7 +20,6 @@
  * - A "math mode" touchpad for easy input of formatted symbols and functions.
  * - AI responses render Markdown, LaTeX-style math ($...$), and code blocks.
  * - Communicates with the Google AI API (Gemini) to get answers.
- * - An 'X' button to easily exit the AI mode.
  */
 
 (function() {
@@ -69,15 +71,24 @@
      * Handles the keyboard shortcut for activating/deactivating the AI.
      */
     function handleKeyDown(e) {
-        // New shortcut: Ctrl + C, but only if no text is selected.
         if (e.ctrlKey && e.key.toLowerCase() === 'c') {
             const selection = window.getSelection().toString();
-            if (selection.length === 0) {
-                // Prevent the default "copy" action only when activating the AI interface.
-                e.preventDefault();
-                toggleAIInterface();
+
+            if (isAIActive) {
+                const editor = document.getElementById('ai-input');
+                // If AI is active and the input is empty (and no text is selected), Ctrl+C closes it.
+                if (editor && editor.innerText.trim().length === 0 && selection.length === 0) {
+                    e.preventDefault();
+                    deactivateAI();
+                }
+                // Otherwise, let the default copy action proceed.
+            } else {
+                // If AI is not active and no text on the page is selected, Ctrl+C opens it.
+                if (selection.length === 0) {
+                    e.preventDefault();
+                    activateAI();
+                }
             }
-            // If text is selected, do nothing and let the default copy action proceed.
         }
     }
 
@@ -396,7 +407,7 @@
                 opacity: 0; animation: welcome-fade 6s forwards; transition: opacity 0.5s;
                 width: 100%;
             }
-            #ai-welcome-message h2 { font-size: 2.5em; margin: 0; color: #fff; }
+            #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
             #ai-welcome-message.faded { opacity: 0 !important; pointer-events: none; }
             #ai-welcome-message p { font-size: 0.9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s ease, transform 0.3s ease; }
