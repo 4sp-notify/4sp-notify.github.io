@@ -96,18 +96,18 @@
         const mathModeToggle = document.createElement('button');
         mathModeToggle.id = 'ai-math-toggle';
         mathModeToggle.innerHTML = '&#8942;'; // Vertical ellipsis
-        mathModeToggle.onclick = toggleMathMode;
+        mathModeToggle.onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
         
         inputWrapper.appendChild(visualInput);
         inputWrapper.appendChild(hiddenTextarea);
         inputWrapper.appendChild(placeholder);
         inputWrapper.appendChild(charCounter);
         inputWrapper.appendChild(mathModeToggle);
+        inputWrapper.appendChild(createMathPad());
         
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
-        container.appendChild(createMathPad());
 
         document.body.appendChild(container);
 
@@ -347,8 +347,8 @@
             #ai-input-placeholder { position: absolute; top: 12px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; }
             #ai-math-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s; z-index: 2; }
             #ai-math-toggle:hover, #ai-math-toggle.active { color: white; }
-            #ai-math-pad { position: absolute; bottom: 100%; right: 0; margin-bottom: 10px; display: none; opacity: 0; transition: opacity 0.3s ease; grid-template-columns: repeat(4, 1fr); gap: 5px; background: rgba(25, 25, 28, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); border-radius: 10px; padding: 10px; }
-            #ai-math-pad button { background: rgba(255,255,255,0.1); border: none; border-radius: 5px; color: white; font-size: 1.2em; cursor: pointer; padding: 8px 12px; transition: background 0.2s; }
+            #ai-math-pad { position: absolute; bottom: 100%; right: 0; margin-bottom: 10px; display: none; opacity: 0; transition: opacity 0.3s ease; grid-template-columns: repeat(4, 1fr); gap: 5px; background: rgba(25, 25, 28, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); border-radius: 15px; padding: 10px; }
+            #ai-math-pad button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.2em; cursor: pointer; padding: 8px 12px; transition: background 0.2s; }
             #ai-math-pad button:hover { background: rgba(255,255,255,0.2); }
             #ai-char-counter { position: absolute; right: 55px; bottom: 10px; font-size: 0.8em; color: rgba(255, 255, 255, 0.4); z-index: 2;}
             .ai-error, .ai-temp-message { text-align: center; color: rgba(255, 255, 255, 0.7); }
