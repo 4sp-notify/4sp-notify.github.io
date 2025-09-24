@@ -235,21 +235,21 @@
         const timeDiff = now - (lastKeystrokeTime || now);
         lastKeystrokeTime = now;
 
-        if (wrapper.classList.contains('waiting')) return;
-
-        wrapper.style.animationPlayState = 'running';
-        if (timeDiff < 150) { // Fast typing
-            wrapper.style.animationDuration = '0.7s';
-        } else { // Slower typing
-            wrapper.style.animationDuration = '1.8s';
-        }
-        clearTimeout(typingTimeout);
-        typingTimeout = setTimeout(() => {
-            const activeWrapper = document.getElementById('ai-input-wrapper');
-            if (activeWrapper && !activeWrapper.classList.contains('waiting')) {
-                activeWrapper.style.animationPlayState = 'paused';
+        if (!wrapper.classList.contains('waiting')) {
+            wrapper.style.animationPlayState = 'running';
+            if (timeDiff < 150) { // Fast typing
+                wrapper.style.animationDuration = '0.7s';
+            } else { // Slower typing
+                wrapper.style.animationDuration = '1.8s';
             }
-        }, 1500);
+            clearTimeout(typingTimeout);
+            typingTimeout = setTimeout(() => {
+                const activeWrapper = document.getElementById('ai-input-wrapper');
+                if (activeWrapper && !activeWrapper.classList.contains('waiting')) {
+                     activeWrapper.style.animationDuration = '4s';
+                }
+            }, 1000);
+        }
 
         editor.querySelectorAll('div:not(:last-child)').forEach(div => {
             if (div.innerHTML.trim() === '' || div.innerHTML === '<br>') {
@@ -442,7 +442,7 @@
         bar.id = 'ai-options-bar';
         const buttons = [
             { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
-            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>&nbsp;' }, 
+            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>' }, 
             { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
             { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' },
             { t: '<', v: '<' }, { t: '>', v: '>' }, { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
