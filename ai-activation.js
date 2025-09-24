@@ -103,11 +103,11 @@
                 <div class="ai-input-container">
                     <div id="ai-input" contenteditable="true"></div>
                     <div id="ai-input-placeholder">Ask a question...</div>
+                    <button id="ai-file-upload-btn" title="Attach up to 3 files">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                    </button>
+                    <button id="ai-math-toggle" title="Math options">&#8942;</button>
                 </div>
-                <button id="ai-file-upload-btn" title="Attach up to 3 files">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
-                </button>
-                <button id="ai-math-toggle" title="Math options">&#8942;</button>
             </div>
             <div id="ai-char-counter">0 / ${USER_CHAR_LIMIT}</div>
             <div id="ai-close-button">&times;</div>
@@ -131,6 +131,7 @@
         visualInput.oninput = handleContentEditableInput;
         visualInput.onkeyup = updateFractionFocus;
         visualInput.onclick = updateFractionFocus;
+        visualInput.onpaste = handlePaste; // Add paste event listener
         document.getElementById('ai-math-toggle').onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
         document.getElementById('ai-file-upload-btn').onclick = () => document.getElementById('ai-file-input').click();
         document.getElementById('ai-file-input').onchange = handleFileSelect;
@@ -149,6 +150,30 @@
         setTimeout(() => container.classList.add('active'), 10);
         visualInput.focus();
         isAIActive = true;
+    }
+    
+    function handlePaste(e) {
+        e.preventDefault();
+        const editor = e.target;
+        const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+        const currentText = editor.innerText;
+
+        if (currentText.length + pastedText.length > USER_CHAR_LIMIT) {
+            if (attachedFiles.length >= 3) {
+                alert("You cannot attach more than 3 files. Your pasted text was not added.");
+                return;
+            }
+            const fileId = `file_paste_${Date.now()}`;
+            attachedFiles.push({
+                id: fileId,
+                name: 'paste.txt',
+                content: pastedText
+            });
+            renderAttachments();
+        } else {
+            // Sanitize and insert plain text
+            document.execCommand('insertText', false, pastedText);
+        }
     }
 
     function deactivateAI() {
@@ -227,7 +252,6 @@
             chip.querySelector('.remove-attachment-btn').onclick = () => removeAttachment(file.id);
             container.appendChild(chip);
         });
-        // After rendering attachments, re-evaluate the placeholder and character count
         handleContentEditableInput();
     }
 
@@ -519,12 +543,25 @@
             #ai-input { min-height: 50px; color: white; font-size: 1.1em; padding: 12px 110px 12px 20px; box-sizing: border-box; outline: none; }
             #ai-attachment-container { display: flex; flex-wrap: wrap; gap: 5px; padding: 10px 20px 0; }
             #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; z-index: 1; }
-            #ai-math-toggle, #ai-file-upload-btn { position: absolute; top: 50%; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
-            #ai-math-toggle { right: 10px; }
-            #ai-file-upload-btn { right: 45px; }
-            #ai-math-toggle:hover, #ai-file-upload-btn:hover { color: white; }
+            .ai-input-container > #ai-math-toggle, .ai-input-container > #ai-file-upload-btn {
+                position: absolute; top: 50%;
+                background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px;
+                line-height: 1; z-index: 2;
+                transform: translateY(-50%);
+                transition: color 0.2s, transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), top 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+            .ai-input-container > #ai-math-toggle { right: 10px; }
+            .ai-input-container > #ai-file-upload-btn { right: 45px; }
+            .ai-input-container > #ai-math-toggle:hover, .ai-input-container > #ai-file-upload-btn:hover { color: white; }
             #ai-math-toggle.active { transform: translateY(-50%) rotate(180deg); }
-            #ai-attachment-indicator { display: none; align-items: center; background: var(--ai-blue); color: white; font-size: 0.8em; padding: 2px 8px; border-radius: 10px; margin: 0 10px 5px auto; }
+            #ai-input-wrapper.options-active .ai-input-container > #ai-math-toggle,
+            #ai-input-wrapper.options-active .ai-input-container > #ai-file-upload-btn {
+                top: 10px;
+                transform: translateY(0);
+            }
+            #ai-input-wrapper.options-active .ai-input-container > #ai-math-toggle.active {
+                transform: translateY(0) rotate(180deg);
+            }
             #ai-options-bar {
                 display: flex; overflow-x: auto; background: rgba(0,0,0,0.3);
                 transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
