@@ -11,7 +11,7 @@
  *
  * Features:
  * - A dark, heavily blurred overlay with a clean, single-column layout.
- * - Chat history is saved for the session (clears on page refresh).
+ * - Chat history is saved between activations but clears on page refresh.
  * - Input box glow smoothly transitions between a white typing pulse and a colored waiting pulse.
  * - An introductory welcome message that fades out.
  * - Automatically sends user's general location and current time with each message.
@@ -34,7 +34,9 @@
     let isMathModeActive = false;
     let lastRequestTime = 0;
     const COOLDOWN_PERIOD = 5000;
-    let chatHistory = []; // Stays in memory for the session
+    // These variables hold the state for the current page session. They reset on refresh.
+    let chatHistory = [];
+    let chatHTML = '';
     let attachedFiles = [];
     const latexSymbolMap = {
         '\\pi': 'π', '\\theta': 'θ', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
@@ -115,6 +117,14 @@
         `;
 
         document.body.appendChild(container);
+
+        // Restore the previous chat HTML if it exists for this session
+        const responseContainer = document.getElementById('ai-response-container');
+        responseContainer.innerHTML = chatHTML;
+        if (chatHistory.length > 0) {
+            fadeOutWelcomeMessage();
+            responseContainer.scrollTop = responseContainer.scrollHeight;
+        }
         
         const brandTitle = document.getElementById('ai-brand-title');
         const brandText = "4SP - AI MODE";
@@ -131,21 +141,11 @@
         visualInput.oninput = handleContentEditableInput;
         visualInput.onkeyup = updateFractionFocus;
         visualInput.onclick = updateFractionFocus;
-        visualInput.onpaste = handlePaste; // Add paste event listener
+        visualInput.onpaste = handlePaste;
         document.getElementById('ai-math-toggle').onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
         document.getElementById('ai-file-upload-btn').onclick = () => document.getElementById('ai-file-input').click();
         document.getElementById('ai-file-input').onchange = handleFileSelect;
         document.getElementById('ai-input-wrapper').appendChild(createOptionsBar());
-        
-        try {
-            chatHistory = JSON.parse(sessionStorage.getItem('ai-chat-history')) || [];
-            document.getElementById('ai-response-container').innerHTML = sessionStorage.getItem('ai-chat-html') || '';
-            if (chatHistory.length > 0) {
-                fadeOutWelcomeMessage();
-            }
-        } catch (e) {
-            chatHistory = [];
-        }
         
         setTimeout(() => container.classList.add('active'), 10);
         visualInput.focus();
@@ -171,7 +171,6 @@
             });
             renderAttachments();
         } else {
-            // Sanitize and insert plain text
             document.execCommand('insertText', false, pastedText);
         }
     }
@@ -179,8 +178,9 @@
     function deactivateAI() {
         const container = document.getElementById('ai-container');
         if (container) {
-            sessionStorage.setItem('ai-chat-history', JSON.stringify(chatHistory));
-            sessionStorage.setItem('ai-chat-html', document.getElementById('ai-response-container').innerHTML);
+            // Save the current chat's visual state to the in-memory variable
+            chatHTML = document.getElementById('ai-response-container').innerHTML;
+
             container.classList.remove('active');
             setTimeout(() => {
                 container.remove();
@@ -553,14 +553,18 @@
             .ai-input-container > #ai-math-toggle { right: 10px; }
             .ai-input-container > #ai-file-upload-btn { right: 45px; }
             .ai-input-container > #ai-math-toggle:hover, .ai-input-container > #ai-file-upload-btn:hover { color: white; }
-            #ai-math-toggle.active { transform: translateY(-50%) rotate(180deg); }
+            #ai-math-toggle.active {
+                color: white;
+                transform: translateY(-50%);
+            }
             #ai-input-wrapper.options-active .ai-input-container > #ai-math-toggle,
             #ai-input-wrapper.options-active .ai-input-container > #ai-file-upload-btn {
                 top: 10px;
                 transform: translateY(0);
             }
             #ai-input-wrapper.options-active .ai-input-container > #ai-math-toggle.active {
-                transform: translateY(0) rotate(180deg);
+                color: white;
+                transform: translateY(0);
             }
             #ai-options-bar {
                 display: flex; overflow-x: auto; background: rgba(0,0,0,0.3);
