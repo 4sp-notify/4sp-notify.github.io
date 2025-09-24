@@ -142,6 +142,8 @@
         visualInput.contentEditable = true;
         visualInput.onkeydown = handleInputSubmission;
         visualInput.oninput = handleContentEditableInput;
+        visualInput.onkeyup = updateFractionFocus;
+        visualInput.onclick = updateFractionFocus;
 
         const placeholder = document.createElement('div');
         placeholder.id = 'ai-input-placeholder';
@@ -200,6 +202,19 @@
         const welcomeMessage = document.getElementById('ai-welcome-message');
         if (welcomeMessage && !welcomeMessage.classList.contains('faded')) {
             welcomeMessage.classList.add('faded');
+        }
+    }
+
+    function updateFractionFocus() {
+        const editor = document.getElementById('ai-input');
+        editor.querySelectorAll('.ai-frac').forEach(f => f.classList.remove('focused'));
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0 && selection.isCollapsed) {
+            const range = selection.getRangeAt(0);
+            const nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
+            if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
+                nodeBefore.classList.add('focused');
+            }
         }
     }
 
@@ -397,7 +412,7 @@
         bar.id = 'ai-options-bar';
         const buttons = [
             { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
-            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>&nbsp;' }, 
+            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>' }, 
             { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
             { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' },
             { t: '<', v: '<' }, { t: '>', v: '>' }, { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
@@ -463,7 +478,8 @@
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite, message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
             .ai-response-content pre { background: #0c0d10; border: 1px solid #222; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: monospace; }
             .ai-math-inline, .user-message { color: #a5d6ff; font-family: monospace; font-size: 1.1em; }
-            .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em; border-radius: 5px; }
+            .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em; border-radius: 5px; transition: box-shadow 0.2s; }
+            .ai-frac.focused { box-shadow: 0 0 0 2px var(--ai-blue); }
             .ai-frac > sup, .ai-frac > sub { display: block; min-width: 1ch; }
             .ai-frac > sup { border-bottom: 1px solid currentColor; padding-bottom: 0.15em; }
             .ai-frac > sub { padding-top: 0.15em; }
@@ -484,7 +500,6 @@
                 animation: glow 2.5s infinite;
                 cursor: text;
                 border: 1px solid rgba(255, 255, 255, 0.2);
-                overflow: hidden;
             }
             #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
             #ai-input {
@@ -496,7 +511,7 @@
                 box-sizing: border-box;
                 word-wrap: break-word;
                 outline: none;
-                overflow-y: auto;
+                overflow-y: hidden;
             }
             #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; }
             #ai-math-toggle { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
