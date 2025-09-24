@@ -581,9 +581,27 @@
                 position: relative;
                 width: 100%;
             }
-            #ai-input { min-height: 50px; color: white; font-size: 1.1em; padding: 12px 110px 12px 20px; box-sizing: border-box; outline: none; }
+            #ai-input {
+                min-height: 38px;
+                color: white;
+                font-size: 1.1em;
+                padding: 8px 110px 8px 20px;
+                box-sizing: border-box;
+                outline: none;
+            }
+            #ai-input .ai-frac, #ai-input sup, #ai-input sub {
+                color: #FFF;
+            }
             #ai-attachment-container { display: flex; flex-wrap: wrap; gap: 5px; padding: 10px 20px 0; }
-            #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; z-index: 1; }
+            #ai-input-placeholder {
+                position: absolute;
+                top: 10px;
+                left: 20px;
+                color: rgba(255,255,255,0.4);
+                pointer-events: none;
+                font-size: 1.1em;
+                z-index: 1;
+            }
             .ai-input-container > #ai-math-toggle, .ai-input-container > #ai-file-upload-btn {
                 position: absolute; top: 50%;
                 background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px;
