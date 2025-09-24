@@ -11,13 +11,12 @@
  *
  * Features:
  * - A dark, heavily blurred overlay for focus mode with enhanced animations.
- * - Dynamic input box glow that pulses based on typing speed.
+ * - Input box glow that pulses steadily while waiting for a response.
  * - Fading effect on the top and bottom of the scrollable chat view.
  * - An introductory welcome message that fades out.
- * - A persistent, glowing "AI Mode" title appears after interaction begins.
  * - Chat history for contextual conversations within a session.
  * - Automatically sends user's general location (state/country) with the first message.
- * - A dynamic, auto-expanding WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
+ * - A dynamic, WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
  * - A horizontal, scrollable math options bar with symbols and inequalities.
  * - AI responses render Markdown, LaTeX-style math, and code blocks.
  * - Communicates with the Google AI API (Gemini) to get answers.
@@ -28,7 +27,6 @@
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA';
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
-    const FIRST_LINE_CHAR_LIMIT = 60;
 
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
@@ -37,8 +35,6 @@
     let lastRequestTime = 0;
     const COOLDOWN_PERIOD = 5000; // 5 seconds in milliseconds
     let chatHistory = [];
-    let typingTimeout = null;
-    let lastKeystrokeTime = 0;
     const latexSymbolMap = {
         '\\pi': 'π', '\\theta': 'θ', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
         '\\delta': 'δ', '\\epsilon': 'ε', '\\infty': '∞', '\\pm': '±',
@@ -113,24 +109,10 @@
         const container = document.createElement('div');
         container.id = 'ai-container';
         
-        const brandTitle = document.createElement('div');
-        brandTitle.id = 'ai-brand-title';
-        const brandText = "4SP - AI MODE";
-        brandText.split('').forEach(char => {
-            const span = document.createElement('span');
-            span.textContent = char;
-            span.style.animationDelay = `${Math.random() * 2}s`;
-            brandTitle.appendChild(span);
-        });
-        
-        const persistentTitle = document.createElement('div');
-        persistentTitle.id = 'ai-persistent-title';
-        persistentTitle.textContent = "AI Mode";
-
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
         welcomeMessage.innerHTML = `
-            <h2>Welcome to AI Mode</h2>
+            <h2>AI Mode</h2>
             <p>This is a beta feature. To improve your experience, your general location (state or country) will be shared with your first message. You may be subject to message limits.</p>
         `;
 
@@ -172,8 +154,6 @@
         inputWrapper.appendChild(mathModeToggle);
         inputWrapper.appendChild(createOptionsBar());
         
-        container.appendChild(brandTitle);
-        container.appendChild(persistentTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
@@ -195,7 +175,6 @@
     function deactivateAI() {
         const container = document.getElementById('ai-container');
         if (container) {
-            clearTimeout(typingTimeout);
             container.classList.remove('active');
             setTimeout(() => {
                 container.remove();
@@ -209,9 +188,9 @@
     }
 
     function fadeOutWelcomeMessage() {
-        const container = document.getElementById('ai-container');
-        if (container && !container.classList.contains('chat-active')) {
-            container.classList.add('chat-active');
+        const welcomeMessage = document.getElementById('ai-welcome-message');
+        if (welcomeMessage && !welcomeMessage.classList.contains('faded')) {
+            welcomeMessage.classList.add('faded');
         }
     }
 
@@ -222,10 +201,13 @@
         const selection = window.getSelection();
         if (selection.rangeCount > 0 && selection.isCollapsed) {
             const range = selection.getRangeAt(0);
-            if (range.startOffset === 0) return;
+            if (range.startOffset === 0 && range.startContainer === editor) return;
             let nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
+             if (range.startOffset === 0) {
+                nodeBefore = range.startContainer.previousSibling;
+            }
             if (nodeBefore && nodeBefore.nodeType === 3 && nodeBefore.textContent === '\u00A0') {
-                 nodeBefore = range.startContainer.childNodes[range.startOffset - 2];
+                 nodeBefore = nodeBefore.previousSibling;
             }
             if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
                 nodeBefore.classList.add('focused');
@@ -236,31 +218,10 @@
     /**
      * Handles input on the contenteditable div, updating placeholder and counter.
      */
-    function handleContentEditableInput(e) {
+    function handleContentEditableInput() {
         fadeOutWelcomeMessage();
-        const editor = e.target;
+        const editor = document.getElementById('ai-input');
         
-        const wrapper = document.getElementById('ai-input-wrapper');
-        const now = Date.now();
-        const timeDiff = now - (lastKeystrokeTime || now);
-        lastKeystrokeTime = now;
-
-        if (!wrapper.classList.contains('waiting')) {
-            wrapper.style.animationPlayState = 'running';
-            if (timeDiff < 150) { // Fast typing
-                wrapper.style.animationDuration = '0.7s';
-            } else { // Slower typing
-                wrapper.style.animationDuration = '1.8s';
-            }
-            clearTimeout(typingTimeout);
-            typingTimeout = setTimeout(() => {
-                const activeWrapper = document.getElementById('ai-input-wrapper');
-                if (activeWrapper && !activeWrapper.classList.contains('waiting')) {
-                     activeWrapper.style.animationDuration = '4s';
-                }
-            }, 1000);
-        }
-
         editor.querySelectorAll('div:not(:last-child)').forEach(div => {
             if (div.innerHTML.trim() === '' || div.innerHTML === '<br>') {
                 div.remove();
@@ -271,7 +232,7 @@
         if (selection.rangeCount > 0) {
             const range = selection.getRangeAt(0);
             const node = range.startContainer;
-            if (node.nodeType === 3) { // Text node
+            if (node.nodeType === 3) {
                 const textContent = node.textContent;
                 const textBeforeCursor = textContent.slice(0, range.startOffset);
                 const match = textBeforeCursor.match(/(\\[a-zA-Z]+)\s$/);
@@ -321,49 +282,20 @@
     function handleInputSubmission(e) {
         e.stopPropagation();
         const editor = e.target;
-
-        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-            const selection = window.getSelection();
-            if (selection.rangeCount > 0) {
-                const range = selection.getRangeAt(0);
-                const container = range.startContainer;
-                let isFirstLine = true;
-                
-                let parent = container.nodeType === 3 ? container.parentNode : container;
-                while (parent && parent !== editor) {
-                    if (parent.previousSibling) {
-                        isFirstLine = false;
-                        break;
-                    }
-                    parent = parent.parentNode;
-                }
-                
-                if (isFirstLine) {
-                    const tempDiv = document.createElement('div');
-                    const firstLineNode = editor.childNodes[0];
-                    if (firstLineNode) {
-                        tempDiv.appendChild(firstLineNode.cloneNode(true));
-                         const firstLineText = tempDiv.innerText;
-                        if (firstLineText.length >= FIRST_LINE_CHAR_LIMIT) {
-                            e.preventDefault();
-                            document.execCommand('insertLineBreak');
-                        }
-                    }
-                }
-            }
-        }
         
         if (e.key === 'Backspace') {
             const selection = window.getSelection();
             if (selection.rangeCount > 0 && selection.isCollapsed) {
                 const range = selection.getRangeAt(0);
-                 if (range.startOffset === 0 && range.startContainer === editor) return;
+                if (range.startOffset === 0 && range.startContainer === editor) return;
                 
                 let nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
-                if (range.startOffset === 0) {
+                if(range.startOffset === 0) {
                     nodeBefore = range.startContainer.previousSibling;
                 }
-
+                if (nodeBefore && nodeBefore.nodeType === 3 && nodeBefore.textContent === '\u00A0') {
+                    nodeBefore = nodeBefore.previousSibling;
+                }
                 if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
                     e.preventDefault();
                     nodeBefore.remove();
@@ -567,6 +499,8 @@
                 animation-play-state: running;
                 cursor: text;
                 border: 1px solid rgba(255, 255, 255, 0.2);
+                display: flex;
+                flex-direction: column;
             }
             #ai-input-wrapper.waiting {
                 animation: gemini-glow 4s linear infinite !important;
@@ -582,7 +516,7 @@
                 word-wrap: break-word;
                 outline: none;
             }
-            #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; }
+            #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; z-index: 1; }
             #ai-math-toggle { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
             #ai-math-toggle:hover, #ai-math-toggle.active { color: white; }
             #ai-math-toggle.active { transform: translateY(-50%) rotate(180deg); }
