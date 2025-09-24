@@ -17,6 +17,7 @@
  * - Automatically sends user's general location and current time with each message.
  * - A dynamic, WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
  * - A horizontal, scrollable math options bar with symbols and inequalities.
+ * - A file uploader for text-based files to provide context to the AI.
  * - AI responses render Markdown, LaTeX-style math, and code blocks.
  * - Communicates with the Google AI API (Gemini) to get answers.
  */
@@ -34,6 +35,7 @@
     let lastRequestTime = 0;
     const COOLDOWN_PERIOD = 5000;
     let chatHistory = []; // Stays in memory for the session
+    let attachedFile = null;
     const latexSymbolMap = {
         '\\pi': 'π', '\\theta': 'θ', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
         '\\delta': 'δ', '\\epsilon': 'ε', '\\infty': '∞', '\\pm': '±',
@@ -98,10 +100,15 @@
             <div id="ai-input-wrapper">
                 <div id="ai-input" contenteditable="true"></div>
                 <div id="ai-input-placeholder">Ask a question...</div>
-                <button id="ai-math-toggle">&#8942;</button>
+                <div id="ai-attachment-indicator"></div>
+                <button id="ai-file-upload-btn" title="Attach file">
+                    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
+                </button>
+                <button id="ai-math-toggle" title="Math options">&#8942;</button>
             </div>
             <div id="ai-char-counter">0 / ${USER_CHAR_LIMIT}</div>
             <div id="ai-close-button">&times;</div>
+            <input type="file" id="ai-file-input" hidden accept=".txt,.js,.html,.css,.json,.md,.py,.java,.c,.cpp,.cs,.php,.rb,.go,.rs,.swift,.kt,.xml,.sh">
         `;
 
         document.body.appendChild(container);
@@ -122,9 +129,10 @@
         visualInput.onkeyup = updateFractionFocus;
         visualInput.onclick = updateFractionFocus;
         document.getElementById('ai-math-toggle').onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
+        document.getElementById('ai-file-upload-btn').onclick = () => document.getElementById('ai-file-input').click();
+        document.getElementById('ai-file-input').onchange = handleFileSelect;
         document.getElementById('ai-input-wrapper').appendChild(createOptionsBar());
         
-        // Load session history
         try {
             chatHistory = JSON.parse(sessionStorage.getItem('ai-chat-history')) || [];
             document.getElementById('ai-response-container').innerHTML = sessionStorage.getItem('ai-chat-html') || '';
@@ -154,6 +162,7 @@
         }
         isAIActive = false;
         isMathModeActive = false;
+        attachedFile = null;
     }
 
     function fadeOutWelcomeMessage() {
@@ -178,6 +187,29 @@
                 nodeBefore.classList.add('focused');
             }
         }
+    }
+
+    function handleFileSelect(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        const reader = new FileReader();
+        reader.onload = (event) => {
+            attachedFile = {
+                name: file.name,
+                content: event.target.result
+            };
+            const indicator = document.getElementById('ai-attachment-indicator');
+            indicator.textContent = file.name;
+            indicator.style.display = 'flex';
+        };
+        reader.onerror = () => {
+            console.error("Failed to read file.");
+            attachedFile = null;
+            document.getElementById('ai-attachment-indicator').style.display = 'none';
+        };
+        reader.readAsText(file);
+        e.target.value = '';
     }
 
     function handleContentEditableInput() {
@@ -259,15 +291,21 @@
             e.preventDefault();
             fadeOutWelcomeMessage();
             let query = parseInputForAPI(editor.innerHTML);
-            if (!query || isRequestPending) return;
+            if ((!query && !attachedFile) || isRequestPending) return;
             const now = Date.now();
             if (now - lastRequestTime < COOLDOWN_PERIOD) return;
 
+            let contextualQuery = query;
             const dateTimeString = new Date().toLocaleString();
-            let contextualQuery = `(User's local time: ${dateTimeString}) ${query}`;
+            contextualQuery = `(User's local time: ${dateTimeString}) ${contextualQuery}`;
+
             if (chatHistory.length === 0) {
                 const location = localStorage.getItem('ai-user-location');
                 if (location) contextualQuery = `(User is located in ${location}) ${contextualQuery}`;
+            }
+
+            if (attachedFile) {
+                contextualQuery = `CONTEXT FROM FILE (${attachedFile.name}):\n\n${attachedFile.content}\n\n---\n\nUSER QUERY:\n${contextualQuery}`;
             }
 
             isRequestPending = true;
@@ -280,8 +318,15 @@
             const responseContainer = document.getElementById('ai-response-container');
             const userBubble = document.createElement('div');
             userBubble.className = 'ai-message-bubble user-message';
-            userBubble.innerHTML = editor.innerHTML;
+            let userBubbleHTML = editor.innerHTML;
+            if (attachedFile) {
+                 userBubbleHTML += `<div class="attachment-chip">${attachedFile.name}</div>`;
+            }
+            userBubble.innerHTML = userBubbleHTML;
             responseContainer.appendChild(userBubble);
+            
+            attachedFile = null;
+            document.getElementById('ai-attachment-indicator').style.display = 'none';
 
             const responseBubble = document.createElement('div');
             responseBubble.className = 'ai-message-bubble gemini-response loading';
@@ -436,12 +481,16 @@
                 border: 1px solid rgba(255, 255, 255, 0.2);
                 display: flex; flex-direction: column; overflow: hidden;
             }
-            #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite !important; }
+            #ai-input-wrapper.waiting { animation-name: gemini-glow !important; animation-duration: 4s !important; }
             #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
-            #ai-input { min-height: 50px; color: white; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; outline: none; }
+            #ai-input { min-height: 50px; color: white; font-size: 1.1em; padding: 12px 80px 12px 20px; box-sizing: border-box; outline: none; }
             #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; z-index: 1; }
-            #ai-math-toggle { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
+            #ai-math-toggle, #ai-file-upload-btn { position: absolute; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
+            #ai-math-toggle { right: 10px; }
+            #ai-file-upload-btn { right: 45px; }
+            #ai-math-toggle:hover, #ai-file-upload-btn:hover { color: white; }
             #ai-math-toggle.active { transform: translateY(-50%) rotate(180deg); }
+            #ai-attachment-indicator { display: none; align-items: center; background: var(--ai-blue); color: white; font-size: 0.8em; padding: 2px 8px; border-radius: 10px; margin: 0 10px 5px auto; }
             #ai-options-bar {
                 display: flex; overflow-x: auto; background: rgba(0,0,0,0.3);
                 transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
@@ -457,6 +506,7 @@
             .ai-typing-indicator span:nth-child(1) { animation-delay: 0s; }
             .ai-typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
             .ai-typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
+            .attachment-chip { font-size: 0.8em; background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 10px; margin-top: 10px; display: inline-block; }
             @keyframes typing-pulse { 0%, 80%, 100% { transform: scale(0); } 40% { transform: scale(1.0); } }
             @keyframes glow { 0%, 100% { box-shadow: 0 0 5px rgba(255, 255, 255, 0.2), 0 0 10px rgba(255, 255, 255, 0.1); } 50% { box-shadow: 0 0 15px rgba(255, 255, 255, 0.5), 0 0 25px rgba(255, 255, 255, 0.3); } }
             @keyframes gemini-glow { 0%, 100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
