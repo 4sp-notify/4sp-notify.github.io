@@ -8,8 +8,8 @@
  *
  * Features:
  * - A dark, heavily blurred overlay for focus mode.
- * - A dynamic, multi-line input that displays user's math input visually.
- * - A "math mode" touchpad for easy input of symbols and functions.
+ * - A dynamic, WYSIWYG contenteditable input for visual math editing.
+ * - A "math mode" touchpad for easy input of formatted symbols and functions.
  * - AI responses render Markdown, LaTeX-style math ($...$), and code blocks.
  * - AI response bubbles feature a Gemini-style animated gradient glow.
  * - Communicates with the Google AI API (Gemini) to get answers.
@@ -70,24 +70,16 @@
 
         const inputWrapper = document.createElement('div');
         inputWrapper.id = 'ai-input-wrapper';
-        inputWrapper.onclick = () => {
-            const hiddenTextarea = document.getElementById('ai-input-hidden');
-            if (hiddenTextarea) hiddenTextarea.focus();
-        };
-
+        
         const visualInput = document.createElement('div');
-        visualInput.id = 'ai-input-display';
-
-        const hiddenTextarea = document.createElement('textarea');
-        hiddenTextarea.id = 'ai-input-hidden';
-        hiddenTextarea.autocomplete = 'off';
-        hiddenTextarea.onkeydown = handleInputSubmission;
-        hiddenTextarea.oninput = handleHiddenInput;
-        hiddenTextarea.maxLength = USER_CHAR_LIMIT;
+        visualInput.id = 'ai-input';
+        visualInput.contentEditable = true;
+        visualInput.onkeydown = handleInputSubmission;
+        visualInput.oninput = handleContentEditableInput;
 
         const placeholder = document.createElement('div');
         placeholder.id = 'ai-input-placeholder';
-        placeholder.textContent = 'Ask a question... (Shift + Enter for new line)';
+        placeholder.textContent = 'Ask a question...';
 
         const charCounter = document.createElement('div');
         charCounter.id = 'ai-char-counter';
@@ -99,7 +91,6 @@
         mathModeToggle.onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
         
         inputWrapper.appendChild(visualInput);
-        inputWrapper.appendChild(hiddenTextarea);
         inputWrapper.appendChild(placeholder);
         inputWrapper.appendChild(charCounter);
         inputWrapper.appendChild(mathModeToggle);
@@ -117,7 +108,7 @@
             inputWrapper.style.opacity = '1';
         }, 10);
 
-        hiddenTextarea.focus();
+        visualInput.focus();
         isAIActive = true;
     }
 
@@ -139,73 +130,78 @@
     }
 
     /**
-     * Handles input on the hidden textarea, updating the visual display and counter.
+     * Handles input on the contenteditable div, updating placeholder and counter.
      */
-    function handleHiddenInput(e) {
-        const textarea = e.target;
+    function handleContentEditableInput(e) {
+        const editor = e.target;
         const charCounter = document.getElementById('ai-char-counter');
         const placeholder = document.getElementById('ai-input-placeholder');
+        
+        const rawText = editor.innerText;
 
         if (charCounter) {
-            charCounter.textContent = `${textarea.value.length} / ${USER_CHAR_LIMIT}`;
+            charCounter.textContent = `${rawText.length} / ${USER_CHAR_LIMIT}`;
         }
+
         if (placeholder) {
-            placeholder.style.display = textarea.value.length > 0 ? 'none' : 'block';
+            placeholder.style.display = rawText.length > 0 || editor.innerHTML.includes('<img') || editor.innerHTML.includes('<sup>') ? 'none' : 'block';
         }
-        updateVisualInput();
     }
 
     /**
-     * Renders the raw text from the hidden textarea into formatted math in the display div.
+     * NEW: Parses the visually formatted HTML from the input into plain text for the API.
      */
-    function updateVisualInput() {
-        const hiddenTextarea = document.getElementById('ai-input-hidden');
-        const displayDiv = document.getElementById('ai-input-display');
-        if (!hiddenTextarea || !displayDiv) return;
+    function parseInputForAPI(innerHTML) {
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = innerHTML;
 
-        let text = hiddenTextarea.value;
-        let displayText = text.replace(/</g, '&lt;').replace(/>/g, '&gt;'); // Sanitize
+        // Convert fractions
+        tempDiv.querySelectorAll('.ai-frac').forEach(frac => {
+            const numerator = frac.querySelector('sup')?.innerText.trim() || '';
+            const denominator = frac.querySelector('sub')?.innerText.trim() || '';
+            frac.replaceWith(`(${numerator})/(${denominator})`);
+        });
 
-        displayText = displayText
-            .replace(/sqrt\((.*?)\)/g, '&radic;($1)')
-            .replace(/cbrt\((.*?)\)/g, '∛($1)')
-            .replace(/\((.*?)\)\/\((.*?)\)/g, '<span class="ai-frac"><sup>$1</sup><span>&frasl;</span><sub>$2</sub></span>')
-            .replace(/pi/g, '&pi;')
-            .replace(/\^(\S+)/g, '<sup>$1</sup>')
-            .replace(/\*/g, '&times;')
-            .replace(/(?<!\()\/(?!\))/g, '&divide;'); // Forward slash not in parens for fractions
+        // Convert superscripts (for exponents)
+        tempDiv.querySelectorAll('sup').forEach(sup => {
+            sup.replaceWith(`^${sup.innerText}`);
+        });
 
-        displayDiv.innerHTML = displayText;
-
-        const inputWrapper = document.getElementById('ai-input-wrapper');
-        inputWrapper.style.minHeight = `${displayDiv.scrollHeight}px`;
+        // The browser automatically converts HTML entities to characters, so we search for the character
+        let text = tempDiv.innerText;
+        text = text.replace(/√\((.*?)\)/g, 'sqrt($1)');
+        text = text.replace(/∛\((.*?)\)/g, 'cbrt($1)');
+        text = text.replace(/×/g, '*');
+        text = text.replace(/÷/g, '/');
+        text = text.replace(/π/g, 'pi');
+        
+        return text;
     }
 
     /**
      * Handles the submission of a question via the 'Enter' key.
      */
     function handleInputSubmission(e) {
+        const editor = e.target;
+
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
-            const textarea = e.target;
-            const query = textarea.value.trim();
+            
+            const query = parseInputForAPI(editor.innerHTML);
 
             if (!query || isRequestPending) return;
             
-            // ... (cooldown and request pending logic remains the same)
             const now = Date.now();
             if (now - lastRequestTime < COOLDOWN_PERIOD) return;
 
             isRequestPending = true;
             lastRequestTime = now;
-            textarea.disabled = true;
+            editor.contentEditable = false;
 
             const responseContainer = document.getElementById('ai-response-container');
             const userBubble = document.createElement('div');
             userBubble.className = 'ai-message-bubble user-message';
-            // Display the formatted math in the user's bubble
-            const displayDiv = document.getElementById('ai-input-display');
-            userBubble.innerHTML = displayDiv.innerHTML;
+            userBubble.innerHTML = editor.innerHTML;
             responseContainer.appendChild(userBubble);
 
             const responseBubble = document.createElement('div');
@@ -215,8 +211,8 @@
             
             responseContainer.scrollTop = responseContainer.scrollHeight;
 
-            textarea.value = '';
-            handleHiddenInput({ target: textarea });
+            editor.innerHTML = '';
+            handleContentEditableInput({ target: editor });
 
             callGoogleAI(query, responseBubble);
         }
@@ -264,10 +260,10 @@
             responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`;
         } finally {
             responseBubble.classList.remove('loading');
-            const textarea = document.getElementById('ai-input-hidden');
-            if(textarea) {
-                textarea.disabled = false;
-                textarea.focus();
+            const editor = document.getElementById('ai-input');
+            if(editor) {
+                editor.contentEditable = true;
+                editor.focus();
             }
             isRequestPending = false;
             const responseContainer = document.getElementById('ai-response-container');
@@ -290,24 +286,37 @@
         }
     }
     
-    function insertAtCursor(text) {
-        const textarea = document.getElementById('ai-input-hidden');
-        if (!textarea) return;
-        const start = textarea.selectionStart;
-        const end = textarea.selectionEnd;
-        textarea.value = textarea.value.substring(0, start) + text + textarea.value.substring(end);
-        textarea.selectionStart = textarea.selectionEnd = start + text.length;
-        textarea.focus();
-        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    function insertAtCursor(html) {
+        const editor = document.getElementById('ai-input');
+        if (!editor) return;
+        editor.focus();
+        if (document.queryCommandSupported('insertHTML')) {
+            document.execCommand('insertHTML', false, html);
+        } else {
+            const selection = window.getSelection();
+            if (selection.getRangeAt && selection.rangeCount) {
+                let range = selection.getRangeAt(0);
+                range.deleteContents();
+                const el = document.createElement("div");
+                el.innerHTML = html;
+                let frag = document.createDocumentFragment(), node;
+                while ((node = el.firstChild)) {
+                    frag.appendChild(node);
+                }
+                range.insertNode(frag);
+            }
+        }
+        handleContentEditableInput({target: editor});
     }
 
     function createMathPad() {
         const pad = document.createElement('div');
         pad.id = 'ai-math-pad';
         const buttons = [
-            { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '&times;', v: '*' }, { t: '&divide;', v: '/' },
-            { t: 'x/y', v: '() / ()' }, { t: '&radic;', v: 'sqrt()' }, { t: '∛', v: 'cbrt()' }, { t: 'x²', v: '^2' },
-            { t: '&pi;', v: 'pi' }, { t: '(', v: '(' }, { t: ')', v: ')' }, { t: '=', v: '=' },
+            { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '&times;', v: '&times;' }, { t: '&divide;', v: '&divide;' },
+            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup>&nbsp;</sup><span>&frasl;</span><sub>&nbsp;</sub></span>' }, 
+            { t: '&radic;', v: '&radic;()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
+            { t: '&pi;', v: '&pi;' }, { t: '(', v: '(' }, { t: ')', v: ')' }, { t: '=', v: '=' },
         ];
         buttons.forEach(btn => {
             const buttonEl = document.createElement('button');
@@ -339,12 +348,13 @@
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite, fadeIn 0.5s ease forwards; }
             .ai-response-content pre { background: #0c0d10; border: 1px solid #222; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: monospace; }
             .ai-math-inline, .user-message { color: #a5d6ff; font-family: monospace; font-size: 1.1em; }
-            .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; }
-            .ai-frac > span { display: block; }
+            .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0 5px; border-radius: 3px; }
+            .ai-frac > sup, .ai-frac > sub { display: block; }
+            .ai-frac > sup { border-bottom: 1px solid currentColor; }
+            #ai-input sup, #ai-input sub { font-family: 'secondaryfont', sans-serif; }
             #ai-input-wrapper { flex-shrink: 0; position: relative; transform: translateY(150px); margin: 15px auto 30px; width: 90%; max-width: 800px; opacity: 0; transition: transform 0.6s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.6s ease; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 25px; background: rgba(10, 10, 10, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 2.5s infinite; cursor: text; }
-            #ai-input-display { width: 100%; min-height: 50px; max-height: 200px; color: white; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; overflow-y: auto; word-wrap: break-word; }
-            #ai-input-hidden { position: absolute; top: 0; left: 0; width: 100%; height: 100%; opacity: 0; z-index: 1; resize: none; border: none; background: transparent; color: white; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; }
-            #ai-input-placeholder { position: absolute; top: 12px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; }
+            #ai-input { width: 100%; min-height: 50px; max-height: 200px; color: white; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; overflow-y: auto; word-wrap: break-word; outline: none; }
+            #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; }
             #ai-math-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s; z-index: 2; }
             #ai-math-toggle:hover, #ai-math-toggle.active { color: white; }
             #ai-math-pad { position: absolute; bottom: 100%; right: 0; margin-bottom: 10px; display: none; opacity: 0; transition: opacity 0.3s ease; grid-template-columns: repeat(4, 1fr); gap: 5px; background: rgba(25, 25, 28, 0.9); backdrop-filter: blur(10px); border: 1px solid rgba(255,255,255,0.1); border-radius: 15px; padding: 10px; }
