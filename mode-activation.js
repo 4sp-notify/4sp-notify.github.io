@@ -11,14 +11,14 @@
  *
  * Features:
  * - A dark, heavily blurred overlay with a clean, single-column layout.
+ * - Poppy and bubbly animations for a friendly user experience.
  * - Chat history is saved between activations but clears on page refresh.
- * - An introductory welcome message that fades out.
  * - A dynamic, WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
  * - Keyboard-first arrow key navigation for all math symbols.
+ * - Intelligent placeholders in math symbols that clear on input.
  * - A horizontally scrollable, expanded math options bar.
  * - A file uploader for up to 3 text-based files to provide context to the AI.
  * - AI responses render Markdown, LaTeX-style math, and code blocks.
- * - Communicates with the Google AI API (Gemini) to get answers.
  */
 
 (function() {
@@ -59,18 +59,20 @@
             }, () => { console.warn("AI location feature: User denied geolocation permission."); });
         }
     }
-    getLocationOnLoad();
-
+    
     function handleGlobalKeyDown(e) {
         if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+            const activeEl = document.activeElement;
+            const isEditing = activeEl.isContentEditable || ['INPUT', 'TEXTAREA'].includes(activeEl.tagName);
             const selection = window.getSelection().toString();
+            
             if (isAIActive) {
                 const editor = document.getElementById('ai-input');
-                if (editor && editor.innerText.trim().length === 0 && selection.length === 0) {
+                if (editor && editor.innerText.trim().length === 0 && selection.length === 0 && !isEditing) {
                     e.preventDefault();
                     deactivateAI();
                 }
-            } else if (selection.length === 0) {
+            } else if (selection.length === 0 && !isEditing) {
                 e.preventDefault();
                 activateAI();
             }
@@ -84,8 +86,10 @@
         container.id = 'ai-container';
         container.innerHTML = `
             <div id="ai-welcome-message">
-                <div id="ai-brand-title"></div>
-                <p>This is a beta feature. Your general location will be shared with your first message.</p>
+                <div class="welcome-content">
+                    <div id="ai-brand-title"></div>
+                    <p>This is a beta feature. Your general location will be shared with your first message.</p>
+                </div>
             </div>
             <div id="ai-response-container"></div>
             <div id="ai-input-wrapper">
@@ -125,22 +129,17 @@
         visualInput.onpaste = handlePaste;
         document.getElementById('ai-close-button').onclick = deactivateAI;
         document.getElementById('ai-math-toggle').onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
-        document.getElementById('ai-file-upload-btn').onclick = () => document.getElementById('ai-file-input').click();
+        document.getElementById('ai-file-upload-btn').onclick = (e) => { e.currentTarget.classList.add('poppy'); document.getElementById('ai-file-input').click(); };
         document.getElementById('ai-file-input').onchange = handleFileSelect;
         document.getElementById('ai-input-wrapper').appendChild(createOptionsBar());
+        
+        container.querySelectorAll('button').forEach(btn => {
+            btn.addEventListener('animationend', () => btn.classList.remove('poppy'));
+        });
         
         setTimeout(() => container.classList.add('active'), 10);
         visualInput.focus();
         isAIActive = true;
-    }
-
-    function setCaretPosition(node, offset) {
-        const selection = window.getSelection();
-        const range = document.createRange();
-        range.setStart(node, offset);
-        range.collapse(true);
-        selection.removeAllRanges();
-        selection.addRange(range);
     }
 
     function moveCaretTo(element, position = 'end') {
@@ -151,44 +150,55 @@
         selection.removeAllRanges();
         selection.addRange(range);
     }
-
-    function handleEditorKeyDown(e) {
-        const selection = window.getSelection();
-        const isCollapsed = selection.rangeCount > 0 && selection.getRangeAt(0).collapsed;
-        
-        if (isCollapsed && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
-            const range = selection.getRangeAt(0);
-            const currentNode = range.startContainer;
-            let targetNode;
-
-            if (e.key === 'ArrowRight') {
-                targetNode = currentNode.nextSibling;
-                if (currentNode.nodeType === 3 && range.startOffset < currentNode.textContent.length) return;
-                if (targetNode && targetNode.classList && (targetNode.classList.contains('ai-frac') || targetNode.classList.contains('ai-root'))) {
-                    e.preventDefault();
-                    moveCaretTo(targetNode.querySelector('[contenteditable="true"]'), 'start');
-                }
-            } else { // ArrowLeft
-                targetNode = currentNode.previousSibling;
-                if (currentNode.nodeType === 3 && range.startOffset > 0) return;
-                if (targetNode && targetNode.classList && (targetNode.classList.contains('ai-frac') || targetNode.classList.contains('ai-root'))) {
-                    e.preventDefault();
-                    const editables = targetNode.querySelectorAll('[contenteditable="true"]');
-                    moveCaretTo(editables[editables.length - 1], 'end');
-                }
+    
+    function handlePlaceholderInteraction(e) {
+        const target = e.currentTarget;
+        if (target.classList.contains('placeholder')) {
+            if (e.type === 'focus') {
+                const selection = window.getSelection();
+                const range = document.createRange();
+                range.selectNodeContents(target);
+                selection.removeAllRanges();
+                selection.addRange(range);
+            } else if (e.type === 'keydown') {
+                target.textContent = '';
+                target.classList.remove('placeholder');
+                target.onkeydown = null;
+                target.onfocus = null;
             }
         }
+    }
+    
+    function handleEditorKeyDown(e) {
+        const selection = window.getSelection();
+        if (!selection.rangeCount) return;
 
-        const parentElement = selection.anchorNode.parentElement;
-        if (isCollapsed && parentElement.isContentEditable) {
-            if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+        const range = selection.getRangeAt(0);
+        const isCollapsed = range.collapsed;
+        
+        if (isCollapsed) {
+            const currentNode = range.startContainer;
+            const parentElement = currentNode.nodeType === 1 ? currentNode : currentNode.parentElement;
+            
+            if (e.key === 'ArrowRight' && range.startOffset === currentNode.textContent.length) {
+                const nextElem = parentElement.closest('span')?.nextElementSibling;
+                if (nextElem && (nextElem.classList.contains('ai-frac') || nextElem.classList.contains('ai-root'))) {
+                    e.preventDefault();
+                    moveCaretTo(nextElem.querySelector('[contenteditable="true"]'), 'start');
+                }
+            } else if (e.key === 'ArrowLeft' && range.startOffset === 0) {
+                const prevElem = parentElement.closest('span')?.previousElementSibling;
+                if (prevElem && (prevElem.classList.contains('ai-frac') || prevElem.classList.contains('ai-root'))) {
+                    e.preventDefault();
+                    const editables = prevElem.querySelectorAll('[contenteditable="true"]');
+                    moveCaretTo(editables[editables.length - 1], 'end');
+                }
+            } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
                 const frac = parentElement.closest('.ai-frac');
                 if (frac) {
                     e.preventDefault();
-                    const targetSelector = e.key === 'ArrowUp' ? 'sub' : 'sup';
-                    if (parentElement.tagName.toLowerCase() !== targetSelector) {
-                        moveCaretTo(frac.querySelector(targetSelector), 'start');
-                    }
+                    const targetSelector = (parentElement.tagName === 'SUP' && e.key === 'ArrowDown') ? 'sub' : (parentElement.tagName === 'SUB' && e.key === 'ArrowUp') ? 'sup' : null;
+                    if (targetSelector) moveCaretTo(frac.querySelector(targetSelector), 'start');
                 }
             }
         }
@@ -205,11 +215,13 @@
         const selection = window.getSelection();
         if (selection.rangeCount > 0 && selection.getRangeAt(0).collapsed) {
             const range = selection.getRangeAt(0);
-            let nodeBefore = range.startContainer.previousSibling;
-            if (range.startOffset === 0 && nodeBefore && nodeBefore.nodeType === 1 && (nodeBefore.classList.contains('ai-frac') || nodeBefore.classList.contains('ai-root') || nodeBefore.tagName === 'SUP')) {
-                e.preventDefault();
-                nodeBefore.remove();
-                handleContentEditableInput();
+            if (range.startOffset === 0) {
+                const nodeBefore = range.startContainer.parentElement.closest('span')?.previousElementSibling;
+                if (nodeBefore && (nodeBefore.classList.contains('ai-frac') || nodeBefore.classList.contains('ai-root') || nodeBefore.tagName === 'SUP')) {
+                    e.preventDefault();
+                    nodeBefore.remove();
+                    handleContentEditableInput();
+                }
             }
         }
     }
@@ -222,6 +234,11 @@
         const now = Date.now();
         if (now - lastRequestTime < COOLDOWN_PERIOD) return;
 
+        isRequestPending = true;
+        lastRequestTime = now;
+        editor.contentEditable = false;
+        document.getElementById('ai-input-wrapper').classList.add('waiting');
+        
         let contextualQuery = query;
         const dateTimeString = new Date().toLocaleString();
         contextualQuery = `(User's local time: ${dateTimeString}) ${contextualQuery}`;
@@ -233,11 +250,6 @@
             const fileContext = attachedFiles.map(f => `CONTEXT FROM FILE (${f.name}):\n\n${f.content}`).join('\n\n---\n\n');
             contextualQuery = `${fileContext}\n\n---\n\nUSER QUERY:\n${contextualQuery}`;
         }
-
-        isRequestPending = true;
-        lastRequestTime = now;
-        editor.contentEditable = false;
-        document.getElementById('ai-input-wrapper').classList.add('waiting');
         
         chatHistory.push({ role: "user", parts: [{ text: contextualQuery }] });
 
@@ -452,7 +464,7 @@
         document.getElementById('ai-math-toggle').classList.toggle('active', isMathModeActive);
     }
     
-    function insertElementAndFocus(element, exitNode = null) {
+    function insertElement(element, exitNode = null) {
         const editor = document.getElementById('ai-input');
         editor.focus();
         const selection = window.getSelection();
@@ -468,7 +480,7 @@
             (exitNode || element).after(spaceNode);
         }
     }
-
+    
     function createOptionsBar() {
         const bar = document.createElement('div');
         bar.id = 'ai-options-bar';
@@ -477,20 +489,23 @@
             { t: 'x/y', action: () => {
                 const frac = document.createElement('span');
                 frac.className = 'ai-frac';
-                frac.innerHTML = `<sup contenteditable="true">&#8203;</sup><sub contenteditable="true">&#8203;</sub>`;
-                insertElementAndFocus(frac);
+                frac.innerHTML = `<sup contenteditable="true" class="placeholder" onfocus="handlePlaceholderInteraction(event)" onkeydown="handlePlaceholderInteraction(event)">n</sup><sub contenteditable="true" class="placeholder" onfocus="handlePlaceholderInteraction(event)" onkeydown="handlePlaceholderInteraction(event)">d</sub>`;
+                insertElement(frac);
             }}, 
             { t: '√', action: () => {
                 const root = document.createElement('span');
                 root.className = 'ai-root';
-                root.innerHTML = `√<span class="ai-root-content" contenteditable="true">&#8203;</span>`;
-                insertElementAndFocus(root, root.querySelector('.ai-root-content'));
+                root.innerHTML = `√<span class="ai-root-content placeholder" contenteditable="true" onfocus="handlePlaceholderInteraction(event)" onkeydown="handlePlaceholderInteraction(event)">x</span>`;
+                insertElement(root, root.querySelector('.ai-root-content'));
             }},
             { t: 'xⁿ', action: () => {
                 const sup = document.createElement('sup');
                 sup.setAttribute('contenteditable', 'true');
-                sup.innerHTML = '&#8203;';
-                insertElementAndFocus(sup);
+                sup.classList.add('placeholder');
+                sup.textContent = 'y';
+                sup.onfocus = handlePlaceholderInteraction;
+                sup.onkeydown = handlePlaceholderInteraction;
+                insertElement(sup);
             }},
             { t: 'x²', v: '<sup>2</sup>' },
             { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' }, { t: '∫', v: '∫' }, { t: '∑', v: '∑' },
@@ -499,11 +514,15 @@
         buttons.forEach(btn => {
             const buttonEl = document.createElement('button');
             buttonEl.innerHTML = btn.t;
-            if (btn.action) {
-                buttonEl.onclick = (e) => { e.stopPropagation(); btn.action(); };
-            } else {
-                buttonEl.onclick = (e) => { e.stopPropagation(); document.execCommand('insertHTML', false, btn.v); };
-            }
+            buttonEl.onclick = (e) => { 
+                e.stopPropagation(); 
+                e.currentTarget.classList.add('poppy');
+                if (btn.action) {
+                    btn.action();
+                } else {
+                    document.execCommand('insertHTML', false, btn.v);
+                }
+            };
             bar.appendChild(buttonEl);
         });
         return bar;
@@ -532,8 +551,9 @@
                 position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                 text-align: center; color: rgba(255,255,255,0.5);
                 opacity: 1; transition: opacity 0.5s; width: 100%;
-                display: flex; justify-content: center; align-items: baseline; gap: 10px;
+                display: flex; justify-content: center; align-items: center;
             }
+            .welcome-content { display: flex; align-items: baseline; gap: 12px; }
             .faded { opacity: 0 !important; pointer-events: none; }
             #ai-brand-title {
                 font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; color: #fff;
@@ -543,8 +563,8 @@
             }
              #ai-brand-title span { animation: brand-pulse 2s ease-in-out infinite; display: inline-block; }
             #ai-welcome-message p { font-size: 0.9em; margin: 0; max-width: 400px; line-height: 1.5; }
-            #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s; z-index: 10; }
-            #ai-close-button:hover { color: white; }
+            #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s, transform 0.2s; z-index: 10; }
+            #ai-close-button:hover { color: white; transform: scale(1.1); }
             #ai-response-container {
                 flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto;
                 display: flex; flex-direction: column; gap: 15px; padding: 20px;
@@ -575,25 +595,26 @@
             #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
             .ai-input-container { position: relative; width: 100%; }
             #ai-input { min-height: 38px; color: white; font-size: 1.1em; padding: 8px 110px 8px 20px; box-sizing: border-box; outline: none; }
+            #ai-input .placeholder { color: #888; }
             #ai-attachment-container { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 20px 5px; }
             #ai-input-placeholder { position: absolute; top: 10px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; z-index: 1; }
-            .ai-input-container > #ai-math-toggle, .ai-input-container > #ai-file-upload-btn {
+            .ai-input-container > button {
                 position: absolute; top: 50%; background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px;
                 line-height: 1; z-index: 2; transform: translateY(-50%);
                 transition: color 0.2s, transform 0.4s cubic-bezier(0.4, 0, 0.2, 1), top 0.4s cubic-bezier(0.4, 0, 0.2, 1);
             }
             .ai-input-container > #ai-math-toggle { right: 10px; }
             .ai-input-container > #ai-file-upload-btn { right: 45px; }
-            .ai-input-container > #ai-math-toggle:hover, .ai-input-container > #ai-file-upload-btn:hover { color: white; }
+            .ai-input-container > button:hover { color: white; }
             #ai-math-toggle.active { color: white; transform: translateY(-50%); }
-            #ai-input-wrapper.options-active .ai-input-container > #ai-math-toggle,
-            #ai-input-wrapper.options-active .ai-input-container > #ai-file-upload-btn { top: 10px; transform: translateY(0); }
+            #ai-input-wrapper.options-active .ai-input-container > button { top: 10px; transform: translateY(0); }
             #ai-input-wrapper.options-active .ai-input-container > #ai-math-toggle.active { color: white; transform: translateY(0); }
             #ai-options-bar {
                 display: flex; overflow-x: auto; background: rgba(0,0,0,0.3);
                 transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
                 border-top: 1px solid transparent; max-height: 0; opacity: 0; visibility: hidden;
                 border-bottom-left-radius: 25px; border-bottom-right-radius: 25px;
+                scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.2) transparent;
             }
             #ai-input-wrapper.options-active #ai-options-bar { max-height: 50px; opacity: 1; visibility: visible; padding: 8px 15px; border-top: 1px solid rgba(255,255,255,0.1); }
             #ai-options-bar button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.1em; cursor: pointer; padding: 5px 10px; transition: background 0.2s; flex-shrink: 0; margin-right: 8px; }
@@ -602,7 +623,7 @@
             .ai-typing-indicator span:nth-child(1) { animation-delay: 0s; }
             .ai-typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
             .ai-typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
-            .attachment-chip { font-size: 0.8em; background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 10px; display: inline-flex; align-items: center; gap: 5px; }
+            .attachment-chip { font-size: 0.8em; background: rgba(255,255,255,0.1); padding: 4px 8px; border-radius: 10px; display: inline-flex; align-items: center; gap: 5px; animation: poppy 0.3s cubic-bezier(.17,.67,.5,1.33); }
             .remove-attachment-btn { background: none; border: none; color: rgba(255,255,255,0.5); cursor: pointer; font-size: 1.2em; line-height: 1; padding: 0; }
             .user-message .attachment-chip-container { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 10px; }
             .user-message .attachment-chip { background: rgba(255,255,255,0.15); }
@@ -612,10 +633,13 @@
             @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(0.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
             @keyframes brand-slide { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
             @keyframes brand-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
+            @keyframes poppy { 0% { transform: scale(0.8); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+            button.poppy { animation: poppy 0.3s cubic-bezier(.17,.67,.5,1.33); }
         `;
         document.head.appendChild(style);
     }
 
+    getLocationOnLoad();
     document.addEventListener('keydown', handleGlobalKeyDown);
 
 })();
