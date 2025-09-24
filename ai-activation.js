@@ -10,12 +10,12 @@
  * - 'X' button or Ctrl + C when the input box is empty.
  *
  * Features:
- * - A dark, heavily blurred overlay with a new two-column layout.
- * - A persistent Chat History panel on the right with locally saved sessions.
- * - Fading effect on the top and bottom of the scrollable chat view.
+ * - A dark, heavily blurred overlay with a clean, single-column layout.
+ * - Chat history is saved for the session (clears on page refresh).
+ * - Input box glow smoothly transitions between a white typing pulse and a colored waiting pulse.
  * - An introductory welcome message that fades out.
- * - Automatically sends user's general location (state/country) with the first message.
- * - A dynamic, WYSIWYG contenteditable input with a 60-character limit on the first line.
+ * - Automatically sends user's general location and current time with each message.
+ * - A dynamic, WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
  * - A horizontal, scrollable math options bar with symbols and inequalities.
  * - AI responses render Markdown, LaTeX-style math, and code blocks.
  * - Communicates with the Google AI API (Gemini) to get answers.
@@ -33,7 +33,7 @@
     let isMathModeActive = false;
     let lastRequestTime = 0;
     const COOLDOWN_PERIOD = 5000;
-    let activeChatId = null;
+    let chatHistory = []; // Stays in memory for the session
     const latexSymbolMap = {
         '\\pi': 'π', '\\theta': 'θ', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
         '\\delta': 'δ', '\\epsilon': 'ε', '\\infty': '∞', '\\pm': '±',
@@ -42,91 +42,6 @@
         '\\approx': '≈', '\\equiv': '≡',
         '\\therefore': '∴', '\\because': '∵',
     };
-
-    // --- LOCAL STORAGE & CHAT MANAGEMENT ---
-    function getSavedChats() {
-        try {
-            return JSON.parse(localStorage.getItem('ai-chat-history')) || {};
-        } catch (e) {
-            return {};
-        }
-    }
-
-    function saveChat() {
-        if (!activeChatId) return;
-        const chats = getSavedChats();
-        const editor = document.getElementById('ai-input');
-        
-        const chatContent = document.getElementById('ai-response-container').innerHTML;
-        const currentChatHistory = chats[activeChatId]?.history || [];
-
-        // Determine title from first user message if it's a new chat
-        let title = chats[activeChatId]?.title;
-        if (!title && currentChatHistory.length > 0) {
-             const firstUserMessage = currentChatHistory.find(m => m.role === 'user');
-             if (firstUserMessage) {
-                title = firstUserMessage.parts[0].text.substring(0, 30);
-             }
-        }
-
-        chats[activeChatId] = {
-            id: activeChatId,
-            title: title || 'New Chat',
-            history: currentChatHistory,
-            htmlContent: chatContent,
-            lastUpdated: Date.now()
-        };
-        localStorage.setItem('ai-chat-history', JSON.stringify(chats));
-        populateHistoryPanel(); // Refresh panel to update title
-    }
-    
-    function loadChat(chatId) {
-        const chats = getSavedChats();
-        const chat = chats[chatId];
-        if (!chat) return;
-
-        activeChatId = chatId;
-        document.getElementById('ai-response-container').innerHTML = chat.htmlContent || '';
-        document.querySelectorAll('#ai-history-list .chat-item').forEach(item => {
-            item.classList.toggle('active', item.dataset.chatId === chatId);
-        });
-        fadeOutWelcomeMessage();
-    }
-
-    function startNewChat() {
-        saveChat(); // Save the current chat before starting a new one
-        activeChatId = `chat_${Date.now()}`;
-        document.getElementById('ai-response-container').innerHTML = '';
-        const editor = document.getElementById('ai-input');
-        if(editor) editor.innerHTML = '';
-        handleContentEditableInput(); // Update UI
-        populateHistoryPanel();
-        
-        const welcomeMessage = document.getElementById('ai-welcome-message');
-        if(welcomeMessage) welcomeMessage.classList.remove('faded');
-    }
-
-    function populateHistoryPanel() {
-        const historyList = document.getElementById('ai-history-list');
-        if (!historyList) return;
-        
-        const chats = getSavedChats();
-        historyList.innerHTML = '';
-        
-        Object.values(chats)
-            .sort((a, b) => b.lastUpdated - a.lastUpdated)
-            .forEach(chat => {
-                const item = document.createElement('div');
-                item.className = 'chat-item';
-                item.textContent = chat.title;
-                item.dataset.chatId = chat.id;
-                if (chat.id === activeChatId) {
-                    item.classList.add('active');
-                }
-                item.onclick = () => loadChat(chat.id);
-                historyList.appendChild(item);
-            });
-    }
 
     function getLocationOnLoad() {
         if (navigator.geolocation) {
@@ -175,32 +90,32 @@
         container.id = 'ai-container';
         
         container.innerHTML = `
-            <div id="ai-main-content">
-                <div id="ai-welcome-message">
-                    <h2>AI Mode</h2>
-                    <p>This is a beta feature. Your general location will be shared with your first message. You may be subject to message limits.</p>
-                </div>
-                <div id="ai-response-container"></div>
-                <div id="ai-input-wrapper">
-                    <div id="ai-input" contenteditable="true"></div>
-                    <div id="ai-input-placeholder">Ask a question...</div>
-                    <button id="ai-math-toggle">&#8942;</button>
-                </div>
+            <div id="ai-welcome-message">
+                 <div id="ai-brand-title"></div>
+                 <p>This is a beta feature. Your general location will be shared with your first message. You may be subject to message limits.</p>
             </div>
-            <div id="ai-history-panel">
-                <h3>Chat History</h3>
-                <button id="ai-new-chat-btn">New Chat</button>
-                <div id="ai-history-list"></div>
+            <div id="ai-response-container"></div>
+            <div id="ai-input-wrapper">
+                <div id="ai-input" contenteditable="true"></div>
+                <div id="ai-input-placeholder">Ask a question...</div>
+                <button id="ai-math-toggle">&#8942;</button>
             </div>
             <div id="ai-char-counter">0 / ${USER_CHAR_LIMIT}</div>
             <div id="ai-close-button">&times;</div>
         `;
 
         document.body.appendChild(container);
+        
+        const brandTitle = document.getElementById('ai-brand-title');
+        const brandText = "4SP - AI MODE";
+        brandText.split('').forEach(char => {
+            const span = document.createElement('span');
+            span.textContent = char;
+            span.style.animationDelay = `${Math.random() * 2}s`;
+            brandTitle.appendChild(span);
+        });
 
-        // Attach events after elements are in the DOM
         document.getElementById('ai-close-button').onclick = deactivateAI;
-        document.getElementById('ai-new-chat-btn').onclick = startNewChat;
         const visualInput = document.getElementById('ai-input');
         visualInput.onkeydown = handleInputSubmission;
         visualInput.oninput = handleContentEditableInput;
@@ -209,17 +124,28 @@
         document.getElementById('ai-math-toggle').onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
         document.getElementById('ai-input-wrapper').appendChild(createOptionsBar());
         
-        startNewChat();
-
+        // Load session history
+        try {
+            chatHistory = JSON.parse(sessionStorage.getItem('ai-chat-history')) || [];
+            document.getElementById('ai-response-container').innerHTML = sessionStorage.getItem('ai-chat-html') || '';
+            if (chatHistory.length > 0) {
+                fadeOutWelcomeMessage();
+            }
+        } catch (e) {
+            chatHistory = [];
+        }
+        
         setTimeout(() => container.classList.add('active'), 10);
         visualInput.focus();
         isAIActive = true;
     }
 
     function deactivateAI() {
-        saveChat();
         const container = document.getElementById('ai-container');
         if (container) {
+            sessionStorage.setItem('ai-chat-history', JSON.stringify(chatHistory));
+            sessionStorage.setItem('ai-chat-html', document.getElementById('ai-response-container').innerHTML);
+
             container.classList.remove('active');
             setTimeout(() => {
                 container.remove();
@@ -228,7 +154,6 @@
         }
         isAIActive = false;
         isMathModeActive = false;
-        activeChatId = null;
     }
 
     function fadeOutWelcomeMessage() {
@@ -312,21 +237,6 @@
         e.stopPropagation();
         const editor = e.target;
         
-        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-            const lines = editor.innerHTML.split(/<br.*?>|<div>/);
-            if (lines.length <= 1) {
-                const tempDiv = document.createElement('div');
-                const firstLineNode = editor.childNodes[0];
-                if (firstLineNode) {
-                    tempDiv.appendChild(firstLineNode.cloneNode(true));
-                    if ((tempDiv.textContent || tempDiv.innerText).length >= FIRST_LINE_CHAR_LIMIT) {
-                        e.preventDefault();
-                        document.execCommand('insertLineBreak');
-                    }
-                }
-            }
-        }
-        
         if (e.key === 'Backspace') {
             const selection = window.getSelection();
             if (selection.rangeCount > 0 && selection.isCollapsed) {
@@ -353,25 +263,19 @@
             const now = Date.now();
             if (now - lastRequestTime < COOLDOWN_PERIOD) return;
 
-            const chats = getSavedChats();
-            const currentHistory = chats[activeChatId]?.history || [];
-
-            if (currentHistory.length === 0) {
-                const location = localStorage.getItem('ai-user-location');
-                if (location) query = `(User is located in ${location}) ${query}`;
-            }
-
             const dateTimeString = new Date().toLocaleString();
-            query = `(User's local time: ${dateTimeString}) ${query}`;
+            let contextualQuery = `(User's local time: ${dateTimeString}) ${query}`;
+            if (chatHistory.length === 0) {
+                const location = localStorage.getItem('ai-user-location');
+                if (location) contextualQuery = `(User is located in ${location}) ${contextualQuery}`;
+            }
 
             isRequestPending = true;
             lastRequestTime = now;
             editor.contentEditable = false;
             document.getElementById('ai-input-wrapper').classList.add('waiting');
             
-            currentHistory.push({ role: "user", parts: [{ text: query }] });
-            chats[activeChatId] = { ...(chats[activeChatId] || {}), history: currentHistory };
-            localStorage.setItem('ai-chat-history', JSON.stringify(chats));
+            chatHistory.push({ role: "user", parts: [{ text: contextualQuery }] });
 
             const responseContainer = document.getElementById('ai-response-container');
             const userBubble = document.createElement('div');
@@ -387,7 +291,7 @@
 
             editor.innerHTML = '';
             handleContentEditableInput();
-            callGoogleAI(query, responseBubble);
+            callGoogleAI(contextualQuery, responseBubble);
         }
     }
 
@@ -411,23 +315,17 @@
     }
 
     async function callGoogleAI(query, responseBubble) {
-        const chats = getSavedChats();
-        const currentHistory = chats[activeChatId]?.history || [];
-
         try {
             const response = await fetch(API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: currentHistory })
+                body: JSON.stringify({ contents: chatHistory })
             });
             if (!response.ok) throw new Error('Network response was not ok.');
             const data = await response.json();
             const text = data.candidates[0].content.parts[0].text;
             
-            currentHistory.push({ role: "model", parts: [{ text: text }] });
-            chats[activeChatId].history = currentHistory;
-            chats[activeChatId].htmlContent = document.getElementById('ai-response-container').innerHTML + `<div class="ai-message-bubble gemini-response">${parseGeminiResponse(text)}</div>`;
-            localStorage.setItem('ai-chat-history', JSON.stringify(chats));
+            chatHistory.push({ role: "model", parts: [{ text: text }] });
 
             responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
         } catch (error) {
@@ -443,7 +341,6 @@
             }
             isRequestPending = false;
             document.getElementById('ai-response-container').scrollTop = document.getElementById('ai-response-container').scrollHeight;
-            saveChat(); // Save chat and update title in history
         }
     }
     
@@ -495,30 +392,9 @@
                 position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
                 background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
                 z-index: 2147483647; opacity: 0; transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-                font-family: 'secondaryfont', sans-serif; display: flex; box-sizing: border-box;
+                font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; box-sizing: border-box;
             }
             #ai-container.active { opacity: 1; }
-            #ai-main-content { flex-grow: 1; display: flex; flex-direction: column; height: 100%; }
-            #ai-history-panel {
-                width: 250px; flex-shrink: 0; background: rgba(10,10,10,0.5); border-left: 1px solid rgba(255,255,255,0.1);
-                display: flex; flex-direction: column; padding: 20px; box-sizing: border-box;
-                transform: translateX(100%); transition: transform 0.5s cubic-bezier(0.4, 0, 0.2, 1);
-            }
-            #ai-container.active #ai-history-panel { transform: translateX(0); }
-            #ai-history-panel h3 { margin: 0 0 15px 0; color: white; text-align: center; }
-            #ai-new-chat-btn {
-                background: var(--ai-blue); color: white; border: none; border-radius: 8px;
-                padding: 10px; font-size: 1em; cursor: pointer; transition: background 0.2s; margin-bottom: 15px;
-            }
-            #ai-new-chat-btn:hover { background: #5a95f5; }
-            #ai-history-list { overflow-y: auto; flex-grow: 1; }
-            .chat-item {
-                padding: 10px; margin-bottom: 5px; border-radius: 5px; cursor: pointer;
-                color: rgba(255,255,255,0.7); transition: background 0.2s, color 0.2s;
-                white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-            }
-            .chat-item:hover { background: rgba(255,255,255,0.1); color: white; }
-            .chat-item.active { background: rgba(255,255,255,0.2); color: white; }
             #ai-welcome-message {
                 position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
                 text-align: center; color: rgba(255,255,255,0.5);
@@ -526,16 +402,23 @@
                 width: 100%;
             }
             .faded { opacity: 0 !important; pointer-events: none; }
-            #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
+            #ai-brand-title {
+                font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff;
+                 background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
+                -webkit-background-clip: text; background-clip: text; color: transparent;
+                animation: brand-slide 10s linear infinite; background-size: 400% 100%;
+                margin-bottom: 10px;
+            }
+             #ai-brand-title span { animation: brand-pulse 2s ease-in-out infinite; display: inline-block; }
             #ai-welcome-message p { font-size: 0.9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
-            #ai-close-button { position: absolute; top: 20px; right: 280px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s, right 0.5s; z-index: 10; }
+            #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s, right 0.5s; z-index: 10; }
             #ai-close-button:hover { color: white; }
             #ai-response-container {
                 flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto;
                 display: flex; flex-direction: column; gap: 15px; padding: 20px;
                 -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%);
             }
-            .ai-message-bubble { background: rgba(15, 15, 18, 0.8); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
+            .ai-message-bubble { background: rgba(15, 15, 18, 0.8); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); animation: message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
             .user-message { align-self: flex-end; background: rgba(40, 45, 50, 0.8); }
             .gemini-response { align-self: flex-start; }
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite, message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; display: flex; align-items: center; }
@@ -546,7 +429,7 @@
             #ai-input sup, #ai-input sub { outline: none; }
             #ai-input-wrapper {
                 flex-shrink: 0; position: relative; opacity: 0; transform: translateY(100px);
-                transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+                transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1), box-shadow 0.5s ease-in-out;
                 margin: 15px auto 30px; width: 90%; max-width: 800px;
                 border-radius: 25px; background: rgba(10, 10, 10, 0.7); backdrop-filter: blur(20px);
                 animation: glow 2.5s infinite; cursor: text;
@@ -569,7 +452,7 @@
                 padding: 8px 15px; border-top: 1px solid rgba(255,255,255,0.1);
             }
             #ai-options-bar button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.1em; cursor: pointer; padding: 5px 10px; transition: background 0.2s; flex-shrink: 0; margin-right: 8px; }
-            #ai-char-counter { position: absolute; bottom: 10px; right: 10px; font-size: 0.8em; color: rgba(255, 255, 255, 0.4); z-index: 2;}
+            #ai-char-counter { position: absolute; bottom: 10px; right: 30px; font-size: 0.8em; color: rgba(255, 255, 255, 0.4); z-index: 2;}
             .ai-typing-indicator span { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background-color: rgba(255, 255, 255, 0.5); margin: 0 2px; animation: typing-pulse 1.4s infinite ease-in-out both; }
             .ai-typing-indicator span:nth-child(1) { animation-delay: 0s; }
             .ai-typing-indicator span:nth-child(2) { animation-delay: 0.2s; }
