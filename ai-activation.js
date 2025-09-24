@@ -4,8 +4,7 @@
  * Injects a fully-featured AI chat interface into the current page.
  *
  * Activation:
- * - Chromebook: Search + A
- * - Other OS: Ctrl + A
+ * - Ctrl + C (only when no text is selected)
  *
  * Features:
  * - A dark, heavily blurred overlay for focus mode with enhanced animations.
@@ -70,25 +69,15 @@
      * Handles the keyboard shortcut for activating/deactivating the AI.
      */
     function handleKeyDown(e) {
-        const isChromebook = /CrOS/.test(navigator.userAgent);
-        let comboPressed = false;
-
-        if (isChromebook) {
-            // Search key on Chromebooks is the meta key.
-            if (e.metaKey && e.key.toLowerCase() === 'a') {
-                comboPressed = true;
+        // New shortcut: Ctrl + C, but only if no text is selected.
+        if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+            const selection = window.getSelection().toString();
+            if (selection.length === 0) {
+                // Prevent the default "copy" action only when activating the AI interface.
+                e.preventDefault();
+                toggleAIInterface();
             }
-        } else {
-            // Ctrl for other computers.
-            if (e.ctrlKey && e.key.toLowerCase() === 'a') {
-                comboPressed = true;
-            }
-        }
-        
-        // Prevent default browser actions like "Select All".
-        if (comboPressed) {
-            e.preventDefault();
-            toggleAIInterface();
+            // If text is selected, do nothing and let the default copy action proceed.
         }
     }
 
