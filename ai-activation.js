@@ -14,7 +14,7 @@
  * - Dynamic input box glow that pulses based on typing speed.
  * - Fading effect on the top and bottom of the scrollable chat view.
  * - An introductory welcome message that fades out.
- * - A persistent, glistening "AI Mode" title appears after interaction begins.
+ * - A persistent, glowing "AI Mode" title appears after interaction begins.
  * - Chat history for contextual conversations within a session.
  * - Automatically sends user's general location (state/country) with the first message.
  * - A dynamic, auto-expanding WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
@@ -28,6 +28,7 @@
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA';
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
+    const FIRST_LINE_CHAR_LIMIT = 60;
 
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
@@ -316,6 +317,19 @@
     function handleInputSubmission(e) {
         e.stopPropagation();
         const editor = e.target;
+
+        if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) { 
+            const lines = editor.innerHTML.split(/<br.*?>|<div>/);
+            if (lines.length <= 1) {
+                const tempDiv = document.createElement('div');
+                tempDiv.innerHTML = lines[0] || '';
+                const firstLineText = tempDiv.textContent || tempDiv.innerText;
+                if (firstLineText.length >= FIRST_LINE_CHAR_LIMIT) {
+                    e.preventDefault();
+                    return;
+                }
+            }
+        }
         
         if (e.key === 'Backspace') {
             const selection = window.getSelection();
@@ -493,15 +507,9 @@
             #ai-persistent-title {
                 position: absolute; top: 28px; left: 30px; font-family: 'secondaryfont', sans-serif;
                 font-size: 18px; font-weight: bold;
-                background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
-                -webkit-background-clip: text; background-clip: text; color: transparent;
+                color: white;
                 opacity: 0; pointer-events: none; transition: opacity 0.5s 0.2s;
-                overflow: hidden;
-            }
-            #ai-persistent-title::before {
-                content: ''; position: absolute; top: -50%; left: -50%; width: 200%; height: 200%;
-                background: linear-gradient(100deg, rgba(255,255,255,0) 20%, rgba(255,255,255,0.4) 50%, rgba(255,255,255,0) 80%);
-                transform: translateX(-100%); animation: glisten 3s infinite;
+                animation: title-pulse 4s linear infinite;
             }
             #ai-container.chat-active #ai-persistent-title { opacity: 1; pointer-events: auto; }
             #ai-welcome-message {
@@ -599,6 +607,7 @@
             @keyframes brand-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
             @keyframes welcome-fade { 0% { opacity: 1; } 100% { opacity: 0; } }
             @keyframes glisten { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
+            @keyframes title-pulse { 0%, 100% { text-shadow: 0 0 7px var(--ai-blue); } 25% { text-shadow: 0 0 7px var(--ai-green); } 50% { text-shadow: 0 0 7px var(--ai-yellow); } 75% { text-shadow: 0 0 7px var(--ai-red); } }
         `;
         document.head.appendChild(style);
     }
