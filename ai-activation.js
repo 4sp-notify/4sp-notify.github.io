@@ -189,6 +189,8 @@
             .replace(/</g, '&lt;').replace(/>/g, '&gt;')
             // Bold text: **text**
             .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+            // Bold text: *text*
+            .replace(/\*([^\n\*]+)\*/g, '<strong>$1</strong>')
             // Lists: * item
             .replace(/^\* (.*$)/gm, '<li>$1</li>');
         
