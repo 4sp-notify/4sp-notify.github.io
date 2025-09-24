@@ -25,7 +25,7 @@
 (function() {
     // --- CONFIGURATION ---
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA';
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${API_KEY}`;
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
 
     // --- STATE MANAGEMENT ---
@@ -93,14 +93,17 @@
         
         container.innerHTML = `
             <div id="ai-welcome-message">
-                 <div id="ai-brand-title"></div>
-                 <p>This is a beta feature. Your general location will be shared with your first message. You may be subject to message limits.</p>
+                <h1 id="ai-welcome-title">Welcome to AI Mode</h1>
+                <div id="ai-brand-title"></div>
+                <p>This is a beta feature. Your general location will be shared with your first message. You may be subject to message limits.</p>
             </div>
             <div id="ai-response-container"></div>
             <div id="ai-input-wrapper">
                 <div id="ai-attachment-container"></div>
-                <div id="ai-input" contenteditable="true"></div>
-                <div id="ai-input-placeholder">Ask a question...</div>
+                <div class="ai-input-container">
+                    <div id="ai-input" contenteditable="true"></div>
+                    <div id="ai-input-placeholder">Ask a question...</div>
+                </div>
                 <button id="ai-file-upload-btn" title="Attach up to 3 files">
                     <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path></svg>
                 </button>
@@ -224,6 +227,8 @@
             chip.querySelector('.remove-attachment-btn').onclick = () => removeAttachment(file.id);
             container.appendChild(chip);
         });
+        // After rendering attachments, re-evaluate the placeholder and character count
+        handleContentEditableInput();
     }
 
     function removeAttachment(fileId) {
@@ -263,9 +268,9 @@
         
         const charCounter = document.getElementById('ai-char-counter');
         const placeholder = document.getElementById('ai-input-placeholder');
-        const rawText = editor.innerText;
+        const rawText = editor.innerText.trim();
         if (charCounter) charCounter.textContent = `${rawText.length} / ${USER_CHAR_LIMIT}`;
-        if (placeholder) placeholder.style.display = (rawText.length > 0 || editor.querySelector('.ai-frac')) ? 'none' : 'block';
+        if (placeholder) placeholder.style.display = (rawText.length > 0 || editor.querySelector('.ai-frac') || attachedFiles.length > 0) ? 'none' : 'block';
     }
 
     function parseInputForAPI(innerHTML) {
@@ -464,6 +469,13 @@
                 width: 100%;
             }
             .faded { opacity: 0 !important; pointer-events: none; }
+            #ai-welcome-title {
+                font-family: 'PrimaryFont', sans-serif;
+                font-size: 2.2em;
+                color: rgba(255, 255, 255, 0.9);
+                margin: 0 0 20px 0;
+                font-weight: normal;
+            }
             #ai-brand-title {
                 font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff;
                  background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
@@ -500,10 +512,14 @@
             }
             #ai-input-wrapper.waiting { animation-name: gemini-glow !important; animation-duration: 4s !important; }
             #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
+            .ai-input-container {
+                position: relative;
+                width: 100%;
+            }
             #ai-input { min-height: 50px; color: white; font-size: 1.1em; padding: 12px 110px 12px 20px; box-sizing: border-box; outline: none; }
-            #ai-attachment-container { display: flex; flex-wrap: wrap; gap: 5px; padding: 5px 20px 0; }
+            #ai-attachment-container { display: flex; flex-wrap: wrap; gap: 5px; padding: 10px 20px 0; }
             #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; z-index: 1; }
-            #ai-math-toggle, #ai-file-upload-btn { position: absolute; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
+            #ai-math-toggle, #ai-file-upload-btn { position: absolute; top: 50%; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
             #ai-math-toggle { right: 10px; }
             #ai-file-upload-btn { right: 45px; }
             #ai-math-toggle:hover, #ai-file-upload-btn:hover { color: white; }
@@ -513,6 +529,7 @@
                 display: flex; overflow-x: auto; background: rgba(0,0,0,0.3);
                 transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
                 border-top: 1px solid transparent; max-height: 0; opacity: 0; visibility: hidden;
+                border-bottom-left-radius: 25px; border-bottom-right-radius: 25px;
             }
             #ai-input-wrapper.options-active #ai-options-bar {
                 max-height: 50px; opacity: 1; visibility: visible;
@@ -543,4 +560,3 @@
     document.addEventListener('keydown', handleKeyDown);
 
 })();
-
