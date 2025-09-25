@@ -1,14 +1,13 @@
 /**
  * ai-activation.js
  *
- * The complete, feature-rich script including a unified attachment/subject menu,
- * file uploads, daily limits, contextual awareness, persistent chat history,
- * a robust response parser, and all UI/UX enhancements.
+ * A feature-rich script with conditional, syntax-highlighted code blocks,
+ * file uploads, daily limits, contextual awareness, and persistent chat history.
  */
 (function() {
     // --- CONFIGURATION ---
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
     const MAX_INPUT_HEIGHT = 200;
 
@@ -76,19 +75,43 @@
         }
     }
 
+    /**
+     * Injects a script or stylesheet into the document's head.
+     * @param {string} tag - The tag name ('script' or 'link').
+     * @param {object} attributes - An object of attributes to set on the element.
+     */
+    function injectDependency(tag, attributes) {
+        if (document.getElementById(attributes.id)) return;
+        const el = document.createElement(tag);
+        el.id = attributes.id;
+        for (const key in attributes) {
+            el.setAttribute(key, attributes[key]);
+        }
+        document.head.appendChild(el);
+    }
+    
     function activateAI() {
         if (document.getElementById('ai-container')) return;
         if (typeof window.startPanicKeyBlocker === 'function') { window.startPanicKeyBlocker(); }
+        
+        // Inject Prism.js for syntax highlighting
+        injectDependency('link', { id: 'prism-css', rel: 'stylesheet', href: 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css' });
+        injectDependency('script', { id: 'prism-js', src: 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js', 'data-manual': '' });
+        
         attachedFiles = [];
         injectStyles();
         const container = document.createElement('div');
         container.id = 'ai-container';
+        container.dataset.subject = currentSubject;
+        
         const persistentTitle = document.createElement('div');
         persistentTitle.id = 'ai-persistent-title';
         persistentTitle.textContent = "AI Mode - General";
+        
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
         welcomeMessage.innerHTML = `<h2>Welcome to AI Mode</h2><p>To improve your experience, this feature collects broad, non-identifying data like your general location, the current date, and time.</p>`;
+        
         const closeButton = document.createElement('div');
         closeButton.id = 'ai-close-button';
         closeButton.innerHTML = '&times;';
@@ -118,11 +141,13 @@
         container.appendChild(inputWrapper);
         container.appendChild(createActionMenu());
         document.body.appendChild(container);
+        
         if (chatHistory.length > 0) { renderChatHistory(); }
         setTimeout(() => {
              if (chatHistory.length > 0) { container.classList.add('chat-active'); }
             container.classList.add('active');
         }, 10);
+        
         visualInput.focus();
         isAIActive = true;
     }
@@ -206,6 +231,24 @@
             const text = data.candidates[0].content.parts[0].text;
             chatHistory.push({ role: "model", parts: [{ text: text }] });
             responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
+
+            // After rendering, find and highlight code blocks
+            if (window.Prism) {
+                responseBubble.querySelectorAll('pre code').forEach((block) => {
+                    Prism.highlightElement(block);
+                });
+            }
+            // Attach copy button listeners
+            responseBubble.querySelectorAll('.copy-code-btn').forEach(btn => {
+                btn.onclick = () => {
+                    const code = btn.previousElementSibling.querySelector('code').innerText;
+                    navigator.clipboard.writeText(code).then(() => {
+                        btn.textContent = 'Copied!';
+                        setTimeout(() => { btn.textContent = 'Copy Code'; }, 2000);
+                    });
+                };
+            });
+
         } catch (error) {
             if (error.name === 'AbortError') { responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`; } 
             else { console.error('AI API Error:', error); responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`; }
@@ -252,6 +295,7 @@
         chatHistory = [];
         const persistentTitle = document.getElementById('ai-persistent-title');
         if (persistentTitle) { persistentTitle.textContent = `AI Mode - ${subject}`; }
+        document.getElementById('ai-container').dataset.subject = subject;
         const menu=document.getElementById('ai-action-menu');
         menu.querySelectorAll('button[data-subject]').forEach(b=>b.classList.remove('active'));
         const activeBtn=menu.querySelector(`button[data-subject="${subject}"]`);
@@ -302,35 +346,24 @@
     function createActionMenu() {
         const menu = document.createElement('div');
         menu.id = 'ai-action-menu';
-        const attachments = [
-            { id: 'photo', icon: '📷', label: 'Photo', type: 'images' },
-            { id: 'video', icon: '🎬', label: 'Video', type: 'videos' },
-            { id: 'audio', icon: '🎤', label: 'Audio', type: 'audio' },
-            { id: 'file', icon: '📎', label: 'File', type: 'file' },
-        ];
+        const attachments = [ { id: 'photo', icon: '📷', label: 'Photo', type: 'images' }, { id: 'video', icon: '🎬', label: 'Video', type: 'videos' }, { id: 'audio', icon: '🎤', label: 'Audio', type: 'audio' }, { id: 'file', icon: '📎', label: 'File', type: 'file' }, ];
         const subjects = ['General','Mathematics','Science','History','Literature','Programming'];
-        
         attachments.forEach(opt => {
             const button = document.createElement('button');
             button.dataset.type = opt.type;
             const canUpload = limitManager.canUpload(opt.type);
             let limitText = '';
-            if (opt.type === 'images' || opt.type === 'videos') {
-                const usage = limitManager.getUsage();
-                limitText = `<span>${usage[opt.type] || 0}/${DAILY_LIMITS[opt.type]} used</span>`;
-            }
+            if (opt.type === 'images' || opt.type === 'videos') { const usage = limitManager.getUsage(); limitText = `<span>${usage[opt.type] || 0}/${DAILY_LIMITS[opt.type]} used</span>`; }
             button.innerHTML = `<span class="icon">${opt.icon}</span> ${opt.label} ${limitText}`;
             if (!canUpload) { button.disabled = true; button.title = 'You have reached your daily limit for this file type.'; }
             button.onclick = () => { handleFileUpload(opt.id); toggleActionMenu(); };
             menu.appendChild(button);
         });
-        
         menu.appendChild(document.createElement('hr'));
         const subjectHeader = document.createElement('div');
         subjectHeader.className = 'menu-header';
         subjectHeader.textContent = 'Focus Topic';
         menu.appendChild(subjectHeader);
-
         subjects.forEach(subject => {
             const button = document.createElement('button');
             button.textContent = subject;
@@ -386,7 +419,24 @@
     
     function fadeOutWelcomeMessage(){const container=document.getElementById("ai-container");if(container&&!container.classList.contains("chat-active")){container.classList.add("chat-active")}}
     function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML}
-    function parseGeminiResponse(text){let html=text.replace(/</g,"&lt;").replace(/>/g,"&gt;");const codeBlocks=[];html=html.replace(/```([\s\S]*?)```/g,(match,code)=>{codeBlocks.push(escapeHTML(code.trim()));return "%%CODE_BLOCK%%"});html=html.replace(/\\([a-zA-Z]+)/g,(match,command)=>latexSymbolMap[match]||match);html=html.replace(/^### (.*$)/gm,"<h3>$1</h3>").replace(/^## (.*$)/gm,"<h2>$1</h2>").replace(/^# (.*$)/gm,"<h1>$1</h1>");html=html.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/\*(.*?)\*/g,"<em>$1</em>");html=html.replace(/^(?:\*|-)\s(.*$)/gm,"<li>$1</li>");html=html.replace(/(<\/li>\s*<li>)/g,"</li><li>").replace(/((<li>.*<\/li>)+)/gs,"<ul>$1</ul>");html=html.replace(/\n/g,"<br>");html=html.replace(/%%CODE_BLOCK%%/g,()=>`<pre><code>${codeBlocks.shift()}</code></pre>`);return html}
+    function parseGeminiResponse(text) {
+        let html = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        const codeBlocks = [];
+        html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+            const escapedCode = escapeHTML(code.trim());
+            const langClass = lang ? `language-${lang.toLowerCase()}` : '';
+            codeBlocks.push(`<div class="code-block-wrapper"><pre><code class="${langClass}">${escapedCode}</code></pre><button class="copy-code-btn">Copy Code</button></div>`);
+            return "%%CODE_BLOCK%%";
+        });
+        html = html.replace(/\\([a-zA-Z]+)/g, (match, command) => latexSymbolMap[match] || match);
+        html = html.replace(/^### (.*$)/gm, "<h3>$1</h3>").replace(/^## (.*$)/gm, "<h2>$1</h2>").replace(/^# (.*$)/gm, "<h1>$1</h1>");
+        html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>");
+        html = html.replace(/^(?:\*|-)\s(.*$)/gm, "<li>$1</li>");
+        html = html.replace(/(<\/li>\s*<li>)/g, "</li><li>").replace(/((<li>.*<\/li>)+)/gs, "<ul>$1</ul>");
+        html = html.replace(/\n/g, "<br>");
+        html = html.replace(/%%CODE_BLOCK%%/g, () => codeBlocks.shift());
+        return html;
+    }
 
     function injectStyles() {
         if (document.getElementById('ai-dynamic-styles')) return;
@@ -414,43 +464,26 @@
             #ai-close-button:hover { color: #fff; transform: scale(1.1); }
             #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 70px 20px 0 20px; }
             .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
-            .ai-message-bubble h1, .ai-message-bubble h2, .ai-message-bubble h3 { margin-top: 0; }
             .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
-            .user-message p { margin: 0; }
-            .sent-attachments { display: block; font-size: 0.8em; color: #ccc; margin-top: 8px; font-style: italic; }
             .gemini-response { align-self: flex-start; }
-            .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite,message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; }
-            .gemini-response ul { padding-left: 20px; margin: 10px 0; }
             #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); }
-            #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
             #ai-input { min-height: 52px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
             #ai-input:empty::before { content: 'Ask a question or describe your files...'; color: rgba(255, 255, 255, 0.4); pointer-events: none; }
             #ai-action-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
-            #ai-action-toggle.active { transform: rotate(90deg); }
-            #ai-action-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
-            #ai-action-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
             #ai-action-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 16px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
             #ai-action-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
             #ai-action-menu button { background: rgba(255,255,255,0.05); border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s, border-color 0.2s, transform 0.2s; }
-            #ai-action-menu button:hover { background-color: rgba(255,255,255,0.1); }
-            #ai-action-menu button:disabled { opacity: 0.5; cursor: not-allowed; color: #888; }
             #ai-action-menu button[data-subject].active { background: rgba(66,133,244,.3); border-color: var(--ai-blue); color: #fff; }
-            #ai-action-menu .icon { font-size: 1.2em; }
-            #ai-action-menu span:last-child { font-size: 0.8em; color: #888; margin-left: auto; font-family: 'secondaryfont', sans-serif; }
             #ai-action-menu hr { border: none; height: 1px; background-color: rgba(255,255,255,0.1); margin: 5px 10px; }
             #ai-action-menu .menu-header { font-size: 0.8em; color: #888; text-transform: uppercase; padding: 10px 15px 5px; cursor: default; }
             #ai-attachment-preview { display: none; flex-direction: row; gap: 10px; padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.1); overflow-x: auto; }
             .attachment-card { position: relative; border-radius: 8px; overflow: hidden; background: #333; height: 80px; width: auto; min-width: 80px; flex-shrink: 0; display: flex; justify-content: center; align-items: center; }
             .attachment-card img { width: 100%; height: 100%; object-fit: cover; }
-            .attachment-card .file-icon { font-size: 2.5em; color: #ccc; }
-            .attachment-card .file-name { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.75em; padding: 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-            .remove-attachment-btn { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.5); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; }
-            .ai-loader { width: 25px; height: 25px; border: 3px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
-            @keyframes glow { 0%,100% { box-shadow: 0 0 8px rgba(255,255,255,.2); } 50% { box-shadow: 0 0 16px rgba(255,255,255,.4); } }
-            @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
-            @keyframes spin { to { transform: rotate(360deg); } }
-            @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
-            @keyframes title-pulse { 0%, 100% { text-shadow: 0 0 7px var(--ai-blue); } 25% { text-shadow: 0 0 7px var(--ai-green); } 50% { text-shadow: 0 0 7px var(--ai-yellow); } 75% { text-shadow: 0 0 7px var(--ai-red); } }
+            #ai-container[data-subject="Programming"] .code-block-wrapper { position: relative; margin: 1em 0; background-color: #282c34; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); overflow: hidden; }
+            #ai-container[data-subject="Programming"] pre[class*="language-"] { margin: 0; padding: 1em; border-radius: 8px; overflow: auto; max-height: 400px; }
+            .copy-code-btn { position: absolute; bottom: 8px; right: 8px; background-color: #444; color: #eee; border: 1px solid #555; border-radius: 6px; padding: 5px 10px; cursor: pointer; font-family: sans-serif; font-size: 0.8em; opacity: 0; transition: opacity 0.2s; }
+            .code-block-wrapper:hover .copy-code-btn { opacity: 1; }
+            .copy-code-btn:hover { background-color: #555; }
         `;
     document.head.appendChild(style);}
     document.addEventListener('keydown', handleKeyDown);
