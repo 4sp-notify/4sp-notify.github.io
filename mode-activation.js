@@ -7,7 +7,7 @@
  * - Ctrl + C (only when no text is selected)
  *
  * Deactivation:
- * - 'X' button or Ctrl + C when the input box is empty.
+ * - 'X' button or Ctrl + C when the AI input box is empty.
  *
  * Features:
  * - A sophisticated, clean UI inspired by Google's AI design language.
@@ -53,18 +53,33 @@
     }
     
     function handleGlobalKeyDown(e) {
-        if (e.ctrlKey && e.key.toLowerCase() === 'c') {
-            const activeEl = document.activeElement;
-            const isEditing = activeEl.isContentEditable || ['INPUT', 'TEXTAREA'].includes(activeEl.tagName);
-            const selection = window.getSelection().toString();
-            
-            if (isAIActive) {
-                const editor = document.getElementById('ai-input');
-                if (editor && editor.innerText.trim().length === 0 && selection.length === 0 && !isEditing) {
-                    e.preventDefault();
-                    deactivateAI();
+        // Only listen for Ctrl+C
+        if (!e.ctrlKey || e.key.toLowerCase() !== 'c') {
+            return;
+        }
+
+        const selectionText = window.getSelection().toString();
+
+        if (isAIActive) {
+            // --- DEACTIVATION LOGIC ---
+            const editor = document.getElementById('ai-input');
+            const isFocusedInEditor = editor && editor.contains(document.activeElement);
+
+            // Deactivate if the user presses Ctrl+C inside our empty input box
+            if (isFocusedInEditor && editor.innerText.trim().length === 0 && selectionText.length === 0) {
+                e.preventDefault();
+                deactivateAI();
+            }
+            // Otherwise, do nothing and allow normal copy behavior.
+
+        } else {
+            // --- ACTIVATION LOGIC ---
+            // Activate if the user is not trying to copy any selected text.
+            if (selectionText.length === 0) {
+                // A final check: don't prevent copying from password fields, even if no text is selected.
+                if (document.activeElement.type === 'password') {
+                    return;
                 }
-            } else if (selection.length === 0 && !isEditing) {
                 e.preventDefault();
                 loadDependencies(activateAI);
             }
@@ -528,7 +543,7 @@
             }
             #ai-welcome-message {
                 position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
-                text-align: center; color: #bdc1c6;
+                text-align: center; color: #bdc1c6; display: flex; justify-content: center; align-items: center; flex-direction: column;
             }
             #ai-brand-title { font-size: 2.5em; font-weight: 700; color: var(--ai-on-surface); }
             #ai-brand-title span { display: inline-block; }
@@ -588,8 +603,8 @@
         `;
         document.head.appendChild(style);
     }
-
-    getLocationOnLoad();
+    
     document.addEventListener('keydown', handleGlobalKeyDown);
+    getLocationOnLoad();
 
 })();
