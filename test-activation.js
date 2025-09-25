@@ -1,8 +1,8 @@
 /**
  * ai-activation.js
  *
- * A feature-rich script with conditional, syntax-highlighted code blocks,
- * file uploads, daily limits, contextual awareness, and persistent chat history.
+ * A feature-rich, self-contained script with enhanced animations, an in-line
+ * loading indicator, file uploads, daily limits, and contextual awareness.
  */
 (function() {
     // --- CONFIGURATION ---
@@ -75,28 +75,9 @@
         }
     }
 
-    /**
-     * Injects a script or stylesheet into the document's head.
-     * @param {string} tag - The tag name ('script' or 'link').
-     * @param {object} attributes - An object of attributes to set on the element.
-     */
-    function injectDependency(tag, attributes) {
-        if (document.getElementById(attributes.id)) return;
-        const el = document.createElement(tag);
-        el.id = attributes.id;
-        for (const key in attributes) {
-            el.setAttribute(key, attributes[key]);
-        }
-        document.head.appendChild(el);
-    }
-    
     function activateAI() {
         if (document.getElementById('ai-container')) return;
         if (typeof window.startPanicKeyBlocker === 'function') { window.startPanicKeyBlocker(); }
-        
-        // Inject Prism.js for syntax highlighting
-        injectDependency('link', { id: 'prism-css', rel: 'stylesheet', href: 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-okaidia.min.css' });
-        injectDependency('script', { id: 'prism-js', src: 'https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js', 'data-manual': '' });
         
         attachedFiles = [];
         injectStyles();
@@ -131,9 +112,15 @@
         actionToggle.id = 'ai-action-toggle';
         actionToggle.innerHTML = '&#8942;';
         actionToggle.onclick = handleActionToggleClick;
+        const inputLoader = document.createElement('div'); // New input loader
+        inputLoader.id = 'ai-input-loader';
+        inputLoader.className = 'ai-loader';
+
         inputWrapper.appendChild(attachmentPreviewContainer);
         inputWrapper.appendChild(visualInput);
         inputWrapper.appendChild(actionToggle);
+        inputWrapper.appendChild(inputLoader); // Add new loader to wrapper
+
         container.appendChild(persistentTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
@@ -214,11 +201,11 @@
         
         let systemInstruction = 'You are a helpful and comprehensive AI assistant.';
         switch (currentSubject) {
-            case 'Mathematics': systemInstruction = 'You are a mathematics expert. Prioritize accuracy, detailed step-by-step explanations, and formal notation using LaTeX where appropriate.'; break;
-            case 'Science': systemInstruction = 'You are a science expert. Provide clear, evidence-based explanations using correct scientific terminology, citing sources if relevant.'; break;
-            case 'History': systemInstruction = 'You are a history expert. Provide historically accurate information with context, key dates, and important figures.'; break;
-            case 'Literature': systemInstruction = 'You are a literary expert. Focus on analyzing themes, characters, literary devices, and historical context.'; break;
-            case 'Programming': systemInstruction = 'You are a programming expert. Provide clean, efficient, and well-commented code examples. Specify the language and explain the logic clearly.'; break;
+            case 'Mathematics': systemInstruction = 'You are a mathematics expert...'; break;
+            case 'Science': systemInstruction = 'You are a science expert...'; break;
+            case 'History': systemInstruction = 'You are a history expert...'; break;
+            case 'Literature': systemInstruction = 'You are a literary expert...'; break;
+            case 'Programming': systemInstruction = 'You are a programming expert...'; break;
         }
 
         const payload = { contents: chatHistory, systemInstruction: { parts: [{ text: systemInstruction }] } };
@@ -230,24 +217,26 @@
             if (!data.candidates || data.candidates.length === 0) throw new Error("Invalid response from API.");
             const text = data.candidates[0].content.parts[0].text;
             chatHistory.push({ role: "model", parts: [{ text: text }] });
-            responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
-
-            // After rendering, find and highlight code blocks
-            if (window.Prism) {
-                responseBubble.querySelectorAll('pre code').forEach((block) => {
-                    Prism.highlightElement(block);
+            
+            // New transition logic
+            const contentHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
+            responseBubble.style.opacity = '0';
+            setTimeout(() => {
+                responseBubble.innerHTML = contentHTML;
+                if (window.Prism) {
+                    responseBubble.querySelectorAll('pre code').forEach((block) => Prism.highlightElement(block));
+                }
+                responseBubble.querySelectorAll('.copy-code-btn').forEach(btn => {
+                    btn.onclick = () => {
+                        const code = btn.previousElementSibling.querySelector('code').innerText;
+                        navigator.clipboard.writeText(code).then(() => {
+                            btn.textContent = 'Copied!';
+                            setTimeout(() => { btn.textContent = 'Copy Code'; }, 2000);
+                        });
+                    };
                 });
-            }
-            // Attach copy button listeners
-            responseBubble.querySelectorAll('.copy-code-btn').forEach(btn => {
-                btn.onclick = () => {
-                    const code = btn.previousElementSibling.querySelector('code').innerText;
-                    navigator.clipboard.writeText(code).then(() => {
-                        btn.textContent = 'Copied!';
-                        setTimeout(() => { btn.textContent = 'Copy Code'; }, 2000);
-                    });
-                };
-            });
+                responseBubble.style.opacity = '1';
+            }, 300); // Duration matches CSS transition
 
         } catch (error) {
             if (error.name === 'AbortError') { responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`; } 
@@ -257,12 +246,18 @@
             currentAIRequestController = null;
             const actionToggle = document.getElementById('ai-action-toggle');
             if (actionToggle) { actionToggle.classList.remove('generating'); actionToggle.innerHTML = '&#8942;'; }
-            responseBubble.classList.remove('loading');
+            
+            // This now happens after the fade-in timeout
+            setTimeout(() => {
+                responseBubble.classList.remove('loading');
+                const responseContainer = document.getElementById('ai-response-container');
+                if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
+            }, 300);
+
             document.getElementById('ai-input-wrapper').classList.remove('waiting');
+            document.getElementById('ai-input-loader').style.display = 'none';
             const editor = document.getElementById('ai-input');
             if(editor) { editor.contentEditable = true; editor.focus(); }
-            const responseContainer = document.getElementById('ai-response-container');
-            if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
         }
     }
 
@@ -391,6 +386,7 @@
             if (isRequestPending) return;
             isRequestPending = true;
             document.getElementById('ai-action-toggle').classList.add('generating');
+            document.getElementById('ai-input-loader').style.display = 'block';
             editor.contentEditable = false;
             document.getElementById('ai-input-wrapper').classList.add('waiting');
             const parts = [];
@@ -419,24 +415,7 @@
     
     function fadeOutWelcomeMessage(){const container=document.getElementById("ai-container");if(container&&!container.classList.contains("chat-active")){container.classList.add("chat-active")}}
     function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML}
-    function parseGeminiResponse(text) {
-        let html = text.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        const codeBlocks = [];
-        html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-            const escapedCode = escapeHTML(code.trim());
-            const langClass = lang ? `language-${lang.toLowerCase()}` : '';
-            codeBlocks.push(`<div class="code-block-wrapper"><pre><code class="${langClass}">${escapedCode}</code></pre><button class="copy-code-btn">Copy Code</button></div>`);
-            return "%%CODE_BLOCK%%";
-        });
-        html = html.replace(/\\([a-zA-Z]+)/g, (match, command) => latexSymbolMap[match] || match);
-        html = html.replace(/^### (.*$)/gm, "<h3>$1</h3>").replace(/^## (.*$)/gm, "<h2>$1</h2>").replace(/^# (.*$)/gm, "<h1>$1</h1>");
-        html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>");
-        html = html.replace(/^(?:\*|-)\s(.*$)/gm, "<li>$1</li>");
-        html = html.replace(/(<\/li>\s*<li>)/g, "</li><li>").replace(/((<li>.*<\/li>)+)/gs, "<ul>$1</ul>");
-        html = html.replace(/\n/g, "<br>");
-        html = html.replace(/%%CODE_BLOCK%%/g, () => codeBlocks.shift());
-        return html;
-    }
+    function parseGeminiResponse(text){let html=text.replace(/</g,"&lt;").replace(/>/g,"&gt;");const codeBlocks=[];html=html.replace(/```(\w*)\n([\s\S]*?)```/g,(match,lang,code)=>{const escapedCode=escapeHTML(code.trim());const langClass=lang?`language-${lang.toLowerCase()}`:'';codeBlocks.push(`<div class="code-block-wrapper"><pre><code class="${langClass}">${escapedCode}</code></pre><button class="copy-code-btn">Copy Code</button></div>`);return "%%CODE_BLOCK%%"});html=html.replace(/\\([a-zA-Z]+)/g,(match,command)=>latexSymbolMap[match]||match);html=html.replace(/^### (.*$)/gm,"<h3>$1</h3>").replace(/^## (.*$)/gm,"<h2>$1</h2>").replace(/^# (.*$)/gm,"<h1>$1</h1>");html=html.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/\*(.*?)\*/g,"<em>$1</em>");html=html.replace(/^(?:\*|-)\s(.*$)/gm,"<li>$1</li>");html=html.replace(/(<\/li>\s*<li>)/g,"</li><li>").replace(/((<li>.*<\/li>)+)/gs,"<ul>$1</ul>");html=html.replace(/\n/g,"<br>");html=html.replace(/%%CODE_BLOCK%%/g,()=>codeBlocks.shift());return html}
 
     function injectStyles() {
         if (document.getElementById('ai-dynamic-styles')) return;
@@ -458,18 +437,20 @@
             #ai-container.chat-active #ai-persistent-title { opacity: 1; }
             #ai-welcome-message { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s, transform .5s; width: 100%; }
             #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; transform: translate(-50%,-50%) scale(0.95); }
-            #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
-            #ai-welcome-message p { font-size: .9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255,255,255,.7); font-size: 40px; cursor: pointer; transition: color .2s ease,transform .3s ease, opacity 0.4s; }
-            #ai-close-button:hover { color: #fff; transform: scale(1.1); }
             #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 70px 20px 0 20px; }
-            .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
+            .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; transition: opacity 0.3s ease-in-out; }
             .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
             .gemini-response { align-self: flex-start; }
-            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); }
+            .gemini-response.loading { display: flex; justify-content: center; align-items: center; min-height: 60px; }
+            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; border: 1px solid rgba(255,255,255,.2); }
+            #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
             #ai-input { min-height: 52px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
             #ai-input:empty::before { content: 'Ask a question or describe your files...'; color: rgba(255, 255, 255, 0.4); pointer-events: none; }
             #ai-action-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
+            #ai-action-toggle.generating { transform: rotate(45deg); }
+            #ai-action-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
+            #ai-input-loader { display: none; position: absolute; right: 50px; bottom: 16px; width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: #fff; }
             #ai-action-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 16px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
             #ai-action-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
             #ai-action-menu button { background: rgba(255,255,255,0.05); border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s, border-color 0.2s, transform 0.2s; }
@@ -479,11 +460,18 @@
             #ai-attachment-preview { display: none; flex-direction: row; gap: 10px; padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.1); overflow-x: auto; }
             .attachment-card { position: relative; border-radius: 8px; overflow: hidden; background: #333; height: 80px; width: auto; min-width: 80px; flex-shrink: 0; display: flex; justify-content: center; align-items: center; }
             .attachment-card img { width: 100%; height: 100%; object-fit: cover; }
-            #ai-container[data-subject="Programming"] .code-block-wrapper { position: relative; margin: 1em 0; background-color: #282c34; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); overflow: hidden; }
-            #ai-container[data-subject="Programming"] pre[class*="language-"] { margin: 0; padding: 1em; border-radius: 8px; overflow: auto; max-height: 400px; }
+            .code-block-wrapper { position: relative; margin: 1em 0; background-color: #282c34; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); overflow: hidden; }
+            #ai-container[data-subject="Programming"] .code-block-wrapper { border: 1px solid var(--ai-blue); }
+            pre[class*="language-"] { margin: 0; padding: 1em; border-radius: 8px; overflow: auto; max-height: 400px; font-size: 0.9em; }
             .copy-code-btn { position: absolute; bottom: 8px; right: 8px; background-color: #444; color: #eee; border: 1px solid #555; border-radius: 6px; padding: 5px 10px; cursor: pointer; font-family: sans-serif; font-size: 0.8em; opacity: 0; transition: opacity 0.2s; }
             .code-block-wrapper:hover .copy-code-btn { opacity: 1; }
             .copy-code-btn:hover { background-color: #555; }
+            .ai-loader { width: 20px; height: 20px; border-radius: 50%; animation: spin 1s linear infinite; }
+            @keyframes glow { 0%,100% { box-shadow: 0 0 8px rgba(255,255,255,.2); } 50% { box-shadow: 0 0 16px rgba(255,255,255,.4); } }
+            @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 12px 3px var(--ai-blue); } 25% { box-shadow: 0 0 12px 3px var(--ai-green); } 50% { box-shadow: 0 0 12px 3px var(--ai-yellow); } 75% { box-shadow: 0 0 12px 3px var(--ai-red); } }
+            @keyframes spin { to { transform: rotate(360deg); } }
+            @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+            @keyframes title-pulse { 0%, 100% { text-shadow: 0 0 7px var(--ai-blue); } 25% { text-shadow: 0 0 7px var(--ai-green); } 50% { text-shadow: 0 0 7px var(--ai-yellow); } 75% { text-shadow: 0 0 7px var(--ai-red); } }
         `;
     document.head.appendChild(style);}
     document.addEventListener('keydown', handleKeyDown);
