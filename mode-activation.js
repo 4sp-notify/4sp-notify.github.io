@@ -3,13 +3,14 @@
  *
  * A feature-rich, self-contained script with file uploads, daily limits, contextual awareness,
  * a redesigned attachment menu, scrolling input, and panic key integration.
+ * Includes the z-index fix for the attachment menu.
  */
 (function() {
     // --- CONFIGURATION ---
     // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
-    // UPDATED: Using the specific model URL you requested.
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
+    // NOTE: Using a stable model name to prevent 404 errors.
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
     const MAX_INPUT_HEIGHT = 200; // Max height in pixels before scrolling
 
@@ -164,7 +165,6 @@
         settingsToggle.innerHTML = '&#8942;';
         settingsToggle.onclick = handleSettingsToggleClick;
 
-        inputWrapper.appendChild(createAttachmentMenu());
         inputWrapper.appendChild(attachmentPreviewContainer);
         inputWrapper.appendChild(visualInput);
         inputWrapper.appendChild(placeholder);
@@ -175,6 +175,7 @@
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
+        container.appendChild(createAttachmentMenu()); // Append menu to main container
         
         document.body.appendChild(container);
         
@@ -301,19 +302,19 @@
      * Toggles the attachment selection menu.
      */
     function toggleAttachmentMenu(){
-        isAttachmentMenuOpen=!isAttachmentMenuOpen;
-        const menu=document.getElementById('ai-attachment-menu');
-        const toggleBtn=document.getElementById('ai-settings-toggle');
+        isAttachmentMenuOpen = !isAttachmentMenuOpen;
+        const menu = document.getElementById('ai-attachment-menu');
+        const toggleBtn = document.getElementById('ai-settings-toggle');
         const inputWrapper = document.getElementById('ai-input-wrapper');
 
         if (isAttachmentMenuOpen) {
             const inputRect = inputWrapper.getBoundingClientRect();
-            if (inputRect.top < 250) { // If not enough space above
-                inputWrapper.classList.add('menu-down');
-            } else {
-                inputWrapper.classList.remove('menu-down');
-            }
-
+            // Position menu relative to the button
+            const btnRect = toggleBtn.getBoundingClientRect();
+            menu.style.bottom = `${window.innerHeight - btnRect.top}px`;
+            menu.style.right = `${window.innerWidth - btnRect.right}px`;
+            
+            // Refresh limit display
             menu.querySelectorAll('button[data-type]').forEach(button => {
                 const type = button.dataset.type;
                 if (type === 'images' || type === 'videos') {
@@ -324,9 +325,9 @@
                 }
             });
         }
-
-        menu.classList.toggle('active',isAttachmentMenuOpen);
-        toggleBtn.classList.toggle('active',isAttachmentMenuOpen);
+        
+        menu.classList.toggle('active', isAttachmentMenuOpen);
+        toggleBtn.classList.toggle('active', isAttachmentMenuOpen);
     }
 
     /**
@@ -517,6 +518,7 @@
     }
     
     function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML;}
+    function parseGeminiResponse(text){let html=text.replace(/</g,'&lt;').replace(/>/g,'&gt;');html=html.replace(/```([\s\S]*?)```/g,(match,code)=>`<pre><code>${code.trim()}</code></pre>`);html=html.replace(/\$([^\$]+)\$/g,(match,math)=>{let processedMath=math;processedMath=processedMath.replace(/(\w+)\^(\w+)/g,'$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g,'&radic;($1)').replace(/\\frac\{(.+?)\}\{(.+?)\}/g,'<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');return`<span class="ai-math-inline">${processedMath}</span>`;});html=html.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*([^\n\*]+)\*/g,'<strong>$1</strong>').replace(/^\* (.*$)/gm,'<li>$1</li>');html=html.replace(/<li>(.*?)<\/li>/g,'<ul><li>$1</li></ul>').replace(/<\/ul>\n?<ul>/g,'');return html.replace(/\n/g,'<br>');}
 
     /**
      * Injects all necessary CSS into the page.
@@ -552,18 +554,16 @@
             .sent-attachments { display: block; font-size: 0.8em; color: #ccc; margin-top: 8px; font-style: italic; }
             .gemini-response { align-self: flex-start; }
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite,message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; }
-            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto 30px; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); overflow: hidden; }
+            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto 30px; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); overflow: hidden; }
             #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
             #ai-input { min-height: 50px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
-            #ai-input-placeholder { position: absolute; top: 15px; left: 20px; color: rgba(255,255,255,.4); pointer-events: none; font-size: 1.1em; transition: opacity 0.2s; }
+            #ai-input-placeholder { position: absolute; bottom: 15px; left: 20px; color: rgba(255,255,255,.4); pointer-events: none; font-size: 1.1em; transition: opacity 0.2s; }
             #ai-settings-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
             #ai-settings-toggle.active { transform: rotate(90deg); }
             #ai-settings-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
             #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
-            #ai-attachment-menu { position: absolute; bottom: 100%; right: 5px; background: #1E1E1E; border: 1px solid #444; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 10; opacity: 0; visibility: hidden; transform: translateY(10px); transition: all .25s cubic-bezier(.4,0,.2,1); }
-            #ai-input-wrapper.menu-down #ai-attachment-menu { bottom: auto; top: 100%; transform: translateY(-10px); }
+            #ai-attachment-menu { position: fixed; background: #1E1E1E; border: 1px solid #444; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
             #ai-attachment-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
-            #ai-input-wrapper.menu-down #ai-attachment-menu.active { transform: translateY(5px); }
             #ai-attachment-menu button { background: transparent; border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s; }
             #ai-attachment-menu button:hover { background-color: #333; }
             #ai-attachment-menu button:disabled { opacity: 0.5; cursor: not-allowed; color: #888; }
