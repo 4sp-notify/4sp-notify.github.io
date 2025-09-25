@@ -1,16 +1,14 @@
 /**
  * ai-activation.js
  *
- * A feature-rich, self-contained script with file uploads, daily limits, contextual awareness,
- * a redesigned attachment menu, scrolling input, and panic key integration.
- * Includes the z-index fix for the attachment menu.
+ * A feature-rich, self-contained script with a polished UI, file uploads,
+ * daily limits, contextual awareness, and panic key integration.
  */
 (function() {
     // --- CONFIGURATION ---
     // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
-    // NOTE: Using a stable model name to prevent 404 errors.
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
     const MAX_INPUT_HEIGHT = 200; // Max height in pixels before scrolling
 
@@ -125,10 +123,6 @@
         const container = document.createElement('div');
         container.id = 'ai-container';
         
-        const persistentTitle = document.createElement('div');
-        persistentTitle.id = 'ai-persistent-title';
-        persistentTitle.textContent = "AI Mode";
-        
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
         welcomeMessage.innerHTML = `
@@ -170,7 +164,6 @@
         inputWrapper.appendChild(placeholder);
         inputWrapper.appendChild(settingsToggle);
         
-        container.appendChild(persistentTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
@@ -305,16 +298,12 @@
         isAttachmentMenuOpen = !isAttachmentMenuOpen;
         const menu = document.getElementById('ai-attachment-menu');
         const toggleBtn = document.getElementById('ai-settings-toggle');
-        const inputWrapper = document.getElementById('ai-input-wrapper');
 
         if (isAttachmentMenuOpen) {
-            const inputRect = inputWrapper.getBoundingClientRect();
-            // Position menu relative to the button
             const btnRect = toggleBtn.getBoundingClientRect();
             menu.style.bottom = `${window.innerHeight - btnRect.top}px`;
             menu.style.right = `${window.innerWidth - btnRect.right}px`;
             
-            // Refresh limit display
             menu.querySelectorAll('button[data-type]').forEach(button => {
                 const type = button.dataset.type;
                 if (type === 'images' || type === 'videos') {
@@ -464,6 +453,8 @@
             editor.style.overflowY = 'hidden';
         }
         
+        fadeOutWelcomeMessage();
+        
         const placeholder = document.getElementById('ai-input-placeholder');
         const rawText = editor.innerText;
         if (placeholder) placeholder.style.display = (rawText.length > 0 || attachedFiles.length > 0) ? 'none' : 'block';
@@ -517,6 +508,7 @@
         }
     }
     
+    function fadeOutWelcomeMessage(){const container=document.getElementById('ai-container');if(container&&!container.classList.contains('chat-active')){container.classList.add('chat-active');}}
     function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML;}
     function parseGeminiResponse(text){let html=text.replace(/</g,'&lt;').replace(/>/g,'&gt;');html=html.replace(/```([\s\S]*?)```/g,(match,code)=>`<pre><code>${code.trim()}</code></pre>`);html=html.replace(/\$([^\$]+)\$/g,(match,math)=>{let processedMath=math;processedMath=processedMath.replace(/(\w+)\^(\w+)/g,'$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g,'&radic;($1)').replace(/\\frac\{(.+?)\}\{(.+?)\}/g,'<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');return`<span class="ai-math-inline">${processedMath}</span>`;});html=html.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*([^\n\*]+)\*/g,'<strong>$1</strong>').replace(/^\* (.*$)/gm,'<li>$1</li>');html=html.replace(/<li>(.*?)<\/li>/g,'<ul><li>$1</li></ul>').replace(/<\/ul>\n?<ul>/g,'');return html.replace(/\n/g,'<br>');}
 
@@ -537,12 +529,12 @@
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
             #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box; }
             #ai-container.active { opacity: 1; background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
-            #ai-container.deactivating, #ai-container.deactivating > * { transition: opacity 0.4s, background-color 0.4s, backdrop-filter 0.4s, transform 0.4s; }
+            #ai-container.deactivating, #ai-container.deactivating > * { transition: opacity 0.4s, transform 0.4s; }
             #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
             #ai-persistent-title { position: absolute; top: 28px; left: 30px; font-family: 'secondaryfont', sans-serif; font-size: 18px; font-weight: bold; color: white; opacity: 0; transition: opacity 0.5s 0.2s; animation: title-pulse 4s linear infinite; }
             #ai-container.chat-active #ai-persistent-title { opacity: 1; }
-            #ai-welcome-message { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s; width: 100%; }
-            #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; }
+            #ai-welcome-message { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s, transform .5s; width: 100%; }
+            #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; transform: translate(-50%,-50%) scale(0.95); }
             #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
             #ai-welcome-message p { font-size: .9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255,255,255,.7); font-size: 40px; cursor: pointer; transition: color .2s ease,transform .3s ease, opacity 0.4s; }
@@ -554,7 +546,7 @@
             .sent-attachments { display: block; font-size: 0.8em; color: #ccc; margin-top: 8px; font-style: italic; }
             .gemini-response { align-self: flex-start; }
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite,message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; }
-            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto 30px; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); overflow: hidden; }
+            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto 30px; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); }
             #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
             #ai-input { min-height: 50px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
             #ai-input-placeholder { position: absolute; bottom: 15px; left: 20px; color: rgba(255,255,255,.4); pointer-events: none; font-size: 1.1em; transition: opacity 0.2s; }
@@ -562,10 +554,10 @@
             #ai-settings-toggle.active { transform: rotate(90deg); }
             #ai-settings-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
             #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
-            #ai-attachment-menu { position: fixed; background: #1E1E1E; border: 1px solid #444; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
+            #ai-attachment-menu { position: fixed; background: rgba(10,10,10,0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
             #ai-attachment-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
             #ai-attachment-menu button { background: transparent; border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s; }
-            #ai-attachment-menu button:hover { background-color: #333; }
+            #ai-attachment-menu button:hover { background-color: rgba(255,255,255,0.1); }
             #ai-attachment-menu button:disabled { opacity: 0.5; cursor: not-allowed; color: #888; }
             #ai-attachment-menu button .icon { font-size: 1.2em; }
             #ai-attachment-menu button span:last-child { font-size: 0.8em; color: #888; margin-left: auto; font-family: 'secondaryfont', sans-serif; }
