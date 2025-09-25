@@ -1,5 +1,5 @@
 /**
- * mode-activation.js
+ * ai-activation.js
  *
  * A feature-rich, self-contained script with file uploads, daily limits, contextual awareness,
  * a redesigned attachment menu, scrolling input, and panic key integration.
