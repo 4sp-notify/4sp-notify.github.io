@@ -14,6 +14,8 @@
  * - Dynamic input box glow that pulses based on typing speed.
  * - A glassy settings menu with custom font to select AI specialization.
  * - A conditional, arrow-key-navigable math symbols bar for Math and Science modes.
+ * - Robust fraction creation with automatic cursor placement.
+ * - Intuitive exponent creation via the '^' key, which works everywhere including inside fractions.
  * - Fading effect on the top and bottom of the scrollable chat view.
  * - An introductory welcome message that fades out.
  * - A persistent, glowing "AI Mode" title appears after interaction begins.
@@ -233,41 +235,59 @@
             }
         }
     }
-    
+
     /**
-     * Reusable logic for converting LaTeX-style commands to symbols in a contenteditable div.
+     * Handles real-time input conversions for LaTeX, superscripts, etc.
      */
-    function convertLatexInPlace(editorNode) {
+    function handleContentEditableInput(e) {
+        const editor = e.target;
         const selection = window.getSelection();
-        if (selection.rangeCount > 0) {
-            const range = selection.getRangeAt(0);
-            const node = range.startContainer;
-            if (node.nodeType === 3) { // Text node
-                const textContent = node.textContent;
-                const textBeforeCursor = textContent.slice(0, range.startOffset);
-                const match = textBeforeCursor.match(/(\\[a-zA-Z]+)\s$/);
-                if (match) {
-                    const command = match[1];
-                    const symbol = latexSymbolMap[command];
-                    if (symbol) {
-                        const commandStartIndex = textBeforeCursor.lastIndexOf(command);
-                        node.textContent = textContent.slice(0, commandStartIndex) + symbol + textContent.slice(range.startOffset);
-                        range.setStart(node, commandStartIndex + 1);
-                        range.collapse(true);
-                        selection.removeAllRanges();
-                        selection.addRange(range);
-                    }
+        if (!selection.rangeCount) return;
+        
+        const range = selection.getRangeAt(0).cloneRange();
+        const node = range.startContainer;
+
+        // Superscript handling via '^' key
+        if (node.nodeType === 3 && range.startOffset > 0) {
+            const textContent = node.textContent;
+            if (textContent.slice(range.startOffset - 1, range.startOffset) === '^') {
+                range.setStart(node, range.startOffset - 1);
+                range.deleteContents();
+
+                const sup = document.createElement('sup');
+                sup.contentEditable = true;
+                sup.innerHTML = '&#8203;'; // Zero-width space for cursor
+                range.insertNode(sup);
+                
+                range.selectNodeContents(sup);
+                range.collapse(false);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                return; // Stop further processing for this input event
+            }
+        }
+        
+        // LaTeX symbol conversion
+        if (node.nodeType === 3) {
+            const textContent = node.textContent;
+            const textBeforeCursor = textContent.slice(0, range.startOffset);
+            const match = textBeforeCursor.match(/(\\[a-zA-Z]+)\s$/);
+            if (match) {
+                const command = match[1];
+                const symbol = latexSymbolMap[command];
+                if (symbol) {
+                    const commandStartIndex = textBeforeCursor.lastIndexOf(command);
+                    node.textContent = textContent.slice(0, commandStartIndex) + symbol + textContent.slice(range.startOffset);
+                    range.setStart(node, commandStartIndex + 1);
+                    range.collapse(true);
+                    selection.removeAllRanges();
+                    selection.addRange(range);
                 }
             }
         }
-    }
-
-    /**
-     * Handles input on the main contenteditable div.
-     */
-    function handleContentEditableInput(e) {
+        
+        // --- Other input handling ---
         fadeOutWelcomeMessage();
-        const editor = e.target;
         
         const wrapper = document.getElementById('ai-input-wrapper');
         const now = Date.now();
@@ -293,8 +313,6 @@
                 div.remove();
             }
         });
-
-        convertLatexInPlace(editor);
         
         const charCounter = document.getElementById('ai-char-counter');
         const placeholder = document.getElementById('ai-input-placeholder');
@@ -310,11 +328,17 @@
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = innerHTML.replace(/<div><br><\/div>/g, '\n').replace(/<br>/g, '\n');
         tempDiv.querySelectorAll('.ai-frac').forEach(frac => {
-            const n = frac.querySelector('sup')?.innerText.trim() || '';
-            const d = frac.querySelector('sub')?.innerText.trim() || '';
-            frac.replaceWith(`(${n})/(${d})`);
+            const n = frac.querySelector('sup')?.innerHTML || '';
+            const d = frac.querySelector('sub')?.innerHTML || '';
+            // Recursively parse the content of numerator and denominator
+            const nText = parseInputForAPI(n);
+            const dText = parseInputForAPI(d);
+            frac.replaceWith(`(${nText})/(${dText})`);
         });
-        tempDiv.querySelectorAll('sup').forEach(sup => sup.replaceWith(`^(${sup.innerText.trim()})`));
+        tempDiv.querySelectorAll('sup').forEach(sup => {
+            const supText = parseInputForAPI(sup.innerHTML);
+            sup.replaceWith(`^(${supText})`);
+        });
         let text = tempDiv.innerText;
         text = text.replace(/√\((.*?)\)/g, 'sqrt($1)').replace(/∛\((.*?)\)/g, 'cbrt($1)')
                    .replace(/×/g, '*').replace(/÷/g, '/').replace(/π/g, 'pi');
@@ -473,25 +497,43 @@
         handleContentEditableInput({target: editor});
     }
     
-    function insertPower() {
+    /**
+     * Inserts a fraction structure at the cursor and focuses the numerator.
+     */
+    function insertFraction() {
         const editor = document.getElementById('ai-input');
         editor.focus();
         const selection = window.getSelection();
         if (!selection.rangeCount) return;
-        
+
         const range = selection.getRangeAt(0);
         range.deleteContents();
 
+        const frac = document.createElement('span');
+        frac.className = 'ai-frac';
+        frac.contentEditable = false;
+
         const sup = document.createElement('sup');
         sup.contentEditable = true;
-        sup.innerHTML = '&nbsp;'; // Add a space to make it selectable
-        range.insertNode(sup);
+        sup.innerHTML = '&#8203;'; // Zero-width space
+
+        const sub = document.createElement('sub');
+        sub.contentEditable = true;
+        sub.innerHTML = '&#8203;'; // Zero-width space
+
+        frac.appendChild(sup);
+        frac.appendChild(sub);
+        range.insertNode(frac);
         
-        const newRange = document.createRange();
-        newRange.setStart(sup, 1);
-        newRange.collapse(true);
+        const spaceNode = document.createTextNode('\u00A0'); // Add a space after to exit easily
+        range.setStartAfter(frac);
+        range.insertNode(spaceNode);
+
+        // Move cursor into the numerator for immediate input
+        range.selectNodeContents(sup);
+        range.collapse(true);
         selection.removeAllRanges();
-        selection.addRange(newRange);
+        selection.addRange(range);
 
         handleContentEditableInput({ target: editor });
     }
@@ -501,8 +543,8 @@
         bar.id = 'ai-options-bar';
         const buttons = [
             { t: '+', v: '+' }, { t: '−', v: '−' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
-            { t: 'x/y', action: () => insertAtCursor('<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>&nbsp;') },
-            { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'xⁿ', action: insertPower },
+            { t: 'x/y', action: insertFraction },
+            { t: '√', v: '√()' }, { t: '∛', v: '∛()' },
             { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' },
             { t: '<', v: '<' }, { t: '>', v: '>' }, { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
         ];
@@ -639,10 +681,10 @@
             .ai-math-inline, .user-message { color: #a5d6ff; font-family: monospace; font-size: 1.1em; }
             .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em; border-radius: 5px; transition: box-shadow 0.2s, transform 0.2s; }
             .ai-frac.focused { box-shadow: 0 0 0 2px var(--ai-blue); transform: scale(1.1); }
-            .ai-frac > sup, .ai-frac > sub { display: block; min-width: 1ch; }
-            .ai-frac > sup { border-bottom: 1px solid currentColor; padding-bottom: 0.15em; }
-            .ai-frac > sub { padding-top: 0.15em; }
-            #ai-input sup, #ai-input sub { font-family: 'secondaryfont', sans-serif; outline: none; background: rgba(0,0,0,0.2); padding: 0.1em 0.3em; border-radius: 4px; }
+            .ai-frac > sup, .ai-frac > sub { display: block; min-width: 1ch; line-height: 1; }
+            .ai-frac > sup { border-bottom: 1px solid currentColor; padding: 0.2em 0.1em; }
+            .ai-frac > sub { padding: 0.2em 0.1em; }
+            #ai-input sup, #ai-input sub { font-family: 'secondaryfont', sans-serif; outline: none; background: rgba(0,0,0,0.2); padding: 0.1em 0.3em; border-radius: 4px; vertical-align: super; }
             #ai-input-wrapper {
                 flex-shrink: 0; position: relative; opacity: 0;
                 transform: translateY(100px); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
