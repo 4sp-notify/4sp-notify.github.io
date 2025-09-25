@@ -2,14 +2,15 @@
  * ai-activation.js
  *
  * A simplified, self-contained script with a direct user authorization check.
- * Includes a functional category-selection menu, corrected API endpoint, and new animations.
+ * Includes a functional category-selection menu and new animations.
+ * API endpoint has been reverted to the original version.
  */
 (function() {
     // --- CONFIGURATION ---
     // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
-    // FIXED: Updated to the correct, non-preview model API endpoint
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+    // REVERTED: Using the original API URL as requested.
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
 
     // --- STATE MANAGEMENT ---
@@ -130,7 +131,7 @@
         inputWrapper.appendChild(charCounter);
         inputWrapper.appendChild(settingsToggle);
         inputWrapper.appendChild(createOptionsBar());
-        container.appendChild(persistentTitle); // ADDED category display
+        container.appendChild(persistentTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
@@ -152,12 +153,12 @@
         }
         const container = document.getElementById('ai-container');
         if (container) {
-            container.classList.add('deactivating'); // Add class to trigger fade-out animations
+            container.classList.add('deactivating');
             setTimeout(() => {
                 container.remove();
                 const styles = document.getElementById('ai-dynamic-styles');
                 if (styles) styles.remove();
-            }, 500); // Wait for animations to finish
+            }, 500);
         }
         isAIActive = false;
         isSettingsMenuOpen = false;
@@ -179,24 +180,21 @@
         
         let systemInstruction = 'You are a helpful and comprehensive AI assistant.';
         switch (currentSubject) {
-            case 'Mathematics':
-                systemInstruction = 'You are a mathematics expert. Prioritize accuracy, detailed step-by-step explanations, and formal notation using LaTeX where appropriate.';
-                break;
-            case 'Science':
-                systemInstruction = 'You are a science expert. Provide clear, evidence-based explanations using correct scientific terminology, citing sources if relevant.';
-                break;
-            case 'History':
-                systemInstruction = 'You are a history expert. Provide historically accurate information with context, key dates, and important figures.';
-                break;
-            case 'Literature':
-                systemInstruction = 'You are a literary expert. Focus on analyzing themes, characters, literary devices, and historical context.';
-                break;
-            case 'Programming':
-                systemInstruction = 'You are a programming expert. Provide clean, efficient, and well-commented code examples. Specify the language and explain the logic clearly.';
-                break;
+            case 'Mathematics': systemInstruction = 'You are a mathematics expert. Prioritize accuracy, detailed step-by-step explanations, and formal notation using LaTeX where appropriate.'; break;
+            case 'Science': systemInstruction = 'You are a science expert. Provide clear, evidence-based explanations using correct scientific terminology, citing sources if relevant.'; break;
+            case 'History': systemInstruction = 'You are a history expert. Provide historically accurate information with context, key dates, and important figures.'; break;
+            case 'Literature': systemInstruction = 'You are a literary expert. Focus on analyzing themes, characters, literary devices, and historical context.'; break;
+            case 'Programming': systemInstruction = 'You are a programming expert. Provide clean, efficient, and well-commented code examples. Specify the language and explain the logic clearly.'; break;
         }
         
-        const payload = { contents: chatHistory, systemInstruction: { parts: [{ text: systemInstruction }] } };
+        // This API format uses `contents` for the full history, not a separate system instruction property.
+        const payload = {
+            contents: [
+                { role: "user", parts: [{ text: `System instruction: ${systemInstruction}` }] },
+                { role: "model", parts: [{ text: "Understood. I will act as requested." }] },
+                ...chatHistory
+            ]
+        };
 
         try {
             const response = await fetch(API_URL, {
@@ -256,7 +254,7 @@
             toggleSettingsMenu();
         }
     }
-
+    
     /**
      * Toggles the category selection menu.
      */
@@ -273,8 +271,8 @@
      */
     function selectSubject(subject){
         currentSubject=subject;
-        document.getElementById('ai-container').dataset.subject=subject;
-
+        chatHistory = []; // Clear history when changing subjects to apply new persona
+        
         const persistentTitle = document.getElementById('ai-persistent-title');
         if (persistentTitle) {
             persistentTitle.textContent = `AI Mode - ${subject}`;
@@ -309,8 +307,8 @@
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
             #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box; }
             #ai-container.active { opacity: 1; background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+            #ai-container.deactivating, #ai-container.deactivating > * { transition: opacity 0.4s, background-color 0.4s, backdrop-filter 0.4s, transform 0.4s; }
             #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
-            #ai-container.deactivating > * { opacity: 0; }
             #ai-persistent-title { position: absolute; top: 28px; left: 30px; font-family: 'secondaryfont', sans-serif; font-size: 18px; font-weight: bold; color: white; opacity: 0; transition: opacity 0.5s 0.2s; animation: title-pulse 4s linear infinite; }
             #ai-container.chat-active #ai-persistent-title { opacity: 1; }
             #ai-welcome-message { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s; width: 100%; }
@@ -363,8 +361,6 @@
             @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
             @keyframes brand-slide { 0% { background-position: 0 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0 50%; } }
             @keyframes brand-pulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.05); } }
-            @keyframes fadeInContainer { from { opacity: 0; } to { opacity: 1; } }
-            @keyframes slideUp { from { transform: translateY(50px); } to { transform: translateY(0); } }
             @keyframes title-pulse { 0%, 100% { text-shadow: 0 0 7px var(--ai-blue); } 25% { text-shadow: 0 0 7px var(--ai-green); } 50% { text-shadow: 0 0 7px var(--ai-yellow); } 75% { text-shadow: 0 0 7px var(--ai-red); } }
         `;
     document.head.appendChild(style);}
