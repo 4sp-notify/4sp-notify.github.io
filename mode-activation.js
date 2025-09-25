@@ -7,12 +7,10 @@
  */
 (function() {
     // --- CONFIGURATION ---
-    // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
-    // UPDATED: Using the specific preview model URL you requested.
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
-    const MAX_INPUT_HEIGHT = 200; // Max height in pixels before scrolling
+    const MAX_INPUT_HEIGHT = 200;
 
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
@@ -458,7 +456,13 @@
         
         const placeholder = document.getElementById('ai-input-placeholder');
         const rawText = editor.innerText;
-        if (placeholder) placeholder.style.display = (rawText.length > 0 || attachedFiles.length > 0) ? 'none' : 'block';
+        
+        // --- THIS IS THE FIX ---
+        // Instead of hiding the placeholder, we make it invisible.
+        // This preserves its space and prevents the layout from shifting.
+        if (placeholder) {
+            placeholder.style.opacity = (rawText.length > 0 || attachedFiles.length > 0) ? '0' : '1';
+        }
     }
 
     /**
@@ -511,7 +515,7 @@
     
     function fadeOutWelcomeMessage(){const container=document.getElementById("ai-container");if(container&&!container.classList.contains("chat-active")){container.classList.add("chat-active")}}
     function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML}
-    function parseGeminiResponse(text){let html=text.replace(/</g,"&lt;").replace(/>/g,"&gt;");html=html.replace(/```([\s\S]*?)```/g,(match,code)=>`<pre><code>${escapeHTML(code.trim())}</code></pre>`);html=html.replace(/\$([^\$]+)\$/g,(match,math)=>{let processedMath=math;processedMath=processedMath.replace(/(\w+)\^(\w+)/g,'$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g,'&radic;($1)').replace(/\\frac\{(.+?)\}\{(.+?)\}/g,'<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');return`<span class="ai-math-inline">${processedMath}</span>`;});html=html.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*(.*?)\*/g,'<em>$1</em>').replace(/^### (.*$)/gm,'<h3>$1</h3>').replace(/^## (.*$)/gm,'<h2>$1</h2>').replace(/^# (.*$)/gm,'<h1>$1</h1>');html=html.replace(/^(?:\*|-)\s(.*$)/gm,'<li>$1</li>');html=html.replace(/(<\/li>\s*<li>)/g,"</li><li>").replace(/((<li>.*<\/li>)+)/gs,"<ul>$1</ul>");return html.replace(/\n/g,'<br>')}
+    function parseGeminiResponse(text){let html=text.replace(/</g,"&lt;").replace(/>/g,"&gt;");html=html.replace(/```([\s\S]*?)```/g,(match,code)=>`<pre><code>${escapeHTML(code.trim())}</code></pre>`);html=html.replace(/\$([^\$]+)\$/g,(match,math)=>{let processedMath=math;processedMath=processedMath.replace(/(\w+)\^(\w+)/g,'$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g,'&radic;($1)').replace(/\\frac\{(.+?)\}\{(.+?)\}/g,'<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');return`<span class="ai-math-inline">${processedMath}</span>`;});html=html.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*(.*?)\*/g,'<em>$1</em>').replace(/^### (.*$)/gm,'<h3>$1</h3>').replace(/^## (.*$)/gm,'<h2>$1</h2>').replace(/^# (.*$)/gm,'<h1>$1</h1>');html=html.replace(/^(?:\*|-)\s(.*$)/gm,'<li>$1</li>');html=html.replace(/(<\/li>\s*<li>)/g,"</li><li>").replace(/((<li>.*<\/li>)+)/gs,"<ul>$1</ul>");return html.replace(/\n/g,"<br>")}
 
     /**
      * Injects all necessary CSS into the page.
@@ -519,13 +523,13 @@
     function injectStyles() {
         if (document.getElementById('ai-dynamic-styles')) return;
         if (!document.querySelector('style[data-font="primary"]')) {
-            const fontStyle = document.createElement('style');
-            fontStyle.setAttribute('data-font','primary');
+            const fontStyle = document.createElement("style");
+            fontStyle.setAttribute("data-font","primary");
             fontStyle.textContent = `@font-face { font-family: 'PrimaryFont'; src: url('../fonts/primary.woff') format('woff'); font-weight: normal; font-style: normal; }`;
             document.head.appendChild(fontStyle);
         }
-        const style = document.createElement('style');
-        style.id = 'ai-dynamic-styles';
+        const style = document.createElement("style");
+        style.id = "ai-dynamic-styles";
         style.innerHTML = `
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
             #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; }
@@ -557,16 +561,17 @@
             #ai-settings-toggle.active { transform: rotate(90deg); }
             #ai-settings-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
             #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
-            #ai-attachment-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
+            #ai-attachment-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 16px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
             #ai-attachment-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
             #ai-attachment-menu button { background: transparent; border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s; }
+            #ai-attachment-menu button:hover { background-color: rgba(255,255,255,0.1); }
             #ai-attachment-menu button:disabled { opacity: 0.5; cursor: not-allowed; color: #888; }
             #ai-attachment-menu button .icon { font-size: 1.2em; }
             #ai-attachment-menu button span:last-child { font-size: 0.8em; color: #888; margin-left: auto; font-family: 'secondaryfont', sans-serif; }
             #ai-attachment-preview { display: none; flex-direction: row; gap: 10px; padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.1); overflow-x: auto; }
-            .attachment-card { position: relative; border-radius: 8px; overflow: hidden; background: #333; height: 80px; width: 100px; flex-shrink: 0; }
+            .attachment-card { position: relative; border-radius: 8px; overflow: hidden; background: #333; height: 80px; width: auto; min-width: 80px; flex-shrink: 0; display: flex; justify-content: center; align-items: center; }
             .attachment-card img { width: 100%; height: 100%; object-fit: cover; }
-            .attachment-card .file-icon { font-size: 2.5em; display: flex; align-items: center; justify-content: center; height: 100%; color: #ccc; }
+            .attachment-card .file-icon { font-size: 2.5em; color: #ccc; }
             .attachment-card .file-name { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.75em; padding: 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .remove-attachment-btn { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.5); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; }
             .ai-loader { width: 25px; height: 25px; border: 3px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
