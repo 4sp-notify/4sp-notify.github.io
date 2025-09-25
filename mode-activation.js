@@ -79,7 +79,6 @@
                     if (isAuthorized) {
                         activateAI();
                     } else {
-                        alert("You are not enrolled in the AI Mode program, or access is misconfigured.");
                     }
                 }
             }
