@@ -12,28 +12,32 @@
  * Features:
  * - A dark, heavily blurred overlay for focus mode with enhanced animations.
  * - Dynamic input box glow that pulses based on typing speed.
+ * - A glassy settings menu to select AI specialization (General, Math, Science, ELA, History).
+ * - A conditional, arrow-key-navigable math symbols bar for Math and Science modes.
+ * - A "Mathematical Translation" mode for converting equations.
  * - Fading effect on the top and bottom of the scrollable chat view.
  * - An introductory welcome message that fades out.
  * - A persistent, glowing "AI Mode" title appears after interaction begins.
  * - Chat history for contextual conversations within a session.
  * - Automatically sends user's general location (state/country) with the first message.
  * - A dynamic, auto-expanding WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
- * - A horizontal, scrollable math options bar with symbols and inequalities.
  * - AI responses render Markdown, LaTeX-style math, and code blocks.
  * - Communicates with the Google AI API (Gemini) to get answers.
  */
 
 (function() {
     // --- CONFIGURATION ---
-    const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA';
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-05-20:generateContent?key=${API_KEY}`;
+    const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; // Note: This appears to be a sample key.
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
     const FIRST_LINE_CHAR_LIMIT = 60;
 
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
     let isRequestPending = false;
-    let isMathModeActive = false;
+    let isSettingsMenuOpen = false;
+    let isMathTranslationModeActive = false;
+    let currentSubject = 'General'; // 'General', 'Math', 'Science', 'ELA', 'History'
     let lastRequestTime = 0;
     const COOLDOWN_PERIOD = 5000; // 5 seconds in milliseconds
     let chatHistory = [];
@@ -112,6 +116,7 @@
 
         const container = document.createElement('div');
         container.id = 'ai-container';
+        container.dataset.subject = 'General';
         
         const brandTitle = document.createElement('div');
         brandTitle.id = 'ai-brand-title';
@@ -161,15 +166,15 @@
         charCounter.id = 'ai-char-counter';
         charCounter.textContent = `0 / ${USER_CHAR_LIMIT}`;
 
-        const mathModeToggle = document.createElement('button');
-        mathModeToggle.id = 'ai-math-toggle';
-        mathModeToggle.innerHTML = '&#8942;';
-        mathModeToggle.onclick = (e) => { e.stopPropagation(); toggleMathMode(); };
+        const settingsToggle = document.createElement('button');
+        settingsToggle.id = 'ai-settings-toggle';
+        settingsToggle.innerHTML = '&#8942;'; // Vertical ellipsis
+        settingsToggle.onclick = (e) => { e.stopPropagation(); toggleSettingsMenu(); };
         
         inputWrapper.appendChild(visualInput);
         inputWrapper.appendChild(placeholder);
         inputWrapper.appendChild(charCounter);
-        inputWrapper.appendChild(mathModeToggle);
+        inputWrapper.appendChild(settingsToggle);
         inputWrapper.appendChild(createOptionsBar());
         
         container.appendChild(brandTitle);
@@ -178,6 +183,8 @@
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
+        container.appendChild(createSettingsMenu()); // Add settings menu
+        container.appendChild(createMathTranslatorUI()); // Add math translator UI
 
         document.body.appendChild(container);
 
@@ -204,7 +211,9 @@
             }, 500);
         }
         isAIActive = false;
-        isMathModeActive = false;
+        isSettingsMenuOpen = false;
+        isMathTranslationModeActive = false;
+        currentSubject = 'General';
         chatHistory = [];
     }
 
@@ -304,7 +313,7 @@
             const d = frac.querySelector('sub')?.innerText.trim() || '';
             frac.replaceWith(`(${n})/(${d})`);
         });
-        tempDiv.querySelectorAll('sup').forEach(sup => sup.replaceWith(`^${sup.innerText}`));
+        tempDiv.querySelectorAll('sup').forEach(sup => sup.replaceWith(`^(${sup.innerText.trim()})`));
         let text = tempDiv.innerText;
         text = text.replace(/√\((.*?)\)/g, 'sqrt($1)').replace(/∛\((.*?)\)/g, 'cbrt($1)')
                    .replace(/×/g, '*').replace(/÷/g, '/').replace(/π/g, 'pi');
@@ -337,7 +346,7 @@
                 const range = selection.getRangeAt(0);
                 const nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
 
-                if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
+                if (nodeBefore && nodeBefore.nodeType === 1 && (nodeBefore.classList.contains('ai-frac') || nodeBefore.tagName.toLowerCase() === 'sup')) {
                     e.preventDefault();
                     nodeBefore.remove();
                     handleContentEditableInput({target: editor});
@@ -382,7 +391,7 @@
 
             editor.innerHTML = '';
             handleContentEditableInput({ target: editor });
-            callGoogleAI(query, responseBubble);
+            callGoogleAI(responseBubble);
         }
     }
 
@@ -411,41 +420,54 @@
     /**
      * Calls the Google AI API and populates the response bubble.
      */
-    async function callGoogleAI(query, responseBubble) {
+    async function callGoogleAI(responseBubble, customPayload = null) {
+        let systemInstruction = null;
+        if (!customPayload) {
+            switch (currentSubject) {
+                case 'Math': systemInstruction = 'You are a mathematics expert. Prioritize accuracy, detailed steps, and formal notation. Be concise.'; break;
+                case 'Science': systemInstruction = 'You are a science expert. Provide clear, evidence-based explanations and use scientific terminology correctly. Be concise.'; break;
+                case 'ELA': systemInstruction = 'You are an English Language Arts expert. Focus on grammar, literary analysis, and writing structure. Be concise.'; break;
+                case 'History': systemInstruction = 'You are a history expert. Provide historically accurate information with context, dates, and sources where applicable. Be concise.'; break;
+            }
+        }
+        
+        const payload = customPayload || { contents: chatHistory };
+        if (systemInstruction) {
+            payload.systemInstruction = { parts: [{ text: systemInstruction }] };
+        }
+
         try {
             const response = await fetch(API_URL, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ contents: chatHistory })
+                body: JSON.stringify(payload)
             });
             if (!response.ok) throw new Error('Network response was not ok.');
             const data = await response.json();
             const text = data.candidates[0].content.parts[0].text;
-            chatHistory.push({ role: "model", parts: [{ text: text }] });
+            
+            if (!customPayload) {
+                chatHistory.push({ role: "model", parts: [{ text: text }] });
+            }
+            
             responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
         } catch (error) {
             console.error('AI API Error:', error);
             responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`;
         } finally {
-            responseBubble.classList.remove('loading');
-            document.getElementById('ai-input-wrapper').classList.remove('waiting');
-            const editor = document.getElementById('ai-input');
-            if(editor) {
-                editor.contentEditable = true;
-                editor.focus();
+            if (!customPayload) { // Only reset for chat mode
+                responseBubble.classList.remove('loading');
+                document.getElementById('ai-input-wrapper').classList.remove('waiting');
+                const editor = document.getElementById('ai-input');
+                if(editor) {
+                    editor.contentEditable = true;
+                    editor.focus();
+                }
+                isRequestPending = false;
+                const responseContainer = document.getElementById('ai-response-container');
+                if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
             }
-            isRequestPending = false;
-            const responseContainer = document.getElementById('ai-response-container');
-            if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
         }
-    }
-    
-    function toggleMathMode() {
-        isMathModeActive = !isMathModeActive;
-        const inputWrapper = document.getElementById('ai-input-wrapper');
-        const toggleBtn = document.getElementById('ai-math-toggle');
-        inputWrapper.classList.toggle('options-active', isMathModeActive);
-        toggleBtn.classList.toggle('active', isMathModeActive);
     }
     
     function insertAtCursor(html) {
@@ -455,24 +477,197 @@
         document.execCommand('insertHTML', false, html);
         handleContentEditableInput({target: editor});
     }
+    
+    function insertPower() {
+        const editor = document.getElementById('ai-input');
+        editor.focus();
+        const selection = window.getSelection();
+        if (!selection.rangeCount) return;
+        
+        const range = selection.getRangeAt(0);
+        range.deleteContents();
+
+        const sup = document.createElement('sup');
+        sup.contentEditable = true;
+        sup.innerHTML = '&nbsp;'; // Add a space to make it selectable
+        range.insertNode(sup);
+        
+        // Create a new range to place the cursor inside the sup
+        const newRange = document.createRange();
+        newRange.setStart(sup, 1); // Place cursor after the &nbsp;
+        newRange.collapse(true);
+        selection.removeAllRanges();
+        selection.addRange(newRange);
+
+        handleContentEditableInput({ target: editor });
+    }
 
     function createOptionsBar() {
         const bar = document.createElement('div');
         bar.id = 'ai-options-bar';
         const buttons = [
-            { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
-            { t: 'x/y', v: '<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>&nbsp;' }, 
-            { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
+            { t: '+', v: '+' }, { t: '−', v: '−' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
+            { t: 'x/y', action: () => insertAtCursor('<span class="ai-frac" contenteditable="false"><sup contenteditable="true"></sup><sub contenteditable="true"></sub></span>&nbsp;') },
+            { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'xⁿ', action: insertPower },
             { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' },
             { t: '<', v: '<' }, { t: '>', v: '>' }, { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
         ];
-        buttons.forEach(btn => {
+
+        buttons.forEach((btn, index) => {
             const buttonEl = document.createElement('button');
             buttonEl.innerHTML = btn.t;
-            buttonEl.onclick = (e) => { e.stopPropagation(); insertAtCursor(btn.v); };
+            buttonEl.tabIndex = -1; // Not reachable by tab, only by arrow keys
+            buttonEl.onclick = (e) => { 
+                e.stopPropagation(); 
+                if (btn.action) {
+                    btn.action();
+                } else {
+                    insertAtCursor(btn.v);
+                }
+            };
             bar.appendChild(buttonEl);
         });
+
+        // Arrow key navigation
+        bar.addEventListener('keydown', (e) => {
+            if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+                e.preventDefault();
+                const currentButtons = Array.from(bar.querySelectorAll('button'));
+                const focusedIndex = currentButtons.findIndex(b => b === document.activeElement);
+                let nextIndex;
+
+                if (e.key === 'ArrowRight') {
+                    nextIndex = focusedIndex >= 0 ? (focusedIndex + 1) % currentButtons.length : 0;
+                } else { // ArrowLeft
+                    nextIndex = focusedIndex > 0 ? focusedIndex - 1 : currentButtons.length - 1;
+                }
+                currentButtons[nextIndex]?.focus();
+            }
+        });
+
         return bar;
+    }
+
+    function toggleSettingsMenu() {
+        isSettingsMenuOpen = !isSettingsMenuOpen;
+        const menu = document.getElementById('ai-settings-menu');
+        const toggleBtn = document.getElementById('ai-settings-toggle');
+        menu.classList.toggle('active', isSettingsMenuOpen);
+        toggleBtn.classList.toggle('active', isSettingsMenuOpen);
+    }
+    
+    function selectSubject(subject) {
+        currentSubject = subject;
+        const container = document.getElementById('ai-container');
+        container.dataset.subject = subject;
+
+        // Update active button style in menu
+        const menu = document.getElementById('ai-settings-menu');
+        menu.querySelectorAll('button').forEach(b => b.classList.remove('active'));
+        const activeBtn = menu.querySelector(`button[onclick="selectSubject('${subject}')"]`);
+        if (activeBtn) activeBtn.classList.add('active');
+
+        // Close menu
+        toggleSettingsMenu();
+        
+        // Deactivate math translation mode if active
+        if (isMathTranslationModeActive) {
+            toggleMathTranslationMode();
+        }
+    }
+    
+    function createSettingsMenu() {
+        const menu = document.createElement('div');
+        menu.id = 'ai-settings-menu';
+        const subjects = ['General', 'Math', 'ELA', 'History', 'Science'];
+        
+        subjects.forEach(subject => {
+            const button = document.createElement('button');
+            button.textContent = subject;
+            if (subject === 'General') button.classList.add('active');
+            button.onclick = () => selectSubject(subject);
+            menu.appendChild(button);
+        });
+        
+        const separator = document.createElement('hr');
+        menu.appendChild(separator);
+        
+        const translatorButton = document.createElement('button');
+        translatorButton.textContent = 'Mathematical Translation';
+        translatorButton.onclick = () => { toggleMathTranslationMode(); toggleSettingsMenu(); };
+        menu.appendChild(translatorButton);
+        
+        return menu;
+    }
+    
+    function toggleMathTranslationMode() {
+        isMathTranslationModeActive = !isMathTranslationModeActive;
+        const container = document.getElementById('ai-container');
+        container.classList.toggle('math-translation-active', isMathTranslationModeActive);
+        if (isMathTranslationModeActive) {
+             document.getElementById('ai-math-translator-input')?.focus();
+        } else {
+             document.getElementById('ai-input')?.focus();
+        }
+    }
+    
+    function createMathTranslatorUI() {
+        const translator = document.createElement('div');
+        translator.id = 'ai-math-translator';
+        translator.innerHTML = `
+            <h3>Mathematical Translation</h3>
+            <p>Enter an equation or expression below.</p>
+            <div id="ai-math-translator-input" contenteditable="true"></div>
+            <p>Choose a conversion target:</p>
+            <div id="ai-math-translator-options">
+                <button data-action="Slope-Intercept to Standard Form">Standard Form</button>
+                <button data-action="Expand the Expression">Expand</button>
+                <button data-action="Factor the Expression">Factor</button>
+            </div>
+            <div id="ai-math-translator-custom">
+                <input type="text" placeholder="Or type a custom conversion..." />
+                <button>Go</button>
+            </div>
+            <div id="ai-math-translator-output-wrapper">
+                <h4>Result:</h4>
+                <div id="ai-math-translator-output"><div class="ai-loader" style="display: none;"></div></div>
+            </div>
+            <button id="ai-math-translator-back">Back to Chat</button>
+        `;
+
+        translator.querySelector('#ai-math-translator-back').onclick = toggleMathTranslationMode;
+
+        const handleTranslate = (action) => {
+            const input = translator.querySelector('#ai-math-translator-input').innerText.trim();
+            if (!input || !action) return;
+            
+            const outputDiv = translator.querySelector('#ai-math-translator-output');
+            const loader = outputDiv.querySelector('.ai-loader');
+            loader.style.display = 'block';
+            outputDiv.innerHTML = ''; // Clear previous result
+            outputDiv.appendChild(loader);
+
+            const prompt = `As a math expert, convert the following expression: "${input}" to this form: "${action}". Respond with only the final converted expression, without any explanation.`;
+            const payload = { contents: [{ role: "user", parts: [{ text: prompt }] }] };
+
+            // Use a wrapper div for the response so it can be replaced
+            const responseWrapper = document.createElement('div');
+            outputDiv.appendChild(responseWrapper);
+            callGoogleAI(responseWrapper, payload).finally(() => {
+                loader.style.display = 'none';
+            });
+        };
+
+        translator.querySelectorAll('#ai-math-translator-options button').forEach(btn => {
+            btn.onclick = () => handleTranslate(btn.dataset.action);
+        });
+
+        translator.querySelector('#ai-math-translator-custom button').onclick = () => {
+            const customAction = translator.querySelector('#ai-math-translator-custom input').value.trim();
+            handleTranslate(customAction);
+        };
+        
+        return translator;
     }
 
     function injectStyles() {
@@ -540,63 +735,77 @@
             .ai-frac > sup, .ai-frac > sub { display: block; min-width: 1ch; }
             .ai-frac > sup { border-bottom: 1px solid currentColor; padding-bottom: 0.15em; }
             .ai-frac > sub { padding-top: 0.15em; }
-            #ai-input sup, #ai-input sub { font-family: 'secondaryfont', sans-serif; outline: none; }
+            #ai-input sup, #ai-input sub { font-family: 'secondaryfont', sans-serif; outline: none; background: rgba(0,0,0,0.2); padding: 0.1em 0.3em; border-radius: 4px; }
             #ai-input-wrapper {
-                flex-shrink: 0;
-                position: relative;
-                opacity: 0;
-                transform: translateY(100px);
-                transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-                margin: 15px auto 30px;
-                width: 90%;
-                max-width: 800px;
-                border-radius: 25px;
-                background: rgba(10, 10, 10, 0.7);
-                backdrop-filter: blur(20px);
-                -webkit-backdrop-filter: blur(20px);
-                animation: glow 2.5s infinite;
-                animation-play-state: paused;
-                cursor: text;
-                border: 1px solid rgba(255, 255, 255, 0.2);
+                flex-shrink: 0; position: relative; opacity: 0;
+                transform: translateY(100px); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+                margin: 15px auto 30px; width: 90%; max-width: 800px;
+                border-radius: 25px; background: rgba(10, 10, 10, 0.7);
+                backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+                animation: glow 2.5s infinite; animation-play-state: paused;
+                cursor: text; border: 1px solid rgba(255, 255, 255, 0.2);
             }
-            #ai-input-wrapper.waiting {
-                animation: gemini-glow 4s linear infinite !important;
-                animation-play-state: running !important;
-            }
+            #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite !important; animation-play-state: running !important; }
             #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
             #ai-input {
-                min-height: 50px;
-                color: white;
-                font-size: 1.1em;
-                padding: 12px 50px 12px 20px;
-                box-sizing: border-box;
-                word-wrap: break-word;
-                outline: none;
+                min-height: 50px; color: white; font-size: 1.1em;
+                padding: 12px 50px 12px 20px; box-sizing: border-box;
+                word-wrap: break-word; outline: none;
             }
             #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; }
-            #ai-math-toggle { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
-            #ai-math-toggle:hover, #ai-math-toggle.active { color: white; }
-            #ai-math-toggle.active { transform: translateY(-50%) rotate(180deg); }
+            #ai-settings-toggle { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 2; }
+            #ai-settings-toggle:hover, #ai-settings-toggle.active { color: white; }
+            #ai-settings-toggle.active { transform: translateY(-50%) rotate(90deg); }
             #ai-options-bar {
-                display: flex;
-                overflow-x: auto;
-                background: rgba(0,0,0,0.3);
+                display: flex; overflow-x: auto; background: rgba(0,0,0,0.3);
                 transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
-                border-top: 1px solid transparent;
-                max-height: 0;
-                opacity: 0;
-                visibility: hidden;
+                border-top: 1px solid transparent; max-height: 0;
+                opacity: 0; visibility: hidden; padding: 0 15px;
             }
-            #ai-input-wrapper.options-active #ai-options-bar {
-                max-height: 50px;
-                opacity: 1;
-                visibility: visible;
-                padding: 8px 15px;
-                border-top: 1px solid rgba(255,255,255,0.1);
+            #ai-container[data-subject="Math"] #ai-options-bar,
+            #ai-container[data-subject="Science"] #ai-options-bar {
+                max-height: 50px; opacity: 1; visibility: visible;
+                padding: 8px 15px; border-top: 1px solid rgba(255,255,255,0.1);
             }
-            #ai-options-bar button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.1em; cursor: pointer; padding: 5px 10px; transition: background 0.2s; flex-shrink: 0; margin-right: 8px; }
+            #ai-options-bar button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.1em; cursor: pointer; padding: 5px 10px; transition: background 0.2s, box-shadow 0.2s; flex-shrink: 0; margin-right: 8px; }
             #ai-options-bar button:hover { background: rgba(255,255,255,0.2); }
+            #ai-options-bar button:focus { outline: none; box-shadow: 0 0 0 2px var(--ai-blue); }
             #ai-char-counter { position: absolute; right: 55px; top: 15px; font-size: 0.8em; color: rgba(255, 255, 255, 0.4); z-index: 2;}
+            #ai-settings-menu {
+                position: absolute; right: 10px; bottom: 110px;
+                background: rgba(30, 32, 35, 0.5); backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+                border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px;
+                padding: 10px; display: flex; flex-direction: column; gap: 8px;
+                opacity: 0; visibility: hidden; transform: translateY(20px);
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+            #ai-settings-menu.active { opacity: 1; visibility: visible; transform: translateY(0); }
+            #ai-settings-menu button { background: rgba(255,255,255,0.05); color: #ccc; border: 1px solid transparent; border-radius: 8px; padding: 8px 15px; text-align: left; cursor: pointer; transition: background .2s, border-color .2s; }
+            #ai-settings-menu button:hover { background: rgba(255,255,255,0.1); }
+            #ai-settings-menu button.active { background: rgba(66, 133, 244, 0.3); border-color: var(--ai-blue); color: #fff; }
+            #ai-settings-menu hr { border: none; border-top: 1px solid rgba(255,255,255,0.1); margin: 5px 0; }
+            #ai-math-translator {
+                position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                width: 90%; max-width: 600px; color: #fff; background: rgba(15, 15, 18, 0.9);
+                border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px;
+                padding: 25px; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px);
+                display: none; flex-direction: column; gap: 15px;
+            }
+            #ai-container.math-translation-active #ai-response-container,
+            #ai-container.math-translation-active #ai-input-wrapper,
+            #ai-container.math-translation-active #ai-welcome-message { display: none !important; }
+            #ai-container.math-translation-active #ai-math-translator { display: flex; }
+            #ai-math-translator h3, #ai-math-translator h4 { margin: 0; }
+            #ai-math-translator p { margin: 0; color: #aaa; }
+            #ai-math-translator-input { min-height: 40px; background: rgba(0,0,0,0.3); border: 1px solid #444; border-radius: 8px; padding: 10px; outline: none; }
+            #ai-math-translator-options { display: flex; gap: 10px; }
+            #ai-math-translator-options button { flex: 1; background: #333; border: 1px solid #555; color: #fff; padding: 10px; border-radius: 8px; cursor: pointer; transition: background .2s; }
+            #ai-math-translator-options button:hover { background: #444; }
+            #ai-math-translator-custom { display: flex; gap: 10px; }
+            #ai-math-translator-custom input { flex: 1; background: rgba(0,0,0,0.3); border: 1px solid #444; border-radius: 8px; padding: 10px; color: #fff; outline: none; }
+            #ai-math-translator-custom button { background: var(--ai-blue); border: none; color: #fff; padding: 10px 15px; border-radius: 8px; cursor: pointer; }
+            #ai-math-translator-output { background: rgba(0,0,0,0.2); border-radius: 8px; padding: 15px; min-height: 40px; font-family: monospace; font-size: 1.2em; color: #a5d6ff; }
+            #ai-math-translator-back { align-self: center; margin-top: 10px; background: none; border: 1px solid #555; color: #aaa; padding: 8px 20px; border-radius: 8px; cursor: pointer; }
             .ai-error, .ai-temp-message { text-align: center; color: rgba(255, 255, 255, 0.7); }
             .ai-loader { width: 25px; height: 25px; border: 3px solid rgba(255, 255, 255, 0.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
             @keyframes glow { 0%, 100% { box-shadow: 0 0 5px rgba(255, 255, 255, 0.2), 0 0 10px rgba(255, 255, 255, 0.1); } 50% { box-shadow: 0 0 15px rgba(255, 255, 255, 0.5), 0 0 25px rgba(255, 255, 255, 0.3); } }
@@ -605,8 +814,6 @@
             @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(0.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
             @keyframes brand-slide { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
             @keyframes brand-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
-            @keyframes welcome-fade { 0% { opacity: 1; } 100% { opacity: 0; } }
-            @keyframes glisten { 0% { transform: translateX(-100%); } 100% { transform: translateX(100%); } }
             @keyframes title-pulse { 0%, 100% { text-shadow: 0 0 7px var(--ai-blue); } 25% { text-shadow: 0 0 7px var(--ai-green); } 50% { text-shadow: 0 0 7px var(--ai-yellow); } 75% { text-shadow: 0 0 7px var(--ai-red); } }
         `;
         document.head.appendChild(style);
