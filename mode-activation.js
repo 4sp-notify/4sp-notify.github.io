@@ -1,26 +1,22 @@
 /**
  * ai-activation.js
  *
- * Injects a fully-featured AI chat interface into the current page.
+ * Injects a fully-featured AI chat interface and manages a site-wide panic key.
  *
- * Activation:
- * - Ctrl + C (only when no text is selected)
+ * --- AI Features ---
+ * Activation: Ctrl + C (no text selected)
+ * Deactivation: 'X' button or Ctrl + C (input empty)
+ * - Settings menu for subject selection (Math, Science, etc.).
+ * - Conditional math symbols menu.
+ * - Advanced WYSIWYG input with arrow-key navigation for math.
+ * - Renders Markdown, LaTeX, and code blocks from Gemini.
  *
- * Deactivation:
- * - 'X' button or Ctrl + C when the input box is empty.
- *
- * Features:
- * - A dark, heavily blurred overlay with enhanced gradient animations.
- * - Dynamic input box glow that pulses based on typing speed.
- * - A settings menu to select a subject, tailoring the AI's focus and available tools.
- * - The math symbols menu is only shown for relevant subjects (Math, Science).
- * - Fading effect on the top and bottom of the scrollable chat view.
- * - Chat history for contextual conversations within a session.
- * - Automatically sends user's general location (state/country) with the first message.
- * - An advanced, auto-expanding WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
- * - Arrow-key navigation for complex math structures like fractions and roots.
- * - AI responses render Markdown, LaTeX-style math (including \boxed{}), and code blocks.
- * - Communicates with the Google AI API (Gemini) to get answers.
+ * --- Panic Key Features ---
+ * - Loads panic key settings from IndexedDB.
+ * - Redirects the user when a configured key is pressed.
+ * - **INTEGRATION**: The panic key functionality is automatically DISABLED
+ * when the AI chat interface is active, preventing accidental redirects
+ * while typing.
  */
 
 (function() {
@@ -36,13 +32,17 @@
         { name: 'History', hasMath: false },
         { name: 'Social Studies', hasMath: false },
     ];
+    // Panic Key DB Config
+    const PANIC_DB_NAME = 'userLocalSettingsDB';
+    const PANIC_STORE_NAME = 'panicKeyStore';
+
 
     // --- STATE MANAGEMENT ---
-    let isAIActive = false;
+    let isAIActive = false; // This is the key state for panic key rejection
     let isRequestPending = false;
     let isSettingsMenuOpen = false;
     let lastRequestTime = 0;
-    const COOLDOWN_PERIOD = 5000; // 5 seconds
+    const COOLDOWN_PERIOD = 5000;
     let chatHistory = [];
     let typingTimeout = null;
     let lastKeystrokeTime = 0;
@@ -55,6 +55,99 @@
         '\\approx': '≈', '\\equiv': '≡',
         '\\therefore': '∴', '\\because': '∵',
     };
+
+    //======================================================================
+    // PANIC KEY FUNCTIONALITY (INTEGRATED)
+    //======================================================================
+
+    /**
+     * Opens the IndexedDB for panic key settings.
+     * @returns {Promise<IDBDatabase>} A promise that resolves with the database object.
+     */
+    function openPanicDB() {
+        return new Promise((resolve, reject) => {
+            const request = indexedDB.open(PANIC_DB_NAME);
+            request.onupgradeneeded = event => {
+                const db = event.target.result;
+                if (!db.objectStoreNames.contains(PANIC_STORE_NAME)) {
+                    db.createObjectStore(PANIC_STORE_NAME, { keyPath: 'id' });
+                }
+            };
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Fetches all panic key settings from the IndexedDB.
+     * @param {IDBDatabase} db - The database instance.
+     * @returns {Promise<Array<object>>} A promise resolving with settings.
+     */
+    function getPanicSettings(db) {
+        return new Promise((resolve, reject) => {
+            const transaction = db.transaction(PANIC_STORE_NAME, 'readonly');
+            const store = transaction.objectStore(PANIC_STORE_NAME);
+            const request = store.getAll();
+            request.onsuccess = () => resolve(request.result || []);
+            request.onerror = () => reject(request.error);
+        });
+    }
+
+    /**
+     * Attaches the panic key listener with a crucial check for the AI mode.
+     * @param {Array<object>} settingsArray - Array of panic key settings.
+     */
+    function addPanicKeyListener(settingsArray) {
+        if (!settingsArray || settingsArray.length === 0) return;
+
+        document.addEventListener('keydown', (event) => {
+            // ======================================================================
+            // >>> CORE REJECTION LOGIC <<<
+            // If the AI chat is active, completely ignore the panic key press.
+            // This prevents redirecting while the user is typing in the AI input.
+            // ======================================================================
+            if (isAIActive) {
+                return;
+            }
+
+            // Original check for standard input fields (fallback for when AI is not active)
+            const activeElement = document.activeElement.tagName.toLowerCase();
+            if (['input', 'select', 'textarea'].includes(activeElement)) {
+                return;
+            }
+
+            // Check for modifier keys
+            const noModifiersPressed = !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
+            if (noModifiersPressed) {
+                const matchedSetting = settingsArray.find(setting => event.key.toLowerCase() === setting.key);
+                if (matchedSetting) {
+                    event.preventDefault();
+                    window.location.href = matchedSetting.url; // 'url' property from your panic key script
+                }
+            }
+        });
+    }
+
+    /**
+     * Initializes the panic key system by fetching settings and adding the listener.
+     */
+    async function initializePanicKey() {
+        try {
+            const db = await openPanicDB();
+            const settings = await getPanicSettings(db);
+            if (settings && settings.length > 0) {
+                addPanicKeyListener(settings);
+            }
+            db.close();
+        } catch (error) {
+            console.error("Panic Key Initialization Error:", error);
+        }
+    }
+
+
+    //======================================================================
+    // AI ACTIVATION & UI FUNCTIONALITY
+    //======================================================================
 
     /**
      * Tries to get the user's location on script load.
@@ -77,12 +170,11 @@
             }, () => console.warn("AI location feature: User denied geolocation permission."));
         }
     }
-    getLocationOnLoad();
 
     /**
      * Handles the keyboard shortcut for activating/deactivating the AI.
      */
-    function handleKeyDown(e) {
+    function handleAIActivationKey(e) {
         if (e.ctrlKey && e.key.toLowerCase() === 'c') {
             const selection = window.getSelection().toString();
             if (isAIActive) {
@@ -104,17 +196,19 @@
     function activateAI() {
         if (document.getElementById('ai-container')) return;
 
+        // SET AI STATE TO ACTIVE - This will disable the panic key
+        isAIActive = true;
         chatHistory = [];
         injectStyles();
 
         const container = document.createElement('div');
         container.id = 'ai-container';
+        // ... (The rest of the `activateAI` function is identical to the previous version)
         container.onclick = (e) => {
             if (isSettingsMenuOpen && !document.getElementById('ai-settings-menu').contains(e.target)) {
                 toggleSettingsMenu();
             }
         };
-
         const brandTitle = document.createElement('div');
         brandTitle.id = 'ai-brand-title';
         "4SP AI".split('').forEach(char => {
@@ -123,137 +217,51 @@
             span.style.animationDelay = `${Math.random() * 2}s`;
             brandTitle.appendChild(span);
         });
-
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
         welcomeMessage.innerHTML = `
             <h2>Welcome to AI Mode</h2>
             <p>This is a beta feature. Your general location (state/country) may be shared. Message limits may apply.</p>
         `;
-
         const closeButton = document.createElement('div');
         closeButton.id = 'ai-close-button';
         closeButton.innerHTML = '&times;';
         closeButton.onclick = deactivateAI;
-
         const responseContainer = document.createElement('div');
         responseContainer.id = 'ai-response-container';
-
         const inputWrapper = document.createElement('div');
         inputWrapper.id = 'ai-input-wrapper';
-        
         const visualInput = document.createElement('div');
         visualInput.id = 'ai-input';
         visualInput.contentEditable = true;
         visualInput.onkeydown = handleInputEvents;
         visualInput.oninput = handleContentEditableInput;
-
         const placeholder = document.createElement('div');
         placeholder.id = 'ai-input-placeholder';
         placeholder.textContent = 'Ask a question...';
-
         const settingsButton = document.createElement('button');
         settingsButton.id = 'ai-settings-button';
-        settingsButton.innerHTML = '&#9881;'; // Gear icon
+        settingsButton.innerHTML = '&#9881;';
         settingsButton.onclick = (e) => { e.stopPropagation(); toggleSettingsMenu(); };
-
         inputWrapper.appendChild(visualInput);
         inputWrapper.appendChild(placeholder);
         inputWrapper.appendChild(settingsButton);
         inputWrapper.appendChild(createOptionsBar());
         inputWrapper.appendChild(createSettingsMenu());
-        
         const charCounter = document.createElement('div');
         charCounter.id = 'ai-char-counter';
         charCounter.textContent = `0 / ${USER_CHAR_LIMIT}`;
-
         container.appendChild(brandTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
         container.appendChild(charCounter);
-
         document.body.appendChild(container);
-
         setTimeout(() => container.classList.add('active'), 10);
         visualInput.focus();
-        isAIActive = true;
-        selectSubject(currentSubject.name); // Initialize UI for default subject
+        selectSubject(currentSubject.name);
     }
-    
-    /**
-     * Sets the caret position within a given node.
-     * @param {Node} el - The element to set the caret in.
-     * @param {number} [offset=0] - The character offset.
-     */
-    function setCaretPosition(el, offset = 0) {
-        const range = document.createRange();
-        const sel = window.getSelection();
-        const textNode = el.firstChild || el;
-        // Ensure offset is not out of bounds
-        const maxOffset = textNode.textContent ? textNode.textContent.length : 0;
-        range.setStart(textNode, Math.min(offset, maxOffset));
-        range.collapse(true);
-        sel.removeAllRanges();
-        sel.addRange(range);
-    }
-
-    /**
-     * Handles advanced arrow key navigation for custom math elements.
-     */
-    function handleArrowKeyNavigation(e) {
-        const sel = window.getSelection();
-        if (!sel.isCollapsed || sel.rangeCount === 0) return;
-
-        const range = sel.getRangeAt(0);
-        const container = range.startContainer;
-        const offset = range.startOffset;
-
-        const currentNode = container.nodeType === 3 ? container.parentNode : container;
-        const nodeBefore = container.childNodes[offset - 1];
-        const nodeAfter = container.childNodes[offset];
-        
-        let handled = false;
-
-        // --- ArrowRight Navigation ---
-        if (e.key === 'ArrowRight' && nodeAfter && nodeAfter.matches?.('.ai-math-node')) {
-            const target = nodeAfter.querySelector('[contenteditable="true"]');
-            if (target) {
-                setCaretPosition(target, 0);
-                handled = true;
-            }
-        }
-        // --- ArrowLeft Navigation ---
-        else if (e.key === 'ArrowLeft' && nodeBefore && nodeBefore.matches?.('.ai-math-node')) {
-            const editableChildren = Array.from(nodeBefore.querySelectorAll('[contenteditable="true"]'));
-            if (editableChildren.length > 0) {
-                const target = editableChildren[editableChildren.length - 1]; // Go to the last editable child (e.g., denominator)
-                setCaretPosition(target, target.textContent.length);
-                handled = true;
-            }
-        }
-        // --- Inside-Component Navigation (Up/Down) ---
-        else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && currentNode.isContentEditable) {
-            const parentFrac = currentNode.closest('.ai-frac');
-            if (parentFrac) {
-                if (e.key === 'ArrowUp' && currentNode.matches('sub')) {
-                    const numerator = parentFrac.querySelector('sup');
-                    setCaretPosition(numerator, offset);
-                    handled = true;
-                } else if (e.key === 'ArrowDown' && currentNode.matches('sup')) {
-                    const denominator = parentFrac.querySelector('sub');
-                    setCaretPosition(denominator, offset);
-                    handled = true;
-                }
-            }
-        }
-
-        if (handled) {
-            e.preventDefault();
-        }
-    }
-
 
     /**
      * Removes the AI interface from the page.
@@ -269,30 +277,81 @@
                 if (styles) styles.remove();
             }, 500);
         }
+        // SET AI STATE TO INACTIVE - This will re-enable the panic key
         isAIActive = false;
         isSettingsMenuOpen = false;
         chatHistory = [];
     }
-    
+
+    // --- All other helper functions (handleArrowKeyNavigation, callGoogleAI, etc.) remain unchanged ---
+    // (For brevity, the unchanged helper functions from the previous response are omitted here,
+    // but they would be included in the final script file.)
+    function setCaretPosition(el, offset = 0) {
+        const range = document.createRange();
+        const sel = window.getSelection();
+        const textNode = el.firstChild || el;
+        const maxOffset = textNode.textContent ? textNode.textContent.length : 0;
+        range.setStart(textNode, Math.min(offset, maxOffset));
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
+    }
+    function handleArrowKeyNavigation(e) {
+        const sel = window.getSelection();
+        if (!sel.isCollapsed || sel.rangeCount === 0) return;
+        const range = sel.getRangeAt(0);
+        const container = range.startContainer;
+        const offset = range.startOffset;
+        const currentNode = container.nodeType === 3 ? container.parentNode : container;
+        const nodeBefore = container.childNodes[offset - 1];
+        const nodeAfter = container.childNodes[offset];
+        let handled = false;
+        if (e.key === 'ArrowRight' && nodeAfter && nodeAfter.matches?.('.ai-math-node')) {
+            const target = nodeAfter.querySelector('[contenteditable="true"]');
+            if (target) {
+                setCaretPosition(target, 0);
+                handled = true;
+            }
+        }
+        else if (e.key === 'ArrowLeft' && nodeBefore && nodeBefore.matches?.('.ai-math-node')) {
+            const editableChildren = Array.from(nodeBefore.querySelectorAll('[contenteditable="true"]'));
+            if (editableChildren.length > 0) {
+                const target = editableChildren[editableChildren.length - 1];
+                setCaretPosition(target, target.textContent.length);
+                handled = true;
+            }
+        }
+        else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && currentNode.isContentEditable) {
+            const parentFrac = currentNode.closest('.ai-frac');
+            if (parentFrac) {
+                if (e.key === 'ArrowUp' && currentNode.matches('sub')) {
+                    const numerator = parentFrac.querySelector('sup');
+                    setCaretPosition(numerator, offset);
+                    handled = true;
+                } else if (e.key === 'ArrowDown' && currentNode.matches('sup')) {
+                    const denominator = parentFrac.querySelector('sub');
+                    setCaretPosition(denominator, offset);
+                    handled = true;
+                }
+            }
+        }
+        if (handled) {
+            e.preventDefault();
+        }
+    }
     function fadeOutWelcomeMessage() {
         const container = document.getElementById('ai-container');
         if (container && !container.classList.contains('chat-active')) {
             container.classList.add('chat-active');
         }
     }
-
-    /**
-     * Handles input on the contenteditable div, updating placeholder, counter, and LaTeX conversion.
-     */
     function handleContentEditableInput(e) {
         fadeOutWelcomeMessage();
         const editor = e.target;
-        
         const wrapper = document.getElementById('ai-input-wrapper');
         const now = Date.now();
         const timeDiff = now - (lastKeystrokeTime || now);
         lastKeystrokeTime = now;
-
         if (!wrapper.classList.contains('waiting')) {
             wrapper.style.animationPlayState = 'running';
             wrapper.style.animationDuration = timeDiff < 150 ? '0.7s' : '1.8s';
@@ -304,12 +363,11 @@
                 }
             }, 1000);
         }
-
         const selection = window.getSelection();
         if (selection.rangeCount > 0) {
             const range = selection.getRangeAt(0);
             const node = range.startContainer;
-            if (node.nodeType === 3) { // Text node
+            if (node.nodeType === 3) {
                 const textContent = node.textContent;
                 const textBeforeCursor = textContent.slice(0, range.startOffset);
                 const match = textBeforeCursor.match(/(\\[a-zA-Z]+)\s$/);
@@ -327,21 +385,15 @@
                 }
             }
         }
-        
         const charCounter = document.getElementById('ai-char-counter');
         const placeholder = document.getElementById('ai-input-placeholder');
         const rawText = editor.innerText;
         if (charCounter) charCounter.textContent = `${rawText.length} / ${USER_CHAR_LIMIT}`;
         if (placeholder) placeholder.style.display = (rawText.length > 0 || editor.querySelector('.ai-math-node')) ? 'none' : 'block';
     }
-
-    /**
-     * Parses the visually formatted HTML from the input into plain text for the API.
-     */
     function parseInputForAPI(innerHTML) {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = innerHTML.replace(/<div><br><\/div>/g, '\n').replace(/<br>/g, '\n');
-        
         tempDiv.querySelectorAll('.ai-frac').forEach(frac => {
             const n = frac.querySelector('sup')?.innerText.trim() || '';
             const d = frac.querySelector('sub')?.innerText.trim() || '';
@@ -355,25 +407,14 @@
             const content = cbrt.querySelector('.ai-cbrt-content')?.innerText.trim() || '';
             cbrt.replaceWith(`cbrt(${content})`);
         });
-        
         tempDiv.querySelectorAll('sup').forEach(sup => sup.replaceWith(`^(${sup.innerText})`));
-        
         return tempDiv.innerText.replace(/×/g, '*').replace(/÷/g, '/').replace(/π/g, 'pi');
     }
-
-    /**
-     * Handles keydown events in the input box, including submission and backspace for custom elements.
-     */
     function handleInputEvents(e) {
         const editor = e.target;
-
-        // Handle Arrow Keys for navigation
         if (e.key.startsWith('Arrow')) {
             handleArrowKeyNavigation(e);
-            // Don't return yet, allow default behavior if not handled
         }
-        
-        // Handle Backspace for custom math nodes
         if (e.key === 'Backspace') {
             const selection = window.getSelection();
             if (selection.rangeCount > 0 && selection.isCollapsed) {
@@ -387,8 +428,6 @@
                 }
             }
         }
-        
-        // Handle Submission with Enter
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             fadeOutWelcomeMessage();
@@ -396,7 +435,6 @@
             if (!query || isRequestPending) return;
             const now = Date.now();
             if (now - lastRequestTime < COOLDOWN_PERIOD) return;
-
             if (chatHistory.length === 0) {
                 const location = localStorage.getItem('ai-user-location');
                 let contextPrefix = `(User is focusing on the subject: ${currentSubject.name}.`;
@@ -406,41 +444,29 @@
                 contextPrefix += ') ';
                 query = contextPrefix + query;
             }
-
             isRequestPending = true;
             lastRequestTime = now;
             editor.contentEditable = false;
             document.getElementById('ai-input-wrapper').classList.add('waiting');
-
             chatHistory.push({ role: "user", parts: [{ text: query }] });
-
             const responseContainer = document.getElementById('ai-response-container');
             const userBubble = document.createElement('div');
             userBubble.className = 'ai-message-bubble user-message';
             userBubble.innerHTML = editor.innerHTML;
             responseContainer.appendChild(userBubble);
-
             const responseBubble = document.createElement('div');
             responseBubble.className = 'ai-message-bubble gemini-response loading';
             responseBubble.innerHTML = '<div class="ai-loader"></div>';
             responseContainer.appendChild(responseBubble);
             responseContainer.scrollTop = responseContainer.scrollHeight;
-
             editor.innerHTML = '';
             handleContentEditableInput({ target: editor });
             callGoogleAI(query, responseBubble);
         }
     }
-    
-    /**
-     * Parses Gemini's response, handling Markdown, math, code blocks, and the new \boxed{} command.
-     */
     function parseGeminiResponse(text) {
         let html = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        
-        // Boxed answers
         html = html.replace(/\\boxed{([\s\S]*?)}/g, (match, content) => `<div class="ai-boxed-answer">${parseGeminiResponse(content)}</div>`);
-
         html = html.replace(/```([\s\S]*?)```/g, (match, code) => `<pre><code>${code.trim()}</code></pre>`);
         html = html.replace(/\$([^\$]+)\$/g, (match, math) => {
             let processedMath = math;
@@ -455,13 +481,8 @@
         html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*([^\n\*]+)\*/g, '<strong>$1</strong>')
                    .replace(/^\* (.*$)/gm, '<li>$1</li>');
         html = html.replace(/<li>(.*?)<\/li>/g, '<ul><li>$1</li></ul>').replace(/<\/ul>\n?<ul>/g, '');
-        
         return html.replace(/\n/g, '<br>');
     }
-
-    /**
-     * Calls the Google AI API and populates the response bubble.
-     */
     async function callGoogleAI(query, responseBubble) {
         try {
             const response = await fetch(API_URL, {
@@ -471,11 +492,9 @@
             });
             if (!response.ok) throw new Error(`Network response was not ok. Status: ${response.status}`);
             const data = await response.json();
-            
             if (!data.candidates || data.candidates.length === 0) {
                  throw new Error('No candidates received from API.');
             }
-
             const text = data.candidates[0].content.parts[0].text;
             chatHistory.push({ role: "model", parts: [{ text: text }] });
             responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
@@ -495,10 +514,6 @@
             if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
         }
     }
-    
-    /**
-     * Toggles the visibility of the settings menu.
-     */
     function toggleSettingsMenu() {
         isSettingsMenuOpen = !isSettingsMenuOpen;
         const menu = document.getElementById('ai-settings-menu');
@@ -506,34 +521,18 @@
         menu.classList.toggle('active', isSettingsMenuOpen);
         button.classList.toggle('active', isSettingsMenuOpen);
     }
-    
-    /**
-     * Handles subject selection from the settings menu.
-     */
     function selectSubject(subjectName) {
         currentSubject = subjects.find(s => s.name === subjectName);
-        
-        // Update button styles
         document.querySelectorAll('#ai-settings-menu button').forEach(btn => {
             btn.classList.toggle('selected', btn.textContent === subjectName);
         });
-
-        // Show/hide math options bar
         const inputWrapper = document.getElementById('ai-input-wrapper');
         inputWrapper.classList.toggle('options-active', currentSubject.hasMath);
-
-        // Update placeholder text
         document.getElementById('ai-input-placeholder').textContent = `Ask a ${currentSubject.name} question...`;
-
-        // Close menu after selection
         if (isSettingsMenuOpen) {
             toggleSettingsMenu();
         }
     }
-
-    /**
-     * Inserts HTML content at the current cursor position in the editor.
-     */
     function insertAtCursor(html) {
         const editor = document.getElementById('ai-input');
         if (!editor) return;
@@ -541,10 +540,6 @@
         document.execCommand('insertHTML', false, html);
         handleContentEditableInput({target: editor});
     }
-
-    /**
-     * Creates the math options bar.
-     */
     function createOptionsBar() {
         const bar = document.createElement('div');
         bar.id = 'ai-options-bar';
@@ -565,10 +560,6 @@
         });
         return bar;
     }
-
-    /**
-     * Creates the subject selection settings menu.
-     */
     function createSettingsMenu() {
         const menu = document.createElement('div');
         menu.id = 'ai-settings-menu';
@@ -583,13 +574,13 @@
         });
         return menu;
     }
-
     function injectStyles() {
         if (document.getElementById('ai-dynamic-styles')) return;
         const style = document.createElement('style');
         style.id = 'ai-dynamic-styles';
         style.innerHTML = `
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
+            /* ... The rest of the CSS is identical to the previous version ... */
             #ai-container {
                 position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
                 background: linear-gradient(-45deg, #12121c, #1a1a2e, #2a2a3a, #1a1a2e);
@@ -636,7 +627,7 @@
             .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; }
             .ai-frac > sup, .ai-frac > sub { display: block; line-height: 1; min-width: 1ch; padding: 0.1em 0.3em; }
             .ai-frac > sup { border-bottom: 1px solid currentColor; }
-            .ai-frac > span { display: none; } /* Hide the visual slash */
+            .ai-frac > span { display: none; }
             #ai-input sup, #ai-input sub { outline: none; }
             #ai-input-wrapper {
                 flex-shrink: 0; position: relative; opacity: 0; transform: translateY(100px);
@@ -654,7 +645,7 @@
                 padding: 12px 50px 12px 20px; box-sizing: border-box;
                 word-wrap: break-word; outline: none;
             }
-            #ai-input [contenteditable="true"] { outline: none; } /* Ensure no outlines on nested editables */
+            #ai-input [contenteditable="true"] { outline: none; }
             #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; }
             #ai-settings-button { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 12; }
             #ai-settings-button:hover, #ai-settings-button.active { color: white; }
@@ -700,6 +691,10 @@
         document.head.appendChild(style);
     }
 
-    document.addEventListener('keydown', handleKeyDown);
+
+    // --- SCRIPT INITIALIZATION ---
+    getLocationOnLoad();
+    initializePanicKey(); // Set up the panic key listener on script load
+    document.addEventListener('keydown', handleAIActivationKey); // Listen for AI activation
 
 })();
