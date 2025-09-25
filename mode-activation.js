@@ -1,8 +1,9 @@
 /**
- * ai-activation.js
+ * mode-activation.js
  *
  * A feature-rich, self-contained script with file uploads, daily limits, contextual awareness,
  * a redesigned attachment menu, scrolling input, and panic key integration.
+ * Includes layout fixes for message padding.
  */
 (function() {
     // --- CONFIGURATION ---
@@ -19,7 +20,7 @@
     let isAttachmentMenuOpen = false;
     let currentAIRequestController = null;
     let chatHistory = [];
-    let attachedFiles = []; // To hold file data for the next message
+    let attachedFiles = [];
 
     // --- DAILY LIMITS CONFIGURATION ---
     const DAILY_LIMITS = {
@@ -32,7 +33,6 @@
      */
     const limitManager = {
         getToday: () => new Date().toLocaleDateString("en-US"),
-        
         getUsage: () => {
             const usageData = JSON.parse(localStorage.getItem('aiUsageLimits')) || {};
             const today = limitManager.getToday();
@@ -41,11 +41,9 @@
             }
             return usageData;
         },
-
         saveUsage: (usageData) => {
             localStorage.setItem('aiUsageLimits', JSON.stringify(usageData));
         },
-
         canUpload: (type) => {
             const usage = limitManager.getUsage();
             if (type in DAILY_LIMITS) {
@@ -53,7 +51,6 @@
             }
             return true;
         },
-
         recordUpload: (type) => {
             if (type in DAILY_LIMITS) {
                 let usage = limitManager.getUsage();
@@ -69,10 +66,8 @@
     async function isUserAuthorized() {
         const user = firebase.auth().currentUser;
         if (typeof firebase === 'undefined' || !user) return false;
-        
         const adminEmails = ['4simpleproblems@gmail.com', 'belkwy30@minerva.sparcc.org'];
         if (adminEmails.includes(user.email)) return true;
-        
         try {
             const userDocRef = firebase.firestore().collection('users').doc(user.uid);
             const userDoc = await userDocRef.get();
@@ -379,7 +374,7 @@
             return;
         }
 
-        previewContainer.style.display = 'grid';
+        previewContainer.style.display = 'flex';
         attachedFiles.forEach((file, index) => {
             const fileCard = document.createElement('div');
             fileCard.className = 'attachment-card';
@@ -459,6 +454,8 @@
             editor.style.overflowY = 'hidden';
         }
         
+        fadeOutWelcomeMessage();
+        
         const placeholder = document.getElementById('ai-input-placeholder');
         const rawText = editor.innerText;
         if (placeholder) placeholder.style.display = (rawText.length > 0 || attachedFiles.length > 0) ? 'none' : 'block';
@@ -512,9 +509,9 @@
         }
     }
     
-    function fadeOutWelcomeMessage(){const container=document.getElementById('ai-container');if(container&&!container.classList.contains('chat-active')){container.classList.add('chat-active');}}
-    function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML;}
-    function parseGeminiResponse(text){let html=text.replace(/</g,'&lt;').replace(/>/g,'&gt;');html=html.replace(/```([\s\S]*?)```/g,(match,code)=>`<pre><code>${code.trim()}</code></pre>`);html=html.replace(/\$([^\$]+)\$/g,(match,math)=>{let processedMath=math;processedMath=processedMath.replace(/(\w+)\^(\w+)/g,'$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g,'&radic;($1)').replace(/\\frac\{(.+?)\}\{(.+?)\}/g,'<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');return`<span class="ai-math-inline">${processedMath}</span>`;});html=html.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*([^\n\*]+)\*/g,'<strong>$1</strong>').replace(/^\* (.*$)/gm,'<li>$1</li>');html=html.replace(/<li>(.*?)<\/li>/g,'<ul><li>$1</li></ul>').replace(/<\/ul>\n?<ul>/g,'');return html.replace(/\n/g,'<br>');}
+    function fadeOutWelcomeMessage(){const container=document.getElementById("ai-container");if(container&&!container.classList.contains("chat-active")){container.classList.add("chat-active")}}
+    function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML}
+    function parseGeminiResponse(text){let html=text.replace(/</g,"&lt;").replace(/>/g,"&gt;");html=html.replace(/```([\s\S]*?)```/g,(match,code)=>`<pre><code>${escapeHTML(code.trim())}</code></pre>`);html=html.replace(/\$([^\$]+)\$/g,(match,math)=>{let processedMath=math;processedMath=processedMath.replace(/(\w+)\^(\w+)/g,'$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g,'&radic;($1)').replace(/\\frac\{(.+?)\}\{(.+?)\}/g,'<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');return`<span class="ai-math-inline">${processedMath}</span>`;});html=html.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*(.*?)\*/g,'<em>$1</em>').replace(/^### (.*$)/gm,'<h3>$1</h3>').replace(/^## (.*$)/gm,'<h2>$1</h2>').replace(/^# (.*$)/gm,'<h1>$1</h1>');html=html.replace(/^(?:\*|-)\s(.*$)/gm,'<li>$1</li>');html=html.replace(/(<\/li>\s*<li>)/g,"</li><li>").replace(/((<li>.*<\/li>)+)/gs,"<ul>$1</ul>");return html.replace(/\n/g,'<br>')}
 
     /**
      * Injects all necessary CSS into the page.
@@ -531,7 +528,7 @@
         style.id = 'ai-dynamic-styles';
         style.innerHTML = `
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
-            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box; }
+            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; }
             #ai-container.active { opacity: 1; background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
             #ai-container.deactivating, #ai-container.deactivating > * { transition: opacity 0.4s, transform 0.4s; }
             #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
@@ -543,7 +540,7 @@
             #ai-welcome-message p { font-size: .9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255,255,255,.7); font-size: 40px; cursor: pointer; transition: color .2s ease,transform .3s ease, opacity 0.4s; }
             #ai-close-button:hover { color: #fff; transform: scale(1.1); }
-            #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 20px; -webkit-mask-image: linear-gradient(to bottom,transparent 0,black 5%,black 95%,transparent 100%); mask-image: linear-gradient(to bottom,transparent 0,black 5%,black 95%,transparent 100%); }
+            #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 70px 20px 0 20px; -webkit-mask-image: linear-gradient(to bottom,transparent 0,black 5%,black 95%,transparent 100%); mask-image: linear-gradient(to bottom,transparent 0,black 5%,black 95%,transparent 100%); }
             .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
             .ai-message-bubble h1, .ai-message-bubble h2, .ai-message-bubble h3 { margin-top: 0; }
             .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
@@ -552,7 +549,7 @@
             .gemini-response { align-self: flex-start; }
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite,message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; }
             .gemini-response ul { padding-left: 20px; margin: 10px 0; }
-            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto 30px; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); }
+            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); }
             #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
             #ai-input { min-height: 50px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
             #ai-input-placeholder { position: absolute; bottom: 15px; left: 20px; color: rgba(255,255,255,.4); pointer-events: none; font-size: 1.1em; transition: opacity 0.2s; }
@@ -560,14 +557,14 @@
             #ai-settings-toggle.active { transform: rotate(90deg); }
             #ai-settings-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
             #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
-            #ai-attachment-menu { position: fixed; background: rgba(10,10,10,0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
+            #ai-attachment-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
             #ai-attachment-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
             #ai-attachment-menu button { background: transparent; border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s; }
             #ai-attachment-menu button:disabled { opacity: 0.5; cursor: not-allowed; color: #888; }
             #ai-attachment-menu button .icon { font-size: 1.2em; }
             #ai-attachment-menu button span:last-child { font-size: 0.8em; color: #888; margin-left: auto; font-family: 'secondaryfont', sans-serif; }
-            #ai-attachment-preview { display: none; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.1); }
-            .attachment-card { position: relative; border-radius: 8px; overflow: hidden; background: #333; height: 80px; }
+            #ai-attachment-preview { display: none; flex-direction: row; gap: 10px; padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.1); overflow-x: auto; }
+            .attachment-card { position: relative; border-radius: 8px; overflow: hidden; background: #333; height: 80px; width: 100px; flex-shrink: 0; }
             .attachment-card img { width: 100%; height: 100%; object-fit: cover; }
             .attachment-card .file-icon { font-size: 2.5em; display: flex; align-items: center; justify-content: center; height: 100%; color: #ccc; }
             .attachment-card .file-name { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.75em; padding: 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
