@@ -1,23 +1,30 @@
 /**
  * ai-activation.js
  *
- * A feature-rich script with a robust, fixed-padding input box, file uploads,
- * daily limits, contextual awareness, and panic key integration.
+ * The complete, feature-rich script including a unified attachment/subject menu,
+ * file uploads, daily limits, contextual awareness, persistent chat history,
+ * a robust response parser, and all UI/UX enhancements.
  */
 (function() {
     // --- CONFIGURATION ---
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
     const MAX_INPUT_HEIGHT = 200;
 
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
     let isRequestPending = false;
-    let isAttachmentMenuOpen = false;
+    let isActionMenuOpen = false;
     let currentAIRequestController = null;
+    let currentSubject = 'General';
     let chatHistory = [];
     let attachedFiles = [];
+
+    // --- EXPANDED SYMBOL MAP ---
+    const latexSymbolMap = {
+        '\\alpha':'α','\\beta':'β','\\gamma':'γ','\\delta':'δ','\\epsilon':'ε','\\zeta':'ζ','\\eta':'η','\\theta':'θ','\\iota':'ι','\\kappa':'κ','\\lambda':'λ','\\mu':'μ','\\nu':'ν','\\xi':'ξ','\\omicron':'ο','\\pi':'π','\\rho':'ρ','\\sigma':'σ','\\tau':'τ','\\upsilon':'υ','\\phi':'φ','\\chi':'χ','\\psi':'ψ','\\omega':'ω','\\Gamma':'Γ','\\Delta':'Δ','\\Theta':'Θ','\\Lambda':'Λ','\\Xi':'Ξ','\\Pi':'Π','\\Sigma':'Σ','\\Upsilon':'Υ','\\Phi':'Φ','\\Psi':'Ψ','\\Omega':'Ω','\\pm':'±','\\times':'×','\\div':'÷','\\cdot':'·','\\ast':'∗','\\cup':'∪','\\cap':'∩','\\in':'∈','\\notin':'∉','\\subset':'⊂','\\supset':'⊃','\\subseteq':'⊆','\\supseteq':'⊇','\\le':'≤','\\ge':'≥','\\ne':'≠','\\approx':'≈','\\equiv':'≡','\\leftarrow':'←','\\rightarrow':'→','\\uparrow':'↑','\\downarrow':'↓','\\leftrightarrow':'↔','\\Leftarrow':'⇐','\\Rightarrow':'⇒','\\Leftrightarrow':'⇔','\\forall':'∀','\\exists':'∃','\\nabla':'∇','\\partial':'∂','\\emptyset':'∅','\\infty':'∞','\\degree':'°','\\angle':'∠','\\hbar':'ħ','\\ell':'ℓ','\\therefore':'∴','\\because':'∵','\\bullet':'•','\\ldots':'…','\\prime':'′','\\hat':'^'
+    };
 
     // --- DAILY LIMITS CONFIGURATION ---
     const DAILY_LIMITS = { images: 5, videos: 1 };
@@ -32,23 +39,9 @@
             }
             return usageData;
         },
-        saveUsage: (usageData) => {
-            localStorage.setItem('aiUsageLimits', JSON.stringify(usageData));
-        },
-        canUpload: (type) => {
-            const usage = limitManager.getUsage();
-            if (type in DAILY_LIMITS) {
-                return (usage[type] || 0) < DAILY_LIMITS[type];
-            }
-            return true;
-        },
-        recordUpload: (type) => {
-            if (type in DAILY_LIMITS) {
-                let usage = limitManager.getUsage();
-                usage[type] = (usage[type] || 0) + 1;
-                limitManager.saveUsage(usage);
-            }
-        }
+        saveUsage: (usageData) => { localStorage.setItem('aiUsageLimits', JSON.stringify(usageData)); },
+        canUpload: (type) => { const usage = limitManager.getUsage(); return (type in DAILY_LIMITS) ? ((usage[type] || 0) < DAILY_LIMITS[type]) : true; },
+        recordUpload: (type) => { if (type in DAILY_LIMITS) { let usage = limitManager.getUsage(); usage[type] = (usage[type] || 0) + 1; limitManager.saveUsage(usage); } }
     };
 
     async function isUserAuthorized() {
@@ -57,13 +50,9 @@
         const adminEmails = ['4simpleproblems@gmail.com', 'belkwy30@minerva.sparcc.org'];
         if (adminEmails.includes(user.email)) return true;
         try {
-            const userDocRef = firebase.firestore().collection('users').doc(user.uid);
-            const userDoc = await userDocRef.get();
+            const userDoc = await firebase.firestore().collection('users').doc(user.uid).get();
             return userDoc.exists && userDoc.data().aiEnrolled === true;
-        } catch (error) {
-            console.error("AI Auth Check Error:", error);
-            return false;
-        }
+        } catch (error) { console.error("AI Auth Check Error:", error); return false; }
     }
 
     async function handleKeyDown(e) {
@@ -89,90 +78,58 @@
 
     function activateAI() {
         if (document.getElementById('ai-container')) return;
-        
-        if (typeof window.startPanicKeyBlocker === 'function') {
-            window.startPanicKeyBlocker();
-        }
-
+        if (typeof window.startPanicKeyBlocker === 'function') { window.startPanicKeyBlocker(); }
         attachedFiles = [];
         injectStyles();
-        
         const container = document.createElement('div');
         container.id = 'ai-container';
-        
         const persistentTitle = document.createElement('div');
         persistentTitle.id = 'ai-persistent-title';
-        persistentTitle.textContent = "AI Mode";
-        
+        persistentTitle.textContent = "AI Mode - General";
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
-        welcomeMessage.innerHTML = `
-            <h2>Welcome to AI Mode</h2>
-            <p>To improve your experience, this feature collects broad, non-identifying data like your general location (state or country), the current date, and time.</p>
-        `;
-
+        welcomeMessage.innerHTML = `<h2>Welcome to AI Mode</h2><p>To improve your experience, this feature collects broad, non-identifying data like your general location, the current date, and time.</p>`;
         const closeButton = document.createElement('div');
         closeButton.id = 'ai-close-button';
         closeButton.innerHTML = '&times;';
         closeButton.onclick = deactivateAI;
-
         const responseContainer = document.createElement('div');
         responseContainer.id = 'ai-response-container';
-
         const inputWrapper = document.createElement('div');
         inputWrapper.id = 'ai-input-wrapper';
-
         const attachmentPreviewContainer = document.createElement('div');
         attachmentPreviewContainer.id = 'ai-attachment-preview';
-        
         const visualInput = document.createElement('div');
         visualInput.id = 'ai-input';
         visualInput.contentEditable = true;
         visualInput.onkeydown = handleInputSubmission;
         visualInput.oninput = handleContentEditableInput;
-        
-        // The placeholder is now handled entirely by CSS, so we don't create it here.
-        
-        const settingsToggle = document.createElement('button');
-        settingsToggle.id = 'ai-settings-toggle';
-        settingsToggle.innerHTML = '&#8942;';
-        settingsToggle.onclick = handleSettingsToggleClick;
-
+        const actionToggle = document.createElement('button');
+        actionToggle.id = 'ai-action-toggle';
+        actionToggle.innerHTML = '&#8942;';
+        actionToggle.onclick = handleActionToggleClick;
         inputWrapper.appendChild(attachmentPreviewContainer);
         inputWrapper.appendChild(visualInput);
-        // No more placeholder appended here.
-        inputWrapper.appendChild(settingsToggle);
-        
+        inputWrapper.appendChild(actionToggle);
         container.appendChild(persistentTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
-        container.appendChild(createAttachmentMenu()); 
-        
+        container.appendChild(createActionMenu());
         document.body.appendChild(container);
-        
-        if (chatHistory.length > 0) {
-            renderChatHistory();
-        }
-
+        if (chatHistory.length > 0) { renderChatHistory(); }
         setTimeout(() => {
-             if (chatHistory.length > 0) {
-                container.classList.add('chat-active');
-            }
+             if (chatHistory.length > 0) { container.classList.add('chat-active'); }
             container.classList.add('active');
         }, 10);
-        
         visualInput.focus();
         isAIActive = true;
     }
 
     function deactivateAI() {
-        if (typeof window.stopPanicKeyBlocker === 'function') {
-            window.stopPanicKeyBlocker();
-        }
+        if (typeof window.stopPanicKeyBlocker === 'function') { window.stopPanicKeyBlocker(); }
         if (currentAIRequestController) currentAIRequestController.abort();
-        
         const container = document.getElementById('ai-container');
         if (container) {
             container.classList.add('deactivating');
@@ -183,7 +140,7 @@
             }, 500);
         }
         isAIActive = false;
-        isAttachmentMenuOpen = false;
+        isActionMenuOpen = false;
         isRequestPending = false;
         attachedFiles = [];
     }
@@ -198,9 +155,7 @@
             if (message.role === 'model') {
                 bubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(message.parts[0].text)}</div>`;
             } else {
-                let bubbleContent = '';
-                let textContent = '';
-                let fileCount = 0;
+                let bubbleContent = ''; let textContent = ''; let fileCount = 0;
                 message.parts.forEach(part => {
                     if (part.text) textContent = part.text;
                     if (part.inlineData) fileCount++;
@@ -215,11 +170,7 @@
     }
 
     async function callGoogleAI(responseBubble) {
-        if (!API_KEY) {
-            responseBubble.innerHTML = `<div class="ai-error">API Key is missing.</div>`;
-            return;
-        }
-
+        if (!API_KEY) { responseBubble.innerHTML = `<div class="ai-error">API Key is missing.</div>`; return; }
         currentAIRequestController = new AbortController();
         let firstMessageContext = '';
         if (chatHistory.length <= 1) {
@@ -233,63 +184,52 @@
         const lastMessageIndex = chatHistory.length - 1;
         const userParts = chatHistory[lastMessageIndex].parts;
         const textPart = userParts.find(p => p.text);
-        if (textPart) {
-            textPart.text = firstMessageContext + textPart.text;
-        } else {
-            userParts.unshift({ text: firstMessageContext });
-        }
+        if (textPart) { textPart.text = firstMessageContext + textPart.text; } 
+        else { userParts.unshift({ text: firstMessageContext }); }
         
-        const payload = { contents: chatHistory };
+        let systemInstruction = 'You are a helpful and comprehensive AI assistant.';
+        switch (currentSubject) {
+            case 'Mathematics': systemInstruction = 'You are a mathematics expert. Prioritize accuracy, detailed step-by-step explanations, and formal notation using LaTeX where appropriate.'; break;
+            case 'Science': systemInstruction = 'You are a science expert. Provide clear, evidence-based explanations using correct scientific terminology, citing sources if relevant.'; break;
+            case 'History': systemInstruction = 'You are a history expert. Provide historically accurate information with context, key dates, and important figures.'; break;
+            case 'Literature': systemInstruction = 'You are a literary expert. Focus on analyzing themes, characters, literary devices, and historical context.'; break;
+            case 'Programming': systemInstruction = 'You are a programming expert. Provide clean, efficient, and well-commented code examples. Specify the language and explain the logic clearly.'; break;
+        }
+
+        const payload = { contents: chatHistory, systemInstruction: { parts: [{ text: systemInstruction }] } };
+        
         try {
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: currentAIRequestController.signal
-            });
+            const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: currentAIRequestController.signal });
             if (!response.ok) throw new Error(`Network response was not ok. Status: ${response.status}`);
             const data = await response.json();
-            if (!data.candidates || data.candidates.length === 0) {
-                 throw new Error("Invalid response from API.");
-            }
+            if (!data.candidates || data.candidates.length === 0) throw new Error("Invalid response from API.");
             const text = data.candidates[0].content.parts[0].text;
             chatHistory.push({ role: "model", parts: [{ text: text }] });
             responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
         } catch (error) {
-            if (error.name === 'AbortError') {
-                responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`;
-            } else {
-                console.error('AI API Error:', error);
-                responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`;
-            }
+            if (error.name === 'AbortError') { responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`; } 
+            else { console.error('AI API Error:', error); responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`; }
         } finally {
             isRequestPending = false;
             currentAIRequestController = null;
-            const settingsToggle = document.getElementById('ai-settings-toggle');
-            if (settingsToggle) {
-                settingsToggle.classList.remove('generating');
-                settingsToggle.innerHTML = '&#8942;';
-            }
+            const actionToggle = document.getElementById('ai-action-toggle');
+            if (actionToggle) { actionToggle.classList.remove('generating'); actionToggle.innerHTML = '&#8942;'; }
             responseBubble.classList.remove('loading');
             document.getElementById('ai-input-wrapper').classList.remove('waiting');
             const editor = document.getElementById('ai-input');
-            if(editor) {
-                editor.contentEditable = true;
-                editor.focus();
-            }
+            if(editor) { editor.contentEditable = true; editor.focus(); }
             const responseContainer = document.getElementById('ai-response-container');
             if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
         }
     }
 
-    function handleSettingsToggleClick(e) { e.stopPropagation(); if (isRequestPending) { stopGeneration(); } else { toggleAttachmentMenu(); } }
+    function handleActionToggleClick(e) { e.stopPropagation(); if (isRequestPending) { stopGeneration(); } else { toggleActionMenu(); } }
     function stopGeneration(){if(currentAIRequestController){currentAIRequestController.abort();}}
-    function toggleAttachmentMenu(){
-        isAttachmentMenuOpen = !isAttachmentMenuOpen;
-        const menu = document.getElementById('ai-attachment-menu');
-        const toggleBtn = document.getElementById('ai-settings-toggle');
-
-        if (isAttachmentMenuOpen) {
+    function toggleActionMenu(){
+        isActionMenuOpen = !isActionMenuOpen;
+        const menu = document.getElementById('ai-action-menu');
+        const toggleBtn = document.getElementById('ai-action-toggle');
+        if (isActionMenuOpen) {
             const btnRect = toggleBtn.getBoundingClientRect();
             menu.style.bottom = `${window.innerHeight - btnRect.top}px`;
             menu.style.right = `${window.innerWidth - btnRect.right}px`;
@@ -303,8 +243,20 @@
                 }
             });
         }
-        menu.classList.toggle('active', isAttachmentMenuOpen);
-        toggleBtn.classList.toggle('active', isAttachmentMenuOpen);
+        menu.classList.toggle('active', isActionMenuOpen);
+        toggleBtn.classList.toggle('active', isActionMenuOpen);
+    }
+    
+    function selectSubject(subject){
+        currentSubject=subject;
+        chatHistory = [];
+        const persistentTitle = document.getElementById('ai-persistent-title');
+        if (persistentTitle) { persistentTitle.textContent = `AI Mode - ${subject}`; }
+        const menu=document.getElementById('ai-action-menu');
+        menu.querySelectorAll('button[data-subject]').forEach(b=>b.classList.remove('active'));
+        const activeBtn=menu.querySelector(`button[data-subject="${subject}"]`);
+        if(activeBtn)activeBtn.classList.add('active');
+        toggleActionMenu();
     }
     
     function handleFileUpload(fileType) {
@@ -315,10 +267,7 @@
         input.onchange = (event) => {
             const file = event.target.files[0];
             if (!file) return;
-            if (file.type.startsWith('video/') && file.size > 100 * 1024 * 1024) { 
-                alert("Video file is too large. Please choose a shorter video (max approx. 5 minutes).");
-                return;
-            }
+            if (file.type.startsWith('video/') && file.size > 100 * 1024 * 1024) { alert("Video file is too large. Please choose a shorter video (max approx. 5 minutes)."); return; }
             const reader = new FileReader();
             reader.onload = (e) => {
                 const base64Data = e.target.result.split(',')[1];
@@ -335,41 +284,33 @@
     function renderAttachments() {
         const previewContainer = document.getElementById('ai-attachment-preview');
         previewContainer.innerHTML = '';
-        if (attachedFiles.length === 0) {
-            previewContainer.style.display = 'none';
-            return;
-        }
+        if (attachedFiles.length === 0) { previewContainer.style.display = 'none'; return; }
         previewContainer.style.display = 'flex';
         attachedFiles.forEach((file, index) => {
             const fileCard = document.createElement('div');
             fileCard.className = 'attachment-card';
             let previewHTML = `<span class="file-icon">📄</span>`;
-            if (file.inlineData.mimeType.startsWith('image/')) {
-                previewHTML = `<img src="data:${file.inlineData.mimeType};base64,${file.inlineData.data}" alt="${file.fileName}" />`;
-            } else if (file.inlineData.mimeType.startsWith('video/')) {
-                previewHTML = `<span class="file-icon">🎬</span>`;
-            } else if (file.inlineData.mimeType.startsWith('audio/')) {
-                previewHTML = `<span class="file-icon">🎵</span>`;
-            }
-            fileCard.innerHTML = `<span class="file-name">${file.fileName}</span><button class="remove-attachment-btn" data-index="${index}">&times;</button>`;
-            fileCard.querySelector('.remove-attachment-btn').onclick = () => {
-                attachedFiles.splice(index, 1);
-                renderAttachments();
-            };
+            if (file.inlineData.mimeType.startsWith('image/')) { previewHTML = `<img src="data:${file.inlineData.mimeType};base64,${file.inlineData.data}" alt="${file.fileName}" />`; } 
+            else if (file.inlineData.mimeType.startsWith('video/')) { previewHTML = `<span class="file-icon">🎬</span>`; } 
+            else if (file.inlineData.mimeType.startsWith('audio/')) { previewHTML = `<span class="file-icon">🎵</span>`; }
+            fileCard.innerHTML = `${previewHTML}<span class="file-name">${file.fileName}</span><button class="remove-attachment-btn" data-index="${index}">&times;</button>`;
+            fileCard.querySelector('.remove-attachment-btn').onclick = () => { attachedFiles.splice(index, 1); renderAttachments(); };
             previewContainer.appendChild(fileCard);
         });
     }
 
-    function createAttachmentMenu() {
+    function createActionMenu() {
         const menu = document.createElement('div');
-        menu.id = 'ai-attachment-menu';
-        const options = [
+        menu.id = 'ai-action-menu';
+        const attachments = [
             { id: 'photo', icon: '📷', label: 'Photo', type: 'images' },
             { id: 'video', icon: '🎬', label: 'Video', type: 'videos' },
             { id: 'audio', icon: '🎤', label: 'Audio', type: 'audio' },
             { id: 'file', icon: '📎', label: 'File', type: 'file' },
         ];
-        options.forEach(opt => {
+        const subjects = ['General','Mathematics','Science','History','Literature','Programming'];
+        
+        attachments.forEach(opt => {
             const button = document.createElement('button');
             button.dataset.type = opt.type;
             const canUpload = limitManager.canUpload(opt.type);
@@ -379,14 +320,23 @@
                 limitText = `<span>${usage[opt.type] || 0}/${DAILY_LIMITS[opt.type]} used</span>`;
             }
             button.innerHTML = `<span class="icon">${opt.icon}</span> ${opt.label} ${limitText}`;
-            if (!canUpload) {
-                button.disabled = true;
-                button.title = 'You have reached your daily limit for this file type.';
-            }
-            button.onclick = () => {
-                handleFileUpload(opt.id);
-                toggleAttachmentMenu();
-            };
+            if (!canUpload) { button.disabled = true; button.title = 'You have reached your daily limit for this file type.'; }
+            button.onclick = () => { handleFileUpload(opt.id); toggleActionMenu(); };
+            menu.appendChild(button);
+        });
+        
+        menu.appendChild(document.createElement('hr'));
+        const subjectHeader = document.createElement('div');
+        subjectHeader.className = 'menu-header';
+        subjectHeader.textContent = 'Focus Topic';
+        menu.appendChild(subjectHeader);
+
+        subjects.forEach(subject => {
+            const button = document.createElement('button');
+            button.textContent = subject;
+            button.dataset.subject = subject;
+            if (subject === 'General') button.classList.add('active');
+            button.onclick = () => selectSubject(subject);
             menu.appendChild(button);
         });
         return menu;
@@ -394,14 +344,8 @@
 
     function handleContentEditableInput(e) {
         const editor = e.target;
-        if (editor.scrollHeight > MAX_INPUT_HEIGHT) {
-            editor.style.height = `${MAX_INPUT_HEIGHT}px`;
-            editor.style.overflowY = 'auto';
-        } else {
-            editor.style.height = 'auto';
-            editor.style.height = `${editor.scrollHeight}px`;
-            editor.style.overflowY = 'hidden';
-        }
+        if (editor.scrollHeight > MAX_INPUT_HEIGHT) { editor.style.height = `${MAX_INPUT_HEIGHT}px`; editor.style.overflowY = 'auto'; } 
+        else { editor.style.height = 'auto'; editor.style.height = `${editor.scrollHeight}px`; editor.style.overflowY = 'hidden'; }
         fadeOutWelcomeMessage();
     }
 
@@ -413,7 +357,7 @@
             if (!query && attachedFiles.length === 0) return;
             if (isRequestPending) return;
             isRequestPending = true;
-            document.getElementById('ai-settings-toggle').classList.add('generating');
+            document.getElementById('ai-action-toggle').classList.add('generating');
             editor.contentEditable = false;
             document.getElementById('ai-input-wrapper').classList.add('waiting');
             const parts = [];
@@ -424,9 +368,7 @@
             const userBubble = document.createElement('div');
             userBubble.className = 'ai-message-bubble user-message';
             let bubbleContent = query ? `<p>${escapeHTML(query)}</p>` : '';
-            if (attachedFiles.length > 0) {
-                bubbleContent += `<div class="sent-attachments">${attachedFiles.length} file(s) sent</div>`;
-            }
+            if (attachedFiles.length > 0) { bubbleContent += `<div class="sent-attachments">${attachedFiles.length} file(s) sent</div>`; }
             userBubble.innerHTML = bubbleContent;
             responseContainer.appendChild(userBubble);
             const responseBubble = document.createElement('div');
@@ -458,10 +400,10 @@
         style.id = "ai-dynamic-styles";
         style.innerHTML = `
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
-            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; }
-            #ai-container.active { opacity: 1; background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; }
+            #ai-container.active { opacity: 1; background-color: rgba(0,0,0,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
             #ai-container.deactivating, #ai-container.deactivating > * { transition: opacity 0.4s, transform 0.4s; }
-            #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+            #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
             #ai-persistent-title { position: absolute; top: 28px; left: 30px; font-family: 'secondaryfont', sans-serif; font-size: 18px; font-weight: bold; color: white; opacity: 0; transition: opacity 0.5s 0.2s; animation: title-pulse 4s linear infinite; }
             #ai-container.chat-active #ai-persistent-title { opacity: 1; }
             #ai-welcome-message { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s, transform .5s; width: 100%; }
@@ -483,17 +425,20 @@
             #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
             #ai-input { min-height: 52px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
             #ai-input:empty::before { content: 'Ask a question or describe your files...'; color: rgba(255, 255, 255, 0.4); pointer-events: none; }
-            #ai-settings-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
-            #ai-settings-toggle.active { transform: rotate(90deg); }
-            #ai-settings-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
-            #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
-            #ai-attachment-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 16px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
-            #ai-attachment-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
-            #ai-attachment-menu button { background: rgba(255,255,255,0.05); border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s; }
-            #ai-attachment-menu button:hover { background-color: rgba(255,255,255,0.1); }
-            #ai-attachment-menu button:disabled { opacity: 0.5; cursor: not-allowed; color: #888; }
-            #ai-attachment-menu button .icon { font-size: 1.2em; }
-            #ai-attachment-menu button span:last-child { font-size: 0.8em; color: #888; margin-left: auto; font-family: 'secondaryfont', sans-serif; }
+            #ai-action-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
+            #ai-action-toggle.active { transform: rotate(90deg); }
+            #ai-action-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
+            #ai-action-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
+            #ai-action-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 16px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
+            #ai-action-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
+            #ai-action-menu button { background: rgba(255,255,255,0.05); border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s, border-color 0.2s, transform 0.2s; }
+            #ai-action-menu button:hover { background-color: rgba(255,255,255,0.1); }
+            #ai-action-menu button:disabled { opacity: 0.5; cursor: not-allowed; color: #888; }
+            #ai-action-menu button[data-subject].active { background: rgba(66,133,244,.3); border-color: var(--ai-blue); color: #fff; }
+            #ai-action-menu .icon { font-size: 1.2em; }
+            #ai-action-menu span:last-child { font-size: 0.8em; color: #888; margin-left: auto; font-family: 'secondaryfont', sans-serif; }
+            #ai-action-menu hr { border: none; height: 1px; background-color: rgba(255,255,255,0.1); margin: 5px 10px; }
+            #ai-action-menu .menu-header { font-size: 0.8em; color: #888; text-transform: uppercase; padding: 10px 15px 5px; cursor: default; }
             #ai-attachment-preview { display: none; flex-direction: row; gap: 10px; padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.1); overflow-x: auto; }
             .attachment-card { position: relative; border-radius: 8px; overflow: hidden; background: #333; height: 80px; width: auto; min-width: 80px; flex-shrink: 0; display: flex; justify-content: center; align-items: center; }
             .attachment-card img { width: 100%; height: 100%; object-fit: cover; }
