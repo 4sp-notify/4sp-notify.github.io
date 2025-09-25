@@ -1,225 +1,561 @@
 /**
- * @file gemini-injector.js
- * @version 2.0
- * @description Injects a highly customizable, Gemini-styled AI chat interface into any webpage.
+ * ai-activation.js
  *
- * This script provides a powerful, self-contained chat environment with selectable AI personas,
- * dynamic theming, and context-aware tools. It maintains a professional and clean aesthetic.
+ * Injects a fully-featured AI chat interface into the current page.
  *
- * Activation Shortcut:
- * - Press `Ctrl + C` when no text is selected on the page.
+ * Activation:
+ * - Ctrl + C (only when no text is selected)
  *
- * Deactivation Methods:
- * - Click the '×' button in the top-right corner.
- * - Press `Ctrl + C` when the chat input box is empty.
+ * Deactivation:
+ * - 'X' button or Ctrl + C when the input box is empty.
  *
- * Core Features:
- * - **Helper Types**: A settings menu allows switching between various AI personas (e.g., Math, History, Science), which alters the AI's response style.
- * - **Dynamic Theming**: Each helper type applies a unique accent color to the UI for clear visual feedback.
- * - **Secret Timestamps & Context**: Invisibly prepends the system time and selected persona to every message for enhanced AI context.
- * - **Conditional Math Toolbar**: A rich math symbol toolbar automatically appears when a scientific or mathematical helper type is selected.
- * - **Rich WYSIWYG Input**: A `contenteditable` input that supports real-time LaTeX-to-symbol conversion and custom elements like fractions.
- * - **Full Rendering**: Renders AI responses containing Markdown, code blocks, and LaTeX-style mathematics.
+ * Features:
+ * - A dark, heavily blurred overlay with enhanced gradient animations.
+ * - Dynamic input box glow that pulses based on typing speed.
+ * - A settings menu to select a subject, tailoring the AI's focus and available tools.
+ * - The math symbols menu is only shown for relevant subjects (Math, Science).
+ * - Fading effect on the top and bottom of the scrollable chat view.
+ * - Chat history for contextual conversations within a session.
+ * - Automatically sends user's general location (state/country) with the first message.
+ * - An advanced, auto-expanding WYSIWYG contenteditable input with real-time LaTeX-to-symbol conversion.
+ * - Arrow-key navigation for complex math structures like fractions and roots.
+ * - AI responses render Markdown, LaTeX-style math (including \boxed{}), and code blocks.
+ * - Communicates with the Google AI API (Gemini) to get answers.
  */
 
 (function() {
-    // --- SCRIPT CONFIGURATION ---
-    const API_KEY = 'YOUR_GOOGLE_AI_API_KEY_HERE';
-    const API_URL = `https://generativelace.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${API_KEY}`;
-    const USER_CHAR_LIMIT = 2000;
+    // --- CONFIGURATION ---
+    const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; // Replace with your actual key
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${API_KEY}`;
+    const USER_CHAR_LIMIT = 500;
+    const subjects = [
+        { name: 'General', hasMath: true },
+        { name: 'Mathematics', hasMath: true },
+        { name: 'Science', hasMath: true },
+        { name: 'Language Arts', hasMath: false },
+        { name: 'History', hasMath: false },
+        { name: 'Social Studies', hasMath: false },
+    ];
 
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
     let isRequestPending = false;
+    let isSettingsMenuOpen = false;
+    let lastRequestTime = 0;
+    const COOLDOWN_PERIOD = 5000; // 5 seconds
     let chatHistory = [];
-    let currentMode = 'general'; // The default helper type.
-
-    // --- HELPER TYPE DEFINITIONS ---
-    const helperModes = {
-        general: {
-            label: 'General Assistant',
-            systemPrompt: 'You are a helpful and professional general-purpose AI assistant.',
-            themeColor: '#8E9397', // Neutral Gray
-            showMathBar: false
-        },
-        math: {
-            label: 'Math',
-            systemPrompt: 'You are an expert mathematician. Provide clear, logical, step-by-step solutions. Use LaTeX for all mathematical expressions.',
-            themeColor: '#4285F4', // Google Blue
-            showMathBar: true
-        },
-        language_arts: {
-            label: 'Language Arts',
-            systemPrompt: 'You are an expert in literature and language arts. Provide insightful analysis of texts, grammar, and writing styles.',
-            themeColor: '#EA4335', // Google Red
-            showMathBar: false
-        },
-        science: {
-            label: 'Science',
-            systemPrompt: 'You are a science communicator. Explain complex scientific concepts clearly and concisely for a broad audience.',
-            themeColor: '#34A853', // Google Green
-            showMathBar: true
-        },
-        biology: {
-            label: 'Biology',
-            systemPrompt: 'You are a biologist. Provide detailed and accurate information on biological systems, from molecular to ecological levels.',
-            themeColor: '#00A86B', // Jade Green
-            showMathBar: false
-        },
-        chemistry: {
-            label: 'Chemistry',
-            systemPrompt: 'You are a chemist. Provide precise explanations of chemical reactions, principles, and molecular structures.',
-            themeColor: '#F9A825', // Bright Yellow
-            showMathBar: true
-        },
-        american_history: {
-            label: 'American History',
-            systemPrompt: 'You are an American History expert. Provide detailed, factual, and nuanced accounts of events, figures, and developments in U.S. history.',
-            themeColor: '#B22234', // Old Glory Red
-            showMathBar: false
-        },
-        ancient_history: {
-            label: 'Ancient History',
-            systemPrompt: 'You are an expert on ancient civilizations. Provide detailed information about ancient history, cultures, and archaeology.',
-            themeColor: '#C8A464', // Papyrus Tan
-            showMathBar: false
-        }
-    };
-
+    let typingTimeout = null;
+    let lastKeystrokeTime = 0;
+    let currentSubject = subjects[0];
     const latexSymbolMap = {
         '\\pi': 'π', '\\theta': 'θ', '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ',
-        '\\delta': 'δ', '\\epsilon': 'ε', '\\infty': '∞', '\\pm': '±', '\\times': '×',
-        '\\div': '÷', '\\cdot': '·', '\\degree': '°', '\\le': '≤', '\\ge': '≥', '\\ne': '≠',
-        '\\approx': '≈', '\\equiv': '≡', '\\therefore': '∴', '\\because': '∵',
+        '\\delta': 'δ', '\\epsilon': 'ε', '\\infty': '∞', '\\pm': '±',
+        '\\times': '×', '\\div': '÷', '\\cdot': '·', '\\degree': '°',
+        '\\le': '≤', '\\ge': '≥', '\\ne': '≠',
+        '\\approx': '≈', '\\equiv': '≡',
+        '\\therefore': '∴', '\\because': '∵',
     };
-    
-    // --- INITIALIZATION ---
-    document.addEventListener('keydown', handleActivationShortcut);
-    initializeUserLocation();
 
-    // --- CORE FUNCTIONS ---
+    /**
+     * Tries to get the user's location on script load.
+     */
+    function getLocationOnLoad() {
+        if (navigator.geolocation) {
+            navigator.geolocation.getCurrentPosition(async (position) => {
+                const { latitude, longitude } = position.coords;
+                try {
+                    const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+                    if (!response.ok) return;
+                    const data = await response.json();
+                    if (data && data.address) {
+                        let locationString = data.address.country_code === 'us' ? data.address.state : data.address.country;
+                        localStorage.setItem('ai-user-location', locationString);
+                    }
+                } catch (error) {
+                    console.error("AI location feature: Reverse geocoding failed.", error);
+                }
+            }, () => console.warn("AI location feature: User denied geolocation permission."));
+        }
+    }
+    getLocationOnLoad();
 
-    function initializeUserLocation() { /* ... (Function is unchanged from previous version) ... */ }
-    function getCurrentDateTimeString() { /* ... (Function is unchanged from previous version) ... */ }
-
-    function handleActivationShortcut(e) {
+    /**
+     * Handles the keyboard shortcut for activating/deactivating the AI.
+     */
+    function handleKeyDown(e) {
         if (e.ctrlKey && e.key.toLowerCase() === 'c') {
             const selection = window.getSelection().toString();
-            const input = document.getElementById('gemini-input');
-            if (isAIActive && input && input.innerText.trim().length === 0 && selection.length === 0) {
-                e.preventDefault();
-                deactivateAI();
-            } else if (!isAIActive && selection.length === 0) {
+            if (isAIActive) {
+                const editor = document.getElementById('ai-input');
+                if (editor && editor.innerText.trim().length === 0 && selection.length === 0) {
+                    e.preventDefault();
+                    deactivateAI();
+                }
+            } else if (selection.length === 0) {
                 e.preventDefault();
                 activateAI();
             }
         }
     }
 
+    /**
+     * Creates and injects the AI interface into the page.
+     */
     function activateAI() {
-        if (document.getElementById('gemini-container')) return;
+        if (document.getElementById('ai-container')) return;
 
         chatHistory = [];
         injectStyles();
 
         const container = document.createElement('div');
-        container.id = 'gemini-container';
-        container.style.setProperty('--theme-accent-color', helperModes[currentMode].themeColor);
+        container.id = 'ai-container';
+        container.onclick = (e) => {
+            if (isSettingsMenuOpen && !document.getElementById('ai-settings-menu').contains(e.target)) {
+                toggleSettingsMenu();
+            }
+        };
 
-        const title = createDOMElement('div', 'gemini-title', 'Gemini');
-        const settingsButton = createSettingsButton();
-        const closeButton = createDOMElement('div', 'gemini-close-button', '&times;');
+        const brandTitle = document.createElement('div');
+        brandTitle.id = 'ai-brand-title';
+        "4SP AI".split('').forEach(char => {
+            const span = document.createElement('span');
+            span.textContent = char;
+            span.style.animationDelay = `${Math.random() * 2}s`;
+            brandTitle.appendChild(span);
+        });
+
+        const welcomeMessage = document.createElement('div');
+        welcomeMessage.id = 'ai-welcome-message';
+        welcomeMessage.innerHTML = `
+            <h2>Welcome to AI Mode</h2>
+            <p>This is a beta feature. Your general location (state/country) may be shared. Message limits may apply.</p>
+        `;
+
+        const closeButton = document.createElement('div');
+        closeButton.id = 'ai-close-button';
+        closeButton.innerHTML = '&times;';
         closeButton.onclick = deactivateAI;
+
+        const responseContainer = document.createElement('div');
+        responseContainer.id = 'ai-response-container';
+
+        const inputWrapper = document.createElement('div');
+        inputWrapper.id = 'ai-input-wrapper';
         
-        const topBar = createDOMElement('div', 'gemini-top-bar');
-        topBar.append(title, settingsButton, closeButton);
+        const visualInput = document.createElement('div');
+        visualInput.id = 'ai-input';
+        visualInput.contentEditable = true;
+        visualInput.onkeydown = handleInputEvents;
+        visualInput.oninput = handleContentEditableInput;
 
-        const settingsMenu = createSettingsMenu();
-        const responseContainer = createDOMElement('div', 'gemini-response-container');
-        const inputWrapper = createInputArea();
+        const placeholder = document.createElement('div');
+        placeholder.id = 'ai-input-placeholder';
+        placeholder.textContent = 'Ask a question...';
 
-        container.append(topBar, settingsMenu, responseContainer, inputWrapper);
+        const settingsButton = document.createElement('button');
+        settingsButton.id = 'ai-settings-button';
+        settingsButton.innerHTML = '&#9881;'; // Gear icon
+        settingsButton.onclick = (e) => { e.stopPropagation(); toggleSettingsMenu(); };
+
+        inputWrapper.appendChild(visualInput);
+        inputWrapper.appendChild(placeholder);
+        inputWrapper.appendChild(settingsButton);
+        inputWrapper.appendChild(createOptionsBar());
+        inputWrapper.appendChild(createSettingsMenu());
+        
+        const charCounter = document.createElement('div');
+        charCounter.id = 'ai-char-counter';
+        charCounter.textContent = `0 / ${USER_CHAR_LIMIT}`;
+
+        container.appendChild(brandTitle);
+        container.appendChild(welcomeMessage);
+        container.appendChild(closeButton);
+        container.appendChild(responseContainer);
+        container.appendChild(inputWrapper);
+        container.appendChild(charCounter);
+
         document.body.appendChild(container);
 
-        requestAnimationFrame(() => {
-            container.classList.add('active');
-            document.getElementById('gemini-input').focus();
-        });
+        setTimeout(() => container.classList.add('active'), 10);
+        visualInput.focus();
         isAIActive = true;
+        selectSubject(currentSubject.name); // Initialize UI for default subject
+    }
+    
+    /**
+     * Sets the caret position within a given node.
+     * @param {Node} el - The element to set the caret in.
+     * @param {number} [offset=0] - The character offset.
+     */
+    function setCaretPosition(el, offset = 0) {
+        const range = document.createRange();
+        const sel = window.getSelection();
+        const textNode = el.firstChild || el;
+        // Ensure offset is not out of bounds
+        const maxOffset = textNode.textContent ? textNode.textContent.length : 0;
+        range.setStart(textNode, Math.min(offset, maxOffset));
+        range.collapse(true);
+        sel.removeAllRanges();
+        sel.addRange(range);
     }
 
+    /**
+     * Handles advanced arrow key navigation for custom math elements.
+     */
+    function handleArrowKeyNavigation(e) {
+        const sel = window.getSelection();
+        if (!sel.isCollapsed || sel.rangeCount === 0) return;
+
+        const range = sel.getRangeAt(0);
+        const container = range.startContainer;
+        const offset = range.startOffset;
+
+        const currentNode = container.nodeType === 3 ? container.parentNode : container;
+        const nodeBefore = container.childNodes[offset - 1];
+        const nodeAfter = container.childNodes[offset];
+        
+        let handled = false;
+
+        // --- ArrowRight Navigation ---
+        if (e.key === 'ArrowRight' && nodeAfter && nodeAfter.matches?.('.ai-math-node')) {
+            const target = nodeAfter.querySelector('[contenteditable="true"]');
+            if (target) {
+                setCaretPosition(target, 0);
+                handled = true;
+            }
+        }
+        // --- ArrowLeft Navigation ---
+        else if (e.key === 'ArrowLeft' && nodeBefore && nodeBefore.matches?.('.ai-math-node')) {
+            const editableChildren = Array.from(nodeBefore.querySelectorAll('[contenteditable="true"]'));
+            if (editableChildren.length > 0) {
+                const target = editableChildren[editableChildren.length - 1]; // Go to the last editable child (e.g., denominator)
+                setCaretPosition(target, target.textContent.length);
+                handled = true;
+            }
+        }
+        // --- Inside-Component Navigation (Up/Down) ---
+        else if ((e.key === 'ArrowUp' || e.key === 'ArrowDown') && currentNode.isContentEditable) {
+            const parentFrac = currentNode.closest('.ai-frac');
+            if (parentFrac) {
+                if (e.key === 'ArrowUp' && currentNode.matches('sub')) {
+                    const numerator = parentFrac.querySelector('sup');
+                    setCaretPosition(numerator, offset);
+                    handled = true;
+                } else if (e.key === 'ArrowDown' && currentNode.matches('sup')) {
+                    const denominator = parentFrac.querySelector('sub');
+                    setCaretPosition(denominator, offset);
+                    handled = true;
+                }
+            }
+        }
+
+        if (handled) {
+            e.preventDefault();
+        }
+    }
+
+
+    /**
+     * Removes the AI interface from the page.
+     */
     function deactivateAI() {
-        const container = document.getElementById('gemini-container');
+        const container = document.getElementById('ai-container');
         if (container) {
+            clearTimeout(typingTimeout);
             container.classList.remove('active');
-            setTimeout(() => container.remove(), 500);
+            setTimeout(() => {
+                container.remove();
+                const styles = document.getElementById('ai-dynamic-styles');
+                if (styles) styles.remove();
+            }, 500);
         }
         isAIActive = false;
+        isSettingsMenuOpen = false;
+        chatHistory = [];
     }
     
-    function createDOMElement(tag, id, innerHTML) { /* ... (Function is unchanged) ... */ }
-
-    // --- UI CREATION ---
-
-    function createSettingsButton() {
-        const button = createDOMElement('button', 'gemini-settings-button', '⚙️');
-        button.onclick = (e) => {
-            e.stopPropagation();
-            toggleSettingsMenu();
-        };
-        return button;
+    function fadeOutWelcomeMessage() {
+        const container = document.getElementById('ai-container');
+        if (container && !container.classList.contains('chat-active')) {
+            container.classList.add('chat-active');
+        }
     }
-    
-    function createSettingsMenu() {
-        const menu = createDOMElement('div', 'gemini-settings-menu');
-        menu.innerHTML = '<h4>Select Helper Type</h4>';
 
-        Object.keys(helperModes).forEach(key => {
-            const mode = helperModes[key];
-            const item = document.createElement('button');
-            item.className = 'gemini-settings-item';
-            item.textContent = mode.label;
-            item.dataset.mode = key;
-            if (key === currentMode) {
-                item.classList.add('active');
+    /**
+     * Handles input on the contenteditable div, updating placeholder, counter, and LaTeX conversion.
+     */
+    function handleContentEditableInput(e) {
+        fadeOutWelcomeMessage();
+        const editor = e.target;
+        
+        const wrapper = document.getElementById('ai-input-wrapper');
+        const now = Date.now();
+        const timeDiff = now - (lastKeystrokeTime || now);
+        lastKeystrokeTime = now;
+
+        if (!wrapper.classList.contains('waiting')) {
+            wrapper.style.animationPlayState = 'running';
+            wrapper.style.animationDuration = timeDiff < 150 ? '0.7s' : '1.8s';
+            clearTimeout(typingTimeout);
+            typingTimeout = setTimeout(() => {
+                const activeWrapper = document.getElementById('ai-input-wrapper');
+                if (activeWrapper && !activeWrapper.classList.contains('waiting')) {
+                     activeWrapper.style.animationDuration = '4s';
+                }
+            }, 1000);
+        }
+
+        const selection = window.getSelection();
+        if (selection.rangeCount > 0) {
+            const range = selection.getRangeAt(0);
+            const node = range.startContainer;
+            if (node.nodeType === 3) { // Text node
+                const textContent = node.textContent;
+                const textBeforeCursor = textContent.slice(0, range.startOffset);
+                const match = textBeforeCursor.match(/(\\[a-zA-Z]+)\s$/);
+                if (match) {
+                    const command = match[1];
+                    const symbol = latexSymbolMap[command];
+                    if (symbol) {
+                        const commandStartIndex = textBeforeCursor.lastIndexOf(command);
+                        node.textContent = textContent.slice(0, commandStartIndex) + symbol + textContent.slice(range.startOffset);
+                        range.setStart(node, commandStartIndex + 1);
+                        range.collapse(true);
+                        selection.removeAllRanges();
+                        selection.addRange(range);
+                    }
+                }
             }
-            item.onclick = () => setMode(key);
-            menu.appendChild(item);
+        }
+        
+        const charCounter = document.getElementById('ai-char-counter');
+        const placeholder = document.getElementById('ai-input-placeholder');
+        const rawText = editor.innerText;
+        if (charCounter) charCounter.textContent = `${rawText.length} / ${USER_CHAR_LIMIT}`;
+        if (placeholder) placeholder.style.display = (rawText.length > 0 || editor.querySelector('.ai-math-node')) ? 'none' : 'block';
+    }
+
+    /**
+     * Parses the visually formatted HTML from the input into plain text for the API.
+     */
+    function parseInputForAPI(innerHTML) {
+        const tempDiv = document.createElement('div');
+        tempDiv.innerHTML = innerHTML.replace(/<div><br><\/div>/g, '\n').replace(/<br>/g, '\n');
+        
+        tempDiv.querySelectorAll('.ai-frac').forEach(frac => {
+            const n = frac.querySelector('sup')?.innerText.trim() || '';
+            const d = frac.querySelector('sub')?.innerText.trim() || '';
+            frac.replaceWith(`(${n})/(${d})`);
+        });
+        tempDiv.querySelectorAll('.ai-sqrt').forEach(sqrt => {
+            const content = sqrt.querySelector('.ai-sqrt-content')?.innerText.trim() || '';
+            sqrt.replaceWith(`sqrt(${content})`);
+        });
+        tempDiv.querySelectorAll('.ai-cbrt').forEach(cbrt => {
+            const content = cbrt.querySelector('.ai-cbrt-content')?.innerText.trim() || '';
+            cbrt.replaceWith(`cbrt(${content})`);
+        });
+        
+        tempDiv.querySelectorAll('sup').forEach(sup => sup.replaceWith(`^(${sup.innerText})`));
+        
+        return tempDiv.innerText.replace(/×/g, '*').replace(/÷/g, '/').replace(/π/g, 'pi');
+    }
+
+    /**
+     * Handles keydown events in the input box, including submission and backspace for custom elements.
+     */
+    function handleInputEvents(e) {
+        const editor = e.target;
+
+        // Handle Arrow Keys for navigation
+        if (e.key.startsWith('Arrow')) {
+            handleArrowKeyNavigation(e);
+            // Don't return yet, allow default behavior if not handled
+        }
+        
+        // Handle Backspace for custom math nodes
+        if (e.key === 'Backspace') {
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0 && selection.isCollapsed) {
+                const range = selection.getRangeAt(0);
+                const nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
+                if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-math-node')) {
+                    e.preventDefault();
+                    nodeBefore.remove();
+                    handleContentEditableInput({target: editor});
+                    return;
+                }
+            }
+        }
+        
+        // Handle Submission with Enter
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            fadeOutWelcomeMessage();
+            let query = parseInputForAPI(editor.innerHTML);
+            if (!query || isRequestPending) return;
+            const now = Date.now();
+            if (now - lastRequestTime < COOLDOWN_PERIOD) return;
+
+            if (chatHistory.length === 0) {
+                const location = localStorage.getItem('ai-user-location');
+                let contextPrefix = `(User is focusing on the subject: ${currentSubject.name}.`;
+                if (location) {
+                    contextPrefix += ` User is located in ${location}.`;
+                }
+                contextPrefix += ') ';
+                query = contextPrefix + query;
+            }
+
+            isRequestPending = true;
+            lastRequestTime = now;
+            editor.contentEditable = false;
+            document.getElementById('ai-input-wrapper').classList.add('waiting');
+
+            chatHistory.push({ role: "user", parts: [{ text: query }] });
+
+            const responseContainer = document.getElementById('ai-response-container');
+            const userBubble = document.createElement('div');
+            userBubble.className = 'ai-message-bubble user-message';
+            userBubble.innerHTML = editor.innerHTML;
+            responseContainer.appendChild(userBubble);
+
+            const responseBubble = document.createElement('div');
+            responseBubble.className = 'ai-message-bubble gemini-response loading';
+            responseBubble.innerHTML = '<div class="ai-loader"></div>';
+            responseContainer.appendChild(responseBubble);
+            responseContainer.scrollTop = responseContainer.scrollHeight;
+
+            editor.innerHTML = '';
+            handleContentEditableInput({ target: editor });
+            callGoogleAI(query, responseBubble);
+        }
+    }
+    
+    /**
+     * Parses Gemini's response, handling Markdown, math, code blocks, and the new \boxed{} command.
+     */
+    function parseGeminiResponse(text) {
+        let html = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        
+        // Boxed answers
+        html = html.replace(/\\boxed{([\s\S]*?)}/g, (match, content) => `<div class="ai-boxed-answer">${parseGeminiResponse(content)}</div>`);
+
+        html = html.replace(/```([\s\S]*?)```/g, (match, code) => `<pre><code>${code.trim()}</code></pre>`);
+        html = html.replace(/\$([^\$]+)\$/g, (match, math) => {
+            let processedMath = math;
+            Object.keys(latexSymbolMap).forEach(key => {
+                processedMath = processedMath.replace(new RegExp(key.replace(/\\/g, '\\\\'), 'g'), latexSymbolMap[key]);
+            });
+            processedMath = processedMath
+                .replace(/(\w+)\^(\w+)/g, '$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g, '&radic;($1)')
+                .replace(/\\frac\{(.+?)\}\{(.+?)\}/g, '<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');
+            return `<span class="ai-math-inline">${processedMath}</span>`;
+        });
+        html = html.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\*([^\n\*]+)\*/g, '<strong>$1</strong>')
+                   .replace(/^\* (.*$)/gm, '<li>$1</li>');
+        html = html.replace(/<li>(.*?)<\/li>/g, '<ul><li>$1</li></ul>').replace(/<\/ul>\n?<ul>/g, '');
+        
+        return html.replace(/\n/g, '<br>');
+    }
+
+    /**
+     * Calls the Google AI API and populates the response bubble.
+     */
+    async function callGoogleAI(query, responseBubble) {
+        try {
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ contents: chatHistory })
+            });
+            if (!response.ok) throw new Error(`Network response was not ok. Status: ${response.status}`);
+            const data = await response.json();
+            
+            if (!data.candidates || data.candidates.length === 0) {
+                 throw new Error('No candidates received from API.');
+            }
+
+            const text = data.candidates[0].content.parts[0].text;
+            chatHistory.push({ role: "model", parts: [{ text: text }] });
+            responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
+        } catch (error) {
+            console.error('AI API Error:', error);
+            responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred. Please try again.</div>`;
+        } finally {
+            responseBubble.classList.remove('loading');
+            document.getElementById('ai-input-wrapper').classList.remove('waiting');
+            const editor = document.getElementById('ai-input');
+            if(editor) {
+                editor.contentEditable = true;
+                editor.focus();
+            }
+            isRequestPending = false;
+            const responseContainer = document.getElementById('ai-response-container');
+            if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
+        }
+    }
+    
+    /**
+     * Toggles the visibility of the settings menu.
+     */
+    function toggleSettingsMenu() {
+        isSettingsMenuOpen = !isSettingsMenuOpen;
+        const menu = document.getElementById('ai-settings-menu');
+        const button = document.getElementById('ai-settings-button');
+        menu.classList.toggle('active', isSettingsMenuOpen);
+        button.classList.toggle('active', isSettingsMenuOpen);
+    }
+    
+    /**
+     * Handles subject selection from the settings menu.
+     */
+    function selectSubject(subjectName) {
+        currentSubject = subjects.find(s => s.name === subjectName);
+        
+        // Update button styles
+        document.querySelectorAll('#ai-settings-menu button').forEach(btn => {
+            btn.classList.toggle('selected', btn.textContent === subjectName);
         });
 
-        // Close menu when clicking outside of it
-        document.addEventListener('click', (e) => {
-            if (isAIActive && !menu.contains(e.target) && !document.getElementById('gemini-settings-button').contains(e.target)) {
-                 menu.classList.remove('active');
-            }
-        }, true);
-        
-        return menu;
+        // Show/hide math options bar
+        const inputWrapper = document.getElementById('ai-input-wrapper');
+        inputWrapper.classList.toggle('options-active', currentSubject.hasMath);
+
+        // Update placeholder text
+        document.getElementById('ai-input-placeholder').textContent = `Ask a ${currentSubject.name} question...`;
+
+        // Close menu after selection
+        if (isSettingsMenuOpen) {
+            toggleSettingsMenu();
+        }
     }
 
-    function createInputArea() {
-        const wrapper = createDOMElement('div', 'gemini-input-wrapper');
-        const input = createDOMElement('div', 'gemini-input');
-        input.contentEditable = true;
-        input.onkeydown = handleInputSubmission;
-        input.oninput = handleWYSIWYGInput;
-
-        const placeholder = createDOMElement('div', 'gemini-input-placeholder', 'Ask anything...');
-        const charCounter = createDOMElement('div', 'gemini-char-counter', `0 / ${USER_CHAR_LIMIT}`);
-        const optionsBar = createOptionsBar();
-        
-        wrapper.append(input, placeholder, charCounter, optionsBar);
-        return wrapper;
+    /**
+     * Inserts HTML content at the current cursor position in the editor.
+     */
+    function insertAtCursor(html) {
+        const editor = document.getElementById('ai-input');
+        if (!editor) return;
+        editor.focus();
+        document.execCommand('insertHTML', false, html);
+        handleContentEditableInput({target: editor});
     }
-    
+
+    /**
+     * Creates the math options bar.
+     */
     function createOptionsBar() {
-        const bar = createDOMElement('div', 'gemini-options-bar');
+        const bar = document.createElement('div');
+        bar.id = 'ai-options-bar';
         const buttons = [
             { t: '+', v: '+' }, { t: '-', v: '-' }, { t: '×', v: '×' }, { t: '÷', v: '÷' },
-            { t: 'x/y', v: '<span class="gemini-frac" contenteditable="false"><sup contenteditable="true">num</sup><sub contenteditable="true">den</sub></span>&nbsp;' }, 
-            { t: '√', v: '√()' }, { t: '∛', v: '∛()' }, { t: 'x²', v: '<sup>2</sup>' },
+            { t: 'x/y', v: '<span class="ai-math-node ai-frac" contenteditable="false"><sup contenteditable="true"></sup><span>/</span><sub contenteditable="true"></sub></span>&nbsp;' },
+            { t: '√', v: '<span class="ai-math-node ai-sqrt" contenteditable="false">√(<span class="ai-sqrt-content" contenteditable="true"></span>)</span>&nbsp;' },
+            { t: '∛', v: '<span class="ai-math-node ai-cbrt" contenteditable="false">∛(<span class="ai-cbrt-content" contenteditable="true"></span>)</span>&nbsp;' },
+            { t: 'x²', v: '<sup>2</sup>' },
             { t: 'π', v: 'π' }, { t: 'θ', v: 'θ' }, { t: '∞', v: '∞' }, { t: '°', v: '°' },
-            { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
+            { t: '<', v: '<' }, { t: '>', v: '>' }, { t: '≤', v: '≤' }, { t: '≥', v: '≥' }, { t: '≠', v: '≠' }
         ];
         buttons.forEach(btn => {
             const buttonEl = document.createElement('button');
@@ -230,205 +566,140 @@
         return bar;
     }
 
-    // --- EVENT HANDLING & LOGIC ---
-
-    function toggleSettingsMenu() {
-        document.getElementById('gemini-settings-menu').classList.toggle('active');
-    }
-    
-    function setMode(modeKey) {
-        if (!helperModes[modeKey]) return;
-        currentMode = modeKey;
-        const mode = helperModes[modeKey];
-
-        // Update theme color
-        document.getElementById('gemini-container').style.setProperty('--theme-accent-color', mode.themeColor);
-
-        // Update math bar visibility
-        document.getElementById('gemini-container').classList.toggle('math-mode-active', mode.showMathBar);
-        
-        // Update active button in settings menu
-        const menu = document.getElementById('gemini-settings-menu');
-        menu.querySelectorAll('.gemini-settings-item').forEach(item => {
-            item.classList.toggle('active', item.dataset.mode === modeKey);
-        });
-
-        menu.classList.remove('active'); // Close menu after selection
-    }
-    
-    function insertAtCursor(html) {
-        const editor = document.getElementById('gemini-input');
-        if (!editor) return;
-        editor.focus();
-        document.execCommand('insertHTML', false, html);
-        handleWYSIWYGInput({target: editor});
-    }
-
-    function handleWYSIWYGInput(e) { /* ... (Function is largely unchanged) ... */ }
-    
     /**
-     * Parses the visually formatted HTML from the input into plain text for the API.
+     * Creates the subject selection settings menu.
      */
-    function parseInputForAPI(innerHTML) {
-        const tempDiv = document.createElement('div');
-        // Standardize line breaks
-        tempDiv.innerHTML = innerHTML.replace(/<div><br><\/div>/g, '\n').replace(/<br>/g, '\n');
-        
-        // Convert fractions
-        tempDiv.querySelectorAll('.gemini-frac').forEach(frac => {
-            const n = frac.querySelector('sup')?.innerText.trim() || '';
-            const d = frac.querySelector('sub')?.innerText.trim() || '';
-            frac.replaceWith(`(${n})/(${d})`);
+    function createSettingsMenu() {
+        const menu = document.createElement('div');
+        menu.id = 'ai-settings-menu';
+        subjects.forEach(subject => {
+            const button = document.createElement('button');
+            button.textContent = subject.name;
+            button.onclick = (e) => {
+                e.stopPropagation();
+                selectSubject(subject.name);
+            };
+            menu.appendChild(button);
         });
-
-        // Convert superscripts
-        tempDiv.querySelectorAll('sup').forEach(sup => sup.replaceWith(`^(${sup.innerText})`));
-
-        return tempDiv.innerText;
+        return menu;
     }
-
-
-    async function handleInputSubmission(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            const editor = e.target;
-            const userHtmlContent = editor.innerHTML;
-            const query = parseInputForAPI(userHtmlContent).trim();
-
-            if (!query || isRequestPending) return;
-
-            appendMessage(userHtmlContent, 'user');
-            
-            const mode = helperModes[currentMode];
-            const systemPrompt = `[Persona: ${mode.systemPrompt}]`;
-            const dateTime = `[System Time: ${getCurrentDateTimeString()}]`;
-
-            let fullQuery = query;
-            if (chatHistory.length === 0) {
-                const location = localStorage.getItem('gemini-injector-location');
-                if (location) {
-                    fullQuery = `(User is in ${location}) ${fullQuery}`;
-                }
-            }
-            
-            fullQuery = `${systemPrompt}\n${dateTime}\n${fullQuery}`;
-
-            chatHistory.push({ role: "user", parts: [{ text: fullQuery }] });
-            sendToAI();
-
-            editor.innerHTML = '';
-            handleWYSIWYGInput({ target: editor });
-        }
-    }
-    
-    function appendMessage(content, type) { /* ... (Function is unchanged) ... */ }
-    async function sendToAI() { /* ... (Function is unchanged) ... */ }
-    function parseAIResponse(text) { /* ... (Function is unchanged) ... */ }
-
-    // --- STYLES ---
 
     function injectStyles() {
-        if (document.getElementById('gemini-dynamic-styles')) return;
-
-        // Assumes 'SecondaryFont' is loaded elsewhere or is a system font.
-        // You can add the @font-face rule here if needed.
-
+        if (document.getElementById('ai-dynamic-styles')) return;
         const style = document.createElement('style');
-        style.id = 'gemini-dynamic-styles';
+        style.id = 'ai-dynamic-styles';
         style.innerHTML = `
-            :root { --theme-accent-color: #8E9397; }
-            #gemini-container { /* ... (Container styling mostly unchanged) ... */ }
-            #gemini-container.active { opacity: 1; }
-
-            .gemini-top-bar {
-                position: absolute; top: 0; left: 0; right: 0; height: 70px;
-                display: flex; align-items: center; padding: 0 30px;
+            :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
+            #ai-container {
+                position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+                background: linear-gradient(-45deg, #12121c, #1a1a2e, #2a2a3a, #1a1a2e);
+                background-size: 400% 400%;
+                animation: gradientBG 25s ease infinite;
+                backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+                z-index: 2147483647; opacity: 0; transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+                font-family: 'Inter', 'Helvetica Neue', Helvetica, Arial, sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box;
             }
-            .gemini-title { font-size: 20px; font-weight: 600; color: var(--theme-accent-color); transition: color 0.3s ease; }
-            .gemini-settings-button {
-                background: none; border: none; font-size: 22px; cursor: pointer;
-                color: rgba(255, 255, 255, 0.6); margin-left: 16px; transition: color 0.2s, transform 0.3s;
+            #ai-container.active { opacity: 1; }
+            #ai-brand-title {
+                position: absolute; top: 25px; left: 30px;
+                font-size: 24px; font-weight: bold;
+                background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue));
+                -webkit-background-clip: text; background-clip: text; color: transparent;
+                animation: brand-slide 10s linear infinite; background-size: 400% 100%;
+                opacity: 1; transition: opacity 0.5s 0.2s;
             }
-            .gemini-settings-button:hover { color: white; transform: rotate(45deg); }
-            .gemini-close-button { margin-left: auto; /* ... (Styling mostly unchanged) ... */ }
-            
-            #gemini-settings-menu {
-                position: absolute; top: 75px; left: 30px;
-                background: rgba(40, 42, 48, 0.8);
-                backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
-                border: 1px solid rgba(255, 255, 255, 0.1);
-                border-radius: 12px;
-                padding: 12px;
-                z-index: 10;
-                opacity: 0; visibility: hidden;
-                transform: translateY(-10px);
-                transition: opacity 0.3s ease, transform 0.3s ease, visibility 0.3s;
-                display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
+            #ai-container.chat-active #ai-brand-title { opacity: 0; pointer-events: none; }
+            #ai-brand-title span { animation: brand-pulse 2s ease-in-out infinite; display: inline-block; }
+            #ai-welcome-message {
+                position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+                text-align: center; color: rgba(255,255,255,0.5);
+                opacity: 1; transition: opacity 0.5s; width: 100%;
             }
-            #gemini-settings-menu.active { opacity: 1; visibility: visible; transform: translateY(0); }
-            #gemini-settings-menu h4 {
-                grid-column: 1 / -1; margin: 0 0 8px; font-weight: 500;
-                color: rgba(255, 255, 255, 0.9);
+            #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; }
+            #ai-welcome-message h2 { font-size: 2.5em; margin: 0; color: #fff; font-weight: 600; }
+            #ai-welcome-message p { font-size: 0.9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
+            #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s ease, transform 0.3s ease; }
+            #ai-close-button:hover { color: white; transform: scale(1.1); }
+            #ai-response-container {
+                flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto;
+                display: flex; flex-direction: column; gap: 15px; padding: 20px;
+                -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%);
+                mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%);
             }
-            .gemini-settings-item {
-                background: rgba(255, 255, 255, 0.05); border: 1px solid transparent;
-                color: rgba(255, 255, 255, 0.8);
-                border-radius: 8px; padding: 8px 12px; text-align: center;
-                cursor: pointer; transition: background 0.2s, border-color 0.2s;
-            }
-            .gemini-settings-item:hover { background: rgba(255, 255, 255, 0.1); }
-            .gemini-settings-item.active {
-                background: var(--theme-accent-color);
-                color: white; font-weight: 600;
-                border-color: rgba(255, 255, 255, 0.8);
-            }
-
-            .gemini-response-container { /* ... (Styling mostly unchanged) ... */ }
-            .gemini-message-bubble { /* ... (Styling mostly unchanged) ... */ }
-            .gemini-user-message {
-                align-self: flex-end; background: #1E2023;
-                border: 1px solid var(--theme-accent-color);
-            }
-            .gemini-gemini-message { align-self: flex-start; }
-            
-            #gemini-input-wrapper {
-                /* ... (Styling mostly unchanged, but using var for focus) ... */
+            .ai-message-bubble { background: rgba(15, 15, 18, 0.8); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
+            .user-message { align-self: flex-end; background: rgba(40, 45, 50, 0.8); }
+            .gemini-response { align-self: flex-start; }
+            .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite, message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+            .ai-response-content pre { background: #0c0d10; border: 1px solid #222; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: monospace; }
+            .ai-math-inline { color: #a5d6ff; font-family: monospace; font-size: 1.1em; }
+            .ai-boxed-answer { border: 1px solid var(--ai-green); background: rgba(52, 168, 83, 0.1); border-radius: 8px; padding: 12px; margin: 10px 0; }
+            .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; }
+            .ai-frac > sup, .ai-frac > sub { display: block; line-height: 1; min-width: 1ch; padding: 0.1em 0.3em; }
+            .ai-frac > sup { border-bottom: 1px solid currentColor; }
+            .ai-frac > span { display: none; } /* Hide the visual slash */
+            #ai-input sup, #ai-input sub { outline: none; }
+            #ai-input-wrapper {
+                flex-shrink: 0; position: relative; opacity: 0; transform: translateY(100px);
+                transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+                margin: 15px auto 30px; width: 90%; max-width: 800px;
+                border-radius: 25px; background: rgba(10, 10, 10, 0.7);
+                backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+                animation: glow 2.5s infinite; animation-play-state: paused;
                 border: 1px solid rgba(255, 255, 255, 0.2);
-                transition: box-shadow 0.3s ease, border-color 0.3s ease;
             }
-            #gemini-input:focus-within {
-                border-color: var(--theme-accent-color);
-                box-shadow: 0 0 8px 0px var(--theme-accent-color);
+            #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite !important; animation-play-state: running !important; }
+            #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
+            #ai-input {
+                min-height: 50px; color: white; font-size: 1.1em;
+                padding: 12px 50px 12px 20px; box-sizing: border-box;
+                word-wrap: break-word; outline: none;
             }
-            #gemini-input-wrapper.waiting {
-                border-color: var(--theme-accent-color);
-                animation: gemini-wait-pulse 2s infinite;
+            #ai-input [contenteditable="true"] { outline: none; } /* Ensure no outlines on nested editables */
+            #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; }
+            #ai-settings-button { position: absolute; right: 10px; top: 25px; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; transition: color 0.2s, transform 0.3s; z-index: 12; }
+            #ai-settings-button:hover, #ai-settings-button.active { color: white; }
+            #ai-settings-button.active { transform: translateY(-50%) rotate(90deg); }
+            #ai-settings-menu {
+                position: absolute; bottom: 120%; right: 0;
+                background: linear-gradient(135deg, rgba(30, 30, 40, 0.9), rgba(50, 50, 60, 0.9));
+                backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+                border: 1px solid rgba(255, 255, 255, 0.2);
+                border-radius: 15px;
+                padding: 10px;
+                display: flex;
+                flex-direction: column;
+                gap: 8px;
+                opacity: 0; visibility: hidden;
+                transform: translateY(10px) scale(0.95);
+                transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+                z-index: 10;
             }
-            
-            #gemini-options-bar {
+            #ai-settings-menu.active { opacity: 1; visibility: visible; transform: translateY(0) scale(1); }
+            #ai-settings-menu button { background: transparent; border: none; color: rgba(255, 255, 255, 0.7); font-size: 1em; text-align: left; padding: 8px 12px; border-radius: 8px; cursor: pointer; transition: background 0.2s, color 0.2s; }
+            #ai-settings-menu button:hover { background: rgba(255, 255, 255, 0.1); color: white; }
+            #ai-settings-menu button.selected { background: var(--ai-blue); color: white; font-weight: bold; }
+            #ai-options-bar {
                 display: flex; overflow-x: auto; background: rgba(0,0,0,0.3);
-                border-top: 1px solid rgba(255,255,255,0.1);
-                transition: max-height 0.4s ease, opacity 0.4s ease, padding 0.4s ease;
-                max-height: 0; opacity: 0; visibility: hidden; padding: 0 15px;
+                transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+                border-top: 1px solid transparent; max-height: 0; opacity: 0; visibility: hidden;
             }
-            #gemini-container.math-mode-active #gemini-options-bar {
-                max-height: 50px; opacity: 1; visibility: visible; padding: 8px 15px;
-            }
-            #gemini-options-bar button { /* ... (Styling is similar to original) ... */ }
-            
-            .gemini-frac {
-                display: inline-flex; flex-direction: column; text-align: center;
-                vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em;
-                border-radius: 5px; margin: 0 0.1em;
-            }
-            .gemini-frac > sup { border-bottom: 1px solid currentColor; padding-bottom: 0.15em; }
-            .gemini-frac > sub { padding-top: 0.15em; }
-            #gemini-input sup, #gemini-input sub { outline: none; }
-            
-            @keyframes gemini-wait-pulse {
-                50% { box-shadow: 0 0 10px 0px var(--theme-accent-color); }
-            }
+            #ai-input-wrapper.options-active #ai-options-bar { max-height: 50px; opacity: 1; visibility: visible; padding: 8px 15px; border-top: 1px solid rgba(255,255,255,0.1); }
+            #ai-options-bar button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.1em; cursor: pointer; padding: 5px 10px; transition: background 0.2s; flex-shrink: 0; margin-right: 8px; }
+            #ai-options-bar button:hover { background: rgba(255,255,255,0.2); }
+            #ai-char-counter { position: fixed; bottom: 10px; right: 20px; font-size: 0.8em; color: rgba(255, 255, 255, 0.4); z-index: 2; user-select: none; }
+            .ai-error { text-align: center; color: var(--ai-red); }
+            .ai-loader { width: 25px; height: 25px; border: 3px solid rgba(255, 255, 255, 0.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
+            @keyframes gradientBG { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
+            @keyframes glow { 0%, 100% { box-shadow: 0 0 5px rgba(255, 255, 255, 0.2), 0 0 10px rgba(255, 255, 255, 0.1); } 50% { box-shadow: 0 0 15px rgba(255, 255, 255, 0.5), 0 0 25px rgba(255, 255, 255, 0.3); } }
+            @keyframes gemini-glow { 0%, 100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
+            @keyframes spin { to { transform: rotate(360deg); } }
+            @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(0.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+            @keyframes brand-slide { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+            @keyframes brand-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
         `;
         document.head.appendChild(style);
     }
+
+    document.addEventListener('keydown', handleKeyDown);
+
 })();
