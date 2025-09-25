@@ -8,8 +8,9 @@
  */
 (function() {
     // --- CONFIGURATION ---
-    let fetchedApiKey = null; 
-    const SECRETS_DOC_PATH = 'secrets/UxpCOtjzFG36CyICPiaa'; // IMPORTANT: Replace with your Document ID from Firestore
+    let fetchedApiKey = null;
+    // IMPORTANT: Replace with your actual Document ID from Firestore Step 1
+    const SECRETS_DOC_PATH = 'secrets/UxpCOtjzFG36CyICPiaa'; 
     const USER_CHAR_LIMIT = 500;
     const FIRST_LINE_CHAR_LIMIT = 60;
 
@@ -38,24 +39,30 @@
         if (typeof firebase === 'undefined' || !firebase.auth().currentUser) {
             return false;
         }
+
         try {
             const userDocRef = firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
             const userDoc = await userDocRef.get();
 
             if (userDoc.exists && userDoc.data().aiEnrolled === true) {
+                // User is enrolled, now try to fetch the key.
+                // This will only succeed if the security rules pass.
                 const secretsDocRef = firebase.firestore().doc(SECRETS_DOC_PATH);
                 const secretsDoc = await secretsDocRef.get();
-                if (secretsDoc.exists) {
+
+                if (secretsDoc.exists && secretsDoc.data().geminiKey) {
                     fetchedApiKey = secretsDoc.data().geminiKey;
-                    return true;
+                    return true; // Success!
                 } else {
-                    throw new Error("Could not retrieve API key.");
+                    throw new Error("Could not retrieve API key. Check Firestore path and document.");
                 }
             } else {
+                // User is not enrolled.
                 return false;
             }
         } catch (error) {
             console.error("Authorization check failed:", error);
+            // This error will trigger if rules deny access, which is the expected secure behavior.
             return false;
         }
     }
@@ -79,6 +86,7 @@
                     if (isAuthorized) {
                         activateAI();
                     } else {
+                        alert("You are not enrolled in the AI Mode program, or access is misconfigured.");
                     }
                 }
             }
@@ -92,39 +100,32 @@
         if (document.getElementById('ai-container')) return;
         chatHistory = [];
         injectStyles();
-
         const container = document.createElement('div');
         container.id = 'ai-container';
         container.dataset.subject = 'General';
-        
         const brandTitle = document.createElement('div');
         brandTitle.id = 'ai-brand-title';
-        const brandText = "4SP"; // Simplified title
+        const brandText = "4SP";
         brandText.split('').forEach(char => {
             const span = document.createElement('span');
             span.textContent = char;
             span.style.animationDelay = `${Math.random() * 2}s`;
             brandTitle.appendChild(span);
         });
-        
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
         welcomeMessage.innerHTML = `
             <h2>Welcome to AI Mode</h2>
             <p>This is a beta feature. Your general location may be shared with your first message.</p>
         `;
-
         const closeButton = document.createElement('div');
         closeButton.id = 'ai-close-button';
         closeButton.innerHTML = '&times;';
         closeButton.onclick = deactivateAI;
-
         const responseContainer = document.createElement('div');
         responseContainer.id = 'ai-response-container';
-
         const inputWrapper = document.createElement('div');
         inputWrapper.id = 'ai-input-wrapper';
-        
         const visualInput = document.createElement('div');
         visualInput.id = 'ai-input';
         visualInput.contentEditable = true;
@@ -132,39 +133,31 @@
         visualInput.oninput = handleContentEditableInput;
         visualInput.onkeyup = updateFractionFocus;
         visualInput.onclick = updateFractionFocus;
-
         const placeholder = document.createElement('div');
         placeholder.id = 'ai-input-placeholder';
         placeholder.textContent = 'Ask a question...';
-
         const charCounter = document.createElement('div');
         charCounter.id = 'ai-char-counter';
         charCounter.textContent = `0 / ${USER_CHAR_LIMIT}`;
-
         const settingsToggle = document.createElement('button');
         settingsToggle.id = 'ai-settings-toggle';
-        settingsToggle.innerHTML = '&#8942;'; // Default state: three dots
+        settingsToggle.innerHTML = '&#8942;';
         settingsToggle.onclick = handleSettingsToggleClick;
-        
         inputWrapper.appendChild(createSettingsMenu());
         inputWrapper.appendChild(visualInput);
         inputWrapper.appendChild(placeholder);
         inputWrapper.appendChild(charCounter);
         inputWrapper.appendChild(settingsToggle);
         inputWrapper.appendChild(createOptionsBar());
-        
         container.appendChild(brandTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
-
         document.body.appendChild(container);
-
         setTimeout(() => {
             container.classList.add('active');
         }, 10);
-
         visualInput.focus();
         isAIActive = true;
     }
@@ -207,8 +200,10 @@
         
         let systemInstruction = null;
         switch (currentSubject) {
-            case 'Math': systemInstruction = 'You are a mathematics expert...'; break;
-            // ... add other cases
+            case 'Math': systemInstruction = 'You are a mathematics expert. Prioritize accuracy, detailed steps, and formal notation. Be concise.'; break;
+            case 'Science': systemInstruction = 'You are a science expert. Provide clear, evidence-based explanations and use scientific terminology correctly. Be concise.'; break;
+            case 'ELA': systemInstruction = 'You are an English Language Arts expert. Focus on grammar, literary analysis, and writing structure. Be concise.'; break;
+            case 'History': systemInstruction = 'You are a history expert. Provide historically accurate information with context, dates, and sources where applicable. Be concise.'; break;
         }
         
         const payload = { contents: chatHistory };
@@ -244,6 +239,7 @@
             const settingsToggle = document.getElementById('ai-settings-toggle');
             if (settingsToggle) {
                 settingsToggle.classList.remove('generating');
+                settingsToggle.innerHTML = '&#8942;';
             }
 
             responseBubble.classList.remove('loading');
@@ -280,69 +276,9 @@
     }
 
     /**
-     * The main function for handling form submission.
+     * Handles real-time input conversions for LaTeX, superscripts, etc.
      */
-    function handleInputSubmission(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            fadeOutWelcomeMessage();
-            let query = parseInputForAPI(editor.innerHTML);
-            if (!query || isRequestPending) return;
-            const now = Date.now();
-            if (now - lastRequestTime < COOLDOWN_PERIOD) return;
-
-            isRequestPending = true;
-            lastRequestTime = now;
-            document.getElementById('ai-settings-toggle').classList.add('generating');
-
-            editor.contentEditable = false;
-            document.getElementById('ai-input-wrapper').classList.add('waiting');
-            chatHistory.push({ role: "user", parts: [{ text: query }] });
-
-            const responseContainer = document.getElementById('ai-response-container');
-            const userBubble = document.createElement('div');
-            userBubble.className = 'ai-message-bubble user-message';
-            userBubble.innerHTML = editor.innerHTML;
-            responseContainer.appendChild(userBubble);
-
-            const responseBubble = document.createElement('div');
-            responseBubble.className = 'ai-message-bubble gemini-response loading';
-            responseBubble.innerHTML = '<div class="ai-loader"></div>';
-            responseContainer.appendChild(responseBubble);
-            responseContainer.scrollTop = responseContainer.scrollHeight;
-
-            editor.innerHTML = '';
-            handleContentEditableInput({ target: editor });
-            callGoogleAI(responseBubble);
-        }
-        // ... (rest of the backspace logic from previous versions) ...
-    }
-
-    // --- All other UI and helper functions remain from the previous version ---
-    // (I am re-including them for a complete, copy-paste ready script)
-
-    function fadeOutWelcomeMessage(){
-        const container = document.getElementById('ai-container');
-        if (container && !container.classList.contains('chat-active')) {
-            container.classList.add('chat-active');
-        }
-    }
-
-    function updateFractionFocus(){
-        const editor = document.getElementById('ai-input');
-        if (!editor) return;
-        editor.querySelectorAll('.ai-frac').forEach(f => f.classList.remove('focused'));
-        const selection = window.getSelection();
-        if (selection.rangeCount > 0 && selection.isCollapsed) {
-            const range = selection.getRangeAt(0);
-            const nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
-            if (nodeBefore && nodeBefore.nodeType === 1 && nodeBefore.classList.contains('ai-frac')) {
-                nodeBefore.classList.add('focused');
-            }
-        }
-    }
-
-    function handleContentEditableInput(e){
+    function handleContentEditableInput(e) {
         const editor = e.target;
         const selection = window.getSelection();
         if (!selection.rangeCount) return;
@@ -400,7 +336,10 @@
         if (placeholder) placeholder.style.display = (rawText.length > 0 || editor.querySelector('.ai-frac')) ? 'none' : 'block';
     }
 
-    function parseInputForAPI(innerHTML){
+    /**
+     * Parses the visually formatted HTML from the input into plain text for the API.
+     */
+    function parseInputForAPI(innerHTML) {
         const tempDiv = document.createElement('div');
         tempDiv.innerHTML = innerHTML.replace(/<div><br><\/div>/g, '\n').replace(/<br>/g, '\n');
         tempDiv.querySelectorAll('.ai-frac').forEach(frac => {
@@ -420,7 +359,64 @@
         return text;
     }
 
-    function parseGeminiResponse(text){
+    /**
+     * Handles the submission of a question via the 'Enter' key.
+     */
+    function handleInputSubmission(e) {
+        const editor = e.target;
+
+        if (e.key === 'Backspace') {
+            const selection = window.getSelection();
+            if (selection.rangeCount > 0 && selection.isCollapsed) {
+                const range = selection.getRangeAt(0);
+                const nodeBefore = range.startContainer.childNodes[range.startOffset - 1];
+                if (nodeBefore && nodeBefore.nodeType === 1 && (nodeBefore.classList.contains('ai-frac') || nodeBefore.tagName.toLowerCase() === 'sup')) {
+                    e.preventDefault();
+                    nodeBefore.remove();
+                    handleContentEditableInput({target: editor});
+                    return;
+                }
+            }
+        }
+        
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            fadeOutWelcomeMessage();
+            let query = parseInputForAPI(editor.innerHTML);
+            if (!query || isRequestPending) return;
+            const now = Date.now();
+            if (now - lastRequestTime < COOLDOWN_PERIOD) return;
+
+            isRequestPending = true;
+            lastRequestTime = now;
+            document.getElementById('ai-settings-toggle').classList.add('generating');
+
+            editor.contentEditable = false;
+            document.getElementById('ai-input-wrapper').classList.add('waiting');
+            chatHistory.push({ role: "user", parts: [{ text: query }] });
+
+            const responseContainer = document.getElementById('ai-response-container');
+            const userBubble = document.createElement('div');
+            userBubble.className = 'ai-message-bubble user-message';
+            userBubble.innerHTML = editor.innerHTML;
+            responseContainer.appendChild(userBubble);
+
+            const responseBubble = document.createElement('div');
+            responseBubble.className = 'ai-message-bubble gemini-response loading';
+            responseBubble.innerHTML = '<div class="ai-loader"></div>';
+            responseContainer.appendChild(responseBubble);
+            responseContainer.scrollTop = responseContainer.scrollHeight;
+
+            editor.innerHTML = '';
+            handleContentEditableInput({ target: editor });
+            callGoogleAI(responseBubble);
+        }
+    }
+
+    /**
+     * Parses Gemini's response, handling Markdown, math, and code blocks.
+     */
+    function parseGeminiResponse(text) {
         let html = text.replace(/</g, '&lt;').replace(/>/g, '&gt;');
         html = html.replace(/```([\s\S]*?)```/g, (match, code) => `<pre><code>${code.trim()}</code></pre>`);
         html = html.replace(/\$([^\$]+)\$/g, (match, math) => {
@@ -438,16 +434,16 @@
         html = html.replace(/<li>(.*?)<\/li>/g, '<ul><li>$1</li></ul>').replace(/<\/ul>\n?<ul>/g, '');
         return html.replace(/\n/g, '<br>');
     }
-
-    function insertAtCursor(html){
+    
+    function insertAtCursor(html) {
         const editor = document.getElementById('ai-input');
         if (!editor) return;
         editor.focus();
         document.execCommand('insertHTML', false, html);
         handleContentEditableInput({target: editor});
     }
-
-    function insertFraction(){
+    
+    function insertFraction() {
         const editor = document.getElementById('ai-input');
         editor.focus();
         const selection = window.getSelection();
@@ -476,7 +472,7 @@
         handleContentEditableInput({ target: editor });
     }
     
-    function insertPower(){
+    function insertPower() {
         const editor = document.getElementById('ai-input');
         editor.focus();
         const selection = window.getSelection();
@@ -494,7 +490,7 @@
         handleContentEditableInput({ target: editor });
     }
 
-    function createOptionsBar(){
+    function createOptionsBar() {
         const bar = document.createElement('div');
         bar.id = 'ai-options-bar';
         const buttons = [
@@ -529,7 +525,7 @@
         return bar;
     }
 
-    function toggleSettingsMenu(){
+    function toggleSettingsMenu() {
         isSettingsMenuOpen = !isSettingsMenuOpen;
         const menu = document.getElementById('ai-settings-menu');
         const toggleBtn = document.getElementById('ai-settings-toggle');
@@ -537,7 +533,7 @@
         toggleBtn.classList.toggle('active', isSettingsMenuOpen);
     }
     
-    function selectSubject(subject){
+    function selectSubject(subject) {
         currentSubject = subject;
         document.getElementById('ai-container').dataset.subject = subject;
         const menu = document.getElementById('ai-settings-menu');
@@ -547,7 +543,7 @@
         toggleSettingsMenu();
     }
     
-    function createSettingsMenu(){
+    function createSettingsMenu() {
         const menu = document.createElement('div');
         menu.id = 'ai-settings-menu';
         const subjects = ['General', 'Math', 'ELA', 'History', 'Science'];
@@ -564,76 +560,75 @@
 
     function injectStyles() {
         if (document.getElementById('ai-dynamic-styles')) return;
-        // ... (font style injection) ...
+        if (!document.querySelector('style[data-font="primary"]')) {
+            const fontStyle = document.createElement('style');
+            fontStyle.setAttribute('data-font', 'primary');
+            fontStyle.textContent = `@font-face { font-family: 'PrimaryFont'; src: url('../fonts/primary.woff') format('woff'); font-weight: normal; font-style: normal; }`;
+            document.head.appendChild(fontStyle);
+        }
         const style = document.createElement('style');
         style.id = 'ai-dynamic-styles';
         style.innerHTML = `
-            :root { /* ... colors ... */ }
-            #ai-container { /* ... container styles ... */ }
-            #ai-brand-title { /* ... brand title styles ... */ font-family: 'PrimaryFont', sans-serif; font-size: 24px; /* etc. */ }
-            /* REMOVED: #ai-persistent-title rule */
-
-            #ai-input-wrapper {
-                /* ... other styles ... */
-                border-radius: 25px;
-                background: rgba(10, 10, 10, 0.7);
-                backdrop-filter: blur(20px);
-                animation: glow 3s infinite; /* CHANGED: Simplified animation */
-                animation-play-state: running; /* CHANGED: Always on */
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                overflow: hidden; /* ADDED: Fixes the corner bug */
-            }
-            @keyframes glow { /* CHANGED: Simplified steady pulse */
-                0%, 100% { box-shadow: 0 0 8px rgba(255, 255, 255, 0.2); }
-                50% { box-shadow: 0 0 16px rgba(255, 255, 255, 0.4); }
-            }
-
-            #ai-settings-toggle {
-                /* ... other styles ... */
-                transition: all 0.3s;
-                border-radius: 50%;
-                width: 34px;
-                height: 34px;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-            }
-            #ai-settings-toggle.generating {
-                transform: translateY(-50%) rotate(45deg);
-                background-color: rgba(255, 255, 255, 0.1);
-            }
-            #ai-settings-toggle.generating::before {
-                content: '■';
-                font-size: 20px;
-                line-height: 1;
-                border-radius: 4px; /* Creates the "roundish square" */
-            }
-            #ai-settings-toggle.generating { pointer-events: auto; } /* Ensure it's clickable */
-
-            #ai-settings-menu {
-                position: absolute;
-                bottom: 60px;
-                right: 5px;
-                z-index: 10; /* RAISED z-index */
-                background: #1E1E1E; /* CHANGED: Opaque background */
-                border: 1px solid rgba(255, 255, 255, 0.2);
-                border-radius: 15px;
-                padding: 10px;
-                display: flex;
-                flex-direction: column;
-                gap: 8px;
-                opacity: 0;
-                visibility: hidden;
-                transform: translateY(10px) scale(0.95);
-                transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-                transform-origin: bottom right;
-                box-shadow: 0 5px 25px rgba(0,0,0,0.3);
-            }
-            /* ... rest of the styles from previous version ... */
+            :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
+            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s cubic-bezier(0.4, 0, 0.2, 1); font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box; }
+            #ai-container.active { opacity: 1; }
+            #ai-brand-title { position: absolute; top: 25px; left: 30px; font-family: 'PrimaryFont', sans-serif; font-size: 24px; font-weight: bold; background: linear-gradient(to right, var(--ai-red), var(--ai-yellow), var(--ai-green), var(--ai-blue)); -webkit-background-clip: text; background-clip: text; color: transparent; animation: brand-slide 10s linear infinite; background-size: 400% 100%; opacity: 1; transform: translateY(0); transition: opacity 0.5s 0.2s, transform 0.5s 0.2s; }
+            #ai-container.chat-active #ai-brand-title { opacity: 0; pointer-events: none; }
+            #ai-brand-title span { animation: brand-pulse 2s ease-in-out infinite; display: inline-block; }
+            #ai-welcome-message { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); text-align: center; color: rgba(255,255,255,0.5); opacity: 1; transition: opacity 0.5s; width: 100%; }
+            #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; }
+            #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
+            #ai-welcome-message p { font-size: 0.9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
+            #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255, 255, 255, 0.7); font-size: 40px; cursor: pointer; transition: color 0.2s ease, transform 0.3s ease; }
+            #ai-close-button:hover { color: white; transform: scale(1.1); }
+            #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 20px; -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%); mask-image: linear-gradient(to bottom, transparent 0%, black 5%, black 95%, transparent 100%); }
+            .ai-message-bubble { background: rgba(15, 15, 18, 0.8); border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
+            .user-message { align-self: flex-end; background: rgba(40, 45, 50, 0.8); }
+            .gemini-response { align-self: flex-start; }
+            .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite, message-pop-in 0.5s cubic-bezier(0.4, 0, 0.2, 1) forwards; }
+            .ai-response-content pre { background: #0c0d10; border: 1px solid #222; border-radius: 8px; padding: 12px; margin: 8px 0; overflow-x: auto; font-family: monospace; }
+            .ai-math-inline, .user-message { color: #a5d6ff; font-family: monospace; font-size: 1.1em; }
+            .ai-frac { display: inline-flex; flex-direction: column; text-align: center; vertical-align: middle; background: rgba(0,0,0,0.2); padding: 0.1em 0.4em; border-radius: 5px; transition: box-shadow 0.2s, transform 0.2s; }
+            .ai-frac.focused { box-shadow: 0 0 0 2px var(--ai-blue); transform: scale(1.1); }
+            .ai-frac > sup, .ai-frac > sub { display: block; min-width: 1ch; line-height: 1; }
+            .ai-frac > sup { border-bottom: 1px solid currentColor; padding: 0.2em 0.1em; }
+            .ai-frac > sub { padding: 0.2em 0.1em; }
+            #ai-input sup, #ai-input sub { font-family: 'secondaryfont', sans-serif; outline: none; background: rgba(0,0,0,0.2); padding: 0.1em 0.3em; border-radius: 4px; vertical-align: super; }
+            #ai-input-wrapper { flex-shrink: 0; position: relative; opacity: 0; transform: translateY(100px); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); margin: 15px auto 30px; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10, 10, 10, 0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255, 255, 255, 0.2); overflow: hidden; }
+            #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite !important; }
+            #ai-container.active #ai-input-wrapper { opacity: 1; transform: translateY(0); }
+            #ai-input { min-height: 50px; color: white; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; word-wrap: break-word; outline: none; }
+            #ai-input-placeholder { position: absolute; top: 14px; left: 20px; color: rgba(255,255,255,0.4); pointer-events: none; font-size: 1.1em; }
+            #ai-settings-toggle { position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; color: rgba(255,255,255,0.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all 0.3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
+            #ai-settings-toggle:hover, #ai-settings-toggle.active { color: white; background-color: rgba(255,255,255,0.1); }
+            #ai-settings-toggle.active { transform: translateY(-50%) rotate(90deg); }
+            #ai-settings-toggle.generating { transform: translateY(-50%) rotate(45deg); background-color: rgba(255, 82, 82, 0.2); color: #ff8a80; }
+            #ai-settings-toggle.generating:hover { background-color: rgba(255, 82, 82, 0.4); }
+            #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
+            #ai-settings-toggle.generating { innerHTML: ''; }
+            #ai-options-bar { display: flex; overflow-x: auto; background: rgba(0,0,0,0.3); transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1); border-top: 1px solid transparent; max-height: 0; opacity: 0; visibility: hidden; padding: 0 15px; }
+            #ai-container[data-subject="Math"] #ai-options-bar, #ai-container[data-subject="Science"] #ai-options-bar { max-height: 50px; opacity: 1; visibility: visible; padding: 8px 15px; border-top: 1px solid rgba(255,255,255,0.1); }
+            #ai-options-bar button { background: rgba(255,255,255,0.1); border: none; border-radius: 8px; color: white; font-size: 1.1em; cursor: pointer; padding: 5px 10px; transition: background 0.2s, box-shadow 0.2s; flex-shrink: 0; margin-right: 8px; }
+            #ai-options-bar button:hover { background: rgba(255,255,255,0.2); }
+            #ai-options-bar button:focus { outline: none; box-shadow: 0 0 0 2px var(--ai-blue); }
+            #ai-char-counter { position: absolute; right: 55px; top: 15px; font-size: 0.8em; color: rgba(255, 255, 255, 0.4); z-index: 2;}
+            #ai-settings-menu { position: absolute; bottom: 60px; right: 5px; z-index: 10; background: #1E1E1E; border: 1px solid rgba(255, 255, 255, 0.2); border-radius: 15px; padding: 10px; display: flex; flex-direction: column; gap: 8px; opacity: 0; visibility: hidden; transform: translateY(10px) scale(0.95); transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); transform-origin: bottom right; box-shadow: 0 5px 25px rgba(0,0,0,0.3); }
+            #ai-settings-menu.active { opacity: 1; visibility: visible; transform: translateY(0) scale(1); }
+            #ai-settings-menu button { font-family: 'PrimaryFont', sans-serif; background: rgba(255,255,255,0.05); color: #ccc; border: 1px solid transparent; border-radius: 8px; padding: 8px 15px; text-align: left; cursor: pointer; transition: background .2s, border-color .2s; font-size: 1.1em; }
+            #ai-settings-menu button:hover { background: rgba(255,255,255,0.1); }
+            #ai-settings-menu button.active { background: rgba(66, 133, 244, 0.3); border-color: var(--ai-blue); color: #fff; }
+            .ai-error, .ai-temp-message { text-align: center; color: rgba(255, 255, 255, 0.7); }
+            .ai-loader { width: 25px; height: 25px; border: 3px solid rgba(255, 255, 255, 0.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
+            @keyframes glow { 0%, 100% { box-shadow: 0 0 8px rgba(255, 255, 255, 0.2); } 50% { box-shadow: 0 0 16px rgba(255, 255, 255, 0.4); } }
+            @keyframes gemini-glow { 0%, 100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
+            @keyframes spin { to { transform: rotate(360deg); } }
+            @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(0.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+            @keyframes brand-slide { 0%{background-position:0% 50%} 50%{background-position:100% 50%} 100%{background-position:0% 50%} }
+            @keyframes brand-pulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.05); } }
         `;
         document.head.appendChild(style);
     }
 
-    // Initialize the main activation listener
     document.addEventListener('keydown', handleKeyDown);
+
 })();
