@@ -8,9 +8,10 @@
  */
 (function() {
     // --- CONFIGURATION ---
-    let fetchedApiKey = null;
-    // IMPORTANT: Replace with your actual Document ID from Firestore Step 1
-    const SECRETS_DOC_PATH = 'secrets/UxpCOtjzFG36CyICPiaa'; 
+    // The API key will be fetched from the secure Firestore document.
+    let fetchedApiKey = null; 
+    // This now uses the specific document path you provided.
+    const SECRETS_DOC_PATH = 'secrets/UxpCOtjzFG36CyICPiaa';
     const USER_CHAR_LIMIT = 500;
     const FIRST_LINE_CHAR_LIMIT = 60;
 
@@ -18,7 +19,7 @@
     let isAIActive = false;
     let isRequestPending = false;
     let isSettingsMenuOpen = false;
-    let currentAIRequestController = null; // To handle stopping the AI response
+    let currentAIRequestController = null;
     let currentSubject = 'General';
     let lastRequestTime = 0;
     const COOLDOWN_PERIOD = 5000;
@@ -33,20 +34,25 @@
     };
 
     /**
-     * Securely checks if the user is enrolled and, if so, fetches the API key.
+     * Securely checks if the user is enrolled (or an admin) and, if so, fetches the API key.
      */
     async function checkEnrollmentAndFetchApiKey() {
-        if (typeof firebase === 'undefined' || !firebase.auth().currentUser) {
+        const user = firebase.auth().currentUser;
+        if (typeof firebase === 'undefined' || !user) {
             return false;
         }
 
         try {
-            const userDocRef = firebase.firestore().collection('users').doc(firebase.auth().currentUser.uid);
+            const userDocRef = firebase.firestore().collection('users').doc(user.uid);
             const userDoc = await userDocRef.get();
+            const adminEmails = ['4simpleproblems@gmail.com', 'belkwy30@minerva.sparcc.org'];
+            
+            const isEnrolled = userDoc.exists && userDoc.data().aiEnrolled === true;
+            const isAdmin = adminEmails.includes(user.email);
 
-            if (userDoc.exists && userDoc.data().aiEnrolled === true) {
-                // User is enrolled, now try to fetch the key.
-                // This will only succeed if the security rules pass.
+            if (isEnrolled || isAdmin) {
+                // User is authorized, now try to fetch the key.
+                // This will only succeed if the security rules pass for enrolled users.
                 const secretsDocRef = firebase.firestore().doc(SECRETS_DOC_PATH);
                 const secretsDoc = await secretsDocRef.get();
 
@@ -86,7 +92,7 @@
                     if (isAuthorized) {
                         activateAI();
                     } else {
-                        alert("You are not enrolled in the AI Mode program, or access is misconfigured.");
+                        alert("You are not enrolled in the AI Mode program.");
                     }
                 }
             }
@@ -183,7 +189,7 @@
         isRequestPending = false;
         currentSubject = 'General';
         chatHistory = [];
-        fetchedApiKey = null;
+        fetchedApiKey = null; // Clear the fetched key when closing
     }
 
     /**
@@ -216,7 +222,7 @@
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(payload),
-                signal: currentAIRequestController.signal // Add the abort signal
+                signal: currentAIRequestController.signal
             });
             if (!response.ok) throw new Error('Network response was not ok.');
             const data = await response.json();
@@ -557,6 +563,13 @@
         });
         return menu;
     }
+    
+    function fadeOutWelcomeMessage() {
+        const container = document.getElementById('ai-container');
+        if (container && !container.classList.contains('chat-active')) {
+            container.classList.add('chat-active');
+        }
+    }
 
     function injectStyles() {
         if (document.getElementById('ai-dynamic-styles')) return;
@@ -628,7 +641,8 @@
         `;
         document.head.appendChild(style);
     }
-
+    
+    // Initialize the main activation listener
     document.addEventListener('keydown', handleKeyDown);
 
 })();
