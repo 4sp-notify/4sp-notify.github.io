@@ -1,13 +1,14 @@
 /**
  * ai-activation.js
  *
- * A feature-rich, self-contained script with file uploads, daily limits,
- * enhanced contextual awareness, and a redesigned attachment menu.
+ * A feature-rich script with file uploads, daily limits, contextual awareness,
+ * a redesigned attachment menu, scrolling input, and panic key integration.
  */
 (function() {
     // --- CONFIGURATION ---
     // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
+    // NOTE: Using a stable model name to prevent 404 errors.
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
     const MAX_INPUT_HEIGHT = 200; // Max height in pixels before scrolling
@@ -37,7 +38,6 @@
             const usageData = JSON.parse(localStorage.getItem('aiUsageLimits')) || {};
             const today = limitManager.getToday();
 
-            // If the saved date is not today, reset the data.
             if (usageData.date !== today) {
                 return { date: today, images: 0, videos: 0 };
             }
@@ -53,7 +53,7 @@
             if (type in DAILY_LIMITS) {
                 return (usage[type] || 0) < DAILY_LIMITS[type];
             }
-            return true; // No limit for this type (e.g., 'files', 'audio')
+            return true;
         },
 
         recordUpload: (type) => {
@@ -69,17 +69,52 @@
      * Checks if the user is authorized to use the AI.
      */
     async function isUserAuthorized() {
-        // (This function remains unchanged from the previous version)
-        // ...
+        const user = firebase.auth().currentUser;
+        if (typeof firebase === 'undefined' || !user) return false;
+        
+        const adminEmails = ['4simpleproblems@gmail.com', 'belkwy30@minerva.sparcc.org'];
+        if (adminEmails.includes(user.email)) return true;
+        
+        try {
+            const userDocRef = firebase.firestore().collection('users').doc(user.uid);
+            const userDoc = await userDocRef.get();
+            return userDoc.exists && userDoc.data().aiEnrolled === true;
+        } catch (error) {
+            console.error("AI Auth Check Error:", error);
+            return false;
+        }
     }
 
     /**
-     * Initializes the AI, including restoring the panic key blocker.
+     * Handles the keyboard shortcut for activating/deactivating the AI.
+     */
+    async function handleKeyDown(e) {
+        if (e.ctrlKey && e.key.toLowerCase() === 'c') {
+            const selection = window.getSelection().toString();
+            if (isAIActive) {
+                e.preventDefault();
+                const mainEditor = document.getElementById('ai-input');
+                if (mainEditor && mainEditor.innerText.trim().length === 0 && selection.length === 0 && attachedFiles.length === 0) {
+                    deactivateAI();
+                }
+            } else {
+                if (selection.length === 0) {
+                    const isAuthorized = await isUserAuthorized();
+                    if (isAuthorized) {
+                        e.preventDefault();
+                        activateAI();
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Creates and injects the AI interface into the page.
      */
     function activateAI() {
         if (document.getElementById('ai-container')) return;
         
-        // Restore Panic Key blocker if the function exists
         if (typeof window.startPanicKeyBlocker === 'function') {
             window.startPanicKeyBlocker();
         }
@@ -90,7 +125,6 @@
         
         const container = document.createElement('div');
         container.id = 'ai-container';
-        container.dataset.subject = 'General';
         
         const persistentTitle = document.createElement('div');
         persistentTitle.id = 'ai-persistent-title';
@@ -98,10 +132,8 @@
         
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
-        welcomeMessage.innerHTML = `
-            <h2>Welcome to AI Mode</h2>
-            <p>This is a beta feature. Your general location may be shared with your first message.</p>
-        `;
+        welcomeMessage.innerHTML = `<h2>Welcome to AI Mode</h2><p>Attach files, images, or audio using the ••• button.</p>`;
+
         const closeButton = document.createElement('div');
         closeButton.id = 'ai-close-button';
         closeButton.innerHTML = '&times;';
@@ -113,7 +145,6 @@
         const inputWrapper = document.createElement('div');
         inputWrapper.id = 'ai-input-wrapper';
 
-        // NEW: Container for file previews
         const attachmentPreviewContainer = document.createElement('div');
         attachmentPreviewContainer.id = 'ai-attachment-preview';
         
@@ -122,29 +153,21 @@
         visualInput.contentEditable = true;
         visualInput.onkeydown = handleInputSubmission;
         visualInput.oninput = handleContentEditableInput;
-        visualInput.onkeyup = updateFractionFocus;
-        visualInput.onclick = updateFractionFocus;
         
         const placeholder = document.createElement('div');
         placeholder.id = 'ai-input-placeholder';
         placeholder.textContent = 'Ask a question or describe your files...';
-
-        const charCounter = document.createElement('div');
-        charCounter.id = 'ai-char-counter';
-        charCounter.textContent = `0 / ${USER_CHAR_LIMIT}`;
 
         const settingsToggle = document.createElement('button');
         settingsToggle.id = 'ai-settings-toggle';
         settingsToggle.innerHTML = '&#8942;';
         settingsToggle.onclick = handleSettingsToggleClick;
 
-        inputWrapper.appendChild(createAttachmentMenu()); // Note: Renamed from settings menu
-        inputWrapper.appendChild(attachmentPreviewContainer); // Add preview container
+        inputWrapper.appendChild(createAttachmentMenu());
+        inputWrapper.appendChild(attachmentPreviewContainer);
         inputWrapper.appendChild(visualInput);
         inputWrapper.appendChild(placeholder);
-        inputWrapper.appendChild(charCounter);
         inputWrapper.appendChild(settingsToggle);
-        inputWrapper.appendChild(createOptionsBar());
         
         container.appendChild(persistentTitle);
         container.appendChild(welcomeMessage);
@@ -154,9 +177,7 @@
         
         document.body.appendChild(container);
         
-        setTimeout(() => {
-            container.classList.add('active');
-        }, 10);
+        setTimeout(() => container.classList.add('active'), 10);
         
         visualInput.focus();
         isAIActive = true;
@@ -166,14 +187,11 @@
      * Deactivates the AI, including re-enabling the panic key.
      */
     function deactivateAI() {
-        // Re-enable Panic Key if the function exists
         if (typeof window.stopPanicKeyBlocker === 'function') {
             window.stopPanicKeyBlocker();
         }
-
-        if (currentAIRequestController) {
-            currentAIRequestController.abort();
-        }
+        if (currentAIRequestController) currentAIRequestController.abort();
+        
         const container = document.getElementById('ai-container');
         if (container) {
             container.classList.add('deactivating');
@@ -186,13 +204,12 @@
         isAIActive = false;
         isAttachmentMenuOpen = false;
         isRequestPending = false;
-        currentSubject = 'General';
         chatHistory = [];
         attachedFiles = [];
     }
 
     /**
-     * Calls the Google AI API, now with contextual data.
+     * Calls the Google AI API, now with contextual data and file support.
      */
     async function callGoogleAI(responseBubble) {
         if (!API_KEY) {
@@ -201,10 +218,9 @@
         }
 
         currentAIRequestController = new AbortController();
-
-        // Add dynamic, invisible context to the first user message
+        
         let firstMessageContext = '';
-        if (chatHistory.length <= 1) { // Only on the first turn
+        if (chatHistory.length <= 1) {
             const location = localStorage.getItem('ai-user-location') || 'an unknown location';
             const now = new Date();
             const date = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
@@ -215,12 +231,96 @@
         const lastMessageIndex = chatHistory.length - 1;
         chatHistory[lastMessageIndex].parts[0].text = firstMessageContext + chatHistory[lastMessageIndex].parts[0].text;
         
-        // ... (system instruction logic remains the same) ...
-
         const payload = { contents: chatHistory };
-        // ... (rest of the function is the same) ...
+
+        try {
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: currentAIRequestController.signal
+            });
+            if (!response.ok) throw new Error(`Network response was not ok. Status: ${response.status}`);
+            const data = await response.json();
+
+            if (!data.candidates || data.candidates.length === 0) {
+                 throw new Error("Invalid response from API.");
+            }
+
+            const text = data.candidates[0].content.parts[0].text;
+            chatHistory.push({ role: "model", parts: [{ text: text }] });
+            responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
+        } catch (error) {
+            if (error.name === 'AbortError') {
+                responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`;
+            } else {
+                console.error('AI API Error:', error);
+                responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`;
+            }
+        } finally {
+            isRequestPending = false;
+            currentAIRequestController = null;
+            
+            const settingsToggle = document.getElementById('ai-settings-toggle');
+            if (settingsToggle) {
+                settingsToggle.classList.remove('generating');
+                settingsToggle.innerHTML = '&#8942;';
+            }
+
+            responseBubble.classList.remove('loading');
+            document.getElementById('ai-input-wrapper').classList.remove('waiting');
+            const editor = document.getElementById('ai-input');
+            if(editor) {
+                editor.contentEditable = true;
+                editor.focus();
+            }
+            const responseContainer = document.getElementById('ai-response-container');
+            if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
+        }
+    }
+
+    /**
+     * Handles clicks on the settings/stop button.
+     */
+    function handleSettingsToggleClick(e) {
+        e.stopPropagation();
+        if (isRequestPending) {
+            stopGeneration();
+        } else {
+            toggleAttachmentMenu();
+        }
     }
     
+    /**
+     * Aborts the current AI fetch request.
+     */
+    function stopGeneration(){if(currentAIRequestController){currentAIRequestController.abort();}}
+    
+    /**
+     * Toggles the attachment selection menu.
+     */
+    function toggleAttachmentMenu(){
+        isAttachmentMenuOpen=!isAttachmentMenuOpen;
+        const menu=document.getElementById('ai-attachment-menu');
+        const toggleBtn=document.getElementById('ai-settings-toggle');
+
+        // Refresh limit display every time the menu is opened
+        if (isAttachmentMenuOpen) {
+            menu.querySelectorAll('button[data-type]').forEach(button => {
+                const type = button.dataset.type;
+                if (type === 'images' || type === 'videos') {
+                    const usage = limitManager.getUsage();
+                    const limitText = `<span>${usage[type] || 0}/${DAILY_LIMITS[type]} used</span>`;
+                    button.querySelector('span:last-child').innerHTML = limitText;
+                    button.disabled = !limitManager.canUpload(type);
+                }
+            });
+        }
+
+        menu.classList.toggle('active',isAttachmentMenuOpen);
+        toggleBtn.classList.toggle('active',isAttachmentMenuOpen);
+    }
+
     /**
      * Handles file selection from the user's device.
      */
@@ -228,33 +328,32 @@
         const input = document.createElement('input');
         input.type = 'file';
         
-        const typeMap = {
-            'photo': 'image/*',
-            'video': 'video/*',
-            'audio': 'audio/*',
-            'file': '*'
-        };
+        const typeMap = {'photo':'image/*','video':'video/*','audio':'audio/*','file':'*'};
         input.accept = typeMap[fileType] || '*';
 
         input.onchange = (event) => {
             const file = event.target.files[0];
             if (!file) return;
 
+            // Enforce video duration limit (approximate)
+            if (file.type.startsWith('video/') && file.size > 100 * 1024 * 1024) { // Rough check for ~5min 1080p
+                alert("Video file is too large. Please choose a shorter video (max approx. 5 minutes).");
+                return;
+            }
+
             const reader = new FileReader();
             reader.onload = (e) => {
                 const base64Data = e.target.result.split(',')[1];
                 
-                // Add to our internal file list
                 attachedFiles.push({
-                    fileData: {
+                    inlineData: {
                         mimeType: file.type,
                         data: base64Data
                     },
                     fileName: file.name
                 });
 
-                // Record the upload for daily limits
-                const limitType = file.type.startsWith('image') ? 'images' : file.type.startsWith('video') ? 'videos' : null;
+                const limitType = file.type.startsWith('image/') ? 'images' : file.type.startsWith('video/') ? 'videos' : null;
                 if (limitType) {
                     limitManager.recordUpload(limitType);
                 }
@@ -282,12 +381,12 @@
             const fileCard = document.createElement('div');
             fileCard.className = 'attachment-card';
 
-            let previewHTML = `<span class="file-icon">📄</span>`; // Default icon
-            if (file.fileData.mimeType.startsWith('image/')) {
-                previewHTML = `<img src="data:${file.fileData.mimeType};base64,${file.fileData.data}" alt="${file.fileName}" />`;
-            } else if (file.fileData.mimeType.startsWith('video/')) {
+            let previewHTML = `<span class="file-icon">📄</span>`;
+            if (file.inlineData.mimeType.startsWith('image/')) {
+                previewHTML = `<img src="data:${file.inlineData.mimeType};base64,${file.inlineData.data}" alt="${file.fileName}" />`;
+            } else if (file.inlineData.mimeType.startsWith('video/')) {
                 previewHTML = `<span class="file-icon">🎬</span>`;
-            } else if (file.fileData.mimeType.startsWith('audio/')) {
+            } else if (file.inlineData.mimeType.startsWith('audio/')) {
                 previewHTML = `<span class="file-icon">🎵</span>`;
             }
 
@@ -299,7 +398,6 @@
             previewContainer.appendChild(fileCard);
         });
 
-        // Add event listeners to the remove buttons
         previewContainer.querySelectorAll('.remove-attachment-btn').forEach(btn => {
             btn.onclick = () => {
                 attachedFiles.splice(btn.dataset.index, 1);
@@ -314,7 +412,6 @@
     function createAttachmentMenu() {
         const menu = document.createElement('div');
         menu.id = 'ai-attachment-menu';
-        
         const options = [
             { id: 'photo', icon: '📷', label: 'Photo', type: 'images' },
             { id: 'video', icon: '🎬', label: 'Video', type: 'videos' },
@@ -326,34 +423,30 @@
             const button = document.createElement('button');
             button.dataset.type = opt.type;
             const canUpload = limitManager.canUpload(opt.type);
-            
             let limitText = '';
             if (opt.type === 'images' || opt.type === 'videos') {
                 const usage = limitManager.getUsage();
                 limitText = `<span>${usage[opt.type] || 0}/${DAILY_LIMITS[opt.type]} used</span>`;
             }
-
             button.innerHTML = `<span class="icon">${opt.icon}</span> ${opt.label} ${limitText}`;
             if (!canUpload) {
                 button.disabled = true;
                 button.title = 'You have reached your daily limit for this file type.';
             }
-
             button.onclick = () => {
                 handleFileUpload(opt.id);
                 toggleAttachmentMenu();
             };
             menu.appendChild(button);
         });
-        
         return menu;
     }
 
-    // ... (rest of the script, including handleContentEditableInput, injectStyles, etc.) ...
-
+    /**
+     * Handles input, enabling scrolling when max height is reached.
+     */
     function handleContentEditableInput(e) {
         const editor = e.target;
-        // Limit the height and enable scrolling
         if (editor.scrollHeight > MAX_INPUT_HEIGHT) {
             editor.style.height = `${MAX_INPUT_HEIGHT}px`;
             editor.style.overflowY = 'auto';
@@ -362,104 +455,125 @@
             editor.style.height = `${editor.scrollHeight}px`;
             editor.style.overflowY = 'hidden';
         }
-
-        // ... (rest of the function is the same)
+        
+        const placeholder = document.getElementById('ai-input-placeholder');
+        const rawText = editor.innerText;
+        if (placeholder) placeholder.style.display = (rawText.length > 0 || attachedFiles.length > 0) ? 'none' : 'block';
     }
 
+    /**
+     * Handles the submission of a question via the 'Enter' key.
+     */
+    function handleInputSubmission(e) {
+        if (e.key === 'Enter' && !e.shiftKey) {
+            e.preventDefault();
+            const editor = e.target;
+            const query = editor.innerText.trim();
+            if (!query && attachedFiles.length === 0) return;
+            if (isRequestPending) return;
+
+            isRequestPending = true;
+            document.getElementById('ai-settings-toggle').classList.add('generating');
+            editor.contentEditable = false;
+            document.getElementById('ai-input-wrapper').classList.add('waiting');
+
+            const parts = [];
+            if (query) {
+                parts.push({ text: query });
+            }
+            attachedFiles.forEach(file => {
+                parts.push({ inlineData: file.inlineData });
+            });
+            chatHistory.push({ role: "user", parts: parts });
+
+            const responseContainer = document.getElementById('ai-response-container');
+            const userBubble = document.createElement('div');
+            userBubble.className = 'ai-message-bubble user-message';
+            // Simple display for user message bubble
+            let bubbleContent = query ? `<p>${query}</p>` : '';
+            if (attachedFiles.length > 0) {
+                bubbleContent += `<div class="sent-attachments">${attachedFiles.length} file(s) sent</div>`;
+            }
+            userBubble.innerHTML = bubbleContent;
+            responseContainer.appendChild(userBubble);
+            
+            const responseBubble = document.createElement('div');
+            responseBubble.className = 'ai-message-bubble gemini-response loading';
+            responseBubble.innerHTML = '<div class="ai-loader"></div>';
+            responseContainer.appendChild(responseBubble);
+            responseContainer.scrollTop = responseContainer.scrollHeight;
+
+            editor.innerHTML = '';
+            attachedFiles = [];
+            renderAttachments();
+            handleContentEditableInput({ target: editor });
+            
+            callGoogleAI(responseBubble);
+        }
+    }
+
+    /**
+     * Injects all necessary CSS into the page.
+     */
     function injectStyles() {
-        // ... (all previous styles) ...
-        style.innerHTML += `
-            /* Attachment Dropdown Menu */
-            #ai-attachment-menu {
-                position: absolute;
-                bottom: 100%;
-                left: 10px;
-                background: #111;
-                border: 1px solid #444;
-                border-radius: 12px;
-                box-shadow: 0 5px 25px rgba(0,0,0,0.5);
-                display: flex;
-                flex-direction: column;
-                gap: 5px;
-                padding: 8px;
-                z-index: 10;
-                opacity: 0;
-                visibility: hidden;
-                transform: translateY(10px);
-                transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-            }
-            #ai-attachment-menu.active {
-                opacity: 1;
-                visibility: visible;
-                transform: translateY(-5px);
-            }
-            #ai-attachment-menu button {
-                background: transparent;
-                border: none;
-                color: #ddd;
-                font-family: 'PrimaryFont', sans-serif;
-                font-size: 1em;
-                padding: 10px 15px;
-                border-radius: 8px;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                gap: 12px;
-                text-align: left;
-                transition: background-color 0.2s;
-            }
+        if (document.getElementById('ai-dynamic-styles')) return;
+        if (!document.querySelector('style[data-font="primary"]')) {
+            const fontStyle = document.createElement('style');
+            fontStyle.setAttribute('data-font','primary');
+            fontStyle.textContent = `@font-face { font-family: 'PrimaryFont'; src: url('../fonts/primary.woff') format('woff'); font-weight: normal; font-style: normal; }`;
+            document.head.appendChild(fontStyle);
+        }
+        const style = document.createElement('style');
+        style.id = 'ai-dynamic-styles';
+        style.innerHTML = `
+            :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
+            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box; }
+            #ai-container.active { opacity: 1; background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+            #ai-container.deactivating, #ai-container.deactivating > * { transition: opacity 0.4s, background-color 0.4s, backdrop-filter 0.4s, transform 0.4s; }
+            #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+            #ai-persistent-title { position: absolute; top: 28px; left: 30px; font-family: 'secondaryfont', sans-serif; font-size: 18px; font-weight: bold; color: white; opacity: 0; transition: opacity 0.5s 0.2s; animation: title-pulse 4s linear infinite; }
+            #ai-container.chat-active #ai-persistent-title { opacity: 1; }
+            #ai-welcome-message { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s; width: 100%; }
+            #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; }
+            #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
+            #ai-welcome-message p { font-size: .9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
+            #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255,255,255,.7); font-size: 40px; cursor: pointer; transition: color .2s ease,transform .3s ease, opacity 0.4s; }
+            #ai-close-button:hover { color: #fff; transform: scale(1.1); }
+            #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 20px; -webkit-mask-image: linear-gradient(to bottom,transparent 0,black 5%,black 95%,transparent 100%); mask-image: linear-gradient(to bottom,transparent 0,black 5%,black 95%,transparent 100%); }
+            .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
+            .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
+            .user-message p { margin: 0; }
+            .sent-attachments { display: block; font-size: 0.8em; color: #ccc; margin-top: 8px; font-style: italic; }
+            .gemini-response { align-self: flex-start; }
+            .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite,message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; }
+            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto 30px; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); overflow: hidden; }
+            #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
+            #ai-input { min-height: 50px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
+            #ai-input-placeholder { position: absolute; bottom: 15px; left: 20px; color: rgba(255,255,255,.4); pointer-events: none; font-size: 1.1em; transition: opacity 0.2s; }
+            #ai-settings-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
+            #ai-settings-toggle:hover,#ai-settings-toggle.active { color: #fff; background-color: rgba(255,255,255,.1); }
+            #ai-settings-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
+            #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
+            #ai-attachment-menu { position: absolute; bottom: 100%; right: 5px; background: #1E1E1E; border: 1px solid #444; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 10; opacity: 0; visibility: hidden; transform: translateY(10px); transition: all .25s cubic-bezier(.4,0,.2,1); }
+            #ai-input-wrapper.menu-down #ai-attachment-menu { bottom: auto; top: 100%; transform: translateY(-10px); }
+            #ai-attachment-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
+            #ai-input-wrapper.menu-down #ai-attachment-menu.active { transform: translateY(5px); }
+            #ai-attachment-menu button { background: transparent; border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s; }
             #ai-attachment-menu button:hover { background-color: #333; }
-            #ai-attachment-menu button:disabled { opacity: 0.5; cursor: not-allowed; }
+            #ai-attachment-menu button:disabled { opacity: 0.5; cursor: not-allowed; color: #888; }
             #ai-attachment-menu button .icon { font-size: 1.2em; }
-            #ai-attachment-menu button span { font-size: 0.8em; color: #888; margin-left: auto; }
-
-            /* Attachment Previews */
-            #ai-attachment-preview {
-                display: none;
-                grid-template-columns: repeat(auto-fill, minmax(80px, 1fr));
-                gap: 10px;
-                padding: 10px 15px;
-                border-bottom: 1px solid rgba(255,255,255,0.1);
-            }
-            .attachment-card {
-                position: relative;
-                border-radius: 8px;
-                overflow: hidden;
-                background: #333;
-                height: 80px;
-            }
+            #ai-attachment-menu button span:last-child { font-size: 0.8em; color: #888; margin-left: auto; font-family: 'secondaryfont', sans-serif; }
+            #ai-attachment-preview { display: none; grid-template-columns: repeat(auto-fill, minmax(80px, 1fr)); gap: 10px; padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.1); }
+            .attachment-card { position: relative; border-radius: 8px; overflow: hidden; background: #333; height: 80px; }
             .attachment-card img { width: 100%; height: 100%; object-fit: cover; }
-            .attachment-card .file-icon { font-size: 2.5em; display: flex; align-items: center; justify-content: center; height: 100%; }
-            .attachment-card .file-name {
-                position: absolute;
-                bottom: 0;
-                left: 0;
-                right: 0;
-                background: rgba(0,0,0,0.6);
-                color: #fff;
-                font-size: 0.75em;
-                padding: 4px;
-                text-align: center;
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-            }
-            .remove-attachment-btn {
-                position: absolute;
-                top: 5px;
-                right: 5px;
-                background: rgba(0,0,0,0.5);
-                color: #fff;
-                border: none;
-                border-radius: 50%;
-                width: 20px;
-                height: 20px;
-                cursor: pointer;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                font-weight: bold;
-            }
+            .attachment-card .file-icon { font-size: 2.5em; display: flex; align-items: center; justify-content: center; height: 100%; color: #ccc; }
+            .attachment-card .file-name { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.75em; padding: 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+            .remove-attachment-btn { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.5); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+            @keyframes glow { 0%,100% { box-shadow: 0 0 8px rgba(255,255,255,.2); } 50% { box-shadow: 0 0 16px rgba(255,255,255,.4); } }
+            @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
+            @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
         `;
-    }
+    document.head.appendChild(style);}
+    document.addEventListener('keydown', handleKeyDown);
+
 })();
