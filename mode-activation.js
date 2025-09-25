@@ -1,14 +1,14 @@
 /**
  * ai-activation.js
  *
- * A feature-rich script with file uploads, daily limits, contextual awareness,
+ * A feature-rich, self-contained script with file uploads, daily limits, contextual awareness,
  * a redesigned attachment menu, scrolling input, and panic key integration.
  */
 (function() {
     // --- CONFIGURATION ---
     // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
-    // NOTE: Using a stable model name to prevent 404 errors.
+    // UPDATED: Using the specific model URL you requested.
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
     const MAX_INPUT_HEIGHT = 200; // Max height in pixels before scrolling
@@ -18,7 +18,6 @@
     let isRequestPending = false;
     let isAttachmentMenuOpen = false;
     let currentAIRequestController = null;
-    let currentSubject = 'General';
     let chatHistory = [];
     let attachedFiles = []; // To hold file data for the next message
 
@@ -37,7 +36,6 @@
         getUsage: () => {
             const usageData = JSON.parse(localStorage.getItem('aiUsageLimits')) || {};
             const today = limitManager.getToday();
-
             if (usageData.date !== today) {
                 return { date: today, images: 0, videos: 0 };
             }
@@ -128,11 +126,14 @@
         
         const persistentTitle = document.createElement('div');
         persistentTitle.id = 'ai-persistent-title';
-        persistentTitle.textContent = "AI Mode - General";
+        persistentTitle.textContent = "AI Mode";
         
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
-        welcomeMessage.innerHTML = `<h2>Welcome to AI Mode</h2><p>Attach files, images, or audio using the ••• button.</p>`;
+        welcomeMessage.innerHTML = `
+            <h2>Welcome to AI Mode</h2>
+            <p>To improve your experience, this feature collects broad, non-identifying data like your general location (state or country), the current date, and time.</p>
+        `;
 
         const closeButton = document.createElement('div');
         closeButton.id = 'ai-close-button';
@@ -225,7 +226,7 @@
             const now = new Date();
             const date = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
             const time = now.toLocaleTimeString('en-US', { timeZoneName: 'short' });
-            firstMessageContext = `(User is asking from ${location}. Current date is ${date}, ${time}.)\n\n`;
+            firstMessageContext = `(System Info: User is asking from ${location}. Current date is ${date}, ${time}.)\n\n`;
         }
         
         const lastMessageIndex = chatHistory.length - 1;
@@ -303,9 +304,16 @@
         isAttachmentMenuOpen=!isAttachmentMenuOpen;
         const menu=document.getElementById('ai-attachment-menu');
         const toggleBtn=document.getElementById('ai-settings-toggle');
+        const inputWrapper = document.getElementById('ai-input-wrapper');
 
-        // Refresh limit display every time the menu is opened
         if (isAttachmentMenuOpen) {
+            const inputRect = inputWrapper.getBoundingClientRect();
+            if (inputRect.top < 250) { // If not enough space above
+                inputWrapper.classList.add('menu-down');
+            } else {
+                inputWrapper.classList.remove('menu-down');
+            }
+
             menu.querySelectorAll('button[data-type]').forEach(button => {
                 const type = button.dataset.type;
                 if (type === 'images' || type === 'videos') {
@@ -335,8 +343,7 @@
             const file = event.target.files[0];
             if (!file) return;
 
-            // Enforce video duration limit (approximate)
-            if (file.type.startsWith('video/') && file.size > 100 * 1024 * 1024) { // Rough check for ~5min 1080p
+            if (file.type.startsWith('video/') && file.size > 100 * 1024 * 1024) { 
                 alert("Video file is too large. Please choose a shorter video (max approx. 5 minutes).");
                 return;
             }
@@ -478,19 +485,16 @@
             document.getElementById('ai-input-wrapper').classList.add('waiting');
 
             const parts = [];
-            if (query) {
-                parts.push({ text: query });
-            }
-            attachedFiles.forEach(file => {
-                parts.push({ inlineData: file.inlineData });
-            });
+            if (query) parts.push({ text: query });
+            
+            attachedFiles.forEach(file => { parts.push({ inlineData: file.inlineData }); });
             chatHistory.push({ role: "user", parts: parts });
 
             const responseContainer = document.getElementById('ai-response-container');
             const userBubble = document.createElement('div');
             userBubble.className = 'ai-message-bubble user-message';
-            // Simple display for user message bubble
-            let bubbleContent = query ? `<p>${query}</p>` : '';
+            
+            let bubbleContent = query ? `<p>${escapeHTML(query)}</p>` : '';
             if (attachedFiles.length > 0) {
                 bubbleContent += `<div class="sent-attachments">${attachedFiles.length} file(s) sent</div>`;
             }
@@ -511,6 +515,8 @@
             callGoogleAI(responseBubble);
         }
     }
+    
+    function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML;}
 
     /**
      * Injects all necessary CSS into the page.
@@ -548,10 +554,10 @@
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite,message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; }
             #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto 30px; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); overflow: hidden; }
             #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
-            #ai-input { min-height: 50px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 12px 50px 12px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
-            #ai-input-placeholder { position: absolute; bottom: 15px; left: 20px; color: rgba(255,255,255,.4); pointer-events: none; font-size: 1.1em; transition: opacity 0.2s; }
+            #ai-input { min-height: 50px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
+            #ai-input-placeholder { position: absolute; top: 15px; left: 20px; color: rgba(255,255,255,.4); pointer-events: none; font-size: 1.1em; transition: opacity 0.2s; }
             #ai-settings-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
-            #ai-settings-toggle:hover,#ai-settings-toggle.active { color: #fff; background-color: rgba(255,255,255,.1); }
+            #ai-settings-toggle.active { transform: rotate(90deg); }
             #ai-settings-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
             #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
             #ai-attachment-menu { position: absolute; bottom: 100%; right: 5px; background: #1E1E1E; border: 1px solid #444; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 10; opacity: 0; visibility: hidden; transform: translateY(10px); transition: all .25s cubic-bezier(.4,0,.2,1); }
@@ -569,9 +575,12 @@
             .attachment-card .file-icon { font-size: 2.5em; display: flex; align-items: center; justify-content: center; height: 100%; color: #ccc; }
             .attachment-card .file-name { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.75em; padding: 4px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
             .remove-attachment-btn { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.5); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+            .ai-loader { width: 25px; height: 25px; border: 3px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
             @keyframes glow { 0%,100% { box-shadow: 0 0 8px rgba(255,255,255,.2); } 50% { box-shadow: 0 0 16px rgba(255,255,255,.4); } }
             @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
+            @keyframes spin { to { transform: rotate(360deg); } }
             @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+            @keyframes title-pulse { 0%, 100% { text-shadow: 0 0 7px var(--ai-blue); } 25% { text-shadow: 0 0 7px var(--ai-green); } 50% { text-shadow: 0 0 7px var(--ai-yellow); } 75% { text-shadow: 0 0 7px var(--ai-red); } }
         `;
     document.head.appendChild(style);}
     document.addEventListener('keydown', handleKeyDown);
