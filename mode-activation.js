@@ -7,10 +7,11 @@
  */
 (function() {
     // --- CONFIGURATION ---
+    // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
-    const MAX_INPUT_HEIGHT = 200;
+    const MAX_INPUT_HEIGHT = 200; // Max height in pixels before scrolling
 
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
@@ -110,7 +111,7 @@
             window.startPanicKeyBlocker();
         }
 
-        chatHistory = [];
+        // Note: chatHistory is intentionally NOT cleared here to persist it.
         attachedFiles = [];
         injectStyles();
         
@@ -171,7 +172,16 @@
         
         document.body.appendChild(container);
         
-        setTimeout(() => container.classList.add('active'), 10);
+        if (chatHistory.length > 0) {
+            renderChatHistory();
+        }
+
+        setTimeout(() => {
+             if (chatHistory.length > 0) {
+                container.classList.add('chat-active');
+            }
+            container.classList.add('active');
+        }, 10);
         
         visualInput.focus();
         isAIActive = true;
@@ -198,8 +208,41 @@
         isAIActive = false;
         isAttachmentMenuOpen = false;
         isRequestPending = false;
-        chatHistory = [];
+        // chatHistory is NOT cleared, allowing it to persist.
         attachedFiles = [];
+    }
+    
+    /**
+     * Renders the existing chat history when the AI is re-activated.
+     */
+    function renderChatHistory() {
+        const responseContainer = document.getElementById('ai-response-container');
+        if (!responseContainer) return;
+        
+        responseContainer.innerHTML = '';
+        
+        chatHistory.forEach(message => {
+            const bubble = document.createElement('div');
+            bubble.className = `ai-message-bubble ${message.role === 'user' ? 'user-message' : 'gemini-response'}`;
+            
+            if (message.role === 'model') {
+                bubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(message.parts[0].text)}</div>`;
+            } else {
+                let bubbleContent = '';
+                let textContent = '';
+                let fileCount = 0;
+                message.parts.forEach(part => {
+                    if (part.text) textContent = part.text;
+                    if (part.inlineData) fileCount++;
+                });
+                if (textContent) bubbleContent += `<p>${escapeHTML(textContent)}</p>`;
+                if (fileCount > 0) bubbleContent += `<div class="sent-attachments">${fileCount} file(s) sent</div>`;
+                bubble.innerHTML = bubbleContent;
+            }
+            responseContainer.appendChild(bubble);
+        });
+        
+        setTimeout(() => responseContainer.scrollTop = responseContainer.scrollHeight, 50);
     }
 
     /**
@@ -453,16 +496,6 @@
         }
         
         fadeOutWelcomeMessage();
-        
-        const placeholder = document.getElementById('ai-input-placeholder');
-        const rawText = editor.innerText;
-        
-        // --- THIS IS THE FIX ---
-        // Instead of hiding the placeholder, we make it invisible.
-        // This preserves its space and prevents the layout from shifting.
-        if (placeholder) {
-            placeholder.style.opacity = (rawText.length > 0 || attachedFiles.length > 0) ? '0' : '1';
-        }
     }
 
     /**
@@ -515,7 +548,7 @@
     
     function fadeOutWelcomeMessage(){const container=document.getElementById("ai-container");if(container&&!container.classList.contains("chat-active")){container.classList.add("chat-active")}}
     function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML}
-    function parseGeminiResponse(text){let html=text.replace(/</g,"&lt;").replace(/>/g,"&gt;");html=html.replace(/```([\s\S]*?)```/g,(match,code)=>`<pre><code>${escapeHTML(code.trim())}</code></pre>`);html=html.replace(/\$([^\$]+)\$/g,(match,math)=>{let processedMath=math;processedMath=processedMath.replace(/(\w+)\^(\w+)/g,'$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g,'&radic;($1)').replace(/\\frac\{(.+?)\}\{(.+?)\}/g,'<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');return`<span class="ai-math-inline">${processedMath}</span>`;});html=html.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*(.*?)\*/g,'<em>$1</em>').replace(/^### (.*$)/gm,'<h3>$1</h3>').replace(/^## (.*$)/gm,'<h2>$1</h2>').replace(/^# (.*$)/gm,'<h1>$1</h1>');html=html.replace(/^(?:\*|-)\s(.*$)/gm,'<li>$1</li>');html=html.replace(/(<\/li>\s*<li>)/g,"</li><li>").replace(/((<li>.*<\/li>)+)/gs,"<ul>$1</ul>");return html.replace(/\n/g,"<br>")}
+    function parseGeminiResponse(text){let html=text.replace(/</g,"&lt;").replace(/>/g,"&gt;");const codeBlocks=[];html=html.replace(/```([\s\S]*?)```/g,(match,code)=>{codeBlocks.push(escapeHTML(code.trim()));return "%%CODE_BLOCK%%"});html=html.replace(/\\([a-zA-Z]+)/g,(match,command)=>latexSymbolMap[match]||match);html=html.replace(/^### (.*$)/gm,"<h3>$1</h3>").replace(/^## (.*$)/gm,"<h2>$1</h2>").replace(/^# (.*$)/gm,"<h1>$1</h1>");html=html.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/\*(.*?)\*/g,"<em>$1</em>");html=html.replace(/^(?:\*|-)\s(.*$)/gm,"<li>$1</li>");html=html.replace(/(<\/li>\s*<li>)/g,"</li><li>").replace(/((<li>.*<\/li>)+)/gs,"<ul>$1</ul>");html=html.replace(/\n/g,"<br>");html=html.replace(/%%CODE_BLOCK%%/g,()=>`<pre><code>${codeBlocks.shift()}</code></pre>`);return html}
 
     /**
      * Injects all necessary CSS into the page.
@@ -538,13 +571,13 @@
             #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
             #ai-persistent-title { position: absolute; top: 28px; left: 30px; font-family: 'secondaryfont', sans-serif; font-size: 18px; font-weight: bold; color: white; opacity: 0; transition: opacity 0.5s 0.2s; animation: title-pulse 4s linear infinite; }
             #ai-container.chat-active #ai-persistent-title { opacity: 1; }
-            #ai-welcome-message { position: absolute; top: 50%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s, transform .5s; width: 100%; }
+            #ai-welcome-message { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s, transform .5s; width: 100%; }
             #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; transform: translate(-50%,-50%) scale(0.95); }
             #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
             #ai-welcome-message p { font-size: .9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255,255,255,.7); font-size: 40px; cursor: pointer; transition: color .2s ease,transform .3s ease, opacity 0.4s; }
             #ai-close-button:hover { color: #fff; transform: scale(1.1); }
-            #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 70px 20px 0 20px; -webkit-mask-image: linear-gradient(to bottom,transparent 0,black 5%,black 95%,transparent 100%); mask-image: linear-gradient(to bottom,transparent 0,black 5%,black 95%,transparent 100%); }
+            #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 70px 20px 0 20px; }
             .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
             .ai-message-bubble h1, .ai-message-bubble h2, .ai-message-bubble h3 { margin-top: 0; }
             .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
@@ -557,6 +590,7 @@
             #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
             #ai-input { min-height: 50px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
             #ai-input-placeholder { position: absolute; bottom: 15px; left: 20px; color: rgba(255,255,255,.4); pointer-events: none; font-size: 1.1em; transition: opacity 0.2s; }
+            #ai-container.chat-active #ai-input-placeholder { opacity: 0; }
             #ai-settings-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
             #ai-settings-toggle.active { transform: rotate(90deg); }
             #ai-settings-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
