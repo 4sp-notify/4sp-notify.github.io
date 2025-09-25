@@ -71,11 +71,22 @@ function addPanicKeyListener(settingsArray) {
     console.log("Debug: Attaching keydown listener to the document with these settings:", settingsArray);
 
     document.addEventListener('keydown', (event) => {
-        // This check prevents the panic key from firing while a user is typing in a form field.
-        const activeElement = document.activeElement.tagName.toLowerCase();
-        if (['input', 'select', 'textarea'].includes(activeElement)) {
-            return;
+        const activeElement = document.activeElement;
+
+        // --- MODIFICATION START ---
+        // This check prevents the panic key from firing while a user is typing in any form field or the AI chat box.
+        if (activeElement) {
+            // Check for the custom AI Mode input box by its ID
+            if (activeElement.id === 'ai-input') {
+                return;
+            }
+            // Check for standard browser input elements by their tag name
+            const tagName = activeElement.tagName.toLowerCase();
+            if (['input', 'select', 'textarea'].includes(tagName)) {
+                return;
+            }
         }
+        // --- MODIFICATION END ---
 
         const noModifiersPressed = !event.shiftKey && !event.ctrlKey && !event.altKey && !event.metaKey;
 
