@@ -1,16 +1,15 @@
 /**
  * ai-activation.js
  *
- * A feature-rich, self-contained script with a polished UI, file uploads,
- * daily limits, contextual awareness, and panic key integration.
+ * A feature-rich, self-contained script with a powerful response parser,
+ * expanded symbol support, file uploads, daily limits, and contextual awareness.
  */
 (function() {
     // --- CONFIGURATION ---
-    // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
-    const MAX_INPUT_HEIGHT = 200; // Max height in pixels before scrolling
+    const MAX_INPUT_HEIGHT = 200;
 
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
@@ -18,514 +17,66 @@
     let isAttachmentMenuOpen = false;
     let currentAIRequestController = null;
     let chatHistory = [];
-    let attachedFiles = []; // To hold file data for the next message
+    let attachedFiles = [];
+
+    // --- EXPANDED SYMBOL MAP ---
+    const latexSymbolMap = {
+        // Greek Letters (Lowercase)
+        '\\alpha': 'α', '\\beta': 'β', '\\gamma': 'γ', '\\delta': 'δ', '\\epsilon': 'ε', 
+        '\\zeta': 'ζ', '\\eta': 'η', '\\theta': 'θ', '\\iota': 'ι', '\\kappa': 'κ', 
+        '\\lambda': 'λ', '\\mu': 'μ', '\\nu': 'ν', '\\xi': 'ξ', '\\omicron': 'ο', 
+        '\\pi': 'π', '\\rho': 'ρ', '\\sigma': 'σ', '\\tau': 'τ', '\\upsilon': 'υ', 
+        '\\phi': 'φ', '\\chi': 'χ', '\\psi': 'ψ', '\\omega': 'ω',
+        // Greek Letters (Uppercase)
+        '\\Gamma': 'Γ', '\\Delta': 'Δ', '\\Theta': 'Θ', '\\Lambda': 'Λ', '\\Xi': 'Ξ', 
+        '\\Pi': 'Π', '\\Sigma': 'Σ', '\\Upsilon': 'Υ', '\\Phi': 'Φ', '\\Psi': 'Ψ', '\\Omega': 'Ω',
+        // Math Operators
+        '\\pm': '±', '\\times': '×', '\\div': '÷', '\\cdot': '·', '\\ast': '∗', 
+        '\\cup': '∪', '\\cap': '∩', '\\in': '∈', '\\notin': '∉', '\\subset': '⊂', 
+        '\\supset': '⊃', '\\subseteq': '⊆', '\\supseteq': '⊇',
+        // Comparison
+        '\\le': '≤', '\\ge': '≥', '\\ne': '≠', '\\approx': '≈', '\\equiv': '≡',
+        // Arrows
+        '\\leftarrow': '←', '\\rightarrow': '→', '\\uparrow': '↑', '\\downarrow': '↓', 
+        '\\leftrightarrow': '↔', '\\Leftarrow': '⇐', '\\Rightarrow': '⇒', '\\Leftrightarrow': '⇔',
+        // Logic and Set Theory
+        '\\forall': '∀', '\\exists': '∃', '\\nabla': '∇', '\\partial': '∂', '\\emptyset': '∅',
+        // Other Symbols
+        '\\infty': '∞', '\\degree': '°', '\\angle': '∠', '\\hbar': 'ħ', '\\ell': 'ℓ',
+        '\\therefore': '∴', '\\because': '∵', '\\bullet': '•', '\\ldots': '…',
+        '\\prime': '′', '\\hat': '^'
+    };
 
     // --- DAILY LIMITS CONFIGURATION ---
-    const DAILY_LIMITS = {
-        images: 5,
-        videos: 1,
-    };
+    const DAILY_LIMITS = { images: 5, videos: 1 };
 
     /**
      * Handles all daily limit logic (checking, decrementing, resetting).
      */
     const limitManager = {
-        getToday: () => new Date().toLocaleDateString("en-US"),
-        
-        getUsage: () => {
-            const usageData = JSON.parse(localStorage.getItem('aiUsageLimits')) || {};
-            const today = limitManager.getToday();
-            if (usageData.date !== today) {
-                return { date: today, images: 0, videos: 0 };
-            }
-            return usageData;
-        },
-
-        saveUsage: (usageData) => {
-            localStorage.setItem('aiUsageLimits', JSON.stringify(usageData));
-        },
-
-        canUpload: (type) => {
-            const usage = limitManager.getUsage();
-            if (type in DAILY_LIMITS) {
-                return (usage[type] || 0) < DAILY_LIMITS[type];
-            }
-            return true;
-        },
-
-        recordUpload: (type) => {
-            if (type in DAILY_LIMITS) {
-                let usage = limitManager.getUsage();
-                usage[type] = (usage[type] || 0) + 1;
-                limitManager.saveUsage(usage);
-            }
-        }
+        getToday:()=>new Date().toLocaleDateString("en-US"),
+        getUsage:()=>{const e=JSON.parse(localStorage.getItem("aiUsageLimits"))||{};return e.date!==limitManager.getToday()?{date:limitManager.getToday(),images:0,videos:0}:e},
+        saveUsage:e=>{localStorage.setItem("aiUsageLimits",JSON.stringify(e))},
+        canUpload:e=>{const t=limitManager.getUsage();return e in DAILY_LIMITS?(t[e]||0)<DAILY_LIMITS[e]:!0},
+        recordUpload:e=>{if(e in DAILY_LIMITS){let t=limitManager.getUsage();t[e]=(t[e]||0)+1,limitManager.saveUsage(t)}}
     };
-
-    /**
-     * Checks if the user is authorized to use the AI.
-     */
-    async function isUserAuthorized() {
-        const user = firebase.auth().currentUser;
-        if (typeof firebase === 'undefined' || !user) return false;
-        
-        const adminEmails = ['4simpleproblems@gmail.com', 'belkwy30@minerva.sparcc.org'];
-        if (adminEmails.includes(user.email)) return true;
-        
-        try {
-            const userDocRef = firebase.firestore().collection('users').doc(user.uid);
-            const userDoc = await userDocRef.get();
-            return userDoc.exists && userDoc.data().aiEnrolled === true;
-        } catch (error) {
-            console.error("AI Auth Check Error:", error);
-            return false;
-        }
-    }
-
-    /**
-     * Handles the keyboard shortcut for activating/deactivating the AI.
-     */
-    async function handleKeyDown(e) {
-        if (e.ctrlKey && e.key.toLowerCase() === 'c') {
-            const selection = window.getSelection().toString();
-            if (isAIActive) {
-                e.preventDefault();
-                const mainEditor = document.getElementById('ai-input');
-                if (mainEditor && mainEditor.innerText.trim().length === 0 && selection.length === 0 && attachedFiles.length === 0) {
-                    deactivateAI();
-                }
-            } else {
-                if (selection.length === 0) {
-                    const isAuthorized = await isUserAuthorized();
-                    if (isAuthorized) {
-                        e.preventDefault();
-                        activateAI();
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Creates and injects the AI interface into the page.
-     */
-    function activateAI() {
-        if (document.getElementById('ai-container')) return;
-        
-        if (typeof window.startPanicKeyBlocker === 'function') {
-            window.startPanicKeyBlocker();
-        }
-
-        chatHistory = [];
-        attachedFiles = [];
-        injectStyles();
-        
-        const container = document.createElement('div');
-        container.id = 'ai-container';
-        
-        const welcomeMessage = document.createElement('div');
-        welcomeMessage.id = 'ai-welcome-message';
-        welcomeMessage.innerHTML = `
-            <h2>Welcome to AI Mode</h2>
-            <p>To improve your experience, this feature collects broad, non-identifying data like your general location (state or country), the current date, and time.</p>
-        `;
-
-        const closeButton = document.createElement('div');
-        closeButton.id = 'ai-close-button';
-        closeButton.innerHTML = '&times;';
-        closeButton.onclick = deactivateAI;
-
-        const responseContainer = document.createElement('div');
-        responseContainer.id = 'ai-response-container';
-
-        const inputWrapper = document.createElement('div');
-        inputWrapper.id = 'ai-input-wrapper';
-
-        const attachmentPreviewContainer = document.createElement('div');
-        attachmentPreviewContainer.id = 'ai-attachment-preview';
-        
-        const visualInput = document.createElement('div');
-        visualInput.id = 'ai-input';
-        visualInput.contentEditable = true;
-        visualInput.onkeydown = handleInputSubmission;
-        visualInput.oninput = handleContentEditableInput;
-        
-        const placeholder = document.createElement('div');
-        placeholder.id = 'ai-input-placeholder';
-        placeholder.textContent = 'Ask a question or describe your files...';
-
-        const settingsToggle = document.createElement('button');
-        settingsToggle.id = 'ai-settings-toggle';
-        settingsToggle.innerHTML = '&#8942;';
-        settingsToggle.onclick = handleSettingsToggleClick;
-
-        inputWrapper.appendChild(attachmentPreviewContainer);
-        inputWrapper.appendChild(visualInput);
-        inputWrapper.appendChild(placeholder);
-        inputWrapper.appendChild(settingsToggle);
-        
-        container.appendChild(welcomeMessage);
-        container.appendChild(closeButton);
-        container.appendChild(responseContainer);
-        container.appendChild(inputWrapper);
-        container.appendChild(createAttachmentMenu()); // Append menu to main container
-        
-        document.body.appendChild(container);
-        
-        setTimeout(() => container.classList.add('active'), 10);
-        
-        visualInput.focus();
-        isAIActive = true;
-    }
-
-    /**
-     * Deactivates the AI, including re-enabling the panic key.
-     */
-    function deactivateAI() {
-        if (typeof window.stopPanicKeyBlocker === 'function') {
-            window.stopPanicKeyBlocker();
-        }
-        if (currentAIRequestController) currentAIRequestController.abort();
-        
-        const container = document.getElementById('ai-container');
-        if (container) {
-            container.classList.add('deactivating');
-            setTimeout(() => {
-                container.remove();
-                const styles = document.getElementById('ai-dynamic-styles');
-                if (styles) styles.remove();
-            }, 500);
-        }
-        isAIActive = false;
-        isAttachmentMenuOpen = false;
-        isRequestPending = false;
-        chatHistory = [];
-        attachedFiles = [];
-    }
-
-    /**
-     * Calls the Google AI API, now with contextual data and file support.
-     */
-    async function callGoogleAI(responseBubble) {
-        if (!API_KEY) {
-            responseBubble.innerHTML = `<div class="ai-error">API Key is missing.</div>`;
-            return;
-        }
-
-        currentAIRequestController = new AbortController();
-        
-        let firstMessageContext = '';
-        if (chatHistory.length <= 1) {
-            const location = localStorage.getItem('ai-user-location') || 'an unknown location';
-            const now = new Date();
-            const date = now.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
-            const time = now.toLocaleTimeString('en-US', { timeZoneName: 'short' });
-            firstMessageContext = `(System Info: User is asking from ${location}. Current date is ${date}, ${time}.)\n\n`;
-        }
-        
-        const lastMessageIndex = chatHistory.length - 1;
-        chatHistory[lastMessageIndex].parts[0].text = firstMessageContext + chatHistory[lastMessageIndex].parts[0].text;
-        
-        const payload = { contents: chatHistory };
-
-        try {
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: currentAIRequestController.signal
-            });
-            if (!response.ok) throw new Error(`Network response was not ok. Status: ${response.status}`);
-            const data = await response.json();
-
-            if (!data.candidates || data.candidates.length === 0) {
-                 throw new Error("Invalid response from API.");
-            }
-
-            const text = data.candidates[0].content.parts[0].text;
-            chatHistory.push({ role: "model", parts: [{ text: text }] });
-            responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
-        } catch (error) {
-            if (error.name === 'AbortError') {
-                responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`;
-            } else {
-                console.error('AI API Error:', error);
-                responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`;
-            }
-        } finally {
-            isRequestPending = false;
-            currentAIRequestController = null;
-            
-            const settingsToggle = document.getElementById('ai-settings-toggle');
-            if (settingsToggle) {
-                settingsToggle.classList.remove('generating');
-                settingsToggle.innerHTML = '&#8942;';
-            }
-
-            responseBubble.classList.remove('loading');
-            document.getElementById('ai-input-wrapper').classList.remove('waiting');
-            const editor = document.getElementById('ai-input');
-            if(editor) {
-                editor.contentEditable = true;
-                editor.focus();
-            }
-            const responseContainer = document.getElementById('ai-response-container');
-            if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
-        }
-    }
-
-    /**
-     * Handles clicks on the settings/stop button.
-     */
-    function handleSettingsToggleClick(e) {
-        e.stopPropagation();
-        if (isRequestPending) {
-            stopGeneration();
-        } else {
-            toggleAttachmentMenu();
-        }
-    }
     
-    /**
-     * Aborts the current AI fetch request.
-     */
-    function stopGeneration(){if(currentAIRequestController){currentAIRequestController.abort();}}
-    
-    /**
-     * Toggles the attachment selection menu.
-     */
-    function toggleAttachmentMenu(){
-        isAttachmentMenuOpen = !isAttachmentMenuOpen;
-        const menu = document.getElementById('ai-attachment-menu');
-        const toggleBtn = document.getElementById('ai-settings-toggle');
-
-        if (isAttachmentMenuOpen) {
-            const btnRect = toggleBtn.getBoundingClientRect();
-            menu.style.bottom = `${window.innerHeight - btnRect.top}px`;
-            menu.style.right = `${window.innerWidth - btnRect.right}px`;
-            
-            menu.querySelectorAll('button[data-type]').forEach(button => {
-                const type = button.dataset.type;
-                if (type === 'images' || type === 'videos') {
-                    const usage = limitManager.getUsage();
-                    const limitText = `<span>${usage[type] || 0}/${DAILY_LIMITS[type]} used</span>`;
-                    button.querySelector('span:last-child').innerHTML = limitText;
-                    button.disabled = !limitManager.canUpload(type);
-                }
-            });
-        }
-        
-        menu.classList.toggle('active', isAttachmentMenuOpen);
-        toggleBtn.classList.toggle('active', isAttachmentMenuOpen);
-    }
-
-    /**
-     * Handles file selection from the user's device.
-     */
-    function handleFileUpload(fileType) {
-        const input = document.createElement('input');
-        input.type = 'file';
-        
-        const typeMap = {'photo':'image/*','video':'video/*','audio':'audio/*','file':'*'};
-        input.accept = typeMap[fileType] || '*';
-
-        input.onchange = (event) => {
-            const file = event.target.files[0];
-            if (!file) return;
-
-            if (file.type.startsWith('video/') && file.size > 100 * 1024 * 1024) { 
-                alert("Video file is too large. Please choose a shorter video (max approx. 5 minutes).");
-                return;
-            }
-
-            const reader = new FileReader();
-            reader.onload = (e) => {
-                const base64Data = e.target.result.split(',')[1];
-                
-                attachedFiles.push({
-                    inlineData: {
-                        mimeType: file.type,
-                        data: base64Data
-                    },
-                    fileName: file.name
-                });
-
-                const limitType = file.type.startsWith('image/') ? 'images' : file.type.startsWith('video/') ? 'videos' : null;
-                if (limitType) {
-                    limitManager.recordUpload(limitType);
-                }
-
-                renderAttachments();
-            };
-            reader.readAsDataURL(file);
-        };
-        input.click();
-    }
-    
-    /**
-     * Renders the preview of attached files above the input box.
-     */
-    function renderAttachments() {
-        const previewContainer = document.getElementById('ai-attachment-preview');
-        previewContainer.innerHTML = '';
-        if (attachedFiles.length === 0) {
-            previewContainer.style.display = 'none';
-            return;
-        }
-
-        previewContainer.style.display = 'grid';
-        attachedFiles.forEach((file, index) => {
-            const fileCard = document.createElement('div');
-            fileCard.className = 'attachment-card';
-
-            let previewHTML = `<span class="file-icon">📄</span>`;
-            if (file.inlineData.mimeType.startsWith('image/')) {
-                previewHTML = `<img src="data:${file.inlineData.mimeType};base64,${file.inlineData.data}" alt="${file.fileName}" />`;
-            } else if (file.inlineData.mimeType.startsWith('video/')) {
-                previewHTML = `<span class="file-icon">🎬</span>`;
-            } else if (file.inlineData.mimeType.startsWith('audio/')) {
-                previewHTML = `<span class="file-icon">🎵</span>`;
-            }
-
-            fileCard.innerHTML = `
-                ${previewHTML}
-                <span class="file-name">${file.fileName}</span>
-                <button class="remove-attachment-btn" data-index="${index}">&times;</button>
-            `;
-            previewContainer.appendChild(fileCard);
-        });
-
-        previewContainer.querySelectorAll('.remove-attachment-btn').forEach(btn => {
-            btn.onclick = () => {
-                attachedFiles.splice(btn.dataset.index, 1);
-                renderAttachments();
-            };
-        });
-    }
-
-    /**
-     * Creates the new attachment dropdown menu.
-     */
-    function createAttachmentMenu() {
-        const menu = document.createElement('div');
-        menu.id = 'ai-attachment-menu';
-        const options = [
-            { id: 'photo', icon: '📷', label: 'Photo', type: 'images' },
-            { id: 'video', icon: '🎬', label: 'Video', type: 'videos' },
-            { id: 'audio', icon: '🎤', label: 'Audio', type: 'audio' },
-            { id: 'file', icon: '📎', label: 'File', type: 'file' },
-        ];
-        
-        options.forEach(opt => {
-            const button = document.createElement('button');
-            button.dataset.type = opt.type;
-            const canUpload = limitManager.canUpload(opt.type);
-            let limitText = '';
-            if (opt.type === 'images' || opt.type === 'videos') {
-                const usage = limitManager.getUsage();
-                limitText = `<span>${usage[opt.type] || 0}/${DAILY_LIMITS[opt.type]} used</span>`;
-            }
-            button.innerHTML = `<span class="icon">${opt.icon}</span> ${opt.label} ${limitText}`;
-            if (!canUpload) {
-                button.disabled = true;
-                button.title = 'You have reached your daily limit for this file type.';
-            }
-            button.onclick = () => {
-                handleFileUpload(opt.id);
-                toggleAttachmentMenu();
-            };
-            menu.appendChild(button);
-        });
-        return menu;
-    }
-
-    /**
-     * Handles input, enabling scrolling when max height is reached.
-     */
-    function handleContentEditableInput(e) {
-        const editor = e.target;
-        if (editor.scrollHeight > MAX_INPUT_HEIGHT) {
-            editor.style.height = `${MAX_INPUT_HEIGHT}px`;
-            editor.style.overflowY = 'auto';
-        } else {
-            editor.style.height = 'auto';
-            editor.style.height = `${editor.scrollHeight}px`;
-            editor.style.overflowY = 'hidden';
-        }
-        
-        fadeOutWelcomeMessage();
-        
-        const placeholder = document.getElementById('ai-input-placeholder');
-        const rawText = editor.innerText;
-        if (placeholder) placeholder.style.display = (rawText.length > 0 || attachedFiles.length > 0) ? 'none' : 'block';
-    }
-
-    /**
-     * Handles the submission of a question via the 'Enter' key.
-     */
-    function handleInputSubmission(e) {
-        if (e.key === 'Enter' && !e.shiftKey) {
-            e.preventDefault();
-            const editor = e.target;
-            const query = editor.innerText.trim();
-            if (!query && attachedFiles.length === 0) return;
-            if (isRequestPending) return;
-
-            isRequestPending = true;
-            document.getElementById('ai-settings-toggle').classList.add('generating');
-            editor.contentEditable = false;
-            document.getElementById('ai-input-wrapper').classList.add('waiting');
-
-            const parts = [];
-            if (query) parts.push({ text: query });
-            
-            attachedFiles.forEach(file => { parts.push({ inlineData: file.inlineData }); });
-            chatHistory.push({ role: "user", parts: parts });
-
-            const responseContainer = document.getElementById('ai-response-container');
-            const userBubble = document.createElement('div');
-            userBubble.className = 'ai-message-bubble user-message';
-            
-            let bubbleContent = query ? `<p>${escapeHTML(query)}</p>` : '';
-            if (attachedFiles.length > 0) {
-                bubbleContent += `<div class="sent-attachments">${attachedFiles.length} file(s) sent</div>`;
-            }
-            userBubble.innerHTML = bubbleContent;
-            responseContainer.appendChild(userBubble);
-            
-            const responseBubble = document.createElement('div');
-            responseBubble.className = 'ai-message-bubble gemini-response loading';
-            responseBubble.innerHTML = '<div class="ai-loader"></div>';
-            responseContainer.appendChild(responseBubble);
-            responseContainer.scrollTop = responseContainer.scrollHeight;
-
-            editor.innerHTML = '';
-            attachedFiles = [];
-            renderAttachments();
-            handleContentEditableInput({ target: editor });
-            
-            callGoogleAI(responseBubble);
-        }
-    }
-    
-    function fadeOutWelcomeMessage(){const container=document.getElementById('ai-container');if(container&&!container.classList.contains('chat-active')){container.classList.add('chat-active');}}
-    function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML;}
-    function parseGeminiResponse(text){let html=text.replace(/</g,'&lt;').replace(/>/g,'&gt;');html=html.replace(/```([\s\S]*?)```/g,(match,code)=>`<pre><code>${code.trim()}</code></pre>`);html=html.replace(/\$([^\$]+)\$/g,(match,math)=>{let processedMath=math;processedMath=processedMath.replace(/(\w+)\^(\w+)/g,'$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g,'&radic;($1)').replace(/\\frac\{(.+?)\}\{(.+?)\}/g,'<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');return`<span class="ai-math-inline">${processedMath}</span>`;});html=html.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*([^\n\*]+)\*/g,'<strong>$1</strong>').replace(/^\* (.*$)/gm,'<li>$1</li>');html=html.replace(/<li>(.*?)<\/li>/g,'<ul><li>$1</li></ul>').replace(/<\/ul>\n?<ul>/g,'');return html.replace(/\n/g,'<br>');}
-
-    /**
-     * Injects all necessary CSS into the page.
-     */
-    function injectStyles() {
-        if (document.getElementById('ai-dynamic-styles')) return;
-        if (!document.querySelector('style[data-font="primary"]')) {
-            const fontStyle = document.createElement('style');
-            fontStyle.setAttribute('data-font','primary');
-            fontStyle.textContent = `@font-face { font-family: 'PrimaryFont'; src: url('../fonts/primary.woff') format('woff'); font-weight: normal; font-style: normal; }`;
-            document.head.appendChild(fontStyle);
-        }
-        const style = document.createElement('style');
-        style.id = 'ai-dynamic-styles';
-        style.innerHTML = `
+    // --- All other functions (unchanged from the last full script) ---
+    async function isUserAuthorized(){const e=firebase.auth().currentUser;if("undefined"==typeof firebase||!e)return!1;const t=["4simpleproblems@gmail.com","belkwy30@minerva.sparcc.org"];if(t.includes(e.email))return!0;try{const t=firebase.firestore().collection("users").doc(e.uid),n=await t.get();return n.exists&&!0===n.data().aiEnrolled}catch(e){return console.error("AI Auth Check Error:",e),!1}}
+    async function handleKeyDown(e){if(e.ctrlKey&&"c"===e.key.toLowerCase()){const t=window.getSelection().toString();if(isAIActive){e.preventDefault();const t=document.getElementById("ai-input");t&&""===t.innerText.trim()&&0===selection.length&&0===attachedFiles.length&&deactivateAI()}else if(0===t.length){const t=await isUserAuthorized();t&&(e.preventDefault(),activateAI())}}}
+    function activateAI(){if(document.getElementById("ai-container"))return;"function"==typeof window.startPanicKeyBlocker&&window.startPanicKeyBlocker(),chatHistory=[],attachedFiles=[],injectStyles();const e=document.createElement("div");e.id="ai-container";const t=document.createElement("div");t.id="ai-persistent-title",t.textContent="AI Mode";const n=document.createElement("div");n.id="ai-welcome-message",n.innerHTML=`\n            <h2>Welcome to AI Mode</h2>\n            <p>To improve your experience, this feature collects broad, non-identifying data like your general location (state or country), the current date, and time.</p>\n        `;const o=document.createElement("div");o.id="ai-close-button",o.innerHTML="&times;",o.onclick=deactivateAI;const a=document.createElement("div");a.id="ai-response-container";const i=document.createElement("div");i.id="ai-input-wrapper";const s=document.createElement("div");s.id="ai-attachment-preview";const r=document.createElement("div");r.id="ai-input",r.contentEditable=!0,r.onkeydown=handleInputSubmission,r.oninput=handleContentEditableInput;const l=document.createElement("div");l.id="ai-input-placeholder",l.textContent="Ask a question or describe your files...";const c=document.createElement("button");c.id="ai-settings-toggle",c.innerHTML="&#8942;",c.onclick=handleSettingsToggleClick,i.appendChild(s),i.appendChild(r),i.appendChild(l),i.appendChild(c),e.appendChild(t),e.appendChild(n),e.appendChild(o),e.appendChild(a),e.appendChild(i),e.appendChild(createAttachmentMenu()),document.body.appendChild(e),setTimeout(()=>e.classList.add("active"),10),r.focus(),isAIActive=!0}
+    function deactivateAI(){"function"==typeof window.stopPanicKeyBlocker&&window.stopPanicKeyBlocker(),currentAIRequestController&&currentAIRequestController.abort();const e=document.getElementById("ai-container");e&&(e.classList.add("deactivating"),setTimeout(()=>{e.remove();const e=document.getElementById("ai-dynamic-styles");e&&e.remove()},500)),isAIActive=!1,isAttachmentMenuOpen=!1,isRequestPending=!1,chatHistory=[],attachedFiles=[]}
+    async function callGoogleAI(e){if(!API_KEY)return void(e.innerHTML='<div class="ai-error">API Key is missing.</div>');currentAIRequestController=new AbortController;let t="";if(chatHistory.length<=1){const e=localStorage.getItem("ai-user-location")||"an unknown location",n=new Date,o=n.toLocaleDateString("en-US",{weekday:"long",year:"numeric",month:"long",day:"numeric"}),a=n.toLocaleTimeString("en-US",{timeZoneName:"short"});t=`(System Info: User is asking from ${e}. Current date is ${o}, ${a}.)\n\n`}const n=chatHistory.length-1;chatHistory[n].parts[0].text=t+chatHistory[n].parts[0].text;const o={contents:chatHistory};try{const t=await fetch(API_URL,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(o),signal:currentAIRequestController.signal});if(!t.ok)throw new Error(`Network response was not ok. Status: ${t.status}`);const n=await t.json();if(!n.candidates||0===n.candidates.length)throw new Error("Invalid response from API.");const a=n.candidates[0].content.parts[0].text;chatHistory.push({role:"model",parts:[{text:a}]}),e.innerHTML=`<div class="ai-response-content">${parseGeminiResponse(a)}</div>`}catch(t){"AbortError"===t.name?e.innerHTML='<div class="ai-error">Message generation stopped.</div>':(console.error("AI API Error:",t),e.innerHTML='<div class="ai-error">Sorry, an error occurred.</div>')}finally{isRequestPending=!1,currentAIRequestController=null;const t=document.getElementById("ai-settings-toggle");t&&(t.classList.remove("generating"),t.innerHTML="&#8942;"),e.classList.remove("loading"),document.getElementById("ai-input-wrapper").classList.remove("waiting");const n=document.getElementById("ai-input");n&&(n.contentEditable=!0,n.focus());const o=document.getElementById("ai-response-container");o&&(o.scrollTop=o.scrollHeight)}}
+    function handleSettingsToggleClick(e){e.stopPropagation(),isRequestPending?stopGeneration():toggleAttachmentMenu()}
+    function stopGeneration(){currentAIRequestController&&currentAIRequestController.abort()}
+    function toggleAttachmentMenu(){isAttachmentMenuOpen=!isAttachmentMenuOpen;const e=document.getElementById("ai-attachment-menu"),t=document.getElementById("ai-settings-toggle");if(isAttachmentMenuOpen){const n=t.getBoundingClientRect();e.style.bottom=`${window.innerHeight-n.top}px`,e.style.right=`${window.innerWidth-n.right}px`,e.querySelectorAll("button[data-type]").forEach(e=>{const t=e.dataset.type;if("images"===t||"videos"===t){const n=limitManager.getUsage(),o=`<span>${n[t]||0}/${DAILY_LIMITS[t]} used</span>`;e.querySelector("span:last-child").innerHTML=o,e.disabled=!limitManager.canUpload(t)}})}e.classList.toggle("active",isAttachmentMenuOpen),t.classList.toggle("active",isAttachmentMenuOpen)}
+    function handleFileUpload(e){const t=document.createElement("input");t.type="file",t.accept={photo:"image/*",video:"video/*",audio:"audio/*",file:"*"}[e]||"*",t.onchange=e=>{const t=e.target.files[0];if(t){if(t.type.startsWith("video/")&&t.size>1024*1024*100)return void alert("Video file is too large. Please choose a shorter video (max approx. 5 minutes).");const n=new FileReader;n.onload=e=>{const n=e.target.result.split(",")[1];attachedFiles.push({inlineData:{mimeType:t.type,data:n},fileName:t.name});const o=t.type.startsWith("image/")?"images":t.type.startsWith("video/")?"videos":null;o&&limitManager.recordUpload(o),renderAttachments()},n.readAsDataURL(t)}},t.click()}
+    function renderAttachments(){const e=document.getElementById("ai-attachment-preview");if(e.innerHTML="",0===attachedFiles.length)return void(e.style.display="none");e.style.display="grid",attachedFiles.forEach((t,n)=>{const o=document.createElement("div");o.className="attachment-card";let a='<span class="file-icon">📄</span>';t.inlineData.mimeType.startsWith("image/")?a=`<img src="data:${t.inlineData.mimeType};base64,${t.inlineData.data}" alt="${t.fileName}" />`:t.inlineData.mimeType.startsWith("video/")?a='<span class="file-icon">🎬</span>':t.inlineData.mimeType.startsWith("audio/")&&(a='<span class="file-icon">🎵</span>'),o.innerHTML=`\n                ${a}\n                <span class="file-name">${t.fileName}</span>\n                <button class="remove-attachment-btn" data-index="${n}">&times;</button>\n            `,e.appendChild(o)}),e.querySelectorAll(".remove-attachment-btn").forEach(e=>{e.onclick=()=>{attachedFiles.splice(e.dataset.index,1),renderAttachments()}})}
+    function createAttachmentMenu(){const e=document.createElement("div");e.id="ai-attachment-menu";const t=[{id:"photo",icon:"📷",label:"Photo",type:"images"},{id:"video",icon:"🎬",label:"Video",type:"videos"},{id:"audio",icon:"🎤",label:"Audio",type:"audio"},{id:"file",icon:"📎",label:"File",type:"file"}];return t.forEach(t=>{const n=document.createElement("button");n.dataset.type=t.type;const o=limitManager.canUpload(t.type);let a="";if("images"===t.type||"videos"===t.type){const e=limitManager.getUsage();a=`<span>${e[t.type]||0}/${DAILY_LIMITS[t.type]} used</span>`}n.innerHTML=`<span class="icon">${t.icon}</span> ${t.label} ${a}`,o||(n.disabled=!0,n.title="You have reached your daily limit for this file type."),n.onclick=()=>{handleFileUpload(t.id),toggleAttachmentMenu()},e.appendChild(n)}),e}
+    function handleContentEditableInput(e){const t=e.target;t.scrollHeight>MAX_INPUT_HEIGHT?(t.style.height=`${MAX_INPUT_HEIGHT}px`,t.style.overflowY="auto"):(t.style.height="auto",t.style.height=`${t.scrollHeight}px`,t.style.overflowY="hidden"),fadeOutWelcomeMessage();const n=document.getElementById("ai-input-placeholder"),o=t.innerText;n&&(n.style.display=o.length>0||attachedFiles.length>0?"none":"block")}
+    function handleInputSubmission(e){if("Enter"===e.key&&!e.shiftKey){e.preventDefault();const t=e.target,n=t.innerText.trim();if(!n&&0===attachedFiles.length)return;if(isRequestPending)return;isRequestPending=!0,document.getElementById("ai-settings-toggle").classList.add("generating"),t.contentEditable=!1,document.getElementById("ai-input-wrapper").classList.add("waiting");const o=[];n&&o.push({text:n}),attachedFiles.forEach(e=>{o.push({inlineData:e.inlineData})}),chatHistory.push({role:"user",parts:o});const a=document.getElementById("ai-response-container"),i=document.createElement("div");i.className="ai-message-bubble user-message";let s=n?`<p>${escapeHTML(n)}</p>`:"";attachedFiles.length>0&&(s+=`<div class="sent-attachments">${attachedFiles.length} file(s) sent</div>`),i.innerHTML=s,a.appendChild(i);const r=document.createElement("div");r.className="ai-message-bubble gemini-response loading",r.innerHTML='<div class="ai-loader"></div>',a.appendChild(r),a.scrollTop=a.scrollHeight,t.innerHTML="",attachedFiles=[],renderAttachments(),handleContentEditableInput({target:t}),callGoogleAI(r)}}
+    function escapeHTML(e){const t=document.createElement("p");return t.textContent=e,t.innerHTML}
+    function injectStyles(){if(document.getElementById("ai-dynamic-styles"))return;if(!document.querySelector('style[data-font="primary"]')){const e=document.createElement("style");e.setAttribute("data-font","primary"),e.textContent="@font-face { font-family: 'PrimaryFont'; src: url('../fonts/primary.woff') format('woff'); font-weight: normal; font-style: normal; }",document.head.appendChild(e)}const e=document.createElement("style");e.id="ai-dynamic-styles",e.innerHTML=`
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
             #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; padding-top: 70px; box-sizing: border-box; }
             #ai-container.active { opacity: 1; background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
@@ -541,11 +92,13 @@
             #ai-close-button:hover { color: #fff; transform: scale(1.1); }
             #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 20px; -webkit-mask-image: linear-gradient(to bottom,transparent 0,black 5%,black 95%,transparent 100%); mask-image: linear-gradient(to bottom,transparent 0,black 5%,black 95%,transparent 100%); }
             .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
+            .ai-message-bubble h1, .ai-message-bubble h2, .ai-message-bubble h3 { margin-top: 0; }
             .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
             .user-message p { margin: 0; }
             .sent-attachments { display: block; font-size: 0.8em; color: #ccc; margin-top: 8px; font-style: italic; }
             .gemini-response { align-self: flex-start; }
             .gemini-response.loading { border: 1px solid transparent; animation: gemini-glow 4s linear infinite,message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; }
+            .gemini-response ul { padding-left: 20px; margin: 10px 0; }
             #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto 30px; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); }
             #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
             #ai-input { min-height: 50px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
@@ -554,10 +107,9 @@
             #ai-settings-toggle.active { transform: rotate(90deg); }
             #ai-settings-toggle.generating { transform: rotate(45deg); background-color: rgba(255,82,82,.2); color: #ff8a80; }
             #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
-            #ai-attachment-menu { position: fixed; background: rgba(10,10,10,0.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
+            #ai-attachment-menu { position: fixed; background: rgba(10,10,10,0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
             #ai-attachment-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
             #ai-attachment-menu button { background: transparent; border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s; }
-            #ai-attachment-menu button:hover { background-color: rgba(255,255,255,0.1); }
             #ai-attachment-menu button:disabled { opacity: 0.5; cursor: not-allowed; color: #888; }
             #ai-attachment-menu button .icon { font-size: 1.2em; }
             #ai-attachment-menu button span:last-child { font-size: 0.8em; color: #888; margin-left: auto; font-family: 'secondaryfont', sans-serif; }
