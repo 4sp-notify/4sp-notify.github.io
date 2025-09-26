@@ -1,17 +1,17 @@
 /**
- * AI MODE - ONLY FOR ADMINS AND ENROLLED USERS
- * Custom Chatbot By Gemini 2.5 Flash Lite Preview, from September of 2025.
+ * ai-activation.js
+ *
  * A feature-rich, self-contained script with a unified attachment/subject menu,
  * enhanced animations, intelligent chat history (token saving),
- * and advanced file previews. This version includes UI fixes for the welcome
- * screen, loading animation, and incorporates new user-requested features.
+ * and advanced file previews. This version includes a character limit,
+ * smart paste handling, and refined animations.
  */
 (function() {
     // --- CONFIGURATION ---
-    // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
     const MAX_INPUT_HEIGHT = 200;
+    const CHAR_LIMIT = 500;
 
     // --- ICONS (for event handlers) ---
     const copyIconSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="copy-icon"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
@@ -25,7 +25,6 @@
     let currentSubject = 'General';
     let chatHistory = [];
     let attachedFiles = [];
-    let shootingStarInterval = null;
 
     // --- EXPANDED SYMBOL MAP ---
     const latexSymbolMap = {
@@ -50,42 +49,6 @@
         recordUpload: (type, count = 1) => { if (type in DAILY_LIMITS) { let usage = limitManager.getUsage(); usage[type] = (usage[type] || 0) + count; limitManager.saveUsage(usage); } }
     };
 
-    // --- UI EFFECTS ---
-    function startShootingStars() {
-        if (shootingStarInterval) return; // Already running
-        const container = document.getElementById('ai-container');
-        if (!container) return;
-
-        shootingStarInterval = setInterval(() => {
-            const star = document.createElement('div');
-            star.className = 'shooting-star';
-            
-            const startX = Math.random() * window.innerWidth;
-            const startY = Math.random() * window.innerHeight * 0.5; // Start in the top half
-            const duration = Math.random() * 3 + 4; // 4-7 seconds
-            const delay = Math.random() * 5; // 0-5 second delay
-            
-            star.style.left = `${startX}px`;
-            star.style.top = `${startY}px`;
-            star.style.setProperty('--duration', `${duration}s`);
-            star.style.animationDelay = `${delay}s`;
-
-            container.appendChild(star);
-            star.addEventListener('animationend', () => {
-                star.remove();
-            }, { once: true });
-
-        }, 2500);
-    }
-
-    function stopShootingStars() {
-        if (shootingStarInterval) {
-            clearInterval(shootingStarInterval);
-            shootingStarInterval = null;
-        }
-    }
-
-
     async function isUserAuthorized() {
         const user = firebase.auth().currentUser;
         if (typeof firebase === 'undefined' || !user) return false;
@@ -101,9 +64,12 @@
         if (e.ctrlKey && e.key.toLowerCase() === 'c') {
             const selection = window.getSelection().toString();
             if (isAIActive) {
+                if (selection.length > 0) {
+                    return; // Allow default copy behavior for selected text
+                }
                 e.preventDefault();
                 const mainEditor = document.getElementById('ai-input');
-                if (mainEditor && mainEditor.innerText.trim().length === 0 && selection.length === 0 && attachedFiles.length === 0) {
+                if (mainEditor && mainEditor.innerText.trim().length === 0 && attachedFiles.length === 0) {
                     deactivateAI();
                 }
             } else {
@@ -166,11 +132,16 @@
         visualInput.contentEditable = true;
         visualInput.onkeydown = handleInputSubmission;
         visualInput.oninput = handleContentEditableInput;
+        visualInput.addEventListener('paste', handlePaste);
         
         const actionToggle = document.createElement('button');
         actionToggle.id = 'ai-action-toggle';
         actionToggle.innerHTML = '<span class="icon-ellipsis">&#8942;</span><span class="icon-stop">■</span>';
         actionToggle.onclick = handleActionToggleClick;
+
+        const charCounter = document.createElement('div');
+        charCounter.id = 'ai-char-counter';
+        charCounter.textContent = `0 / ${CHAR_LIMIT}`;
 
         inputWrapper.appendChild(attachmentPreviewContainer);
         inputWrapper.appendChild(visualInput);
@@ -183,6 +154,7 @@
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
         container.appendChild(createActionMenu());
+        container.appendChild(charCounter);
         
         document.body.appendChild(container);
         
@@ -191,9 +163,6 @@
         setTimeout(() => {
             if (chatHistory.length > 0) { container.classList.add('chat-active'); }
             container.classList.add('active');
-            if (currentSubject === 'General') {
-                startShootingStars();
-            }
         }, 10);
         
         visualInput.focus();
@@ -202,7 +171,6 @@
 
     function deactivateAI() {
         if (typeof window.stopPanicKeyBlocker === 'function') { window.stopPanicKeyBlocker(); }
-        stopShootingStars();
         if (currentAIRequestController) currentAIRequestController.abort();
         const container = document.getElementById('ai-container');
         if (container) {
@@ -362,11 +330,6 @@
         const persistentTitle = document.getElementById('ai-persistent-title');
         if (persistentTitle) { persistentTitle.textContent = `AI Mode - ${subject}`; }
         document.getElementById('ai-container').dataset.subject = subject;
-        
-        stopShootingStars();
-        if (subject === 'General') {
-            startShootingStars();
-        }
 
         const menu=document.getElementById('ai-action-menu');
         menu.querySelectorAll('button[data-subject]').forEach(b=>b.classList.remove('active'));
@@ -525,17 +488,63 @@
 
     function handleContentEditableInput(e) {
         const editor = e.target;
+        const charCount = editor.innerText.length;
+        
+        const counter = document.getElementById('ai-char-counter');
+        if (counter) {
+            counter.textContent = `${charCount} / ${CHAR_LIMIT}`;
+            counter.classList.toggle('limit-exceeded', charCount > CHAR_LIMIT);
+        }
+
+        if (charCount > CHAR_LIMIT) {
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false); // Go to the end
+            selection.removeAllRanges();
+            selection.addRange(range);
+        }
+
         if (editor.scrollHeight > MAX_INPUT_HEIGHT) { editor.style.height = `${MAX_INPUT_HEIGHT}px`; editor.style.overflowY = 'auto'; } 
         else { editor.style.height = 'auto'; editor.style.height = `${editor.scrollHeight}px`; editor.style.overflowY = 'hidden'; }
         fadeOutWelcomeMessage();
     }
+    
+    function handlePaste(e) {
+        e.preventDefault();
+        const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+        const currentText = e.target.innerText;
+
+        if (currentText.length + pastedText.length > CHAR_LIMIT) {
+            let filename = 'paste.txt';
+            let counter = 2;
+            while (attachedFiles.some(f => f.fileName === filename)) {
+                filename = `paste${counter++}.txt`;
+            }
+            // Use encodeURIComponent to handle special characters before btoa
+            const base64Data = btoa(unescape(encodeURIComponent(pastedText)));
+            attachedFiles.push({
+                inlineData: { mimeType: 'text/plain', data: base64Data },
+                fileName: filename
+            });
+            renderAttachments();
+        } else {
+            document.execCommand('insertText', false, pastedText);
+        }
+    }
 
     function handleInputSubmission(e) {
+        const editor = e.target;
+        const query = editor.innerText.trim();
+        if (editor.innerText.length > CHAR_LIMIT) {
+             e.preventDefault();
+             return;
+        }
+
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             if (isActionMenuOpen) { toggleActionMenu(); }
-            const editor = e.target;
-            const query = editor.innerText.trim();
+            
             if (attachedFiles.some(f => f.isLoading)) {
                 alert("Please wait for files to finish uploading before sending.");
                 return;
@@ -563,9 +572,10 @@
             responseContainer.appendChild(responseBubble);
             responseContainer.scrollTop = responseContainer.scrollHeight;
             editor.innerHTML = '';
+            handleContentEditableInput({target: editor}); // Reset counter
             attachedFiles = [];
             renderAttachments();
-            handleContentEditableInput({ target: editor });
+            
             callGoogleAI(responseBubble);
         }
     }
@@ -642,8 +652,8 @@
         style.innerHTML = `
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
             #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; overflow: hidden; }
-            #ai-container.active { opacity: 1; background-color: rgba(17, 24, 39, 0.9); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
-            #ai-container[data-subject="General"] { background-color: rgba(17, 24, 39, 0.9); }
+            #ai-container.active { opacity: 1; background-color: rgba(0, 0, 0, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+            #ai-container[data-subject="General"] { background-color: rgba(0, 0, 0, 0.8); }
             #ai-container[data-subject="Mathematics"] { background-color: rgba(76, 29, 29, 0.9); }
             #ai-container[data-subject="Science"] { background-color: rgba(6, 78, 59, 0.9); }
             #ai-container[data-subject="History"] { background-color: rgba(74, 50, 11, 0.9); }
@@ -659,6 +669,8 @@
             #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
             #ai-welcome-message p { font-size: .9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255,255,255,.7); font-size: 40px; cursor: pointer; transition: color .2s ease,transform .3s ease, opacity 0.4s; }
+            #ai-char-counter { position: fixed; bottom: 15px; right: 30px; font-size: 0.9em; font-family: monospace; color: #aaa; transition: color 0.2s; z-index: 2147483647; }
+            #ai-char-counter.limit-exceeded { color: #e57373; font-weight: bold; }
             #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 70px 20px 0 20px; -webkit-mask-image: linear-gradient(to bottom,transparent 0,black 3%,black 97%,transparent 100%); mask-image: linear-gradient(to bottom,transparent 0,black 3%,black 97%,transparent 100%);}
             .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; transition: opacity 0.3s ease-in-out; }
             .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
@@ -716,9 +728,6 @@
             .code-block-wrapper pre::-webkit-scrollbar { height: 8px; }
             .code-block-wrapper pre::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
             .code-block-wrapper code { font-family: 'Menlo', 'Consolas', monospace; font-size: 0.9em; color: #f0f0f0; }
-            .shooting-star { position: fixed; z-index: -1; width: 2px; height: 2px; background-color: #fff; border-radius: 50%; box-shadow: 0 0 6px 1px #fff; animation: shooting-star-anim var(--duration, 5s) linear; }
-            .shooting-star::after { content: ''; position: absolute; top: 50%; transform: translateY(-50%); width: 100px; height: 1px; background: linear-gradient(to right, #fff, transparent); }
-            @keyframes shooting-star-anim { 0% { transform: translate(0, 0) rotate(225deg); opacity: 1; } 100% { transform: translate(-100vw, 100vw) rotate(225deg); opacity: 0; } }
             @keyframes glow { 0%,100% { box-shadow: 0 0 5px rgba(255,255,255,.15), 0 0 10px rgba(255,255,255,.1); } 50% { box-shadow: 0 0 10px rgba(255,255,255,.25), 0 0 20px rgba(255,255,255,.2); } }
             @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
             @keyframes spin { to { transform: rotate(360deg); } }
