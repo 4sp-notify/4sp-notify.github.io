@@ -1,18 +1,17 @@
 /**
- * AI MODE - ONLY FOR ADMINS AND ENROLLED USERS
- * Custom Chatbot By Gemini 2.5 Flash Lite Preview, from September of 2025.
+ * ai-activation.js
+ *
  * A feature-rich, self-contained script with a unified attachment/subject menu,
  * enhanced animations, intelligent chat history (token saving),
- * and advanced file previews. This version includes UI fixes for the welcome
- * screen, loading animation, and incorporates new user-requested features.
+ * and advanced file previews. This version includes a character limit,
+ * smart paste handling, and refined animations.
  */
 (function() {
     // --- CONFIGURATION ---
-    // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
     const MAX_INPUT_HEIGHT = 200;
-    const CHAR_LIMIT = 500; // New character limit request
+    const CHAR_LIMIT = 500;
 
     // --- ICONS (for event handlers) ---
     const copyIconSVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" class="copy-icon"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>`;
@@ -51,38 +50,37 @@
         recordUpload: (type, count = 1) => { if (type in DAILY_LIMITS) { let usage = limitManager.getUsage(); usage[type] = (usage[type] || 0) + count; limitManager.saveUsage(usage); } }
     };
 
-    // --- UI EFFECTS (Redesigned Shooting Star) ---
+    // --- UI EFFECTS ---
     function startShootingStars() {
-        if (shootingStarInterval) return; 
+        if (shootingStarInterval) return;
         const container = document.getElementById('ai-container');
         if (!container) return;
-
-        stopShootingStars(); // Clear any existing interval before starting a new one
 
         shootingStarInterval = setInterval(() => {
             const star = document.createElement('div');
             star.className = 'shooting-star';
             
-            // New Generative Logic: Stars start from the top/middle area and shoot down/right
-            const startX = Math.random() * window.innerWidth * 1.5 - (window.innerWidth * 0.25); // Wider starting range
-            const startY = Math.random() * window.innerHeight * 0.2; // Start in the very top quarter
-            const duration = Math.random() * 3 + 5; // Longer duration: 5s to 8s
-            const delay = Math.random() * 10; // Longer max delay: 10s
-            
-            star.style.left = `${startX}px`;
-            star.style.top = `${startY}px`;
-            star.style.setProperty('--duration', `${duration}s`);
-            star.style.animationDelay = `${delay}s`;
-            star.style.opacity = 0.8 + Math.random() * 0.2; // Slight opacity variation
-            star.style.setProperty('--star-size', `${0.5 + Math.random() * 1.5}px`); // Size variation
+            const side = Math.random() > 0.5 ? 'top' : 'right';
+            let top, left;
+
+            if (side === 'top') {
+                top = -10;
+                left = Math.random() * window.innerWidth;
+            } else {
+                top = Math.random() * window.innerHeight;
+                left = window.innerWidth + 10;
+            }
+
+            star.style.top = `${top}px`;
+            star.style.left = `${left}px`;
+            star.style.setProperty('--duration', `${Math.random() * 2 + 3}s`); // 3-5 seconds
+            star.style.setProperty('--delay', `${Math.random() * 5}s`); // 0-5s delay
 
             container.appendChild(star);
-            
             star.addEventListener('animationend', () => {
                 star.remove();
             }, { once: true });
-
-        }, 1500 + Math.random() * 1500); // Spawn more frequently (every 1.5s to 3s)
+        }, 1000);
     }
 
     function stopShootingStars() {
@@ -90,9 +88,7 @@
             clearInterval(shootingStarInterval);
             shootingStarInterval = null;
         }
-        // Optional: Fade out existing stars if necessary, though they should clean up via animationend
     }
-
 
     async function isUserAuthorized() {
         const user = firebase.auth().currentUser;
@@ -109,14 +105,15 @@
         if (e.ctrlKey && e.key.toLowerCase() === 'c') {
             const selection = window.getSelection().toString();
             if (isAIActive) {
-                // If AI is active, Ctrl+C on empty input/selection deactivates it
+                if (selection.length > 0) {
+                    return; // Allow default copy behavior for selected text
+                }
+                e.preventDefault();
                 const mainEditor = document.getElementById('ai-input');
-                if (mainEditor && mainEditor.innerText.trim().length === 0 && selection.length === 0 && attachedFiles.length === 0) {
+                if (mainEditor && mainEditor.innerText.trim().length === 0 && attachedFiles.length === 0) {
                     deactivateAI();
-                    e.preventDefault();
                 }
             } else {
-                // If AI is inactive, Ctrl+C activates it (if authorized)
                 if (selection.length === 0) {
                     const isAuthorized = await isUserAuthorized();
                     if (isAuthorized) {
@@ -176,15 +173,21 @@
         visualInput.contentEditable = true;
         visualInput.onkeydown = handleInputSubmission;
         visualInput.oninput = handleContentEditableInput;
+        visualInput.addEventListener('paste', handlePaste);
         
         const actionToggle = document.createElement('button');
         actionToggle.id = 'ai-action-toggle';
         actionToggle.innerHTML = '<span class="icon-ellipsis">&#8942;</span><span class="icon-stop">■</span>';
         actionToggle.onclick = handleActionToggleClick;
 
+        const charCounter = document.createElement('div');
+        charCounter.id = 'ai-char-counter';
+        charCounter.textContent = `0 / ${CHAR_LIMIT}`;
+
         inputWrapper.appendChild(attachmentPreviewContainer);
         inputWrapper.appendChild(visualInput);
         inputWrapper.appendChild(actionToggle);
+        inputWrapper.appendChild(charCounter);
         
         container.appendChild(brandTitle);
         container.appendChild(persistentTitle);
@@ -201,7 +204,6 @@
         setTimeout(() => {
             if (chatHistory.length > 0) { container.classList.add('chat-active'); }
             container.classList.add('active');
-            // Start stars only if subject is General, as per request.
             if (currentSubject === 'General') {
                 startShootingStars();
             }
@@ -351,7 +353,6 @@
         const toggleBtn = document.getElementById('ai-action-toggle');
         if (isActionMenuOpen) {
             const btnRect = toggleBtn.getBoundingClientRect();
-            // Position menu relative to its toggle button, accounting for viewport edges
             menu.style.bottom = `${window.innerHeight - btnRect.top}px`;
             menu.style.right = `${window.innerWidth - btnRect.right}px`;
             menu.querySelectorAll('button[data-type]').forEach(button => {
@@ -373,8 +374,7 @@
         chatHistory = [];
         const persistentTitle = document.getElementById('ai-persistent-title');
         if (persistentTitle) { persistentTitle.textContent = `AI Mode - ${subject}`; }
-        const container = document.getElementById('ai-container');
-        if (container) container.dataset.subject = subject;
+        document.getElementById('ai-container').dataset.subject = subject;
         
         stopShootingStars();
         if (subject === 'General') {
@@ -388,67 +388,6 @@
         toggleActionMenu();
     }
     
-    // --- FILE HANDLING ---
-
-    /** Helper to generate a unique filename sequentially if one exists */
-    function generateUniqueFileName(baseName, ext, existingNames) {
-        if (!existingNames.has(baseName + '.' + ext)) {
-            return baseName + '.' + ext;
-        }
-        let counter = 1;
-        let newName = `${baseName}-${counter}.${ext}`;
-        while (existingNames.has(newName)) {
-            counter++;
-            newName = `${baseName}-${counter}.${ext}`;
-        }
-        return newName;
-    }
-
-    /** Extracts all text content from all parts of the current message */
-    function extractCurrentTextContent() {
-        const editor = document.getElementById('ai-input');
-        return editor ? editor.innerText : "";
-    }
-
-    /** Processes text content that exceeds the limit by converting it to a virtual file */
-    function convertTextToAttachment(text) {
-        if (!text || text.length <= CHAR_LIMIT) return;
-
-        // 1. Determine existing file names (only for successfully uploaded/processed ones)
-        const existingFileNames = new Set(attachedFiles.filter(f => !f.isLoading).map(f => f.fileName));
-
-        // 2. Generate unique name for the 'paste' file
-        const baseName = 'paste';
-        const ext = 'txt';
-        const fileName = generateUniqueFileName(baseName, ext, existingFileNames);
-
-        // 3. Create a mock file object structure for Gemini API
-        const mockFile = {
-            name: fileName,
-            type: 'text/plain',
-            size: text.length // Approximate size
-        };
-
-        // 4. Read the file data (simulate loading/encoding)
-        const tempId = `file-paste-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
-        
-        attachedFiles.push({ 
-            tempId, 
-            file: mockFile, 
-            isLoading: false, // Treat pasted text as immediately ready
-            fileName: fileName,
-            inlineData: { 
-                mimeType: 'text/plain', 
-                data: btoa(text) // Encode text as base64 data
-            }
-        });
-
-        // 5. Notify user and clear editor
-        alert(`Input exceeded ${CHAR_LIMIT} characters. Content was automatically converted into attachment: ${fileName}`);
-        document.getElementById('ai-input').innerText = '';
-        handleContentEditableInput({ target: document.getElementById('ai-input') }); // Resize input
-    }
-    
     function handleFileUpload(fileType) {
         const input = document.createElement('input');
         input.type = 'file';
@@ -458,24 +397,19 @@
         input.onchange = (event) => {
             const files = Array.from(event.target.files);
             if (!files || files.length === 0) return;
-            
-            // Check size limit before proceeding with any file
             const currentTotalSize = attachedFiles.reduce((sum, file) => sum + (file.inlineData ? atob(file.inlineData.data).length : 0), 0);
             const newFilesSize = files.reduce((sum, file) => sum + file.size, 0);
             if (currentTotalSize + newFilesSize > (4 * 1024 * 1024)) { // Example: 4MB limit
                 alert(`Upload failed: Total size of attachments would exceed the 4MB limit per message.`);
                 return;
             }
-            
             let filesToProcess = [...files];
             const usage = limitManager.getUsage();
             const remainingSlots = DAILY_LIMITS.images - (usage.images || 0);
-            
             if (fileType === 'photo' && filesToProcess.length > remainingSlots) {
                 alert(`You can only upload ${remainingSlots} more image(s) today.`);
                 filesToProcess = filesToProcess.slice(0, remainingSlots);
             }
-            
             filesToProcess.forEach(file => {
                 const tempId = `file-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`;
                 attachedFiles.push({ tempId, file, isLoading: true });
@@ -497,7 +431,6 @@
                 };
                 reader.readAsDataURL(file);
             });
-            
             if (fileType === 'photo') { limitManager.recordUpload('images', filesToProcess.length); }
         };
         input.click();
@@ -517,14 +450,12 @@
         inputWrapper.classList.add('has-attachments');
         previewContainer.innerHTML = ''; // Clear previous previews
 
-
         attachedFiles.forEach((file, index) => {
             const fileCard = document.createElement('div');
             fileCard.className = 'attachment-card';
             let previewHTML = '';
             let fileExt = 'FILE';
             let fileName = '';
-
 
             if (file.isLoading) {
                 fileCard.classList.add('loading');
@@ -541,20 +472,17 @@
                 }
             }
 
-
             if (fileExt.length > 5) fileExt = 'FILE';
             let fileTypeBadge = `<div class="file-type-badge">${fileExt}</div>`;
             if (file.inlineData && file.inlineData.mimeType.startsWith('image/')) {
                  fileTypeBadge = '';
             }
 
-
             const nameSpan = document.createElement('span');
             nameSpan.textContent = fileName;
             const marqueeWrapper = document.createElement('div');
             marqueeWrapper.className = 'file-name';
             marqueeWrapper.appendChild(nameSpan);
-
 
             fileCard.innerHTML = `${previewHTML}<div class="file-info"></div>${fileTypeBadge}<button class="remove-attachment-btn" data-index="${index}">&times;</button>`;
             fileCard.querySelector('.file-info').appendChild(marqueeWrapper);
@@ -567,7 +495,6 @@
                     nameSpan.innerHTML += `<span aria-hidden="true">${fileName}</span>`;
                 }
             }, 0);
-
 
             fileCard.querySelector('.remove-attachment-btn').onclick = () => {
                 attachedFiles.splice(index, 1);
@@ -609,125 +536,97 @@
         return menu;
     }
 
-    function updateInputVisuals(editor) {
-        const currentText = editor.innerText;
-        const currentLen = currentText.length;
+    function handleContentEditableInput(e) {
+        const editor = e.target;
+        let text = editor.innerText;
+        const charCount = text.length;
         
-        // 1. Character Limit Check & Conversion
-        if (currentLen > CHAR_LIMIT) {
-            convertTextToAttachment(currentText);
-            // After conversion, the editor is cleared, so we stop visual updates here
-            return; 
+        const counter = document.getElementById('ai-char-counter');
+        if (counter) {
+            counter.textContent = `${charCount} / ${CHAR_LIMIT}`;
+            counter.classList.toggle('limit-exceeded', charCount > CHAR_LIMIT);
         }
 
-        // 2. Dynamic Height Adjustment
-        if (editor.scrollHeight > MAX_INPUT_HEIGHT) { 
-            editor.style.height = `${MAX_INPUT_HEIGHT}px`; 
-            editor.style.overflowY = 'auto'; 
-        } else { 
-            editor.style.height = 'auto'; 
-            editor.style.height = `${editor.scrollHeight}px`; 
-            editor.style.overflowY = 'hidden'; 
-        }
-        
-        // 3. Live Character Count Display (New Feature)
-        const inputWrapper = document.getElementById('ai-input-wrapper');
-        if (!inputWrapper.querySelector('.char-counter')) {
-            const counterDiv = document.createElement('div');
-            counterDiv.className = 'char-counter';
-            inputWrapper.prepend(counterDiv); // Prepend it before the attachment previews/input
-        }
-        const counter = inputWrapper.querySelector('.char-counter');
-        counter.textContent = `${currentLen}/${CHAR_LIMIT}`;
-        
-        if (currentLen > CHAR_LIMIT * 0.9) {
-            counter.style.color = '#fbbc05'; // Yellow warning
-        } else if (currentLen > CHAR_LIMIT * 0.98) {
-             counter.style.color = '#ea4335'; // Red critical warning
-        }
-        else {
-            counter.style.color = 'rgba(255, 255, 255, 0.5)';
+        if (charCount > CHAR_LIMIT) {
+            const selection = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false); // Go to the end
+            selection.removeAllRanges();
+            selection.addRange(range);
         }
 
+        if (editor.scrollHeight > MAX_INPUT_HEIGHT) { editor.style.height = `${MAX_INPUT_HEIGHT}px`; editor.style.overflowY = 'auto'; } 
+        else { editor.style.height = 'auto'; editor.style.height = `${editor.scrollHeight}px`; editor.style.overflowY = 'hidden'; }
         fadeOutWelcomeMessage();
     }
+    
+    function handlePaste(e) {
+        e.preventDefault();
+        const pastedText = (e.clipboardData || window.clipboardData).getData('text');
+        const currentText = e.target.innerText;
 
-    function handleContentEditableInput(e) {
-        updateInputVisuals(e.target);
+        if (currentText.length + pastedText.length > CHAR_LIMIT) {
+            let filename = 'paste.txt';
+            let counter = 2;
+            while (attachedFiles.some(f => f.fileName === filename)) {
+                filename = `paste${counter++}.txt`;
+            }
+            // Use encodeURIComponent to handle special characters before btoa
+            const base64Data = btoa(unescape(encodeURIComponent(pastedText)));
+            attachedFiles.push({
+                inlineData: { mimeType: 'text/plain', data: base64Data },
+                fileName: filename
+            });
+            renderAttachments();
+        } else {
+            document.execCommand('insertText', false, pastedText);
+        }
     }
 
     function handleInputSubmission(e) {
+        const editor = e.target;
+        const query = editor.innerText.trim();
+        if (editor.innerText.length > CHAR_LIMIT) {
+             e.preventDefault();
+             return;
+        }
+
         if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();
             if (isActionMenuOpen) { toggleActionMenu(); }
             
-            const editor = e.target;
-            const query = editor.innerText.trim();
-            
-            // Check for pending uploads
             if (attachedFiles.some(f => f.isLoading)) {
                 alert("Please wait for files to finish uploading before sending.");
                 return;
             }
-            
-            // Check if content is empty (text or attachments)
             if (!query && attachedFiles.length === 0) return;
-            
-            // Check if already processing a request
             if (isRequestPending) return;
             
-            // Check if text needs to be converted *before* sending
-            if (query.length > CHAR_LIMIT) {
-                convertTextToAttachment(query);
-                // If conversion happened, the editor text is now empty, so we stop here.
-                if (document.getElementById('ai-input').innerText.trim().length === 0 && attachedFiles.length > 0) {
-                    // We proceed to send the *new* attachment instead of the old text
-                    editor.innerText = ''; // Ensure editor is clear visually
-                    handleContentEditableInput({ target: editor }); // Update visuals
-                    // Fall through to send logic below, which will now see attachments only
-                } else {
-                    return; // If conversion failed or something went wrong, stop submission
-                }
-            }
-
             isRequestPending = true;
             document.getElementById('ai-action-toggle').classList.add('generating');
             document.getElementById('ai-input-wrapper').classList.add('waiting');
-            
             const parts = [];
-            const finalQuery = editor.innerText.trim(); // Use potentially truncated/cleared text
-            if (finalQuery) parts.push({ text: finalQuery });
-            
-            // Add ready attachments (including converted text files)
+            if (query) parts.push({ text: query });
             attachedFiles.forEach(file => { if (file.inlineData) parts.push({ inlineData: file.inlineData }); });
-            
-            if (parts.length === 0) {
-                isRequestPending = false;
-                document.getElementById('ai-action-toggle').classList.remove('generating');
-                document.getElementById('ai-input-wrapper').classList.remove('waiting');
-                return;
-            }
-
             chatHistory.push({ role: "user", parts: parts });
-            
             const responseContainer = document.getElementById('ai-response-container');
             const userBubble = document.createElement('div');
             userBubble.className = 'ai-message-bubble user-message';
-            let bubbleContent = finalQuery ? `<p>${escapeHTML(finalQuery)}</p>` : '';
+            let bubbleContent = query ? `<p>${escapeHTML(query)}</p>` : '';
             if (attachedFiles.length > 0) { bubbleContent += `<div class="sent-attachments">${attachedFiles.length} file(s) sent</div>`; }
             userBubble.innerHTML = bubbleContent;
             responseContainer.appendChild(userBubble);
-            
             const responseBubble = document.createElement('div');
             responseBubble.className = 'ai-message-bubble gemini-response loading';
             responseBubble.innerHTML = '<div class="ai-loader"></div>';
             responseContainer.appendChild(responseBubble);
             responseContainer.scrollTop = responseContainer.scrollHeight;
-            
             editor.innerHTML = '';
+            handleContentEditableInput({target: editor}); // Reset counter
             attachedFiles = [];
             renderAttachments();
-            handleContentEditableInput({ target: editor }); // Reset height and counter
+            
             callGoogleAI(responseBubble);
         }
     }
@@ -757,5 +656,140 @@
         let html = text;
         const codeBlocks = [];
 
+        html = html.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+            const trimmedCode = code.trim();
+            const lines = trimmedCode.split('\n').length;
+            const words = trimmedCode.split(/\s+/).filter(Boolean).length;
+            const escapedCode = escapeHTML(trimmedCode);
+            const langClass = lang ? `language-${lang.toLowerCase()}` : '';
 
-        html = html.replace(/
+            codeBlocks.push(`
+                <div class="code-block-wrapper">
+                    <div class="code-block-header">
+                        <span class="code-metadata">${lines} lines &middot; ${words} words</span>
+                        <button class="copy-code-btn" title="Copy code">${copyIconSVG}</button>
+                    </div>
+                    <pre><code class="${langClass}">${escapedCode}</code></pre>
+                </div>
+            `);
+            return "%%CODE_BLOCK%%";
+        });
+
+        html = escapeHTML(html);
+        html = html.replace(/^### (.*$)/gm, "<h3>$1</h3>")
+                   .replace(/^## (.*$)/gm, "<h2>$1</h2>")
+                   .replace(/^# (.*$)/gm, "<h1>$1</h1>");
+        html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>")
+                   .replace(/\*(.*?)\*/g, "<em>$1</em>");
+        html = html.replace(/^(?:\*|-)\s(.*$)/gm, "<li>$1</li>");
+        html = html.replace(/(<\/li>\s*<li>)/g, "</li><li>")
+                   .replace(/((<li>.*<\/li>)+)/gs, "<ul>$1</ul>");
+        html = html.replace(/\n/g, "<br>");
+        html = html.replace(/%%CODE_BLOCK%%/g, () => codeBlocks.shift());
+        
+        return html;
+    }
+
+    function injectStyles() {
+        if (document.getElementById('ai-dynamic-styles')) return;
+        if (!document.querySelector('style[data-font="primary"]')) {
+            const fontStyle = document.createElement("style");
+            fontStyle.setAttribute("data-font","primary");
+            fontStyle.textContent = `@font-face { font-family: 'PrimaryFont'; src: url('../fonts/primary.woff') format('woff'); font-weight: normal; font-style: normal; }`;
+            document.head.appendChild(fontStyle);
+        }
+        const style = document.createElement("style");
+        style.id = "ai-dynamic-styles";
+        style.innerHTML = `
+            :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
+            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; overflow: hidden; }
+            #ai-container.active { opacity: 1; background-color: rgba(0, 0, 0, 0.8); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+            #ai-container[data-subject="General"] { background-color: rgba(0, 0, 0, 0.8); }
+            #ai-container[data-subject="Mathematics"] { background-color: rgba(76, 29, 29, 0.9); }
+            #ai-container[data-subject="Science"] { background-color: rgba(6, 78, 59, 0.9); }
+            #ai-container[data-subject="History"] { background-color: rgba(74, 50, 11, 0.9); }
+            #ai-container[data-subject="English"] { background-color: rgba(30, 58, 138, 0.9); }
+            #ai-container[data-subject="Programming"] { background-color: rgba(8, 74, 113, 0.9); }
+            #ai-container.deactivating, #ai-container.deactivating > * { transition: opacity 0.4s, transform 0.4s; }
+            #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+            #ai-persistent-title, #ai-brand-title { position: absolute; top: 28px; left: 30px; font-family: 'SecondaryFont', sans-serif; font-size: 18px; font-weight: bold; color: white; opacity: 0; transition: opacity 0.5s 0.2s; animation: title-pulse 4s linear infinite; }
+            #ai-container.chat-active #ai-persistent-title { opacity: 1; }
+            #ai-container:not(.chat-active) #ai-brand-title { opacity: 1; }
+            #ai-welcome-message { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s, transform .5s; width: 100%; }
+            #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; transform: translate(-50%,-50%) scale(0.95); }
+            #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
+            #ai-welcome-message p { font-size: .9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
+            #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255,255,255,.7); font-size: 40px; cursor: pointer; transition: color .2s ease,transform .3s ease, opacity 0.4s; }
+            #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 70px 20px 0 20px; -webkit-mask-image: linear-gradient(to bottom,transparent 0,black 3%,black 97%,transparent 100%); mask-image: linear-gradient(to bottom,transparent 0,black 3%,black 97%,transparent 100%);}
+            .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; transition: opacity 0.3s ease-in-out; }
+            .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
+            .gemini-response { animation: glow 4s infinite; }
+            .gemini-response.loading { display: flex; justify-content: center; align-items: center; min-height: 60px; max-width: 100px; padding: 15px; background: rgba(15,15,18,.8); animation: gemini-glow 4s linear infinite; }
+            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,.2); }
+            #ai-input-wrapper::before, #ai-input-wrapper::after { content: ''; position: absolute; top: -1px; left: -1px; right: -1px; bottom: -1px; border-radius: 26px; z-index: -1; transition: opacity 0.5s ease-in-out; }
+            #ai-input-wrapper::before { animation: glow 3s infinite; opacity: 1; }
+            #ai-input-wrapper::after { animation: gemini-glow 4s linear infinite; opacity: 0; }
+            #ai-input-wrapper.waiting::before { opacity: 0; }
+            #ai-input-wrapper.waiting::after { opacity: 1; }
+            #ai-input { min-height: 52px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 120px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
+            #ai-input:empty::before { content: 'Ask a question or describe your files...'; color: rgba(255, 255, 255, 0.4); pointer-events: none; }
+            #ai-char-counter { position: absolute; bottom: 8px; right: 55px; font-size: 0.8em; font-family: monospace; color: #888; transition: color 0.2s; }
+            #ai-char-counter.limit-exceeded { color: #e57373; }
+            #ai-action-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+            #ai-action-toggle .icon-ellipsis, #ai-action-toggle .icon-stop { transition: opacity 0.3s, transform 0.3s; position: absolute; }
+            #ai-action-toggle .icon-stop { opacity: 0; transform: scale(0.5); font-size: 14px; }
+            #ai-action-toggle.generating { background-color: #581e1e; border: 1px solid #a12832; color: #ff8a80; border-radius: 8px; }
+            #ai-action-toggle.generating .icon-ellipsis { opacity: 0; transform: scale(0.5); }
+            #ai-action-toggle.generating .icon-stop { opacity: 1; transform: scale(1); }
+            #ai-action-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
+            #ai-action-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
+            #ai-action-menu button { background: rgba(255,255,255,0.05); border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s, filter 0.2s, box-shadow 0.2s; }
+            #ai-action-menu button[data-subject] { justify-content: center; }
+            #ai-action-menu button[data-subject="General"] { background-color: rgba(55, 65, 81, 0.7); }
+            #ai-action-menu button[data-subject="Mathematics"] { background-color: rgba(127, 29, 29, 0.7); }
+            #ai-action-menu button[data-subject="Science"] { background-color: rgba(22, 101, 52, 0.7); }
+            #ai-action-menu button[data-subject="History"] { background-color: rgba(120, 53, 15, 0.7); }
+            #ai-action-menu button[data-subject="English"] { background-color: rgba(30, 64, 175, 0.7); }
+            #ai-action-menu button[data-subject="Programming"] { background-color: rgba(12, 74, 110, 0.7); }
+            #ai-action-menu button:hover { filter: brightness(1.2); }
+            #ai-action-menu button[data-subject].active { filter: brightness(1.2); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.8); }
+            #ai-action-menu hr { border: none; height: 1px; background-color: rgba(255,255,255,0.1); margin: 5px 10px; }
+            #ai-action-menu .menu-header { font-size: 0.8em; color: #888; text-transform: uppercase; padding: 10px 15px 5px; cursor: default; }
+            #ai-attachment-preview { display: none; flex-direction: row; gap: 10px; padding: 0; max-height: 0; border-bottom: 1px solid transparent; overflow-x: auto; transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+            #ai-input-wrapper.has-attachments #ai-attachment-preview { max-height: 100px; padding: 10px 15px; }
+            .attachment-card { position: relative; border-radius: 8px; overflow: hidden; background: #333; height: 80px; width: 80px; flex-shrink: 0; display: flex; justify-content: center; align-items: center; transition: filter 0.3s; }
+            .attachment-card.loading { filter: grayscale(80%) brightness(0.7); }
+            .attachment-card.loading .file-icon { opacity: 0.3; }
+            .attachment-card.loading .ai-loader { position: absolute; z-index: 2; }
+            .attachment-card img { width: 100%; height: 100%; object-fit: cover; }
+            .file-info { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,0,0,0.6); overflow: hidden; }
+            .file-name { display: block; color: #fff; font-size: 0.75em; padding: 4px; text-align: center; white-space: nowrap; }
+            .file-name.marquee > span { display: inline-block; padding-left: 100%; animation: marquee linear infinite; }
+            .file-type-badge { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.6); color: #fff; font-size: 0.7em; padding: 2px 5px; border-radius: 4px; font-family: sans-serif; font-weight: bold; }
+            .remove-attachment-btn { position: absolute; top: 5px; left: 5px; background: rgba(0,0,0,0.5); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; z-index: 3; }
+            .ai-loader { width: 25px; height: 25px; border-radius: 50%; animation: spin 1s linear infinite; border: 3px solid rgba(255,255,255,0.3); border-top-color: #fff; }
+            .code-block-wrapper { background-color: rgba(42, 42, 48, 0.8); border-radius: 8px; margin: 10px 0; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); }
+            .code-block-header { display: flex; justify-content: flex-end; align-items: center; padding: 6px 12px; background-color: rgba(0,0,0,0.2); }
+            .code-metadata { font-size: 0.8em; color: #aaa; margin-right: auto; font-family: monospace; }
+            .copy-code-btn { background: rgba(255, 255, 255, 0.1); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.2); color: #fff; border-radius: 6px; width: 32px; height: 32px; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background-color 0.2s; }
+            .copy-code-btn:hover { background: rgba(255, 255, 255, 0.2); }
+            .copy-code-btn:disabled { cursor: default; background: rgba(25, 103, 55, 0.5); }
+            .copy-code-btn svg { stroke: #e0e0e0; }
+            .code-block-wrapper pre { margin: 0; padding: 15px; overflow: auto; background-color: transparent; }
+            .code-block-wrapper pre::-webkit-scrollbar { height: 8px; }
+            .code-block-wrapper pre::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
+            .code-block-wrapper code { font-family: 'Menlo', 'Consolas', monospace; font-size: 0.9em; color: #f0f0f0; }
+            .shooting-star { position: fixed; z-index: 0; width: 2px; height: 2px; background: white; border-radius: 50%; animation: shooting-star-fly var(--duration) linear var(--delay) forwards; }
+            .shooting-star::after { content: ''; position: absolute; top: 50%; left: 1px; transform: translateY(-50%) rotate(225deg); width: 150px; height: 1px; background: linear-gradient(to left, rgba(255,255,255,0.6), transparent); }
+            @keyframes shooting-star-fly { 0% { transform: translate(0, 0); opacity: 1; } 100% { transform: translate(-100vw, 100vw); opacity: 0; } }
+            @keyframes glow { 0%,100% { box-shadow: 0 0 5px rgba(255,255,255,.15), 0 0 10px rgba(255,255,255,.1); } 50% { box-shadow: 0 0 10px rgba(255,255,255,.25), 0 0 20px rgba(255,255,255,.2); } }
+            @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
+            @keyframes spin { to { transform: rotate(360deg); } }
+            @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+            @keyframes title-pulse { 0%, 100% { text-shadow: 0 0 7px var(--ai-blue); } 25% { text-shadow: 0 0 7px var(--ai-green); } 50% { text-shadow: 0 0 7px var(--ai-yellow); } 75% { text-shadow: 0 0 7px var(--ai-red); } }
+            @keyframes marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-100%); } }
+        `;
+    document.head.appendChild(style);}
+    document.addEventListener('keydown', handleKeyDown);
+
+})();
