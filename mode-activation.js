@@ -1,6 +1,6 @@
 /**
- * ai-activation.js
- *
+ * AI MODE - ONLY FOR ADMINS AND ENROLLED USERS
+ * Custom Chatbot By Gemini 2.5 Flash Lite Preview, from September of 2025.
  * A feature-rich, self-contained script with a unified attachment/subject menu,
  * enhanced animations, intelligent chat history (token saving),
  * and advanced file previews. This version includes UI fixes for the welcome
@@ -25,6 +25,7 @@
     let currentSubject = 'General';
     let chatHistory = [];
     let attachedFiles = [];
+    let shootingStarInterval = null;
 
     // --- EXPANDED SYMBOL MAP ---
     const latexSymbolMap = {
@@ -48,6 +49,42 @@
         canUpload: (type) => { const usage = limitManager.getUsage(); return (type in DAILY_LIMITS) ? ((usage[type] || 0) < DAILY_LIMITS[type]) : true; },
         recordUpload: (type, count = 1) => { if (type in DAILY_LIMITS) { let usage = limitManager.getUsage(); usage[type] = (usage[type] || 0) + count; limitManager.saveUsage(usage); } }
     };
+
+    // --- UI EFFECTS ---
+    function startShootingStars() {
+        if (shootingStarInterval) return; // Already running
+        const container = document.getElementById('ai-container');
+        if (!container) return;
+
+        shootingStarInterval = setInterval(() => {
+            const star = document.createElement('div');
+            star.className = 'shooting-star';
+            
+            const startX = Math.random() * window.innerWidth;
+            const startY = Math.random() * window.innerHeight * 0.5; // Start in the top half
+            const duration = Math.random() * 3 + 4; // 4-7 seconds
+            const delay = Math.random() * 5; // 0-5 second delay
+            
+            star.style.left = `${startX}px`;
+            star.style.top = `${startY}px`;
+            star.style.setProperty('--duration', `${duration}s`);
+            star.style.animationDelay = `${delay}s`;
+
+            container.appendChild(star);
+            star.addEventListener('animationend', () => {
+                star.remove();
+            }, { once: true });
+
+        }, 2500);
+    }
+
+    function stopShootingStars() {
+        if (shootingStarInterval) {
+            clearInterval(shootingStarInterval);
+            shootingStarInterval = null;
+        }
+    }
+
 
     async function isUserAuthorized() {
         const user = firebase.auth().currentUser;
@@ -152,8 +189,11 @@
         if (chatHistory.length > 0) { renderChatHistory(); }
         
         setTimeout(() => {
-             if (chatHistory.length > 0) { container.classList.add('chat-active'); }
+            if (chatHistory.length > 0) { container.classList.add('chat-active'); }
             container.classList.add('active');
+            if (currentSubject === 'General') {
+                startShootingStars();
+            }
         }, 10);
         
         visualInput.focus();
@@ -162,6 +202,7 @@
 
     function deactivateAI() {
         if (typeof window.stopPanicKeyBlocker === 'function') { window.stopPanicKeyBlocker(); }
+        stopShootingStars();
         if (currentAIRequestController) currentAIRequestController.abort();
         const container = document.getElementById('ai-container');
         if (container) {
@@ -321,6 +362,12 @@
         const persistentTitle = document.getElementById('ai-persistent-title');
         if (persistentTitle) { persistentTitle.textContent = `AI Mode - ${subject}`; }
         document.getElementById('ai-container').dataset.subject = subject;
+        
+        stopShootingStars();
+        if (subject === 'General') {
+            startShootingStars();
+        }
+
         const menu=document.getElementById('ai-action-menu');
         menu.querySelectorAll('button[data-subject]').forEach(b=>b.classList.remove('active'));
         const activeBtn=menu.querySelector(`button[data-subject="${subject}"]`);
@@ -594,14 +641,14 @@
         style.id = "ai-dynamic-styles";
         style.innerHTML = `
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
-            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; }
-            #ai-container.active { opacity: 1; background-color: rgba(17, 24, 39, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
-            #ai-container[data-subject="General"] { background-color: rgba(31, 41, 55, 0.85); }
-            #ai-container[data-subject="Mathematics"] { background-color: rgba(76, 29, 29, 0.85); }
-            #ai-container[data-subject="Science"] { background-color: rgba(6, 78, 59, 0.85); }
-            #ai-container[data-subject="History"] { background-color: rgba(74, 50, 11, 0.85); }
-            #ai-container[data-subject="English"] { background-color: rgba(30, 58, 138, 0.85); }
-            #ai-container[data-subject="Programming"] { background-color: rgba(8, 74, 113, 0.85); }
+            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; overflow: hidden; }
+            #ai-container.active { opacity: 1; background-color: rgba(17, 24, 39, 0.9); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+            #ai-container[data-subject="General"] { background-color: rgba(17, 24, 39, 0.9); }
+            #ai-container[data-subject="Mathematics"] { background-color: rgba(76, 29, 29, 0.9); }
+            #ai-container[data-subject="Science"] { background-color: rgba(6, 78, 59, 0.9); }
+            #ai-container[data-subject="History"] { background-color: rgba(74, 50, 11, 0.9); }
+            #ai-container[data-subject="English"] { background-color: rgba(30, 58, 138, 0.9); }
+            #ai-container[data-subject="Programming"] { background-color: rgba(8, 74, 113, 0.9); }
             #ai-container.deactivating, #ai-container.deactivating > * { transition: opacity 0.4s, transform 0.4s; }
             #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
             #ai-persistent-title, #ai-brand-title { position: absolute; top: 28px; left: 30px; font-family: 'SecondaryFont', sans-serif; font-size: 18px; font-weight: bold; color: white; opacity: 0; transition: opacity 0.5s 0.2s; animation: title-pulse 4s linear infinite; }
@@ -633,8 +680,16 @@
             #ai-action-toggle.generating .icon-stop { opacity: 1; transform: scale(1); }
             #ai-action-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); border-radius: 12px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
             #ai-action-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
-            #ai-action-menu button { background: rgba(255,255,255,0.05); border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s, border-color 0.2s, transform 0.2s; }
-            #ai-action-menu button[data-subject].active { background: rgba(66,133,244,.3); color: #fff; }
+            #ai-action-menu button { background: rgba(255,255,255,0.05); border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s, filter 0.2s, box-shadow 0.2s; }
+            #ai-action-menu button[data-subject] { justify-content: center; }
+            #ai-action-menu button[data-subject="General"] { background-color: rgba(55, 65, 81, 0.7); }
+            #ai-action-menu button[data-subject="Mathematics"] { background-color: rgba(127, 29, 29, 0.7); }
+            #ai-action-menu button[data-subject="Science"] { background-color: rgba(22, 101, 52, 0.7); }
+            #ai-action-menu button[data-subject="History"] { background-color: rgba(120, 53, 15, 0.7); }
+            #ai-action-menu button[data-subject="English"] { background-color: rgba(30, 64, 175, 0.7); }
+            #ai-action-menu button[data-subject="Programming"] { background-color: rgba(12, 74, 110, 0.7); }
+            #ai-action-menu button:hover { filter: brightness(1.2); }
+            #ai-action-menu button[data-subject].active { filter: brightness(1.2); box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.8); }
             #ai-action-menu hr { border: none; height: 1px; background-color: rgba(255,255,255,0.1); margin: 5px 10px; }
             #ai-action-menu .menu-header { font-size: 0.8em; color: #888; text-transform: uppercase; padding: 10px 15px 5px; cursor: default; }
             #ai-attachment-preview { display: none; flex-direction: row; gap: 10px; padding: 0; max-height: 0; border-bottom: 1px solid transparent; overflow-x: auto; transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), padding 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
@@ -661,6 +716,9 @@
             .code-block-wrapper pre::-webkit-scrollbar { height: 8px; }
             .code-block-wrapper pre::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 4px; }
             .code-block-wrapper code { font-family: 'Menlo', 'Consolas', monospace; font-size: 0.9em; color: #f0f0f0; }
+            .shooting-star { position: fixed; z-index: -1; width: 2px; height: 2px; background-color: #fff; border-radius: 50%; box-shadow: 0 0 6px 1px #fff; animation: shooting-star-anim var(--duration, 5s) linear; }
+            .shooting-star::after { content: ''; position: absolute; top: 50%; transform: translateY(-50%); width: 100px; height: 1px; background: linear-gradient(to right, #fff, transparent); }
+            @keyframes shooting-star-anim { 0% { transform: translate(0, 0) rotate(225deg); opacity: 1; } 100% { transform: translate(-100vw, 100vw) rotate(225deg); opacity: 0; } }
             @keyframes glow { 0%,100% { box-shadow: 0 0 5px rgba(255,255,255,.15), 0 0 10px rgba(255,255,255,.1); } 50% { box-shadow: 0 0 10px rgba(255,255,255,.25), 0 0 20px rgba(255,255,255,.2); } }
             @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
             @keyframes spin { to { transform: rotate(360deg); } }
