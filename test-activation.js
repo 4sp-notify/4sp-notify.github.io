@@ -1,16 +1,17 @@
 /**
  * ai-activation.js
  *
- * A feature-rich, self-contained script with file uploads, daily limits, contextual awareness,
- * a redesigned attachment menu, scrolling input, and panic key integration.
- * Includes layout fixes for message padding.
+ * A stable, feature-rich script with a focus on reliability.
+ * Includes file uploads, daily limits, contextual awareness, persistent chat history,
+ * a polished UI with layout fixes, and panic key integration.
  */
 (function() {
     // --- CONFIGURATION ---
+    // WARNING: Your API key is visible in this client-side code.
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
-    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
-    const USER_CHAR_LIMIT = 500;
-    const MAX_INPUT_HEIGHT = 200;
+    // NOTE: Using a stable model name to prevent API errors.
+    const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`;
+    const MAX_INPUT_HEIGHT = 200; // Max height in pixels before scrolling
 
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
@@ -21,10 +22,7 @@
     let attachedFiles = [];
 
     // --- DAILY LIMITS CONFIGURATION ---
-    const DAILY_LIMITS = {
-        images: 5,
-        videos: 1,
-    };
+    const DAILY_LIMITS = { images: 5, videos: 1 };
 
     const limitManager = {
         getToday: () => new Date().toLocaleDateString("en-US"),
@@ -36,23 +34,9 @@
             }
             return usageData;
         },
-        saveUsage: (usageData) => {
-            localStorage.setItem('aiUsageLimits', JSON.stringify(usageData));
-        },
-        canUpload: (type) => {
-            const usage = limitManager.getUsage();
-            if (type in DAILY_LIMITS) {
-                return (usage[type] || 0) < DAILY_LIMITS[type];
-            }
-            return true;
-        },
-        recordUpload: (type) => {
-            if (type in DAILY_LIMITS) {
-                let usage = limitManager.getUsage();
-                usage[type] = (usage[type] || 0) + 1;
-                limitManager.saveUsage(usage);
-            }
-        }
+        saveUsage: (usageData) => { localStorage.setItem('aiUsageLimits', JSON.stringify(usageData)); },
+        canUpload: (type) => { const usage = limitManager.getUsage(); return (type in DAILY_LIMITS) ? ((usage[type] || 0) < DAILY_LIMITS[type]) : true; },
+        recordUpload: (type) => { if (type in DAILY_LIMITS) { let usage = limitManager.getUsage(); usage[type] = (usage[type] || 0) + 1; limitManager.saveUsage(usage); } }
     };
 
     async function isUserAuthorized() {
@@ -61,13 +45,9 @@
         const adminEmails = ['4simpleproblems@gmail.com', 'belkwy30@minerva.sparcc.org'];
         if (adminEmails.includes(user.email)) return true;
         try {
-            const userDocRef = firebase.firestore().collection('users').doc(user.uid);
-            const userDoc = await userDocRef.get();
+            const userDoc = await firebase.firestore().collection('users').doc(user.uid).get();
             return userDoc.exists && userDoc.data().aiEnrolled === true;
-        } catch (error) {
-            console.error("AI Auth Check Error:", error);
-            return false;
-        }
+        } catch (error) { console.error("AI Auth Check Error:", error); return false; }
     }
 
     async function handleKeyDown(e) {
@@ -93,10 +73,7 @@
 
     function activateAI() {
         if (document.getElementById('ai-container')) return;
-        
-        if (typeof window.startPanicKeyBlocker === 'function') {
-            window.startPanicKeyBlocker();
-        }
+        if (typeof window.startPanicKeyBlocker === 'function') { window.startPanicKeyBlocker(); }
 
         attachedFiles = [];
         injectStyles();
@@ -108,25 +85,21 @@
         persistentTitle.id = 'ai-persistent-title';
         persistentTitle.textContent = "AI Mode";
         
-        // REVERTED: Welcome message and description reverted to the original style.
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
-        welcomeMessage.innerHTML = `
-            <h2>Welcome to AI Mode</h2>
-            <p>This is a beta feature. To improve your experience, your general location (state or country) will be shared with your first message.</p>
-        `;
-
+        welcomeMessage.innerHTML = `<h2>Welcome to AI Mode</h2><p>To improve your experience, this feature collects broad, non-identifying data like your general location, the current date, and time.</p>`;
+        
         const closeButton = document.createElement('div');
         closeButton.id = 'ai-close-button';
         closeButton.innerHTML = '&times;';
         closeButton.onclick = deactivateAI;
-
+        
         const responseContainer = document.createElement('div');
         responseContainer.id = 'ai-response-container';
-
+        
         const inputWrapper = document.createElement('div');
         inputWrapper.id = 'ai-input-wrapper';
-
+        
         const attachmentPreviewContainer = document.createElement('div');
         attachmentPreviewContainer.id = 'ai-attachment-preview';
         
@@ -150,18 +123,14 @@
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
-        container.appendChild(createAttachmentMenu()); 
+        container.appendChild(createAttachmentMenu());
         
         document.body.appendChild(container);
         
-        if (chatHistory.length > 0) {
-            renderChatHistory();
-        }
-
+        if (chatHistory.length > 0) { renderChatHistory(); }
+        
         setTimeout(() => {
-             if (chatHistory.length > 0) {
-                container.classList.add('chat-active');
-            }
+             if (chatHistory.length > 0) { container.classList.add('chat-active'); }
             container.classList.add('active');
         }, 10);
         
@@ -170,11 +139,8 @@
     }
 
     function deactivateAI() {
-        if (typeof window.stopPanicKeyBlocker === 'function') {
-            window.stopPanicKeyBlocker();
-        }
+        if (typeof window.stopPanicKeyBlocker === 'function') { window.stopPanicKeyBlocker(); }
         if (currentAIRequestController) currentAIRequestController.abort();
-        
         const container = document.getElementById('ai-container');
         if (container) {
             container.classList.add('deactivating');
@@ -200,9 +166,7 @@
             if (message.role === 'model') {
                 bubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(message.parts[0].text)}</div>`;
             } else {
-                let bubbleContent = '';
-                let textContent = '';
-                let fileCount = 0;
+                let bubbleContent = ''; let textContent = ''; let fileCount = 0;
                 message.parts.forEach(part => {
                     if (part.text) textContent = part.text;
                     if (part.inlineData) fileCount++;
@@ -217,13 +181,8 @@
     }
 
     async function callGoogleAI(responseBubble) {
-        if (!API_KEY) {
-            responseBubble.innerHTML = `<div class="ai-error">API Key is missing.</div>`;
-            return;
-        }
-
+        if (!API_KEY) { responseBubble.innerHTML = `<div class="ai-error">API Key is missing.</div>`; return; }
         currentAIRequestController = new AbortController();
-        
         let firstMessageContext = '';
         if (chatHistory.length <= 1) {
             const location = localStorage.getItem('ai-user-location') || 'an unknown location';
@@ -236,37 +195,28 @@
         const lastMessageIndex = chatHistory.length - 1;
         const userParts = chatHistory[lastMessageIndex].parts;
         const textPart = userParts.find(p => p.text);
-        if (textPart) {
-            textPart.text = firstMessageContext + textPart.text;
-        } else {
-            userParts.unshift({ text: firstMessageContext });
-        }
+        if (textPart) { textPart.text = firstMessageContext + textPart.text; } 
+        else { userParts.unshift({ text: firstMessageContext }); }
         
         const payload = { contents: chatHistory };
-
         try {
-            const response = await fetch(API_URL, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload),
-                signal: currentAIRequestController.signal
-            });
+            const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: currentAIRequestController.signal });
             if (!response.ok) throw new Error(`Network response was not ok. Status: ${response.status}`);
             const data = await response.json();
-            if (!data.candidates || data.candidates.length === 0) {
-                 throw new Error("Invalid response from API.");
-            }
-
+            if (!data.candidates || data.candidates.length === 0) throw new Error("Invalid response from API.");
             const text = data.candidates[0].content.parts[0].text;
             chatHistory.push({ role: "model", parts: [{ text: text }] });
-            responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
+            
+            const contentHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
+            responseBubble.style.opacity = '0';
+            setTimeout(() => {
+                responseBubble.innerHTML = contentHTML;
+                responseBubble.style.opacity = '1';
+            }, 300);
+
         } catch (error) {
-            if (error.name === 'AbortError') {
-                responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`;
-            } else {
-                console.error('AI API Error:', error);
-                responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`;
-            }
+            if (error.name === 'AbortError') { responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`; } 
+            else { console.error('AI API Error:', error); responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`; }
         } finally {
             isRequestPending = false;
             currentAIRequestController = null;
@@ -275,15 +225,16 @@
                 settingsToggle.classList.remove('generating');
                 settingsToggle.innerHTML = '&#8942;';
             }
-            responseBubble.classList.remove('loading');
+            
+            setTimeout(() => {
+                responseBubble.classList.remove('loading');
+                const responseContainer = document.getElementById('ai-response-container');
+                if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
+            }, 300);
+
             document.getElementById('ai-input-wrapper').classList.remove('waiting');
             const editor = document.getElementById('ai-input');
-            if(editor) {
-                editor.contentEditable = true;
-                editor.focus();
-            }
-            const responseContainer = document.getElementById('ai-response-container');
-            if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
+            if(editor) { editor.contentEditable = true; editor.focus(); }
         }
     }
 
@@ -293,7 +244,6 @@
         isAttachmentMenuOpen = !isAttachmentMenuOpen;
         const menu = document.getElementById('ai-attachment-menu');
         const toggleBtn = document.getElementById('ai-settings-toggle');
-
         if (isAttachmentMenuOpen) {
             const btnRect = toggleBtn.getBoundingClientRect();
             menu.style.bottom = `${window.innerHeight - btnRect.top}px`;
@@ -320,10 +270,7 @@
         input.onchange = (event) => {
             const file = event.target.files[0];
             if (!file) return;
-            if (file.type.startsWith('video/') && file.size > 100 * 1024 * 1024) { 
-                alert("Video file is too large. Please choose a shorter video (max approx. 5 minutes).");
-                return;
-            }
+            if (file.type.startsWith('video/') && file.size > 100 * 1024 * 1024) { alert("Video file is too large."); return; }
             const reader = new FileReader();
             reader.onload = (e) => {
                 const base64Data = e.target.result.split(',')[1];
@@ -436,10 +383,10 @@
         style.id = "ai-dynamic-styles";
         style.innerHTML = `
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
-            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; }
-            #ai-container.active { opacity: 1; background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; }
+            #ai-container.active { opacity: 1; background-color: rgba(0,0,0,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
             #ai-container.deactivating, #ai-container.deactivating > * { transition: opacity 0.4s, transform 0.4s; }
-            #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+            #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
             #ai-persistent-title { position: absolute; top: 28px; left: 30px; font-family: 'secondaryfont', sans-serif; font-size: 18px; font-weight: bold; color: white; opacity: 0; transition: opacity 0.5s 0.2s; animation: title-pulse 4s linear infinite; }
             #ai-container.chat-active #ai-persistent-title { opacity: 1; }
             #ai-welcome-message { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s, transform .5s; width: 100%; }
@@ -447,7 +394,6 @@
             #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
             #ai-welcome-message p { font-size: .9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255,255,255,.7); font-size: 40px; cursor: pointer; transition: color .2s ease,transform .3s ease, opacity 0.4s; }
-            #ai-close-button:hover { color: #fff; transform: scale(1.1); }
             #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 70px 20px 0 20px; }
             .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
             .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
@@ -456,7 +402,6 @@
             #ai-input { min-height: 52px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
             #ai-input:empty::before { content: 'Ask a question or describe your files...'; color: rgba(255, 255, 255, 0.4); pointer-events: none; }
             #ai-settings-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
-            #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
             #ai-attachment-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 16px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
             #ai-attachment-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
             #ai-attachment-menu button { background: rgba(255,255,255,0.05); border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s; }
@@ -466,7 +411,6 @@
             .remove-attachment-btn { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.5); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; }
             .ai-loader { width: 25px; height: 25px; border: 3px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
             @keyframes glow { 0%,100% { box-shadow: 0 0 8px rgba(255,255,255,.2); } 50% { box-shadow: 0 0 16px rgba(255,255,255,.4); } }
-            @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
             @keyframes spin { to { transform: rotate(360deg); } }
             @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
             @keyframes title-pulse { 0%, 100% { text-shadow: 0 0 7px var(--ai-blue); } 25% { text-shadow: 0 0 7px var(--ai-green); } 50% { text-shadow: 0 0 7px var(--ai-yellow); } 75% { text-shadow: 0 0 7px var(--ai-red); } }
