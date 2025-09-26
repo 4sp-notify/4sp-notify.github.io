@@ -1,13 +1,13 @@
 /**
  * ai-activation.js
  *
- * A feature-rich, self-contained script with a powerful response parser,
- * expanded symbol support, file uploads, daily limits, and contextual awareness.
+ * A feature-rich, self-contained script with file uploads, daily limits, contextual awareness,
+ * a redesigned attachment menu, scrolling input, and panic key integration.
+ * Includes layout fixes for message padding.
  */
 (function() {
     // --- CONFIGURATION ---
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
-    // UPDATED: Using the specific preview model URL you requested.
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
     const MAX_INPUT_HEIGHT = 200;
@@ -15,19 +15,16 @@
     // --- STATE MANAGEMENT ---
     let isAIActive = false;
     let isRequestPending = false;
-    let isActionMenuOpen = false;
+    let isAttachmentMenuOpen = false;
     let currentAIRequestController = null;
-    let currentSubject = 'General';
     let chatHistory = [];
     let attachedFiles = [];
 
-    // --- EXPANDED SYMBOL MAP ---
-    const latexSymbolMap = {
-        '\\alpha':'α','\\beta':'β','\\gamma':'γ','\\delta':'δ','\\epsilon':'ε','\\zeta':'ζ','\\eta':'η','\\theta':'θ','\\iota':'ι','\\kappa':'κ','\\lambda':'λ','\\mu':'μ','\\nu':'ν','\\xi':'ξ','\\omicron':'ο','\\pi':'π','\\rho':'ρ','\\sigma':'σ','\\tau':'τ','\\upsilon':'υ','\\phi':'φ','\\chi':'χ','\\psi':'ψ','\\omega':'ω','\\Gamma':'Γ','\\Delta':'Δ','\\Theta':'Θ','\\Lambda':'Λ','\\Xi':'Ξ','\\Pi':'Π','\\Sigma':'Σ','\\Upsilon':'Υ','\\Phi':'Φ','\\Psi':'Ψ','\\Omega':'Ω','\\pm':'±','\\times':'×','\\div':'÷','\\cdot':'·','\\ast':'∗','\\cup':'∪','\\cap':'∩','\\in':'∈','\\notin':'∉','\\subset':'⊂','\\supset':'⊃','\\subseteq':'⊆','\\supseteq':'⊇','\\le':'≤','\\ge':'≥','\\ne':'≠','\\approx':'≈','\\equiv':'≡','\\leftarrow':'←','\\rightarrow':'→','\\uparrow':'↑','\\downarrow':'↓','\\leftrightarrow':'↔','\\Leftarrow':'⇐','\\Rightarrow':'⇒','\\Leftrightarrow':'⇔','\\forall':'∀','\\exists':'∃','\\nabla':'∇','\\partial':'∂','\\emptyset':'∅','\\infty':'∞','\\degree':'°','\\angle':'∠','\\hbar':'ħ','\\ell':'ℓ','\\therefore':'∴','\\because':'∵','\\bullet':'•','\\ldots':'…','\\prime':'′','\\hat':'^'
-    };
-
     // --- DAILY LIMITS CONFIGURATION ---
-    const DAILY_LIMITS = { images: 5, videos: 1 };
+    const DAILY_LIMITS = {
+        images: 5,
+        videos: 1,
+    };
 
     const limitManager = {
         getToday: () => new Date().toLocaleDateString("en-US"),
@@ -39,9 +36,23 @@
             }
             return usageData;
         },
-        saveUsage: (usageData) => { localStorage.setItem('aiUsageLimits', JSON.stringify(usageData)); },
-        canUpload: (type) => { const usage = limitManager.getUsage(); return (type in DAILY_LIMITS) ? ((usage[type] || 0) < DAILY_LIMITS[type]) : true; },
-        recordUpload: (type) => { if (type in DAILY_LIMITS) { let usage = limitManager.getUsage(); usage[type] = (usage[type] || 0) + 1; limitManager.saveUsage(usage); } }
+        saveUsage: (usageData) => {
+            localStorage.setItem('aiUsageLimits', JSON.stringify(usageData));
+        },
+        canUpload: (type) => {
+            const usage = limitManager.getUsage();
+            if (type in DAILY_LIMITS) {
+                return (usage[type] || 0) < DAILY_LIMITS[type];
+            }
+            return true;
+        },
+        recordUpload: (type) => {
+            if (type in DAILY_LIMITS) {
+                let usage = limitManager.getUsage();
+                usage[type] = (usage[type] || 0) + 1;
+                limitManager.saveUsage(usage);
+            }
+        }
     };
 
     async function isUserAuthorized() {
@@ -50,9 +61,13 @@
         const adminEmails = ['4simpleproblems@gmail.com', 'belkwy30@minerva.sparcc.org'];
         if (adminEmails.includes(user.email)) return true;
         try {
-            const userDoc = await firebase.firestore().collection('users').doc(user.uid).get();
+            const userDocRef = firebase.firestore().collection('users').doc(user.uid);
+            const userDoc = await userDocRef.get();
             return userDoc.exists && userDoc.data().aiEnrolled === true;
-        } catch (error) { console.error("AI Auth Check Error:", error); return false; }
+        } catch (error) {
+            console.error("AI Auth Check Error:", error);
+            return false;
+        }
     }
 
     async function handleKeyDown(e) {
@@ -78,61 +93,75 @@
 
     function activateAI() {
         if (document.getElementById('ai-container')) return;
-        if (typeof window.startPanicKeyBlocker === 'function') { window.startPanicKeyBlocker(); }
         
+        if (typeof window.startPanicKeyBlocker === 'function') {
+            window.startPanicKeyBlocker();
+        }
+
         attachedFiles = [];
         injectStyles();
+        
         const container = document.createElement('div');
         container.id = 'ai-container';
-        container.dataset.subject = currentSubject;
         
         const persistentTitle = document.createElement('div');
         persistentTitle.id = 'ai-persistent-title';
-        persistentTitle.textContent = "AI Mode - General";
+        persistentTitle.textContent = "AI Mode";
         
+        // REVERTED: Welcome message and description reverted to the original style.
         const welcomeMessage = document.createElement('div');
         welcomeMessage.id = 'ai-welcome-message';
-        welcomeMessage.innerHTML = `<h2>Welcome to AI Mode</h2><p>To improve your experience, this feature collects broad, non-identifying data like your general location, the current date, and time.</p>`;
-        
+        welcomeMessage.innerHTML = `
+            <h2>Welcome to AI Mode</h2>
+            <p>This is a beta feature. To improve your experience, your general location (state or country) will be shared with your first message.</p>
+        `;
+
         const closeButton = document.createElement('div');
         closeButton.id = 'ai-close-button';
         closeButton.innerHTML = '&times;';
         closeButton.onclick = deactivateAI;
+
         const responseContainer = document.createElement('div');
         responseContainer.id = 'ai-response-container';
+
         const inputWrapper = document.createElement('div');
         inputWrapper.id = 'ai-input-wrapper';
+
         const attachmentPreviewContainer = document.createElement('div');
         attachmentPreviewContainer.id = 'ai-attachment-preview';
+        
         const visualInput = document.createElement('div');
         visualInput.id = 'ai-input';
         visualInput.contentEditable = true;
         visualInput.onkeydown = handleInputSubmission;
         visualInput.oninput = handleContentEditableInput;
-        const actionToggle = document.createElement('button');
-        actionToggle.id = 'ai-action-toggle';
-        actionToggle.innerHTML = '&#8942;';
-        actionToggle.onclick = handleActionToggleClick;
-        const inputLoader = document.createElement('div');
-        inputLoader.id = 'ai-input-loader';
-        inputLoader.className = 'ai-loader';
+        
+        const settingsToggle = document.createElement('button');
+        settingsToggle.id = 'ai-settings-toggle';
+        settingsToggle.innerHTML = '&#8942;';
+        settingsToggle.onclick = handleSettingsToggleClick;
 
         inputWrapper.appendChild(attachmentPreviewContainer);
         inputWrapper.appendChild(visualInput);
-        inputWrapper.appendChild(actionToggle);
-        inputWrapper.appendChild(inputLoader);
-
+        inputWrapper.appendChild(settingsToggle);
+        
         container.appendChild(persistentTitle);
         container.appendChild(welcomeMessage);
         container.appendChild(closeButton);
         container.appendChild(responseContainer);
         container.appendChild(inputWrapper);
-        container.appendChild(createActionMenu());
+        container.appendChild(createAttachmentMenu()); 
+        
         document.body.appendChild(container);
         
-        if (chatHistory.length > 0) { renderChatHistory(); }
+        if (chatHistory.length > 0) {
+            renderChatHistory();
+        }
+
         setTimeout(() => {
-             if (chatHistory.length > 0) { container.classList.add('chat-active'); }
+             if (chatHistory.length > 0) {
+                container.classList.add('chat-active');
+            }
             container.classList.add('active');
         }, 10);
         
@@ -141,8 +170,11 @@
     }
 
     function deactivateAI() {
-        if (typeof window.stopPanicKeyBlocker === 'function') { window.stopPanicKeyBlocker(); }
+        if (typeof window.stopPanicKeyBlocker === 'function') {
+            window.stopPanicKeyBlocker();
+        }
         if (currentAIRequestController) currentAIRequestController.abort();
+        
         const container = document.getElementById('ai-container');
         if (container) {
             container.classList.add('deactivating');
@@ -153,7 +185,7 @@
             }, 500);
         }
         isAIActive = false;
-        isActionMenuOpen = false;
+        isAttachmentMenuOpen = false;
         isRequestPending = false;
         attachedFiles = [];
     }
@@ -168,7 +200,9 @@
             if (message.role === 'model') {
                 bubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(message.parts[0].text)}</div>`;
             } else {
-                let bubbleContent = ''; let textContent = ''; let fileCount = 0;
+                let bubbleContent = '';
+                let textContent = '';
+                let fileCount = 0;
                 message.parts.forEach(part => {
                     if (part.text) textContent = part.text;
                     if (part.inlineData) fileCount++;
@@ -183,8 +217,13 @@
     }
 
     async function callGoogleAI(responseBubble) {
-        if (!API_KEY) { responseBubble.innerHTML = `<div class="ai-error">API Key is missing.</div>`; return; }
+        if (!API_KEY) {
+            responseBubble.innerHTML = `<div class="ai-error">API Key is missing.</div>`;
+            return;
+        }
+
         currentAIRequestController = new AbortController();
+        
         let firstMessageContext = '';
         if (chatHistory.length <= 1) {
             const location = localStorage.getItem('ai-user-location') || 'an unknown location';
@@ -197,76 +236,65 @@
         const lastMessageIndex = chatHistory.length - 1;
         const userParts = chatHistory[lastMessageIndex].parts;
         const textPart = userParts.find(p => p.text);
-        if (textPart) { textPart.text = firstMessageContext + textPart.text; } 
-        else { userParts.unshift({ text: firstMessageContext }); }
-        
-        let systemInstruction = 'You are a helpful and comprehensive AI assistant.';
-        switch (currentSubject) {
-            case 'Mathematics': systemInstruction = 'You are a mathematics expert...'; break;
-            case 'Science': systemInstruction = 'You are a science expert...'; break;
-            case 'History': systemInstruction = 'You are a history expert...'; break;
-            case 'Literature': systemInstruction = 'You are a literary expert...'; break;
-            case 'Programming': systemInstruction = 'You are a programming expert...'; break;
+        if (textPart) {
+            textPart.text = firstMessageContext + textPart.text;
+        } else {
+            userParts.unshift({ text: firstMessageContext });
         }
-
-        const payload = { contents: chatHistory, systemInstruction: { parts: [{ text: systemInstruction }] } };
         
+        const payload = { contents: chatHistory };
+
         try {
-            const response = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload), signal: currentAIRequestController.signal });
+            const response = await fetch(API_URL, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+                signal: currentAIRequestController.signal
+            });
             if (!response.ok) throw new Error(`Network response was not ok. Status: ${response.status}`);
             const data = await response.json();
-            if (!data.candidates || data.candidates.length === 0) throw new Error("Invalid response from API.");
+            if (!data.candidates || data.candidates.length === 0) {
+                 throw new Error("Invalid response from API.");
+            }
+
             const text = data.candidates[0].content.parts[0].text;
             chatHistory.push({ role: "model", parts: [{ text: text }] });
-            
-            const contentHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
-            responseBubble.style.opacity = '0';
-            setTimeout(() => {
-                responseBubble.innerHTML = contentHTML;
-                if (window.Prism) {
-                    responseBubble.querySelectorAll('pre code').forEach((block) => Prism.highlightElement(block));
-                }
-                responseBubble.querySelectorAll('.copy-code-btn').forEach(btn => {
-                    btn.onclick = () => {
-                        const code = btn.previousElementSibling.querySelector('code').innerText;
-                        navigator.clipboard.writeText(code).then(() => {
-                            btn.textContent = 'Copied!';
-                            setTimeout(() => { btn.textContent = 'Copy Code'; }, 2000);
-                        });
-                    };
-                });
-                responseBubble.style.opacity = '1';
-            }, 300);
-
+            responseBubble.innerHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
         } catch (error) {
-            if (error.name === 'AbortError') { responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`; } 
-            else { console.error('AI API Error:', error); responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`; }
+            if (error.name === 'AbortError') {
+                responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`;
+            } else {
+                console.error('AI API Error:', error);
+                responseBubble.innerHTML = `<div class="ai-error">Sorry, an error occurred.</div>`;
+            }
         } finally {
             isRequestPending = false;
             currentAIRequestController = null;
-            const actionToggle = document.getElementById('ai-action-toggle');
-            if (actionToggle) { actionToggle.classList.remove('generating'); actionToggle.innerHTML = '&#8942;'; }
-            
-            setTimeout(() => {
-                responseBubble.classList.remove('loading');
-                const responseContainer = document.getElementById('ai-response-container');
-                if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
-            }, 300);
-
+            const settingsToggle = document.getElementById('ai-settings-toggle');
+            if (settingsToggle) {
+                settingsToggle.classList.remove('generating');
+                settingsToggle.innerHTML = '&#8942;';
+            }
+            responseBubble.classList.remove('loading');
             document.getElementById('ai-input-wrapper').classList.remove('waiting');
-            document.getElementById('ai-input-loader').style.display = 'none';
             const editor = document.getElementById('ai-input');
-            if(editor) { editor.contentEditable = true; editor.focus(); }
+            if(editor) {
+                editor.contentEditable = true;
+                editor.focus();
+            }
+            const responseContainer = document.getElementById('ai-response-container');
+            if(responseContainer) responseContainer.scrollTop = responseContainer.scrollHeight;
         }
     }
 
-    function handleActionToggleClick(e) { e.stopPropagation(); if (isRequestPending) { stopGeneration(); } else { toggleActionMenu(); } }
+    function handleSettingsToggleClick(e) { e.stopPropagation(); if (isRequestPending) { stopGeneration(); } else { toggleAttachmentMenu(); } }
     function stopGeneration(){if(currentAIRequestController){currentAIRequestController.abort();}}
-    function toggleActionMenu(){
-        isActionMenuOpen = !isActionMenuOpen;
-        const menu = document.getElementById('ai-action-menu');
-        const toggleBtn = document.getElementById('ai-action-toggle');
-        if (isActionMenuOpen) {
+    function toggleAttachmentMenu(){
+        isAttachmentMenuOpen = !isAttachmentMenuOpen;
+        const menu = document.getElementById('ai-attachment-menu');
+        const toggleBtn = document.getElementById('ai-settings-toggle');
+
+        if (isAttachmentMenuOpen) {
             const btnRect = toggleBtn.getBoundingClientRect();
             menu.style.bottom = `${window.innerHeight - btnRect.top}px`;
             menu.style.right = `${window.innerWidth - btnRect.right}px`;
@@ -280,21 +308,8 @@
                 }
             });
         }
-        menu.classList.toggle('active', isActionMenuOpen);
-        toggleBtn.classList.toggle('active', isActionMenuOpen);
-    }
-    
-    function selectSubject(subject){
-        currentSubject=subject;
-        chatHistory = [];
-        const persistentTitle = document.getElementById('ai-persistent-title');
-        if (persistentTitle) { persistentTitle.textContent = `AI Mode - ${subject}`; }
-        document.getElementById('ai-container').dataset.subject = subject;
-        const menu=document.getElementById('ai-action-menu');
-        menu.querySelectorAll('button[data-subject]').forEach(b=>b.classList.remove('active'));
-        const activeBtn=menu.querySelector(`button[data-subject="${subject}"]`);
-        if(activeBtn)activeBtn.classList.add('active');
-        toggleActionMenu();
+        menu.classList.toggle('active', isAttachmentMenuOpen);
+        toggleBtn.classList.toggle('active', isAttachmentMenuOpen);
     }
     
     function handleFileUpload(fileType) {
@@ -305,7 +320,10 @@
         input.onchange = (event) => {
             const file = event.target.files[0];
             if (!file) return;
-            if (file.type.startsWith('video/') && file.size > 100 * 1024 * 1024) { alert("Video file is too large. Please choose a shorter video (max approx. 5 minutes)."); return; }
+            if (file.type.startsWith('video/') && file.size > 100 * 1024 * 1024) { 
+                alert("Video file is too large. Please choose a shorter video (max approx. 5 minutes).");
+                return;
+            }
             const reader = new FileReader();
             reader.onload = (e) => {
                 const base64Data = e.target.result.split(',')[1];
@@ -337,12 +355,16 @@
         });
     }
 
-    function createActionMenu() {
+    function createAttachmentMenu() {
         const menu = document.createElement('div');
-        menu.id = 'ai-action-menu';
-        const attachments = [ { id: 'photo', icon: '📷', label: 'Photo', type: 'images' }, { id: 'video', icon: '🎬', label: 'Video', type: 'videos' }, { id: 'audio', icon: '🎤', label: 'Audio', type: 'audio' }, { id: 'file', icon: '📎', label: 'File', type: 'file' }, ];
-        const subjects = ['General','Mathematics','Science','History','Literature','Programming'];
-        attachments.forEach(opt => {
+        menu.id = 'ai-attachment-menu';
+        const options = [
+            { id: 'photo', icon: '📷', label: 'Photo', type: 'images' },
+            { id: 'video', icon: '🎬', label: 'Video', type: 'videos' },
+            { id: 'audio', icon: '🎤', label: 'Audio', type: 'audio' },
+            { id: 'file', icon: '📎', label: 'File', type: 'file' },
+        ];
+        options.forEach(opt => {
             const button = document.createElement('button');
             button.dataset.type = opt.type;
             const canUpload = limitManager.canUpload(opt.type);
@@ -350,20 +372,7 @@
             if (opt.type === 'images' || opt.type === 'videos') { const usage = limitManager.getUsage(); limitText = `<span>${usage[opt.type] || 0}/${DAILY_LIMITS[opt.type]} used</span>`; }
             button.innerHTML = `<span class="icon">${opt.icon}</span> ${opt.label} ${limitText}`;
             if (!canUpload) { button.disabled = true; button.title = 'You have reached your daily limit for this file type.'; }
-            button.onclick = () => { handleFileUpload(opt.id); toggleActionMenu(); };
-            menu.appendChild(button);
-        });
-        menu.appendChild(document.createElement('hr'));
-        const subjectHeader = document.createElement('div');
-        subjectHeader.className = 'menu-header';
-        subjectHeader.textContent = 'Focus Topic';
-        menu.appendChild(subjectHeader);
-        subjects.forEach(subject => {
-            const button = document.createElement('button');
-            button.textContent = subject;
-            button.dataset.subject = subject;
-            if (subject === 'General') button.classList.add('active');
-            button.onclick = () => selectSubject(subject);
+            button.onclick = () => { handleFileUpload(opt.id); toggleAttachmentMenu(); };
             menu.appendChild(button);
         });
         return menu;
@@ -384,8 +393,7 @@
             if (!query && attachedFiles.length === 0) return;
             if (isRequestPending) return;
             isRequestPending = true;
-            document.getElementById('ai-action-toggle').classList.add('generating');
-            document.getElementById('ai-input-loader').style.display = 'block';
+            document.getElementById('ai-settings-toggle').classList.add('generating');
             editor.contentEditable = false;
             document.getElementById('ai-input-wrapper').classList.add('waiting');
             const parts = [];
@@ -414,31 +422,7 @@
     
     function fadeOutWelcomeMessage(){const container=document.getElementById("ai-container");if(container&&!container.classList.contains("chat-active")){container.classList.add("chat-active")}}
     function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML}
-    
-    /**
-     * NEW: A more robust parser for Gemini's mixed Markdown and LaTeX responses.
-     */
-    function parseGeminiResponse(text) {
-        const codeBlocks = [];
-        let html = text.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
-            const escapedCode = escapeHTML(code.trim());
-            const langClass = lang ? `language-${lang.toLowerCase()}` : '';
-            const codeHtml = `<div class="code-block-wrapper"><pre><code class="${langClass}">${escapedCode}</code></pre><button class="copy-code-btn">Copy Code</button></div>`;
-            codeBlocks.push(codeHtml);
-            return "%%CODE_BLOCK%%";
-        });
-
-        html = escapeHTML(html);
-        html = html.replace(/\\([a-zA-Z]+)/g, (match, command) => latexSymbolMap[match] || match);
-        html = html.replace(/^### (.*$)/gm, "<h3>$1</h3>").replace(/^## (.*$)/gm, "<h2>$1</h2>").replace(/^# (.*$)/gm, "<h1>$1</h1>");
-        html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>");
-        html = html.replace(/^(?:\*|-)\s(.*$)/gm, "<li>$1</li>");
-        html = html.replace(/(<\/li>\s*<li>)/g, "</li><li>").replace(/((<li>.*<\/li>)+)/gs, "<ul>$1</ul>");
-        html = html.replace(/\n/g, "<br>");
-        html = html.replace(/%%CODE_BLOCK%%/g, () => codeBlocks.shift());
-
-        return html;
-    }
+    function parseGeminiResponse(text){let html=text.replace(/</g,"&lt;").replace(/>/g,"&gt;");const codeBlocks=[];html=html.replace(/```([\s\S]*?)```/g,(match,code)=>{codeBlocks.push(escapeHTML(code.trim()));return "%%CODE_BLOCK%%"});html=html.replace(/\$([^\$]+)\$/g,(match,math)=>{let processedMath=math;processedMath=processedMath.replace(/(\w+)\^(\w+)/g,'$1<sup>$2</sup>').replace(/\\sqrt\{(.+?)\}/g,'&radic;($1)').replace(/\\frac\{(.+?)\}\{(.+?)\}/g,'<span class="ai-frac"><sup>$1</sup><sub>$2</sub></span>');return`<span class="ai-math-inline">${processedMath}</span>`;});html=html.replace(/\*\*(.*?)\*\*/g,'<strong>$1</strong>').replace(/\*(.*?)\*/g,'<em>$1</em>').replace(/^### (.*$)/gm,'<h3>$1</h3>').replace(/^## (.*$)/gm,'<h2>$1</h2>').replace(/^# (.*$)/gm,'<h1>$1</h1>');html=html.replace(/^(?:\*|-)\s(.*$)/gm,'<li>$1</li>');html=html.replace(/(<\/li>\s*<li>)/g,"</li><li>").replace(/((<li>.*<\/li>)+)/gs,"<ul>$1</ul>");html=html.replace(/\n/g,"<br>");html=html.replace(/%%CODE_BLOCK%%/g,()=>`<pre><code>${codeBlocks.shift()}</code></pre>`);return html}
 
     function injectStyles() {
         if (document.getElementById('ai-dynamic-styles')) return;
@@ -452,46 +436,37 @@
         style.id = "ai-dynamic-styles";
         style.innerHTML = `
             :root { --ai-red: #ea4335; --ai-blue: #4285f4; --ai-green: #34a853; --ai-yellow: #fbbc05; }
-            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; }
-            #ai-container.active { opacity: 1; background-color: rgba(0,0,0,0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
+            #ai-container { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); z-index: 2147483647; opacity: 0; transition: opacity 0.5s, background-color 0.5s, backdrop-filter 0.5s; font-family: 'secondaryfont', sans-serif; display: flex; flex-direction: column; justify-content: flex-end; padding: 0; box-sizing: border-box; }
+            #ai-container.active { opacity: 1; background-color: rgba(0, 0, 0, 0.85); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); }
             #ai-container.deactivating, #ai-container.deactivating > * { transition: opacity 0.4s, transform 0.4s; }
-            #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0,0,0,0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
+            #ai-container.deactivating { opacity: 0 !important; background-color: rgba(0, 0, 0, 0); backdrop-filter: blur(0px); -webkit-backdrop-filter: blur(0px); }
             #ai-persistent-title { position: absolute; top: 28px; left: 30px; font-family: 'secondaryfont', sans-serif; font-size: 18px; font-weight: bold; color: white; opacity: 0; transition: opacity 0.5s 0.2s; animation: title-pulse 4s linear infinite; }
             #ai-container.chat-active #ai-persistent-title { opacity: 1; }
             #ai-welcome-message { position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%); text-align: center; color: rgba(255,255,255,.5); opacity: 1; transition: opacity .5s, transform .5s; width: 100%; }
             #ai-container.chat-active #ai-welcome-message { opacity: 0; pointer-events: none; transform: translate(-50%,-50%) scale(0.95); }
+            #ai-welcome-message h2 { font-family: 'PrimaryFont', sans-serif; font-size: 2.5em; margin: 0; color: #fff; }
+            #ai-welcome-message p { font-size: .9em; margin-top: 10px; max-width: 400px; margin-left: auto; margin-right: auto; line-height: 1.5; }
             #ai-close-button { position: absolute; top: 20px; right: 30px; color: rgba(255,255,255,.7); font-size: 40px; cursor: pointer; transition: color .2s ease,transform .3s ease, opacity 0.4s; }
+            #ai-close-button:hover { color: #fff; transform: scale(1.1); }
             #ai-response-container { flex: 1 1 auto; overflow-y: auto; width: 100%; max-width: 800px; margin: 0 auto; display: flex; flex-direction: column; gap: 15px; padding: 70px 20px 0 20px; }
-            .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; transition: opacity 0.3s ease-in-out; }
+            .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; }
             .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
             .gemini-response { align-self: flex-start; }
-            .gemini-response.loading { display: flex; justify-content: center; align-items: center; min-height: 60px; background: rgba(15,15,18,.8); }
-            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; border: 1px solid rgba(255,255,255,.2); }
-            #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
+            #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; animation-play-state: running; border: 1px solid rgba(255,255,255,.2); }
             #ai-input { min-height: 52px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
             #ai-input:empty::before { content: 'Ask a question or describe your files...'; color: rgba(255, 255, 255, 0.4); pointer-events: none; }
-            #ai-action-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
-            #ai-action-toggle.generating { transform: rotate(45deg); }
-            #ai-action-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
-            #ai-input-loader { display: none; position: absolute; right: 50px; bottom: 16px; width: 20px; height: 20px; border: 3px solid rgba(255,255,255,0.3); border-top-color: #fff; }
-            #ai-action-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 16px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
-            #ai-action-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
-            #ai-action-menu button { background: rgba(255,255,255,0.05); border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s, border-color 0.2s, transform 0.2s; }
-            #ai-action-menu button[data-subject].active { background: rgba(66,133,244,.3); border-color: var(--ai-blue); color: #fff; }
-            #ai-action-menu hr { border: none; height: 1px; background-color: rgba(255,255,255,0.1); margin: 5px 10px; }
-            #ai-action-menu .menu-header { font-size: 0.8em; color: #888; text-transform: uppercase; padding: 10px 15px 5px; cursor: default; }
+            #ai-settings-toggle { position: absolute; right: 10px; bottom: 12px; transform: translateY(0); background: 0 0; border: none; color: rgba(255,255,255,.5); font-size: 24px; cursor: pointer; padding: 5px; line-height: 1; z-index: 3; transition: all .3s ease; border-radius: 50%; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center; }
+            #ai-settings-toggle.generating::before { content: '■'; font-size: 18px; line-height: 1; transform: rotate(-45deg); }
+            #ai-attachment-menu { position: fixed; background: rgba(20, 20, 22, 0.7); backdrop-filter: blur(18px); -webkit-backdrop-filter: blur(18px); border: 1px solid rgba(255,255,255,0.2); animation: glow 3s infinite; border-radius: 16px; box-shadow: 0 5px 25px rgba(0,0,0,0.5); display: flex; flex-direction: column; gap: 5px; padding: 8px; z-index: 2147483647; opacity: 0; visibility: hidden; transform: translateY(10px) scale(.95); transition: all .25s cubic-bezier(.4,0,.2,1); transform-origin: bottom right; }
+            #ai-attachment-menu.active { opacity: 1; visibility: visible; transform: translateY(-5px); }
+            #ai-attachment-menu button { background: rgba(255,255,255,0.05); border: none; color: #ddd; font-family: 'PrimaryFont', sans-serif; font-size: 1em; padding: 10px 15px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; gap: 12px; text-align: left; transition: background-color 0.2s; }
             #ai-attachment-preview { display: none; flex-direction: row; gap: 10px; padding: 10px 15px; border-bottom: 1px solid rgba(255,255,255,0.1); overflow-x: auto; }
             .attachment-card { position: relative; border-radius: 8px; overflow: hidden; background: #333; height: 80px; width: auto; min-width: 80px; flex-shrink: 0; display: flex; justify-content: center; align-items: center; }
             .attachment-card img { width: 100%; height: 100%; object-fit: cover; }
-            .code-block-wrapper { position: relative; margin: 1em 0; background-color: #282c34; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.3); overflow: hidden; }
-            #ai-container[data-subject="Programming"] .code-block-wrapper { border: 1px solid var(--ai-blue); }
-            pre[class*="language-"] { margin: 0; padding: 1em; border-radius: 8px; overflow: auto; max-height: 400px; font-size: 0.9em; }
-            .copy-code-btn { position: absolute; bottom: 8px; right: 8px; background-color: #444; color: #eee; border: 1px solid #555; border-radius: 6px; padding: 5px 10px; cursor: pointer; font-family: sans-serif; font-size: 0.8em; opacity: 0; transition: opacity 0.2s; }
-            .code-block-wrapper:hover .copy-code-btn { opacity: 1; }
-            .copy-code-btn:hover { background-color: #555; }
-            .ai-loader { width: 20px; height: 20px; border-radius: 50%; animation: spin 1s linear infinite; border: 3px solid rgba(255,255,255,0.3); border-top-color: #fff; }
+            .remove-attachment-btn { position: absolute; top: 5px; right: 5px; background: rgba(0,0,0,0.5); color: #fff; border: none; border-radius: 50%; width: 20px; height: 20px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+            .ai-loader { width: 25px; height: 25px; border: 3px solid rgba(255,255,255,.3); border-top-color: #fff; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto; }
             @keyframes glow { 0%,100% { box-shadow: 0 0 8px rgba(255,255,255,.2); } 50% { box-shadow: 0 0 16px rgba(255,255,255,.4); } }
-            @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 12px 3px var(--ai-blue); } 25% { box-shadow: 0 0 12px 3px var(--ai-green); } 50% { box-shadow: 0 0 12px 3px var(--ai-yellow); } 75% { box-shadow: 0 0 12px 3px var(--ai-red); } }
+            @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 8px 2px var(--ai-blue); } 25% { box-shadow: 0 0 8px 2px var(--ai-green); } 50% { box-shadow: 0 0 8px 2px var(--ai-yellow); } 75% { box-shadow: 0 0 8px 2px var(--ai-red); } }
             @keyframes spin { to { transform: rotate(360deg); } }
             @keyframes message-pop-in { 0% { opacity: 0; transform: translateY(10px) scale(.98); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
             @keyframes title-pulse { 0%, 100% { text-shadow: 0 0 7px var(--ai-blue); } 25% { text-shadow: 0 0 7px var(--ai-green); } 50% { text-shadow: 0 0 7px var(--ai-yellow); } 75% { text-shadow: 0 0 7px var(--ai-red); } }
