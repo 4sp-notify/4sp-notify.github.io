@@ -71,36 +71,41 @@
 
         /* --- 3. Auth Container & Form Styles --- */
         .auth-container {
+            position: relative;
             max-width: 480px;
             margin: 4rem auto;
-            padding: 2.5rem;
             background-color: var(--bg-white);
             border: 1px solid var(--border-color);
             border-radius: 8px;
-            text-align: center;
-            overflow: hidden; /* For animations */
+            overflow: hidden;
+        }
+
+        .auth-view {
+            padding: 2.5rem;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out, visibility 0.3s;
+            visibility: hidden;
+            position: absolute;
+            width: 100%;
+        }
+        .auth-view.is-active {
+            position: static;
+            opacity: 1;
+            visibility: visible;
         }
 
         .auth-container h1 {
             margin-top: 0;
             margin-bottom: 0.5rem;
+            text-align: center;
         }
 
         .auth-container p {
             color: var(--text-secondary);
             margin-bottom: 2rem;
+            text-align: center;
         }
         
-        .auth-view {
-            display: none;
-            opacity: 0;
-            transition: opacity 0.3s ease-in-out;
-        }
-        .auth-view.is-active {
-            display: block;
-            opacity: 1;
-        }
-
         .form-group {
             margin-bottom: 1.25rem;
             text-align: left;
@@ -137,21 +142,6 @@
             cursor: pointer;
         }
         
-        .divider {
-            display: flex;
-            align-items: center;
-            text-align: center;
-            color: var(--text-secondary);
-            margin: 2rem 0;
-        }
-        .divider::before, .divider::after {
-            content: '';
-            flex: 1;
-            border-bottom: 1px solid var(--border-color);
-        }
-        .divider:not(:empty)::before { margin-right: .5em; }
-        .divider:not(:empty)::after { margin-left: .5em; }
-        
         /* --- Better Error Display --- */
         .message-area {
             min-height: 24px;
@@ -177,6 +167,7 @@
 
         .switch-link {
             margin-top: 1.5rem;
+            text-align: center;
         }
         .switch-link a, .back-to-login-link a {
             color: var(--primary-blue);
@@ -208,20 +199,6 @@
         .btn-primary:hover {
             background-color: var(--primary-blue-dark);
             border-color: var(--primary-blue-dark);
-        }
-        .btn-outline {
-            background-color: var(--bg-white);
-            color: var(--text-secondary);
-            border: 2px solid var(--border-color);
-        }
-        .btn-outline:hover {
-            border-color: var(--text-secondary);
-            background-color: var(--bg-light-gray);
-        }
-        .btn-google img {
-            width: 20px;
-            height: 20px;
-            margin-right: 10px;
         }
     </style>
 </head>
@@ -256,13 +233,6 @@
                     <button type="submit" class="btn btn-primary">Log In</button>
                 </form>
                 
-                <div class="divider">or</div>
-
-                <button id="googleLoginBtn" class="btn btn-outline btn-google">
-                    <img src="../images/google-icon.png" alt="Google Icon">
-                    <span>Log in with Google</span>
-                </button>
-
                 <p class="switch-link">
                     Don't have an account? <a href="signup.html">Sign Up</a>
                 </p>
@@ -303,28 +273,29 @@
             const resetView = document.getElementById('resetView');
             const loginForm = document.getElementById('loginForm');
             const resetForm = document.getElementById('resetForm');
-            const googleLoginBtn = document.getElementById('googleLoginBtn');
             const loginMessageDiv = document.getElementById('loginMessage');
             const resetMessageDiv = document.getElementById('resetMessage');
             const forgotPasswordLink = document.getElementById('forgotPasswordLink');
             const backToLoginLink = document.getElementById('backToLoginLink');
 
             const switchView = (viewToShow) => {
-                if (viewToShow === 'reset') {
-                    loginView.classList.remove('is-active');
-                    setTimeout(() => {
-                        resetView.classList.add('is-active');
-                    }, 300);
-                } else {
-                    resetView.classList.remove('is-active');
-                    setTimeout(() => {
-                        loginView.classList.add('is-active');
-                    }, 300);
+                const activeView = document.querySelector('.auth-view.is-active');
+                const nextView = viewToShow === 'reset' ? resetView : loginView;
+                
+                if (activeView) {
+                    activeView.classList.remove('is-active');
                 }
+                
+                setTimeout(() => {
+                    nextView.classList.add('is-active');
+                }, 300); // Delay matches the CSS transition duration
             };
 
             forgotPasswordLink.addEventListener('click', () => switchView('reset'));
-            backToLoginLink.addEventListener('click', () => switchView('login'));
+            backToLoginLink.addEventListener('click', () => {
+                showMessage(resetMessageDiv, '');
+                switchView('login');
+            });
             
             const showMessage = (element, text, isError = true) => {
                 if (!text) {
@@ -379,16 +350,38 @@
                 }
             });
 
-            googleLoginBtn.addEventListener('click', async () => {
+            // This is the deprecated Google login button handler.
+            // It is kept here for reference but is not attached to any button.
+            const handleGoogleLogin = async () => {
                 const provider = new firebase.auth.GoogleAuthProvider();
                 try {
-                    await auth.signInWithPopup(provider);
+                    const result = await auth.signInWithPopup(provider);
+                    const isNewUser = result.additionalUserInfo.isNewUser;
+                    
+                    // CRITICAL LOGIC: Check if the user is new
+                    if (isNewUser) {
+                        // If they are new, immediately delete the auth account
+                        const userToDelete = result.user;
+                        await userToDelete.delete();
+                        await auth.signOut();
+                        
+                        // Show an error message
+                        showMessage(loginMessageDiv, "No account found. Please sign up first.");
+                        return; // Stop the function here
+                    }
+                    
+                    // If the user is NOT new, proceed to the dashboard
                     window.location.href = 'index.html';
+
                 } catch (error) {
-                    showMessage(loginMessageDiv, 'Failed to log in with Google. Please try again.');
+                    // Handle other errors, like popup closed
                     console.error('Google login error:', error);
+                    if (error.code !== 'auth/popup-closed-by-user') {
+                        showMessage(loginMessageDiv, 'Failed to log in with Google. Please try again.');
+                    }
                 }
-            });
+            };
+
         });
     </script>
 </body>
