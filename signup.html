@@ -5,10 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Attentio - Sign Up</title>
 
+    <!-- Google Fonts: Poppins -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;700&display=swap" rel="stylesheet">
 
+    <!-- Firebase Scripts -->
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-app-compat.js" defer></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-auth-compat.js" defer></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.10/firebase-firestore-compat.js" defer></script>
@@ -90,12 +92,16 @@
             color: var(--text-secondary);
             margin-bottom: 2rem;
         }
-
+        
+        /* --- Fading Animation --- */
         .signup-step {
-            display: none; /* Hidden by default */
+            display: none;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
         }
         .signup-step.is-active {
-            display: block; /* Shown when active */
+            display: block;
+            opacity: 1;
         }
 
         .role-selection button {
@@ -184,10 +190,13 @@
             border: none;
             cursor: pointer;
             padding: 0;
-            display: none; /* Hidden by default */
+            display: none;
+            opacity: 0;
+            transition: opacity 0.3s ease-in-out;
         }
         .back-button.is-active {
             display: block;
+            opacity: 1;
         }
         .back-button svg {
             width: 24px;
@@ -195,10 +204,11 @@
             color: var(--text-secondary);
         }
 
-
         /* --- 4. Buttons (from index.html) --- */
         .btn {
-            display: inline-block;
+            display: flex;
+            align-items: center;
+            justify-content: center;
             width: 100%;
             text-align: center;
             padding: 0.75rem 1.5rem;
@@ -227,6 +237,11 @@
             border-color: var(--text-secondary);
             background-color: var(--bg-light-gray);
         }
+        .btn-google img {
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+        }
     </style>
 </head>
 <body>
@@ -245,6 +260,7 @@
                 </svg>
             </button>
 
+            <!-- Step 1: Role Selection -->
             <div id="step1" class="signup-step is-active">
                 <h1>Join Attentio</h1>
                 <p>First, tell us who you are.</p>
@@ -254,6 +270,7 @@
                 </div>
             </div>
 
+            <!-- Step 2: Account Details -->
             <div id="step2" class="signup-step">
                 <h1>Create your <span id="role-text"></span> account</h1>
                 <p>Welcome! Let's get you set up.</p>
@@ -274,7 +291,10 @@
                 
                 <div class="divider">or</div>
 
-                <button id="googleSignupBtn" class="btn btn-outline">Sign up with Google</button>
+                <button id="googleSignupBtn" class="btn btn-outline btn-google">
+                    <img src="../images/google-icon.png" alt="Google Icon">
+                    <span>Sign up with Google</span>
+                </button>
 
                 <p class="switch-link">
                     Already have an account? <a href="login.html">Log In</a>
@@ -306,16 +326,19 @@
             const goToStep = (stepNumber) => {
                 if (stepNumber === 1) {
                     step2.classList.remove('is-active');
-                    step1.classList.add('is-active');
                     backBtn.classList.remove('is-active');
+                    setTimeout(() => {
+                        step1.classList.add('is-active');
+                    }, 50); // Small delay to allow fade out
                 } else {
                     step1.classList.remove('is-active');
-                    step2.classList.add('is-active');
-                    backBtn.classList.add('is-active');
+                    setTimeout(() => {
+                        step2.classList.add('is-active');
+                        backBtn.classList.add('is-active');
+                    }, 300); // Wait for fade-out to finish
                 }
             };
 
-            // --- Step 1 Logic: Role Selection ---
             step1.addEventListener('click', (event) => {
                 if (event.target.matches('[data-role]')) {
                     selectedRole = event.target.dataset.role;
@@ -324,13 +347,11 @@
                 }
             });
 
-            // --- Back Button Logic ---
             backBtn.addEventListener('click', () => {
                 goToStep(1);
-                showMessage('', false); // Clear any previous messages
+                showMessage('', false);
             });
 
-            // --- Step 2 Logic: Form Submission ---
             const showMessage = (text, isError = true) => {
                 if (!text) {
                     signupMessageDiv.classList.remove('is-active', 'error', 'success');
@@ -347,21 +368,30 @@
                 }
             };
 
+            /**
+             * Creates a new user document in the 'users' collection in Firestore.
+             * This is where the 'role' is saved to the database.
+             * @param {object} user - The Firebase Auth user object.
+             * @param {string} username - The user's generated username.
+             * @param {string} role - The selected role ('student' or 'teacher').
+             */
             const createUserDocument = async (user, username, role) => {
+                const userRef = db.collection('users').doc(user.uid);
                 try {
-                    await db.collection('users').doc(user.uid).set({
+                    await userRef.set({
                         email: user.email,
                         username: username,
-                        role: role,
+                        role: role, // Saves the selected role to differentiate users
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                         emailVerified: user.emailVerified
                     });
                 } catch (error) {
                     console.error("Error creating user document:", error);
+                    // If document creation fails, we might want to delete the auth user
+                    // to prevent orphaned accounts. This is an advanced step.
                 }
             };
             
-            // --- Email/Password Signup ---
             signupForm.addEventListener('submit', async (e) => {
                 e.preventDefault();
                 const email = document.getElementById('signupEmail').value;
@@ -377,6 +407,7 @@
                     const user = userCredential.user;
                     
                     const username = email.split('@')[0];
+                    // Pass the selectedRole to the function that saves to Firestore
                     await createUserDocument(user, username, selectedRole);
 
                     await user.sendEmailVerification();
@@ -395,7 +426,6 @@
                 }
             });
 
-            // --- Google Signup ---
             googleSignupBtn.addEventListener('click', async () => {
                 const provider = new firebase.auth.GoogleAuthProvider();
                 try {
@@ -405,9 +435,11 @@
 
                     if (isNewUser) {
                         const username = user.email.split('@')[0];
+                        // Pass the selectedRole to the function that saves to Firestore
                         await createUserDocument(user, username, selectedRole);
                     }
                     
+                    // If login/signup is successful, redirect to the main page
                     window.location.href = 'index.html';
 
                 } catch (error) {
