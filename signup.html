@@ -24,6 +24,10 @@
             --border-color: #e0e0e0;
             --bg-white: #ffffff;
             --bg-light-gray: #f8f9fa;
+            --error-red: #d9534f;
+            --error-bg: #fdf2f2;
+            --success-green: #28a745;
+            --success-bg: #f0f9f4;
         }
 
         *, *::before, *::after {
@@ -67,6 +71,7 @@
 
         /* --- 3. Auth Container & Form Styles --- */
         .auth-container {
+            position: relative;
             max-width: 480px;
             margin: 4rem auto;
             padding: 2.5rem;
@@ -138,10 +143,27 @@
         .divider:not(:empty)::before { margin-right: .5em; }
         .divider:not(:empty)::after { margin-left: .5em; }
         
+        /* --- Better Error Display --- */
         .message-area {
             min-height: 24px;
-            color: #d9534f;
             margin-bottom: 1rem;
+            padding: 0.75rem;
+            border-radius: 8px;
+            font-weight: 500;
+            display: none; /* Hidden by default */
+        }
+        .message-area.is-active {
+            display: block;
+        }
+        .message-area.error {
+            background-color: var(--error-bg);
+            border: 1px solid var(--error-red);
+            color: var(--error-red);
+        }
+        .message-area.success {
+            background-color: var(--success-bg);
+            border: 1px solid var(--success-green);
+            color: var(--success-green);
         }
 
         .switch-link {
@@ -152,6 +174,27 @@
             font-weight: 500;
             text-decoration: none;
         }
+
+        /* --- X Back Button --- */
+        .back-button {
+            position: absolute;
+            top: 1.5rem;
+            right: 1.5rem;
+            background: none;
+            border: none;
+            cursor: pointer;
+            padding: 0;
+            display: none; /* Hidden by default */
+        }
+        .back-button.is-active {
+            display: block;
+        }
+        .back-button svg {
+            width: 24px;
+            height: 24px;
+            color: var(--text-secondary);
+        }
+
 
         /* --- 4. Buttons (from index.html) --- */
         .btn {
@@ -196,6 +239,12 @@
 
     <main>
         <div class="auth-container">
+            <button class="back-button" id="backBtn" aria-label="Go back to role selection">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+
             <div id="step1" class="signup-step is-active">
                 <h1>Join Attentio</h1>
                 <p>First, tell us who you are.</p>
@@ -244,31 +293,58 @@
         document.addEventListener('DOMContentLoaded', () => {
             const db = firebase.firestore();
             const auth = firebase.auth();
-            let selectedRole = ''; // Variable to store 'student' or 'teacher'
+            let selectedRole = '';
 
             const step1 = document.getElementById('step1');
             const step2 = document.getElementById('step2');
+            const backBtn = document.getElementById('backBtn');
             const roleText = document.getElementById('role-text');
             const signupForm = document.getElementById('signupForm');
             const googleSignupBtn = document.getElementById('googleSignupBtn');
             const signupMessageDiv = document.getElementById('signupMessage');
 
+            const goToStep = (stepNumber) => {
+                if (stepNumber === 1) {
+                    step2.classList.remove('is-active');
+                    step1.classList.add('is-active');
+                    backBtn.classList.remove('is-active');
+                } else {
+                    step1.classList.remove('is-active');
+                    step2.classList.add('is-active');
+                    backBtn.classList.add('is-active');
+                }
+            };
+
             // --- Step 1 Logic: Role Selection ---
             step1.addEventListener('click', (event) => {
                 if (event.target.matches('[data-role]')) {
                     selectedRole = event.target.dataset.role;
-                    roleText.textContent = selectedRole; // Update heading text
-                    
-                    // Switch to Step 2
-                    step1.classList.remove('is-active');
-                    step2.classList.add('is-active');
+                    roleText.textContent = selectedRole;
+                    goToStep(2);
                 }
+            });
+
+            // --- Back Button Logic ---
+            backBtn.addEventListener('click', () => {
+                goToStep(1);
+                showMessage('', false); // Clear any previous messages
             });
 
             // --- Step 2 Logic: Form Submission ---
             const showMessage = (text, isError = true) => {
+                if (!text) {
+                    signupMessageDiv.classList.remove('is-active', 'error', 'success');
+                    return;
+                }
                 signupMessageDiv.textContent = text;
-                signupMessageDiv.style.color = isError ? '#d9534f' : '#28a745';
+                signupMessageDiv.classList.add('is-active');
+                if (isError) {
+                    signupMessageDiv.classList.add('error');
+                    signupMessageDiv.classList.remove('success');
+                } else {
+                    signupMessageDiv.classList.add('success');
+                    signupMessageDiv.classList.remove('error');
+                }
             };
 
             const createUserDocument = async (user, username, role) => {
@@ -276,13 +352,12 @@
                     await db.collection('users').doc(user.uid).set({
                         email: user.email,
                         username: username,
-                        role: role, // Add the selected role to the document
+                        role: role,
                         createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                         emailVerified: user.emailVerified
                     });
                 } catch (error) {
                     console.error("Error creating user document:", error);
-                    // Handle cleanup if document creation fails
                 }
             };
             
@@ -301,18 +376,18 @@
                     const userCredential = await auth.createUserWithEmailAndPassword(email, password);
                     const user = userCredential.user;
                     
-                    // Create a default username from email
                     const username = email.split('@')[0];
                     await createUserDocument(user, username, selectedRole);
 
                     await user.sendEmailVerification();
                     showMessage('Account created! Please check your email to verify your account.', false);
                     signupForm.reset();
-                    // Optionally redirect or show a success message
                     
                 } catch (error) {
                     if (error.code === 'auth/email-already-in-use') {
                         showMessage('This email is already registered. Please log in.');
+                    } else if (error.code === 'auth/weak-password') {
+                        showMessage('Password is too weak. Please use at least 6 characters.');
                     } else {
                         showMessage('Error creating account. Please try again.');
                     }
@@ -333,7 +408,6 @@
                         await createUserDocument(user, username, selectedRole);
                     }
                     
-                    // Redirect to dashboard or home
                     window.location.href = 'index.html';
 
                 } catch (error) {
