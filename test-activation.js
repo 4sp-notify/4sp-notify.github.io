@@ -1,12 +1,13 @@
 /**
  * ai-activation.js
  *
- * A feature-rich, self-contained script with enhanced animations, an in-line
- * loading indicator, file uploads, daily limits, and contextual awareness.
+ * A feature-rich, self-contained script with a powerful response parser,
+ * expanded symbol support, file uploads, daily limits, and contextual awareness.
  */
 (function() {
     // --- CONFIGURATION ---
     const API_KEY = 'AIzaSyDcoUA4Js1oOf1nz53RbLaxUzD0GxTmKXA'; 
+    // UPDATED: Using the specific preview model URL you requested.
     const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-lite-preview-09-2025:generateContent?key=${API_KEY}`;
     const USER_CHAR_LIMIT = 500;
     const MAX_INPUT_HEIGHT = 200;
@@ -112,14 +113,14 @@
         actionToggle.id = 'ai-action-toggle';
         actionToggle.innerHTML = '&#8942;';
         actionToggle.onclick = handleActionToggleClick;
-        const inputLoader = document.createElement('div'); // New input loader
+        const inputLoader = document.createElement('div');
         inputLoader.id = 'ai-input-loader';
         inputLoader.className = 'ai-loader';
 
         inputWrapper.appendChild(attachmentPreviewContainer);
         inputWrapper.appendChild(visualInput);
         inputWrapper.appendChild(actionToggle);
-        inputWrapper.appendChild(inputLoader); // Add new loader to wrapper
+        inputWrapper.appendChild(inputLoader);
 
         container.appendChild(persistentTitle);
         container.appendChild(welcomeMessage);
@@ -218,7 +219,6 @@
             const text = data.candidates[0].content.parts[0].text;
             chatHistory.push({ role: "model", parts: [{ text: text }] });
             
-            // New transition logic
             const contentHTML = `<div class="ai-response-content">${parseGeminiResponse(text)}</div>`;
             responseBubble.style.opacity = '0';
             setTimeout(() => {
@@ -236,7 +236,7 @@
                     };
                 });
                 responseBubble.style.opacity = '1';
-            }, 300); // Duration matches CSS transition
+            }, 300);
 
         } catch (error) {
             if (error.name === 'AbortError') { responseBubble.innerHTML = `<div class="ai-error">Message generation stopped.</div>`; } 
@@ -247,7 +247,6 @@
             const actionToggle = document.getElementById('ai-action-toggle');
             if (actionToggle) { actionToggle.classList.remove('generating'); actionToggle.innerHTML = '&#8942;'; }
             
-            // This now happens after the fade-in timeout
             setTimeout(() => {
                 responseBubble.classList.remove('loading');
                 const responseContainer = document.getElementById('ai-response-container');
@@ -415,7 +414,31 @@
     
     function fadeOutWelcomeMessage(){const container=document.getElementById("ai-container");if(container&&!container.classList.contains("chat-active")){container.classList.add("chat-active")}}
     function escapeHTML(str){const p=document.createElement("p");p.textContent=str;return p.innerHTML}
-    function parseGeminiResponse(text){let html=text.replace(/</g,"&lt;").replace(/>/g,"&gt;");const codeBlocks=[];html=html.replace(/```(\w*)\n([\s\S]*?)```/g,(match,lang,code)=>{const escapedCode=escapeHTML(code.trim());const langClass=lang?`language-${lang.toLowerCase()}`:'';codeBlocks.push(`<div class="code-block-wrapper"><pre><code class="${langClass}">${escapedCode}</code></pre><button class="copy-code-btn">Copy Code</button></div>`);return "%%CODE_BLOCK%%"});html=html.replace(/\\([a-zA-Z]+)/g,(match,command)=>latexSymbolMap[match]||match);html=html.replace(/^### (.*$)/gm,"<h3>$1</h3>").replace(/^## (.*$)/gm,"<h2>$1</h2>").replace(/^# (.*$)/gm,"<h1>$1</h1>");html=html.replace(/\*\*(.*?)\*\*/g,"<strong>$1</strong>").replace(/\*(.*?)\*/g,"<em>$1</em>");html=html.replace(/^(?:\*|-)\s(.*$)/gm,"<li>$1</li>");html=html.replace(/(<\/li>\s*<li>)/g,"</li><li>").replace(/((<li>.*<\/li>)+)/gs,"<ul>$1</ul>");html=html.replace(/\n/g,"<br>");html=html.replace(/%%CODE_BLOCK%%/g,()=>codeBlocks.shift());return html}
+    
+    /**
+     * NEW: A more robust parser for Gemini's mixed Markdown and LaTeX responses.
+     */
+    function parseGeminiResponse(text) {
+        const codeBlocks = [];
+        let html = text.replace(/```(\w*)\n([\s\S]*?)```/g, (match, lang, code) => {
+            const escapedCode = escapeHTML(code.trim());
+            const langClass = lang ? `language-${lang.toLowerCase()}` : '';
+            const codeHtml = `<div class="code-block-wrapper"><pre><code class="${langClass}">${escapedCode}</code></pre><button class="copy-code-btn">Copy Code</button></div>`;
+            codeBlocks.push(codeHtml);
+            return "%%CODE_BLOCK%%";
+        });
+
+        html = escapeHTML(html);
+        html = html.replace(/\\([a-zA-Z]+)/g, (match, command) => latexSymbolMap[match] || match);
+        html = html.replace(/^### (.*$)/gm, "<h3>$1</h3>").replace(/^## (.*$)/gm, "<h2>$1</h2>").replace(/^# (.*$)/gm, "<h1>$1</h1>");
+        html = html.replace(/\*\*(.*?)\*\*/g, "<strong>$1</strong>").replace(/\*(.*?)\*/g, "<em>$1</em>");
+        html = html.replace(/^(?:\*|-)\s(.*$)/gm, "<li>$1</li>");
+        html = html.replace(/(<\/li>\s*<li>)/g, "</li><li>").replace(/((<li>.*<\/li>)+)/gs, "<ul>$1</ul>");
+        html = html.replace(/\n/g, "<br>");
+        html = html.replace(/%%CODE_BLOCK%%/g, () => codeBlocks.shift());
+
+        return html;
+    }
 
     function injectStyles() {
         if (document.getElementById('ai-dynamic-styles')) return;
@@ -442,7 +465,7 @@
             .ai-message-bubble { background: rgba(15,15,18,.8); border: 1px solid rgba(255,255,255,.1); border-radius: 20px; padding: 15px 20px; color: #e0e0e0; backdrop-filter: blur(15px); -webkit-backdrop-filter: blur(15px); animation: message-pop-in .5s cubic-bezier(.4,0,.2,1) forwards; max-width: 90%; line-height: 1.6; overflow-wrap: break-word; transition: opacity 0.3s ease-in-out; }
             .user-message { align-self: flex-end; background: rgba(40,45,50,.8); }
             .gemini-response { align-self: flex-start; }
-            .gemini-response.loading { display: flex; justify-content: center; align-items: center; min-height: 60px; }
+            .gemini-response.loading { display: flex; justify-content: center; align-items: center; min-height: 60px; background: rgba(15,15,18,.8); }
             #ai-input-wrapper { display: flex; flex-direction: column; flex-shrink: 0; position: relative; z-index: 2; transition: all .4s cubic-bezier(.4,0,.2,1); margin: 15px auto; width: 90%; max-width: 800px; border-radius: 25px; background: rgba(10,10,10,.7); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); animation: glow 3s infinite; border: 1px solid rgba(255,255,255,.2); }
             #ai-input-wrapper.waiting { animation: gemini-glow 4s linear infinite!important; }
             #ai-input { min-height: 52px; max-height: ${MAX_INPUT_HEIGHT}px; overflow-y: hidden; color: #fff; font-size: 1.1em; padding: 15px 50px 15px 20px; box-sizing: border-box; word-wrap: break-word; outline: 0; }
@@ -466,7 +489,7 @@
             .copy-code-btn { position: absolute; bottom: 8px; right: 8px; background-color: #444; color: #eee; border: 1px solid #555; border-radius: 6px; padding: 5px 10px; cursor: pointer; font-family: sans-serif; font-size: 0.8em; opacity: 0; transition: opacity 0.2s; }
             .code-block-wrapper:hover .copy-code-btn { opacity: 1; }
             .copy-code-btn:hover { background-color: #555; }
-            .ai-loader { width: 20px; height: 20px; border-radius: 50%; animation: spin 1s linear infinite; }
+            .ai-loader { width: 20px; height: 20px; border-radius: 50%; animation: spin 1s linear infinite; border: 3px solid rgba(255,255,255,0.3); border-top-color: #fff; }
             @keyframes glow { 0%,100% { box-shadow: 0 0 8px rgba(255,255,255,.2); } 50% { box-shadow: 0 0 16px rgba(255,255,255,.4); } }
             @keyframes gemini-glow { 0%,100% { box-shadow: 0 0 12px 3px var(--ai-blue); } 25% { box-shadow: 0 0 12px 3px var(--ai-green); } 50% { box-shadow: 0 0 12px 3px var(--ai-yellow); } 75% { box-shadow: 0 0 12px 3px var(--ai-red); } }
             @keyframes spin { to { transform: rotate(360deg); } }
