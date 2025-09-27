@@ -14,13 +14,11 @@
 <body class="bg-gray-100 flex items-center justify-center min-h-screen p-4">
 
     <div id="invite-container" class="w-full max-w-md mx-auto bg-white p-8 rounded-xl shadow-lg text-center">
-        <!-- Loading State -->
         <div id="loading-view">
             <h2 class="text-xl font-bold text-gray-800 font-poppins">Loading Invitation...</h2>
             <p class="text-gray-500 mt-2">Please wait a moment.</p>
         </div>
         
-        <!-- Logged Out View -->
         <div id="logged-out-view" class="hidden">
             <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 mb-4">
                 <svg class="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M15 21a6 6 0 00-9-5.197M15 21a6 6 0 006-6v-1a3 3 0 00-3-3H6a3 3 0 00-3 3v1a6 6 0 006 6z" /></svg>
@@ -33,7 +31,6 @@
              </div>
         </div>
 
-        <!-- Logged In View -->
         <div id="content-view" class="hidden">
              <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 mb-4">
                 <svg class="h-6 w-6 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4.354a4 4 0 110 5.292M15 21H3v-1a6 6 0 0112 0v1zm0 0h6v-1a6 6 0 00-9-5.197M15 21a6 6 0 00-9-5.197M15 21a6 6 0 006-6v-1a3 3 0 00-3-3H6a3 3 0 00-3 3v1a6 6 0 006 6z" /></svg>
@@ -53,7 +50,6 @@
         </div>
     </div>
 
-    <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
@@ -88,13 +84,13 @@
                 const classId = params.get('classId');
 
                 if (!classId) {
-                    displayMessage("error", "No class invitation found. The link may be invalid.");
+                    displayMessage("error", "No class invitation found. The link may be invalid.", false);
                     return;
                 }
 
                 auth.onAuthStateChanged(async user => {
+                    loadingView.classList.add('hidden');
                     if (!user) {
-                        loadingView.classList.add('hidden');
                         loggedOutView.classList.remove('hidden');
                         const inviteUrl = window.location.href;
                         document.getElementById('login-redirect-btn').href = `login.html?redirectTo=${encodeURIComponent(inviteUrl)}`;
@@ -106,7 +102,7 @@
                     const classDoc = await classRef.get();
 
                     if (!classDoc.exists) {
-                        displayMessage("error", "This class does not exist or may have been deleted.");
+                        displayMessage("error", "This invitation link has expired because the class has been deleted.", false);
                         return;
                     }
 
@@ -120,7 +116,6 @@
                         displayMessage("info", "You are already a member of this class.");
                         actionButtons.innerHTML = `<a href="dashboard.html" class="block w-full px-4 py-3 bg-blue-600 text-white font-semibold rounded-lg shadow-sm hover:bg-blue-700">Go to Dashboard</a>`;
                     } else {
-                        loadingView.classList.add('hidden');
                         contentView.classList.remove('hidden');
                     }
 
@@ -128,9 +123,28 @@
                         joinBtn.disabled = true;
                         joinBtn.textContent = 'Joining...';
                         try {
-                            await classRef.update({
-                                studentIds: firebase.firestore.FieldValue.arrayUnion(user.uid)
+                            const userRef = db.collection('users').doc(user.uid);
+                            await db.runTransaction(async transaction => {
+                                const userDoc = await transaction.get(userRef);
+                                if (!userDoc.exists) {
+                                    throw new Error("User document does not exist!");
+                                }
+                                const classDocData = await transaction.get(classRef);
+                                if (!classDocData.exists) {
+                                    throw new Error("Class document does not exist!");
+                                }
+                                
+                                const newClassIds = [...(userDoc.data().classIds || []), classId];
+                                const newStudentIds = [...(classDocData.data().studentIds || []), user.uid];
+
+                                transaction.update(classRef, {
+                                    studentIds: newStudentIds
+                                });
+                                transaction.update(userRef, {
+                                    classIds: newClassIds
+                                });
                             });
+                            
                             displayMessage("success", "Successfully joined the class! Redirecting...");
                             setTimeout(() => window.location.href = 'dashboard.html', 2000);
                         } catch (error) {
@@ -167,4 +181,3 @@
     </script>
 </body>
 </html>
-
