@@ -8,8 +8,11 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- IMPORTANT: Load Google API scripts with defer to ensure they load correctly -->
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://apis.google.com/js/api.js" async defer></script>
+    
     <style>
         body { font-family: 'Inter', sans-serif; }
         .font-poppins { font-family: 'Poppins', sans-serif; }
@@ -275,375 +278,393 @@
         </div>
     </div>
 
-    <!-- Firebase SDKs -->
+    <!-- Firebase SDKs - Load these first -->
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
     
+    <!-- Then load your config -->
     <script src="../firebase-config.js"></script>
+    
+    <!-- Finally, load the main app logic -->
     <script>
+        // Wrap everything in DOMContentLoaded to ensure HTML is ready
         document.addEventListener('DOMContentLoaded', () => {
-            if (typeof firebaseConfig === 'undefined') {
-                document.body.innerHTML = '<div class="text-center p-8">Error: Firebase configuration is missing.</div>';
-                return;
-            }
-
-            const app = firebase.initializeApp(firebaseConfig);
-            const auth = firebase.auth();
-            const db = firebase.firestore();
-
-            let currentUser = null;
-            let userData = null;
-            let currentClassId = null;
-            let unsubscribes = [];
-            let allLoadedClasses = {};
-
-            const userProfileBtn = document.getElementById('user-profile-btn');
-            const userProfileMenu = document.getElementById('user-profile-menu');
             
-            auth.onAuthStateChanged(user => {
-                if (user) {
-                    currentUser = user;
-                    fetchUserData(user.uid);
-                } else {
-                    window.location.href = 'login.html';
-                }
-            });
-
-            async function fetchUserData(uid) {
-                const userDoc = await db.collection('users').doc(uid).get();
-                if (userDoc.exists) {
-                    userData = userDoc.data();
-                    updateProfileUI(currentUser, userData);
-                    listenForClasses(uid, userData.role);
-                } else {
-                    auth.signOut();
-                }
-            }
-            
-            function applyMarqueeIfNeeded(textEl, containerEl) {
-                setTimeout(() => {
-                    if (textEl.scrollWidth > containerEl.clientWidth) textEl.classList.add('marquee');
-                    else textEl.classList.remove('marquee');
+            // Function to wait for Firebase to be ready
+            function onFirebaseReady(callback) {
+                const interval = setInterval(() => {
+                    if (typeof firebase !== 'undefined' && typeof firebase.initializeApp === 'function' && typeof firebaseConfig !== 'undefined') {
+                        clearInterval(interval);
+                        callback();
+                    }
                 }, 100);
             }
 
-            function updateProfileUI(user, data) {
-                const displayNameEl = document.getElementById('user-display-name-menu');
-                const emailEl = document.getElementById('user-email-menu');
-                displayNameEl.textContent = data.username;
-                emailEl.textContent = user.email;
+            onFirebaseReady(() => {
+                // --- Start of Main Application Logic ---
 
-                applyMarqueeIfNeeded(displayNameEl, document.getElementById('user-display-name-container'));
-                applyMarqueeIfNeeded(emailEl, document.getElementById('user-email-container'));
+                const app = firebase.initializeApp(firebaseConfig);
+                const auth = firebase.auth();
+                const db = firebase.firestore();
 
-                const picEls = [document.getElementById('user-profile-pic'), document.getElementById('user-profile-pic-menu')];
-                const initialEls = [document.getElementById('user-profile-initial'), document.getElementById('user-profile-initial-menu')];
+                let currentUser = null;
+                let userData = null;
+                let currentClassId = null;
+                let unsubscribes = [];
+                let allLoadedClasses = {};
 
-                if (user.photoURL) {
-                    picEls.forEach(el => { el.src = user.photoURL; el.classList.remove('hidden'); });
-                    initialEls.forEach(el => el.classList.add('hidden'));
-                } else {
-                    const initial = data.username.charAt(0).toUpperCase();
-                    initialEls.forEach(el => { el.textContent = initial; el.classList.remove('hidden'); });
-                    picEls.forEach(el => el.classList.add('hidden'));
-                }
+                // All element selectors
+                const userProfileBtn = document.getElementById('user-profile-btn');
+                const userProfileMenu = document.getElementById('user-profile-menu');
+                const inviteLinkBtn = document.getElementById('invite-link-btn');
                 
-                const isTeacher = data.role === 'teacher';
-                document.getElementById('teacher-sidebar-actions').classList.toggle('hidden', !isTeacher);
-                document.getElementById('empty-state-actions').children[0].style.display = isTeacher ? 'inline-block' : 'none'; // Create
-                document.getElementById('empty-state-actions').children[1].style.display = isTeacher ? 'inline-flex' : 'none'; // Import
-                document.getElementById('empty-state-actions').children[2].style.display = isTeacher ? 'none' : 'inline-block'; // Join
-            }
-
-            function listenForClasses(uid, role) {
-                unsubscribes.forEach(unsub => unsub());
-                unsubscribes = [];
-                allLoadedClasses = {};
-
-                const reRenderClasses = () => {
-                    const classesArray = Object.values(allLoadedClasses);
-                    document.getElementById('empty-state-actions').classList.toggle('hidden', classesArray.length > 0);
-                    if (classesArray.length === 0) {
-                        displayNoClasses();
-                        return;
+                auth.onAuthStateChanged(user => {
+                    if (user) {
+                        currentUser = user;
+                        fetchUserData(user.uid);
+                    } else {
+                        window.location.href = 'login.html';
                     }
-                    renderClassList(classesArray);
-                    if (currentClassId) {
-                        const updated = classesArray.find(c => c.id === currentClassId);
-                        if(updated) selectClass(updated);
-                        else resetToEmptyState();
+                });
+
+                async function fetchUserData(uid) {
+                    const userDoc = await db.collection('users').doc(uid).get();
+                    if (userDoc.exists) {
+                        userData = userDoc.data();
+                        updateProfileUI(currentUser, userData);
+                        listenForClasses(uid, userData.role);
+                    } else {
+                        auth.signOut();
                     }
                 }
                 
-                if (role === 'teacher') {
-                    const teacherQuery = db.collection('classes').where('teacherId', '==', uid);
-                    const unsubTeacher = teacherQuery.onSnapshot(snapshot => {
+                function applyMarqueeIfNeeded(textEl, containerEl) {
+                    setTimeout(() => {
+                        if (textEl.scrollWidth > containerEl.clientWidth) textEl.classList.add('marquee');
+                        else textEl.classList.remove('marquee');
+                    }, 100);
+                }
+
+                function updateProfileUI(user, data) {
+                    const displayNameEl = document.getElementById('user-display-name-menu');
+                    const emailEl = document.getElementById('user-email-menu');
+                    displayNameEl.textContent = data.username;
+                    emailEl.textContent = user.email;
+
+                    applyMarqueeIfNeeded(displayNameEl, document.getElementById('user-display-name-container'));
+                    applyMarqueeIfNeeded(emailEl, document.getElementById('user-email-container'));
+
+                    const picEls = [document.getElementById('user-profile-pic'), document.getElementById('user-profile-pic-menu')];
+                    const initialEls = [document.getElementById('user-profile-initial'), document.getElementById('user-profile-initial-menu')];
+
+                    if (user.photoURL) {
+                        picEls.forEach(el => { el.src = user.photoURL; el.classList.remove('hidden'); });
+                        initialEls.forEach(el => el.classList.add('hidden'));
+                    } else {
+                        const initial = data.username.charAt(0).toUpperCase();
+                        initialEls.forEach(el => { el.textContent = initial; el.classList.remove('hidden'); });
+                        picEls.forEach(el => el.classList.add('hidden'));
+                    }
+                    
+                    const isTeacher = data.role === 'teacher';
+                    document.getElementById('teacher-sidebar-actions').classList.toggle('hidden', !isTeacher);
+                    document.getElementById('empty-state-actions').children[0].style.display = isTeacher ? 'inline-block' : 'none'; // Create
+                    document.getElementById('empty-state-actions').children[1].style.display = isTeacher ? 'inline-flex' : 'none'; // Import
+                    document.getElementById('empty-state-actions').children[2].style.display = isTeacher ? 'none' : 'inline-block'; // Join
+                }
+
+                function listenForClasses(uid, role) {
+                    unsubscribes.forEach(unsub => unsub());
+                    unsubscribes = [];
+                    allLoadedClasses = {};
+
+                    const reRenderClasses = () => {
+                        const classesArray = Object.values(allLoadedClasses);
+                        document.getElementById('empty-state-actions').classList.toggle('hidden', classesArray.length > 0);
+                        if (classesArray.length === 0) {
+                            displayNoClasses();
+                            return;
+                        }
+                        renderClassList(classesArray);
+                        if (currentClassId) {
+                            const updated = classesArray.find(c => c.id === currentClassId);
+                            if(updated) selectClass(updated);
+                            else resetToEmptyState();
+                        }
+                    }
+                    
+                    if (role === 'teacher') {
+                        const teacherQuery = db.collection('classes').where('teacherId', '==', uid);
+                        const unsubTeacher = teacherQuery.onSnapshot(snapshot => {
+                            snapshot.docs.forEach(doc => allLoadedClasses[doc.id] = { id: doc.id, ...doc.data() });
+                            reRenderClasses();
+                        });
+                        unsubscribes.push(unsubTeacher);
+                    }
+
+                    const studentQuery = db.collection('classes').where('studentIds', 'array-contains', uid);
+                    const unsubStudent = studentQuery.onSnapshot(snapshot => {
                         snapshot.docs.forEach(doc => allLoadedClasses[doc.id] = { id: doc.id, ...doc.data() });
                         reRenderClasses();
                     });
-                    unsubscribes.push(unsubTeacher);
+                    unsubscribes.push(unsubStudent);
                 }
 
-                const studentQuery = db.collection('classes').where('studentIds', 'array-contains', uid);
-                const unsubStudent = studentQuery.onSnapshot(snapshot => {
-                    snapshot.docs.forEach(doc => allLoadedClasses[doc.id] = { id: doc.id, ...doc.data() });
-                    reRenderClasses();
-                });
-                unsubscribes.push(unsubStudent);
-            }
+                function displayNoClasses() {
+                    document.getElementById('class-list').innerHTML = '';
+                    document.getElementById('no-classes-sidebar').classList.remove('hidden');
+                    resetToEmptyState();
+                }
 
-            function displayNoClasses() {
-                document.getElementById('class-list').innerHTML = '';
-                document.getElementById('no-classes-sidebar').classList.remove('hidden');
-                resetToEmptyState();
-            }
-
-            function renderClassList(classes) {
-                document.getElementById('no-classes-sidebar').classList.add('hidden');
-                const classListEl = document.getElementById('class-list');
-                classListEl.innerHTML = '';
-                classes.sort((a,b) => a.name.localeCompare(b.name)).forEach(cls => {
-                    const li = document.createElement('li');
-                    const isActive = currentClassId === cls.id;
-                    li.innerHTML = `<button data-class-id="${cls.id}" class="w-full text-left px-3 py-2 rounded-md font-medium text-sm transition-colors ${isActive ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">${cls.name}</button>`;
-                    li.querySelector('button').addEventListener('click', () => selectClass(cls));
-                    classListEl.appendChild(li);
-                });
-            }
-
-            function resetToEmptyState() {
-                currentClassId = null;
-                document.getElementById('empty-state-view').classList.remove('hidden');
-                document.getElementById('class-content-view').classList.add('hidden');
-            }
-
-            function selectClass(classData) {
-                currentClassId = classData.id;
-                document.querySelectorAll('#class-list button').forEach(btn => {
-                    const isActive = btn.dataset.classId === classData.id;
-                    btn.classList.toggle('bg-blue-100', isActive);
-                    btn.classList.toggle('text-blue-700', isActive);
-                });
-
-                document.getElementById('empty-state-view').classList.add('hidden');
-                document.getElementById('class-content-view').classList.remove('hidden');
-                document.getElementById('class-name-header').textContent = classData.name;
-                document.getElementById('class-code-header').textContent = `Class Code: ${classData.code}`;
-                
-                const isTeacher = userData.role === 'teacher';
-                document.getElementById('invite-link-btn').classList.toggle('hidden', !isTeacher);
-                document.getElementById('tab-settings').classList.toggle('hidden', !isTeacher);
-                showRequestsView();
-            }
-            
-            function showRequestsView() {
-                document.getElementById('requests-view').classList.remove('hidden');
-                document.getElementById('settings-view').classList.add('hidden');
-                document.getElementById('tab-requests').classList.add('border-blue-500', 'text-blue-600');
-                document.getElementById('tab-settings').classList.remove('border-blue-500', 'text-blue-600');
-            }
-
-            function showSettingsView() {
-                document.getElementById('requests-view').classList.add('hidden');
-                document.getElementById('settings-view').classList.remove('hidden');
-                document.getElementById('tab-settings').classList.add('border-blue-500', 'text-blue-600');
-                document.getElementById('tab-requests').classList.remove('border-blue-500', 'text-blue-600');
-            }
-
-            const modalBackdrop = document.getElementById('modal-backdrop');
-            function showModal(modalId) {
-                const modal = document.getElementById(modalId);
-                modalBackdrop.classList.remove('hidden');
-                modal.classList.remove('hidden');
-                modal.firstElementChild.classList.add('fade-enter', 'fade-enter-active');
-                setTimeout(() => modal.firstElementChild.classList.remove('fade-enter', 'fade-enter-active'), 200);
-            }
-
-            function hideModal(modalId) {
-                const modal = document.getElementById(modalId);
-                modal.firstElementChild.classList.add('fade-leave', 'fade-leave-active');
-                setTimeout(() => {
-                    modal.firstElementChild.classList.remove('fade-leave', 'fade-leave-active');
-                    modal.classList.add('hidden');
-                    if (!document.querySelector('.fixed.z-50:not(.hidden)')) {
-                        modalBackdrop.classList.add('hidden');
-                    }
-                }, 150);
-            }
-
-            async function createNewClass(className) {
-                const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-                await db.collection('classes').add({
-                    name: className,
-                    teacherId: currentUser.uid,
-                    code: classCode,
-                    studentIds: [],
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
-            }
-
-            // --- Google Classroom Import Logic ---
-            let gapiInited = false;
-            let tokenClient;
-
-            async function handleGoogleImportClick() {
-                showModal('google-import-modal');
-                const errorDiv = document.getElementById('g-import-error');
-                const loadingDiv = document.getElementById('g-import-loading');
-                const listEl = document.getElementById('g-import-list');
-                
-                loadingDiv.classList.remove('hidden');
-                errorDiv.classList.add('hidden');
-                listEl.classList.add('hidden');
-
-                try {
-                    const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
-                    if (!secretsDoc.exists) throw new Error("Critical: Secrets document not found in Firestore.");
-
-                    const secrets = secretsDoc.data();
-                    const API_KEY = secrets.GoogleClassroomAPIKey;
-                    const CLIENT_ID = secrets.GoogleClientID;
-
-                    if (!API_KEY) throw new Error("GoogleClassroomAPIKey is missing from your secrets document.");
-                    if (!CLIENT_ID) throw new Error("GoogleClientID is missing from your secrets document. Please add it in Firestore.");
-
-                    if (!gapiInited) {
-                        await new Promise((resolve) => gapi.load('client', resolve));
-                        await gapi.client.init({ apiKey: API_KEY, discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest"] });
-                        gapiInited = true;
-                    }
-
-                    tokenClient = google.accounts.oauth2.initTokenModelClient({
-                        client_id: CLIENT_ID,
-                        scope: 'https://www.googleapis.com/auth/classroom.courses.readonly',
-                        callback: async (tokenResponse) => {
-                            if (tokenResponse.error) {
-                                throw new Error(tokenResponse.error);
-                            }
-                            await listGoogleCourses();
-                        },
+                function renderClassList(classes) {
+                    document.getElementById('no-classes-sidebar').classList.add('hidden');
+                    const classListEl = document.getElementById('class-list');
+                    classListEl.innerHTML = '';
+                    classes.sort((a,b) => a.name.localeCompare(b.name)).forEach(cls => {
+                        const li = document.createElement('li');
+                        const isActive = currentClassId === cls.id;
+                        li.innerHTML = `<button data-class-id="${cls.id}" class="w-full text-left px-3 py-2 rounded-md font-medium text-sm transition-colors ${isActive ? 'bg-blue-100 text-blue-700' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">${cls.name}</button>`;
+                        li.querySelector('button').addEventListener('click', () => selectClass(cls));
+                        classListEl.appendChild(li);
                     });
-                     tokenClient.requestAccessToken({prompt: ''});
-
-                } catch (error) {
-                    console.error('Google Import Error:', error);
-                    errorDiv.textContent = `Error: ${error.message}. Please check console for details.`;
-                    errorDiv.classList.remove('hidden');
-                    loadingDiv.classList.add('hidden');
                 }
-            }
 
-            async function listGoogleCourses() {
-                const listEl = document.getElementById('g-import-list');
-                const loadingDiv = document.getElementById('g-import-loading');
-                const errorDiv = document.getElementById('g-import-error');
+                function resetToEmptyState() {
+                    currentClassId = null;
+                    document.getElementById('empty-state-view').classList.remove('hidden');
+                    document.getElementById('class-content-view').classList.add('hidden');
+                }
 
-                try {
-                    const response = await gapi.client.classroom.courses.list({ teacherId: 'me', courseStates: 'ACTIVE' });
-                    loadingDiv.classList.add('hidden');
+                function selectClass(classData) {
+                    currentClassId = classData.id;
+                    document.querySelectorAll('#class-list button').forEach(btn => {
+                        const isActive = btn.dataset.classId === classData.id;
+                        btn.classList.toggle('bg-blue-100', isActive);
+                        btn.classList.toggle('text-blue-700', isActive);
+                    });
+
+                    document.getElementById('empty-state-view').classList.add('hidden');
+                    document.getElementById('class-content-view').classList.remove('hidden');
+                    document.getElementById('class-name-header').textContent = classData.name;
+                    document.getElementById('class-code-header').textContent = `Class Code: ${classData.code}`;
                     
-                    const courses = response.result.courses;
-                    if (courses && courses.length > 0) {
-                        listEl.innerHTML = '';
-                        courses.forEach(course => {
-                            const li = document.createElement('li');
-                            li.className = 'flex justify-between items-center p-3 bg-gray-50 rounded-md';
-                            li.innerHTML = `
-                                <span class="font-medium text-gray-800">${course.name}</span>
-                                <button data-course-name="${course.name}" class="import-g-class-btn bg-blue-500 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-600">Import</button>
-                            `;
-                            listEl.appendChild(li);
+                    const isTeacher = userData.role === 'teacher';
+                    inviteLinkBtn.classList.toggle('hidden', !isTeacher);
+                    document.getElementById('tab-settings').classList.toggle('hidden', !isTeacher);
+                    showRequestsView();
+                }
+                
+                function showRequestsView() {
+                    document.getElementById('requests-view').classList.remove('hidden');
+                    document.getElementById('settings-view').classList.add('hidden');
+                    document.getElementById('tab-requests').classList.add('border-blue-500', 'text-blue-600');
+                    document.getElementById('tab-settings').classList.remove('border-blue-500', 'text-blue-600');
+                }
+
+                function showSettingsView() {
+                    document.getElementById('requests-view').classList.add('hidden');
+                    document.getElementById('settings-view').classList.remove('hidden');
+                    document.getElementById('tab-settings').classList.add('border-blue-500', 'text-blue-600');
+                    document.getElementById('tab-requests').classList.remove('border-blue-500', 'text-blue-600');
+                }
+
+                const modalBackdrop = document.getElementById('modal-backdrop');
+                function showModal(modalId) {
+                    const modal = document.getElementById(modalId);
+                    modalBackdrop.classList.remove('hidden');
+                    modal.classList.remove('hidden');
+                    modal.firstElementChild.classList.add('fade-enter', 'fade-enter-active');
+                    setTimeout(() => modal.firstElementChild.classList.remove('fade-enter', 'fade-enter-active'), 200);
+                }
+
+                function hideModal(modalId) {
+                    const modal = document.getElementById(modalId);
+                    modal.firstElementChild.classList.add('fade-leave', 'fade-leave-active');
+                    setTimeout(() => {
+                        modal.firstElementChild.classList.remove('fade-leave', 'fade-leave-active');
+                        modal.classList.add('hidden');
+                        if (!document.querySelector('.fixed.z-50:not(.hidden)')) {
+                            modalBackdrop.classList.add('hidden');
+                        }
+                    }, 150);
+                }
+
+                async function createNewClass(className) {
+                    const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+                    await db.collection('classes').add({
+                        name: className,
+                        teacherId: currentUser.uid,
+                        code: classCode,
+                        studentIds: [],
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                }
+
+                // --- Google Classroom Import Logic ---
+                let gapiInited = false;
+                let tokenClient;
+
+                async function handleGoogleImportClick() {
+                    showModal('google-import-modal');
+                    const errorDiv = document.getElementById('g-import-error');
+                    const loadingDiv = document.getElementById('g-import-loading');
+                    const listEl = document.getElementById('g-import-list');
+                    
+                    loadingDiv.classList.remove('hidden');
+                    errorDiv.classList.add('hidden');
+                    listEl.classList.add('hidden');
+
+                    try {
+                        const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
+                        if (!secretsDoc.exists) throw new Error("Critical: Secrets document not found in Firestore.");
+
+                        const secrets = secretsDoc.data();
+                        const API_KEY = secrets.GoogleClassroomAPIKey;
+                        const CLIENT_ID = secrets.GoogleClientID;
+
+                        if (!API_KEY) throw new Error("GoogleClassroomAPIKey is missing from your secrets document.");
+                        if (!CLIENT_ID) throw new Error("GoogleClientID is missing from your secrets document. Please add it in Firestore.");
+
+                        if (!gapiInited) {
+                            await new Promise((resolve) => gapi.load('client', resolve));
+                            await gapi.client.init({ apiKey: API_KEY, discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest"] });
+                            gapiInited = true;
+                        }
+
+                        tokenClient = google.accounts.oauth2.initTokenModelClient({
+                            client_id: CLIENT_ID,
+                            scope: 'https://www.googleapis.com/auth/classroom.courses.readonly',
+                            callback: async (tokenResponse) => {
+                                if (tokenResponse.error) {
+                                    throw new Error(tokenResponse.error);
+                                }
+                                await listGoogleCourses();
+                            },
                         });
-                        listEl.classList.remove('hidden');
-                    } else {
-                        listEl.innerHTML = '<p class="text-center text-gray-500">No active Google Classroom courses found.</p>';
-                        listEl.classList.remove('hidden');
+                         tokenClient.requestAccessToken({prompt: ''});
+
+                    } catch (error) {
+                        console.error('Google Import Error:', error);
+                        errorDiv.textContent = `Error: ${error.message}. Please check console for details.`;
+                        errorDiv.classList.remove('hidden');
+                        loadingDiv.classList.add('hidden');
                     }
-                } catch (err) {
-                     errorDiv.textContent = `Error fetching courses: ${err.result.error.message}`;
-                     errorDiv.classList.remove('hidden');
                 }
-            }
-            
-            document.getElementById('g-import-list').addEventListener('click', async (e) => {
-                if (e.target.classList.contains('import-g-class-btn')) {
-                    e.target.disabled = true;
-                    e.target.textContent = 'Importing...';
-                    const className = e.target.dataset.courseName;
-                    await createNewClass(className);
-                    hideModal('google-import-modal');
-                }
-            });
 
-            userProfileBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const menu = userProfileMenu;
-                if (menu.classList.contains('hidden')) {
-                    menu.classList.remove('hidden');
-                    menu.classList.add('fade-enter', 'fade-enter-active');
-                    setTimeout(() => menu.classList.remove('fade-enter', 'fade-enter-active'), 200);
-                } else {
-                    menu.classList.add('fade-leave', 'fade-leave-active');
-                    setTimeout(() => { menu.classList.add('hidden'); menu.classList.remove('fade-leave', 'fade-leave-active'); }, 150);
-                }
-            });
-            
-            document.addEventListener('click', () => {
-                if(!userProfileMenu.classList.contains('hidden')) {
-                    userProfileMenu.classList.add('fade-leave', 'fade-leave-active');
-                    setTimeout(() => { userProfileMenu.classList.add('hidden'); userProfileMenu.classList.remove('fade-leave', 'fade-leave-active'); }, 150);
-                }
-            });
+                async function listGoogleCourses() {
+                    const listEl = document.getElementById('g-import-list');
+                    const loadingDiv = document.getElementById('g-import-loading');
+                    const errorDiv = document.getElementById('g-import-error');
 
-            document.getElementById('logout-btn').addEventListener('click', () => auth.signOut());
-            document.getElementById('tab-requests').addEventListener('click', showRequestsView);
-            document.getElementById('tab-settings').addEventListener('click', showSettingsView);
-
-            inviteLinkBtn.addEventListener('click', () => {
-                const inviteURL = `${window.location.origin}/invite.html?classId=${currentClassId}`;
-                navigator.clipboard.writeText(inviteURL).then(() => {
-                    const msg = document.getElementById('invite-copied-msg');
-                    msg.classList.remove('hidden');
-                    setTimeout(() => msg.classList.add('hidden'), 2000);
+                    try {
+                        const response = await gapi.client.classroom.courses.list({ teacherId: 'me', courseStates: 'ACTIVE' });
+                        loadingDiv.classList.add('hidden');
+                        
+                        const courses = response.result.courses;
+                        if (courses && courses.length > 0) {
+                            listEl.innerHTML = '';
+                            courses.forEach(course => {
+                                const li = document.createElement('li');
+                                li.className = 'flex justify-between items-center p-3 bg-gray-50 rounded-md';
+                                li.innerHTML = `
+                                    <span class="font-medium text-gray-800">${course.name}</span>
+                                    <button data-course-name="${course.name}" class="import-g-class-btn bg-blue-500 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-600">Import</button>
+                                `;
+                                listEl.appendChild(li);
+                            });
+                            listEl.classList.remove('hidden');
+                        } else {
+                            listEl.innerHTML = '<p class="text-center text-gray-500">No active Google Classroom courses found.</p>';
+                            listEl.classList.remove('hidden');
+                        }
+                    } catch (err) {
+                         errorDiv.textContent = `Error fetching courses: ${err.result.error.message}`;
+                         errorDiv.classList.remove('hidden');
+                    }
+                }
+                
+                document.getElementById('g-import-list').addEventListener('click', async (e) => {
+                    if (e.target.classList.contains('import-g-class-btn')) {
+                        e.target.disabled = true;
+                        e.target.textContent = 'Importing...';
+                        const className = e.target.dataset.courseName;
+                        await createNewClass(className);
+                        hideModal('google-import-modal');
+                    }
                 });
-            });
 
-            document.getElementById('create-another-class-btn').addEventListener('click', () => showModal('create-class-modal'));
-            document.getElementById('create-class-btn-main').addEventListener('click', () => showModal('create-class-modal'));
-            document.getElementById('join-class-btn-main').addEventListener('click', () => showModal('join-class-modal'));
-            document.getElementById('google-import-btn-main').addEventListener('click', handleGoogleImportClick);
-            
-            document.querySelectorAll('.modal-cancel-btn').forEach(btn => btn.addEventListener('click', () => hideModal(btn.closest('.fixed').id)));
-            modalBackdrop.addEventListener('click', () => document.querySelectorAll('.fixed.z-50:not(.hidden)').forEach(m => hideModal(m.id)));
-
-            document.getElementById('create-class-form').addEventListener('submit', (e) => {
-                e.preventDefault();
-                const className = document.getElementById('new-class-name').value.trim();
-                if(className) {
-                    createNewClass(className);
-                    document.getElementById('create-class-form').reset();
-                    hideModal('create-class-modal');
-                }
-            });
-
-            document.getElementById('join-class-form').addEventListener('submit', async (e) => {
-                e.preventDefault();
-                const code = document.getElementById('join-class-code').value.trim().toUpperCase();
-                const errorEl = document.getElementById('join-class-error');
-                if(!code) return;
-
-                const classQuery = await db.collection('classes').where('code', '==', code).limit(1).get();
-                if(classQuery.empty) {
-                    errorEl.textContent = 'Invalid class code.';
-                    errorEl.classList.remove('hidden');
-                    return;
-                }
-                const classDoc = classQuery.docs[0];
-                await classDoc.ref.update({
-                    studentIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+                userProfileBtn.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const menu = userProfileMenu;
+                    if (menu.classList.contains('hidden')) {
+                        menu.classList.remove('hidden');
+                        menu.classList.add('fade-enter', 'fade-enter-active');
+                        setTimeout(() => menu.classList.remove('fade-enter', 'fade-enter-active'), 200);
+                    } else {
+                        menu.classList.add('fade-leave', 'fade-leave-active');
+                        setTimeout(() => { menu.classList.add('hidden'); menu.classList.remove('fade-leave', 'fade-leave-active'); }, 150);
+                    }
                 });
-                hideModal('join-class-modal');
+                
+                document.addEventListener('click', () => {
+                    if(!userProfileMenu.classList.contains('hidden')) {
+                        userProfileMenu.classList.add('fade-leave', 'fade-leave-active');
+                        setTimeout(() => { userProfileMenu.classList.add('hidden'); userProfileMenu.classList.remove('fade-leave', 'fade-leave-active'); }, 150);
+                    }
+                });
+
+                document.getElementById('logout-btn').addEventListener('click', () => auth.signOut());
+                document.getElementById('tab-requests').addEventListener('click', showRequestsView);
+                document.getElementById('tab-settings').addEventListener('click', showSettingsView);
+
+                inviteLinkBtn.addEventListener('click', () => {
+                    const inviteURL = `${window.location.origin}/invite.html?classId=${currentClassId}`;
+                    navigator.clipboard.writeText(inviteURL).then(() => {
+                        const msg = document.getElementById('invite-copied-msg');
+                        msg.classList.remove('hidden');
+                        setTimeout(() => msg.classList.add('hidden'), 2000);
+                    });
+                });
+
+                document.getElementById('create-another-class-btn').addEventListener('click', () => showModal('create-class-modal'));
+                document.getElementById('create-class-btn-main').addEventListener('click', () => showModal('create-class-modal'));
+                document.getElementById('join-class-btn-main').addEventListener('click', () => showModal('join-class-modal'));
+                document.getElementById('google-import-btn-main').addEventListener('click', handleGoogleImportClick);
+                
+                document.querySelectorAll('.modal-cancel-btn').forEach(btn => btn.addEventListener('click', () => hideModal(btn.closest('.fixed').id)));
+                modalBackdrop.addEventListener('click', () => document.querySelectorAll('.fixed.z-50:not(.hidden)').forEach(m => hideModal(m.id)));
+
+                document.getElementById('create-class-form').addEventListener('submit', (e) => {
+                    e.preventDefault();
+                    const className = document.getElementById('new-class-name').value.trim();
+                    if(className) {
+                        createNewClass(className);
+                        document.getElementById('create-class-form').reset();
+                        hideModal('create-class-modal');
+                    }
+                });
+
+                document.getElementById('join-class-form').addEventListener('submit', async (e) => {
+                    e.preventDefault();
+                    const code = document.getElementById('join-class-code').value.trim().toUpperCase();
+                    const errorEl = document.getElementById('join-class-error');
+                    if(!code) return;
+
+                    const classQuery = await db.collection('classes').where('code', '==', code).limit(1).get();
+                    if(classQuery.empty) {
+                        errorEl.textContent = 'Invalid class code.';
+                        errorEl.classList.remove('hidden');
+                        return;
+                    }
+                    const classDoc = classQuery.docs[0];
+                    await classDoc.ref.update({
+                        studentIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+                    });
+                    hideModal('join-class-modal');
+                });
+                
+                // --- End of Main Application Logic ---
             });
         });
     </script>
