@@ -9,8 +9,6 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
     
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLMDJzL/G6S8jH9D/gU2FowM9I5yT8W4j6P3+9zW5gH6K9z5Yl+O0s/v6y4g==" crossorigin="anonymous" referrerpolicy="no-referrer" />
-
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://apis.google.com/js/api.js" async defer></script>
     
@@ -25,37 +23,6 @@
         }
         .main-layout { 
             height: calc(100vh - 4rem); 
-        }
-
-        /* Cookie Overlay */
-        .cookie-overlay {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(255, 255, 255, 0.95); /* Semi-transparent white backdrop */
-            z-index: 1000;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: opacity 0.5s ease-out;
-        }
-        .cookie-content {
-            background-color: white;
-        }
-
-        /* Cookie Icon Styles */
-        .cookie-icon {
-            color: #d1d5db; /* light-gray-300 */
-            transition: transform 0.3s ease-out;
-        }
-        .cookie-accepted {
-            transform: scale(1.1) rotate(5deg);
-        }
-        .cookie-denied {
-            transform: scale(1.0);
-            transition: transform 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
         }
 
         /* Custom Scrollbar */
@@ -109,36 +76,11 @@
         .btn-bubbly:active { 
             transform: scale(0.95); 
         }
-
-        /* Particle CSS */
-        .particle {
-            position: absolute;
-            width: 8px;
-            height: 8px;
-            background-color: #fca5a5; /* Cookie color */
-            border-radius: 50%;
-            pointer-events: none;
-            opacity: 0;
-            animation: explode 0.8s forwards;
-        }
-        @keyframes explode {
-            0% {
-                transform: translate(0, 0) scale(1);
-                opacity: 1;
-            }
-            100% {
-                transform: translate(var(--x), var(--y)) scale(0);
-                opacity: 0;
-            }
-        }
     </style>
 </head>
 <body class="bg-gray-100 h-screen overflow-hidden">
 
-    <div id="cookie-consent-overlay" class="cookie-overlay">
-        </div>
-
-    <div id="app-main-content" class="flex flex-col h-full hidden">
+    <div id="app-main-content" class="flex flex-col h-full">
         <header class="bg-white border-b border-gray-200 shadow-sm sticky top-0 z-30 h-16 flex-shrink-0">
             <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between items-center h-16">
@@ -218,396 +160,379 @@
     <script src="../firebase-config.js"></script>
     
     <script>
-        // Global variable to track if Firebase has been initialized
-        let firebaseInitialized = false;
-
-        function initializeApp() {
-            if (firebaseInitialized) return;
-
-            // Hide cookie overlay and show main app content
-            document.getElementById('cookie-consent-overlay').style.opacity = '0';
-            setTimeout(() => {
-                document.getElementById('cookie-consent-overlay').classList.add('hidden');
-            }, 500);
-            document.getElementById('app-main-content').classList.remove('hidden');
-
-            const app = firebase.initializeApp(firebaseConfig);
-            const auth = firebase.auth();
-            const db = firebase.firestore();
-            firebaseInitialized = true;
-
-            let currentUser = null;
-            let userData = null;
-            let currentClassId = null;
-            let currentClassData = null;
-            let unsubscribes = [];
-            let allLoadedClasses = {};
-
-            const userProfileBtn = document.getElementById('user-profile-btn');
-            const userProfileMenu = document.getElementById('user-profile-menu');
-            const mainContentArea = document.getElementById('main-content-area');
-
-            auth.onAuthStateChanged(user => {
-                if (user) {
-                    currentUser = user;
-                    fetchUserData(user.uid);
-                } else {
-                    window.location.href = 'login.html';
-                }
-            });
-
-            async function fetchUserData(uid) {
-                const userDoc = await db.collection('users').doc(uid).get();
-                if (userDoc.exists) {
-                    userData = { uid, ...userDoc.data() };
-                    updateProfileUI(currentUser, userData);
-                    listenForClasses(uid, userData.role);
-                    renderMainContent();
-                } else {
-                    auth.signOut();
-                }
-            }
-
-            function applyMarqueeIfNeeded(textEl, containerEl) {
-                setTimeout(() => {
-                    if (textEl.scrollWidth > containerEl.clientWidth) textEl.classList.add('marquee');
-                    else textEl.classList.remove('marquee');
-                }, 100);
-            }
-
-            function updateProfileUI(user, data) {
-                const displayNameEl = document.getElementById('user-display-name-menu');
-                const emailEl = document.getElementById('user-email-menu');
-                if (displayNameEl && emailEl) {
-                    displayNameEl.textContent = data.username;
-                    emailEl.textContent = user.email;
-                    applyMarqueeIfNeeded(displayNameEl, document.getElementById('user-display-name-container'));
-                    applyMarqueeIfNeeded(emailEl, document.getElementById('user-email-container'));
-                }
-                
-                const picEls = [document.getElementById('user-profile-pic'), document.getElementById('user-profile-pic-menu')];
-                const initialEls = [document.getElementById('user-profile-initial'), document.getElementById('user-profile-initial-menu')];
-
-                if (user.photoURL) {
-                    picEls.forEach(el => { el.src = user.photoURL; el.classList.remove('hidden'); });
-                    initialEls.forEach(el => el.classList.add('hidden'));
-                } else {
-                    const initial = data.username.charAt(0).toUpperCase();
-                    initialEls.forEach(el => { el.textContent = initial; el.classList.remove('hidden'); });
-                    picEls.forEach(el => el.classList.add('hidden'));
-                }
-                
-                document.getElementById('teacher-sidebar-actions').classList.toggle('hidden', data.role !== 'teacher');
-            }
-
-            function listenForClasses(uid, role) {
-                unsubscribes.forEach(unsub => unsub());
-                unsubscribes = [];
-                allLoadedClasses = {};
-
-                const reRender = () => {
-                    const classesArray = Object.values(allLoadedClasses);
-                    renderClassList(classesArray);
-                    if (currentClassId && !allLoadedClasses[currentClassId]) {
-                        selectClass(null);
-                    } else if (currentClassId) {
-                        currentClassData = allLoadedClasses[currentClassId];
-                        renderMainContent(document.querySelector('#class-tabs .border-blue-500')?.dataset.tab || 'requests');
-                    } else {
-                        renderMainContent();
+        document.addEventListener('DOMContentLoaded', () => {
+            function onFirebaseReady(callback) {
+                const interval = setInterval(() => {
+                    if (typeof firebase !== 'undefined' && typeof firebase.initializeApp === 'function' && typeof firebaseConfig !== 'undefined') {
+                        clearInterval(interval);
+                        callback();
                     }
-                };
-                
-                const teacherQuery = db.collection('classes').where('teacherId', '==', uid);
-                unsubscribes.push(teacherQuery.onSnapshot(snapshot => {
-                    snapshot.docChanges().forEach(change => {
-                        if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
-                        else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
+                }, 50);
+            }
+
+            onFirebaseReady(() => {
+                const app = firebase.initializeApp(firebaseConfig);
+                const auth = firebase.auth();
+                const db = firebase.firestore();
+
+                let currentUser = null;
+                let userData = null;
+                let currentClassId = null;
+                let currentClassData = null;
+                let unsubscribes = [];
+                let allLoadedClasses = {};
+
+                const userProfileBtn = document.getElementById('user-profile-btn');
+                const userProfileMenu = document.getElementById('user-profile-menu');
+                const mainContentArea = document.getElementById('main-content-area');
+
+                auth.onAuthStateChanged(user => {
+                    if (user) {
+                        currentUser = user;
+                        fetchUserData(user.uid);
+                    } else {
+                        window.location.href = 'login.html';
+                    }
+                });
+
+                async function fetchUserData(uid) {
+                    const userDoc = await db.collection('users').doc(uid).get();
+                    if (userDoc.exists) {
+                        userData = { uid, ...userDoc.data() };
+                        updateProfileUI(currentUser, userData);
+                        listenForClasses(uid, userData.role);
+                        renderMainContent();
+                    } else {
+                        auth.signOut();
+                    }
+                }
+
+                function applyMarqueeIfNeeded(textEl, containerEl) {
+                    setTimeout(() => {
+                        if (textEl.scrollWidth > containerEl.clientWidth) textEl.classList.add('marquee');
+                        else textEl.classList.remove('marquee');
+                    }, 100);
+                }
+
+                function updateProfileUI(user, data) {
+                    const displayNameEl = document.getElementById('user-display-name-menu');
+                    const emailEl = document.getElementById('user-email-menu');
+                    if (displayNameEl && emailEl) {
+                        displayNameEl.textContent = data.username;
+                        emailEl.textContent = user.email;
+                        applyMarqueeIfNeeded(displayNameEl, document.getElementById('user-display-name-container'));
+                        applyMarqueeIfNeeded(emailEl, document.getElementById('user-email-container'));
+                    }
+                    
+                    const picEls = [document.getElementById('user-profile-pic'), document.getElementById('user-profile-pic-menu')];
+                    const initialEls = [document.getElementById('user-profile-initial'), document.getElementById('user-profile-initial-menu')];
+
+                    if (user.photoURL) {
+                        picEls.forEach(el => { el.src = user.photoURL; el.classList.remove('hidden'); });
+                        initialEls.forEach(el => el.classList.add('hidden'));
+                    } else {
+                        const initial = data.username.charAt(0).toUpperCase();
+                        initialEls.forEach(el => { el.textContent = initial; el.classList.remove('hidden'); });
+                        picEls.forEach(el => el.classList.add('hidden'));
+                    }
+                    
+                    document.getElementById('teacher-sidebar-actions').classList.toggle('hidden', data.role !== 'teacher');
+                }
+
+                function listenForClasses(uid, role) {
+                    unsubscribes.forEach(unsub => unsub());
+                    unsubscribes = [];
+                    allLoadedClasses = {};
+
+                    const reRender = () => {
+                        const classesArray = Object.values(allLoadedClasses);
+                        renderClassList(classesArray);
+                        if (currentClassId && !allLoadedClasses[currentClassId]) {
+                            selectClass(null);
+                        } else if (currentClassId) {
+                            currentClassData = allLoadedClasses[currentClassId];
+                            renderMainContent(document.querySelector('#class-tabs .border-blue-500')?.dataset.tab || 'requests');
+                        } else {
+                            renderMainContent();
+                        }
+                    };
+                    
+                    const teacherQuery = db.collection('classes').where('teacherId', '==', uid);
+                    unsubscribes.push(teacherQuery.onSnapshot(snapshot => {
+                        snapshot.docChanges().forEach(change => {
+                            if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
+                            else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
+                        });
+                        reRender();
+                    }));
+
+                    const studentQuery = db.collection('classes').where('studentIds', 'array-contains', uid);
+                    unsubscribes.push(studentQuery.onSnapshot(snapshot => {
+                        snapshot.docChanges().forEach(change => {
+                           if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
+                           else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
+                        });
+                        reRender();
+                    }));
+                }
+
+                function renderClassList(classes) {
+                    const classListEl = document.getElementById('class-list');
+                    document.getElementById('no-classes-sidebar').classList.toggle('hidden', classes.length > 0);
+                    classListEl.innerHTML = '';
+                    classes.sort((a,b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0)).forEach(cls => {
+                        const li = document.createElement('li');
+                        const isActive = currentClassId === cls.id;
+                        li.innerHTML = `<button data-class-id="${cls.id}" class="w-full text-left px-3 py-2 rounded-md font-medium text-sm transition-colors btn-bubbly ${isActive ? 'bg-blue-100 text-blue-800 font-semibold' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">${cls.name}</button>`;
+                        classListEl.appendChild(li);
                     });
-                    reRender();
-                }));
-
-                const studentQuery = db.collection('classes').where('studentIds', 'array-contains', uid);
-                unsubscribes.push(studentQuery.onSnapshot(snapshot => {
-                    snapshot.docChanges().forEach(change => {
-                       if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
-                       else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
-                    });
-                    reRender();
-                }));
-            }
-
-            function renderClassList(classes) {
-                const classListEl = document.getElementById('class-list');
-                document.getElementById('no-classes-sidebar').classList.toggle('hidden', classes.length > 0);
-                classListEl.innerHTML = '';
-                classes.sort((a,b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0)).forEach(cls => {
-                    const li = document.createElement('li');
-                    const isActive = currentClassId === cls.id;
-                    li.innerHTML = `<button data-class-id="${cls.id}" class="w-full text-left px-3 py-2 rounded-md font-medium text-sm transition-colors btn-bubbly ${isActive ? 'bg-blue-100 text-blue-800 font-semibold' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">${cls.name}</button>`;
-                    classListEl.appendChild(li);
-                });
-            }
-            
-            function selectClass(classData) {
-                currentClassId = classData ? classData.id : null;
-                currentClassData = classData;
-                renderClassList(Object.values(allLoadedClasses)); 
-                renderMainContent();
-            }
-
-            function renderMainContent(tab = 'requests') {
-                if (currentClassData) {
-                    mainContentArea.innerHTML = TPL.classView(currentClassData, userData, tab);
-                } else {
-                    mainContentArea.innerHTML = TPL.emptyState(userData);
-                }
-            }
-            
-            document.body.addEventListener('click', e => {
-                if (e.target.closest('#user-profile-btn')) {
-                    toggleComponent('user-profile-menu');
-                    return;
-                }
-                if (!e.target.closest('#user-profile-menu')) {
-                    hideComponent('user-profile-menu');
-                }
-                if(e.target.closest('#logout-btn')) auth.signOut();
-                
-                const classBtn = e.target.closest('#class-list button');
-                if (classBtn) selectClass(allLoadedClasses[classBtn.dataset.classId]);
-                
-                if(e.target.closest('#new-class-btn')) showModal(TPL.newClassChoiceModal());
-                if(e.target.closest('#join-class-btn')) showModal(TPL.joinClassModal());
-                
-                const modalTarget = e.target.closest('.modal-content-area');
-                if (modalTarget) {
-                    if (e.target.closest('#create-manual-btn')) showModal(TPL.createClassModal());
-                    if (e.target.closest('#import-gclass-btn')) handleGoogleImportClick();
-                }
-
-                if(e.target.closest('.modal-cancel-btn') || e.target.id === 'modal-backdrop') hideModal();
-
-                if(e.target.closest('#invite-link-btn')) copyInviteLink();
-                const tabBtn = e.target.closest('#class-tabs button');
-                if(tabBtn) renderMainContent(tabBtn.dataset.tab);
-                
-                if(e.target.closest('#add-preset-btn')) addPresetQuestion();
-                const removePresetBtn = e.target.closest('.remove-preset-btn');
-                if(removePresetBtn) removePresetQuestion(removePresetBtn.dataset.preset);
-                if(e.target.closest('#save-schedule-btn')) saveClassSchedule();
-                if(e.target.closest('#delete-class-btn')) showModal(TPL.deleteConfirmModal(currentClassData));
-                if(e.target.closest('#confirm-delete-class-btn')) deleteClass();
-                
-                const dropdownBtn = e.target.closest('.custom-dropdown-btn');
-                if (dropdownBtn) {
-                    const options = dropdownBtn.nextElementSibling;
-                    options.classList.toggle('hidden');
-                } else if (!e.target.closest('.custom-dropdown-options')) {
-                    document.querySelectorAll('.custom-dropdown-options').forEach(el => el.classList.add('hidden'));
-                }
-
-                const dropdownOption = e.target.closest('.custom-dropdown-option');
-                if (dropdownOption) {
-                    const dropdown = dropdownOption.closest('.relative');
-                    const btnText = dropdown.querySelector('.custom-dropdown-btn span');
-                    btnText.textContent = dropdownOption.dataset.value;
-                    dropdown.querySelector('.custom-dropdown-options').classList.add('hidden');
                 }
                 
-                // Cookie consent button handling is outside of app initialization
-                // as it runs before Firebase is guaranteed to be ready.
-            });
-            
-            document.body.addEventListener('submit', e => {
-                if(e.target.id === 'create-class-form') {
-                    e.preventDefault();
-                    const className = e.target.querySelector('#new-class-name').value.trim();
-                    if(className) createNewClass(className);
+                function selectClass(classData) {
+                    currentClassId = classData ? classData.id : null;
+                    currentClassData = classData;
+                    renderClassList(Object.values(allLoadedClasses)); 
+                    renderMainContent();
                 }
-            });
 
-            function copyInviteLink() {
-                const inviteURL = `${window.location.origin}/invite.html?classId=${currentClassId}`;
-                document.execCommand('copy');
-                const msg = document.getElementById('invite-copied-msg');
-                if (msg) {
-                    msg.classList.remove('hidden');
-                    setTimeout(() => msg.classList.add('hidden'), 2000);
+                function renderMainContent(tab = 'requests') {
+                    if (currentClassData) {
+                        mainContentArea.innerHTML = TPL.classView(currentClassData, userData, tab);
+                    } else {
+                        mainContentArea.innerHTML = TPL.emptyState(userData);
+                    }
                 }
-            }
-            
-            async function addPresetQuestion() {
-                const input = document.getElementById('new-preset-input');
-                const presetText = input.value.trim();
-                if (!presetText || !currentClassId) return;
                 
-                await db.collection('classes').doc(currentClassId).update({
-                    presetQuestions: firebase.firestore.FieldValue.arrayUnion(presetText)
-                });
-                input.value = '';
-            }
-
-            async function removePresetQuestion(presetText) {
-                await db.collection('classes').doc(currentClassId).update({
-                    presetQuestions: firebase.firestore.FieldValue.arrayRemove(presetText)
-                });
-            }
-            
-            async function saveClassSchedule() {
-                const startHour = document.getElementById('start-hour').value;
-                const startMinute = document.getElementById('start-minute').value;
-                const startPeriod = document.getElementById('start-period-text').textContent;
-                const endHour = document.getElementById('end-hour').value;
-                const endMinute = document.getElementById('end-minute').value;
-                const endPeriod = document.getElementById('end-period-text').textContent;
-                
-                const schedule = {
-                    start: `${startHour}:${startMinute} ${startPeriod}`,
-                    end: `${endHour}:${endMinute} ${endPeriod}`
-                };
-                
-                await db.collection('classes').doc(currentClassId).update({ schedule });
-                alert('Schedule saved!');
-            }
-            
-            async function deleteClass() {
-                await db.collection('classes').doc(currentClassId).delete();
-                hideModal();
-            }
-
-            async function createNewClass(className) {
-                const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-                await db.collection('classes').add({
-                    name: className,
-                    teacherId: currentUser.uid,
-                    code: classCode,
-                    studentIds: [],
-                    presetQuestions: [],
-                    schedule: { start: "09:00 AM", end: "03:00 PM" },
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                });
-                hideModal();
-            }
-            
-            let gapiLoaded = false;
-            let auth2Initialized = false;
-            const SCOPE = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
-
-            function loadGoogleAPIs() {
-                return new Promise((resolve, reject) => {
-                    if (gapiLoaded) {
-                        resolve();
+                document.body.addEventListener('click', e => {
+                    if (e.target.closest('#user-profile-btn')) {
+                        toggleComponent('user-profile-menu');
                         return;
                     }
-                    gapi.load('client', {
-                        callback: () => {
-                            gapi.load('auth2', {
-                                callback: () => {
-                                    gapiLoaded = true;
-                                    resolve();
-                                },
-                                onerror: reject
-                            });
-                        },
-                        onerror: reject
-                    });
+                    if (!e.target.closest('#user-profile-menu')) {
+                        hideComponent('user-profile-menu');
+                    }
+                    if(e.target.closest('#logout-btn')) auth.signOut();
+                    
+                    const classBtn = e.target.closest('#class-list button');
+                    if (classBtn) selectClass(allLoadedClasses[classBtn.dataset.classId]);
+                    
+                    if(e.target.closest('#new-class-btn')) showModal(TPL.newClassChoiceModal());
+                    if(e.target.closest('#join-class-btn')) showModal(TPL.joinClassModal());
+                    
+                    const modalTarget = e.target.closest('.modal-content-area');
+                    if (modalTarget) {
+                        if (e.target.closest('#create-manual-btn')) showModal(TPL.createClassModal());
+                        if (e.target.closest('#import-gclass-btn')) handleGoogleImportClick();
+                    }
+
+                    if(e.target.closest('.modal-cancel-btn') || e.target.id === 'modal-backdrop') hideModal();
+
+                    if(e.target.closest('#invite-link-btn')) copyInviteLink();
+                    const tabBtn = e.target.closest('#class-tabs button');
+                    if(tabBtn) renderMainContent(tabBtn.dataset.tab);
+                    
+                    if(e.target.closest('#add-preset-btn')) addPresetQuestion();
+                    const removePresetBtn = e.target.closest('.remove-preset-btn');
+                    if(removePresetBtn) removePresetQuestion(removePresetBtn.dataset.preset);
+                    if(e.target.closest('#save-schedule-btn')) saveClassSchedule();
+                    if(e.target.closest('#delete-class-btn')) showModal(TPL.deleteConfirmModal(currentClassData));
+                    if(e.target.closest('#confirm-delete-class-btn')) deleteClass();
+                    
+                    const dropdownBtn = e.target.closest('.custom-dropdown-btn');
+                    if (dropdownBtn) {
+                        const options = dropdownBtn.nextElementSibling;
+                        options.classList.toggle('hidden');
+                    } else if (!e.target.closest('.custom-dropdown-options')) {
+                        document.querySelectorAll('.custom-dropdown-options').forEach(el => el.classList.add('hidden'));
+                    }
+
+                    const dropdownOption = e.target.closest('.custom-dropdown-option');
+                    if (dropdownOption) {
+                        const dropdown = dropdownOption.closest('.relative');
+                        const btnText = dropdown.querySelector('.custom-dropdown-btn span');
+                        btnText.textContent = dropdownOption.dataset.value;
+                        dropdown.querySelector('.custom-dropdown-options').classList.add('hidden');
+                    }
                 });
-            }
-
-            // --- REWRITTEN AND ROBUST GOOGLE IMPORT LOGIC ---
-            async function handleGoogleImportClick() {
-                // Ensure the modal is immediately visible and showing connecting state
-                showModal(TPL.googleImportModal());
                 
-                const loadingEl = document.getElementById('g-import-loading');
-                const errorEl = document.getElementById('g-import-error');
+                document.body.addEventListener('submit', e => {
+                    if(e.target.id === 'create-class-form') {
+                        e.preventDefault();
+                        const className = e.target.querySelector('#new-class-name').value.trim();
+                        if(className) createNewClass(className);
+                    }
+                });
+
+                function copyInviteLink() {
+                    const inviteURL = `${window.location.origin}/invite.html?classId=${currentClassId}`;
+                    document.execCommand('copy');
+                    const msg = document.getElementById('invite-copied-msg');
+                    if (msg) {
+                        msg.classList.remove('hidden');
+                        setTimeout(() => msg.classList.add('hidden'), 2000);
+                    }
+                }
                 
-                if (loadingEl) loadingEl.classList.remove('hidden');
-                if (errorEl) errorEl.classList.add('hidden');
-
-                try {
-                    // 1. Pre-Check Authentication and Role (CRITICAL)
-                    if (!currentUser || !currentUser.uid) {
-                         throw new Error('User is not authenticated. Please log in first.');
-                    }
-                    if (userData.role !== 'teacher') {
-                         throw new Error('Access Denied: Only teachers can import classes.');
-                    }
-
-                    // 2. Fetch Secrets from Firebase
-                    let API_KEY, CLIENT_ID;
-                    try {
-                        const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
-                        
-                        // Check 2a: Document Existence (this is the key check)
-                        if (!secretsDoc.exists) {
-                            console.error("Firebase Document Path Error: secrets/wUTBTbjuNLueOfhgHXEE");
-                            throw new Error("Missing Setup: The required configuration document was not found at 'secrets/wUTBTbjuNLueOfhgHXEE'.");
-                        }
-                        
-                        const secrets = secretsDoc.data();
-                        API_KEY = secrets.GoogleClassroomAPIKey;
-                        CLIENT_ID = secrets.GoogleClientID;
-
-                        // Check 2b: Field Existence
-                        if (!API_KEY || !CLIENT_ID) {
-                            throw new Error("Incomplete Setup: API Key or Client ID fields are empty in the Firebase document.");
-                        }
-                    } catch (secretsError) {
-                        console.error('Error fetching Firebase secrets:', secretsError);
-                        // Permission denied usually means the rule is failing (even with correct data)
-                        if (secretsError.code === 'permission-denied') {
-                            throw new Error(`Security Error: Firebase blocked access. Your document is correct, but the Firestore security rule for /secrets/ is failing for your account.`);
-                        }
-                        // Re-throw other errors
-                        throw secretsError;
-                    }
-
-                    // 3. Initialize Google APIs and Auth
-                    await loadGoogleAPIs();
+                async function addPresetQuestion() {
+                    const input = document.getElementById('new-preset-input');
+                    const presetText = input.value.trim();
+                    if (!presetText || !currentClassId) return;
                     
-                    if (!auth2Initialized) {
-                        await gapi.client.init({
-                            apiKey: API_KEY,
-                            clientId: CLIENT_ID,
-                            scope: SCOPE,
-                            discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest"]
+                    await db.collection('classes').doc(currentClassId).update({
+                        presetQuestions: firebase.firestore.FieldValue.arrayUnion(presetText)
+                    });
+                    input.value = '';
+                }
+
+                async function removePresetQuestion(presetText) {
+                    await db.collection('classes').doc(currentClassId).update({
+                        presetQuestions: firebase.firestore.FieldValue.arrayRemove(presetText)
+                    });
+                }
+                
+                async function saveClassSchedule() {
+                    const startHour = document.getElementById('start-hour').value;
+                    const startMinute = document.getElementById('start-minute').value;
+                    const startPeriod = document.getElementById('start-period-text').textContent;
+                    const endHour = document.getElementById('end-hour').value;
+                    const endMinute = document.getElementById('end-minute').value;
+                    const endPeriod = document.getElementById('end-period-text').textContent;
+                    
+                    const schedule = {
+                        start: `${startHour}:${startMinute} ${startPeriod}`,
+                        end: `${endHour}:${endMinute} ${endPeriod}`
+                    };
+                    
+                    await db.collection('classes').doc(currentClassId).update({ schedule });
+                    alert('Schedule saved!');
+                }
+                
+                async function deleteClass() {
+                    await db.collection('classes').doc(currentClassId).delete();
+                    hideModal();
+                }
+
+                async function createNewClass(className) {
+                    const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+                    await db.collection('classes').add({
+                        name: className,
+                        teacherId: currentUser.uid,
+                        code: classCode,
+                        studentIds: [],
+                        presetQuestions: [],
+                        schedule: { start: "09:00 AM", end: "03:00 PM" },
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                    hideModal();
+                }
+                
+                let gapiLoaded = false;
+                let auth2Initialized = false;
+                const SCOPE = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
+
+                function loadGoogleAPIs() {
+                    return new Promise((resolve, reject) => {
+                        if (gapiLoaded) {
+                            resolve();
+                            return;
+                        }
+                        gapi.load('client', {
+                            callback: () => {
+                                gapi.load('auth2', {
+                                    callback: () => {
+                                        gapiLoaded = true;
+                                        resolve();
+                                    },
+                                    onerror: reject
+                                });
+                            },
+                            onerror: reject
                         });
-                        auth2Initialized = true;
-                    }
+                    });
+                }
+
+                // --- REWRITTEN AND ROBUST GOOGLE IMPORT LOGIC ---
+                async function handleGoogleImportClick() {
+                    showModal(TPL.googleImportModal());
                     
-                    // 4. Force Google Sign-In and Authorization
-                    const auth2 = gapi.auth2.getAuthInstance();
+                    const loadingEl = document.getElementById('g-import-loading');
+                    const errorEl = document.getElementById('g-import-error');
                     
-                    if (!auth2.isSignedIn.get()) {
-                        try {
-                            await auth2.signIn();
-                        } catch (signInError) {
-                            const errorDetails = signInError.details || signInError.message || 'Unknown sign-in failure.';
-                            if (errorDetails.includes('Not a valid origin for the client')) {
-                                throw new Error(`OAuth Misconfiguration: The application URL (${window.location.origin}) is not registered as an Authorized JavaScript Origin in your Google Cloud Console.`);
-                            }
-                            throw new Error('Google Sign-in failed: ' + errorDetails);
+                    if (loadingEl) loadingEl.classList.remove('hidden');
+                    if (errorEl) errorEl.classList.add('hidden');
+
+                    try {
+                        if (!currentUser || !currentUser.uid) {
+                             throw new Error('User is not authenticated. Please log in first.');
                         }
-                    }
-                    
-                    // 5. Proceed to list courses
-                    await listGoogleCourses();
-                    
-                } catch (error) {
-                    console.error('Final Google import process failure:', error);
-                    if (loadingEl) loadingEl.classList.add('hidden');
-                    
-                    const errorMessage = error.message || (error.result && error.result.error && error.result.error.message) || "Unknown error occurred while connecting to Google Classroom.";
-                    
-                    // Display detailed error in the modal
-                    if (errorEl) {
-                        errorEl.innerHTML = `<div class="p-4 bg-red-50 border border-red-200 rounded-lg">
-                            <div class="flex">
-                                <div class="flex-shrink-0">
-                                    <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
-                                        <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
+                        if (userData.role !== 'teacher') {
+                             throw new Error('Access Denied: Only teachers can import classes.');
+                        }
+
+                        let API_KEY, CLIENT_ID;
+                        try {
+                            const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
+                            
+                            if (!secretsDoc.exists) {
+                                console.error("Firebase Document Path Error: secrets/wUTBTbjuNLueOfhgHXEE");
+                                throw new Error("Missing Setup: The required configuration document was not found at 'secrets/wUTBTbjuNLueOfhgHXEE'.");
+                            }
+                            
+                            const secrets = secretsDoc.data();
+                            API_KEY = secrets.GoogleClassroomAPIKey;
+                            CLIENT_ID = secrets.GoogleClientID;
+
+                            if (!API_KEY || !CLIENT_ID) {
+                                throw new Error("Incomplete Setup: API Key or Client ID fields are empty in the Firebase document.");
+                            }
+                        } catch (secretsError) {
+                            console.error('Error fetching Firebase secrets:', secretsError);
+                            if (secretsError.code === 'permission-denied') {
+                                throw new Error(`Security Error: Firebase blocked access. Your document is correct, but the Firestore security rule for /secrets/ is failing for your account.`);
+                            }
+                            throw secretsError;
+                        }
+
+                        await loadGoogleAPIs();
+                        
+                        if (!auth2Initialized) {
+                            await gapi.client.init({
+                                apiKey: API_KEY,
+                                clientId: CLIENT_ID,
+                                scope: SCOPE,
+                                discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest"]
+                            });
+                            auth2Initialized = true;
+                        }
+                        
+                        const auth2 = gapi.auth2.getAuthInstance();
+                        
+                        if (!auth2.isSignedIn.get()) {
+                            try {
+                                await auth2.signIn();
+                            } catch (signInError) {
+                                const errorDetails = signInError.details || signInError.message || 'Unknown sign-in failure.';
+                                if (errorDetails.includes('Not a valid origin for the client')) {
+                                    throw new Error(`OAuth Misconfiguration: The application URL (${window.location.origin}) is not registered as an Authorized JavaScript Origin in your Google Cloud Console.`);
+                                }
+                                throw new Error('Google Sign-in failed: ' + errorDetails);
+                            }
+                        }
+                        
+                        await listGoogleCourses();
+                        
+                    } catch (error) {
+                        console.error('Final Google import process failure:', error);
+                        if (loadingEl) loadingEl.classList.add('hidden');
+                        
+                        const errorMessage = error.message || (error.result && error.result.error && error.result.error.message) || "Unknown error occurred while connecting to Google Classroom.";
+                        
+                        if (errorEl) {
+                            errorEl.innerHTML = `<div class="p-4 bg-red-50 border border-red-200 rounded-lg">
+                                <div class="flex">
+                                    <div class="flex-shrink-0">
+                                        <svg class="h-5 w-5 text-red-400" viewBox="0 0 20 20" fill="currentColor">
+                                            <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clip-rule="evenodd" />
                                     </svg>
                                 </div>
                                 <div class="ml-3">
@@ -869,117 +794,9 @@
                 }
             }
 
-            // --- COOKIE CONSENT FUNCTIONS ---
-            function createParticle(x, y) {
-                const particle = document.createElement('div');
-                particle.classList.add('particle');
-                particle.style.left = `${x}px`;
-                particle.style.top = `${y}px`;
-                
-                // Randomize trajectory within a 100px radius
-                const angle = Math.random() * 2 * Math.PI;
-                const distance = Math.random() * 100 + 50;
-                particle.style.setProperty('--x', `${Math.cos(angle) * distance}px`);
-                particle.style.setProperty('--y', `${Math.sin(angle) * distance}px`);
-                
-                document.body.appendChild(particle);
-                setTimeout(() => particle.remove(), 800);
-            }
-
-            function acceptCookies() {
-                localStorage.setItem('cookie_consent', 'accepted');
-                const overlayEl = document.getElementById('cookie-consent-overlay');
-                const iconEl = overlayEl.querySelector('#cookie-icon-bitten');
-                
-                if (iconEl) {
-                    iconEl.classList.add('cookie-accepted');
-                    // Create particle burst from the center of the icon
-                    const rect = iconEl.getBoundingClientRect();
-                    const centerX = rect.left + rect.width / 2;
-                    const centerY = rect.top + rect.height / 2;
-
-                    for (let i = 0; i < 20; i++) {
-                        createParticle(centerX, centerY);
-                    }
-                }
-                
-                // Fade out the overlay and initialize the app
-                overlayEl.style.opacity = '0';
-                setTimeout(() => {
-                    overlayEl.classList.add('hidden');
-                    initializeApp();
-                }, 500);
-            }
-
-            function denyCookies() {
-                localStorage.setItem('cookie_consent', 'denied');
-                const overlayEl = document.getElementById('cookie-consent-overlay');
-                const iconBitten = overlayEl.querySelector('#cookie-icon-bitten');
-                const iconWhole = overlayEl.querySelector('#cookie-icon-whole');
-                const denyWarning = overlayEl.querySelector('#cookie-deny-warning');
-                
-                // Show denial warning
-                if (denyWarning) denyWarning.classList.remove('hidden');
-                
-                // Hide bitten cookie and show whole cookie with a spring animation
-                if (iconBitten) iconBitten.classList.add('hidden');
-                if (iconWhole) {
-                    iconWhole.classList.remove('hidden');
-                    iconWhole.classList.add('cookie-denied');
-                }
-                
-                // Hide main modal content and fade away the denial menu
-                const modalContent = overlayEl.querySelector('.cookie-content-container');
-                if (modalContent) modalContent.style.opacity = '0';
-
-                // Prevent app initialization
-                setTimeout(() => {
-                    overlayEl.classList.add('hidden');
-                }, 1500);
-            }
-
-            function checkCookieConsent() {
-                const consent = localStorage.getItem('cookie_consent');
-                const overlay = document.getElementById('cookie-consent-overlay');
-
-                if (consent === 'accepted') {
-                    // Start the app immediately
-                    overlay.classList.add('hidden');
-                    initializeApp();
-                } else {
-                    // Show consent screen (either denied or no choice)
-                    overlay.innerHTML = TPL.cookieConsentModal();
-                    // Keep app hidden until accepted
-                }
-            }
-            // --- END COOKIE CONSENT FUNCTIONS ---
+            // --- Unused cookie consent functions, removed for brevity ---
 
             const TPL = {
-                cookieConsentModal: () => `
-                    <div class="p-8 max-w-lg mx-auto bg-white rounded-xl shadow-2xl border border-gray-200 text-center cookie-content-container">
-                        <div id="cookie-icon-container" class="relative inline-block mb-4">
-                            <i id="cookie-icon-bitten" class="fa-solid fa-cookie-bite fa-4x cookie-icon"></i>
-                            <i id="cookie-icon-whole" class="fa-solid fa-cookie fa-4x cookie-icon absolute top-0 left-0 hidden"></i>
-                        </div>
-
-                        <h2 class="text-3xl font-bold font-poppins text-gray-800 mb-2">Privacy Consent Required</h2>
-                        <p class="text-gray-700 mb-6 leading-relaxed">
-                            To function correctly and allow you to sign in securely and integrate with services like Google Classroom, this application needs your permission to store data (a "cookie") on your device.
-                        </p>
-                        <p id="cookie-deny-warning" class="text-sm font-medium text-red-600 mb-4 hidden">
-                            **Warning:** Denying consent means the app cannot maintain your login session or save personalization like theme preferences, severely limiting functionality.
-                        </p>
-                        
-                        <div class="flex justify-center space-x-4">
-                            <button id="cookie-deny-btn" class="px-5 py-2 bg-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-300 transition-colors btn-bubbly">
-                                Deny Consent
-                            </button>
-                            <button id="cookie-accept-btn" class="px-5 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 transition-colors btn-bubbly">
-                                Accept & Continue
-                            </button>
-                        </div>
-                    </div>
-                `,
                 emptyState: (user) => `
                     <div class="h-full flex items-center justify-center text-center fade-enter-active">
                         <div>
@@ -1041,31 +858,12 @@
                     return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Preset Questions</h3><div id="preset-questions-list" class="space-y-3 mb-4">${presets.map(p => `<div class="flex items-center justify-between bg-gray-50 p-2 rounded-md"><span class="text-sm text-gray-800">${p}</span><button data-preset="${p}" class="remove-preset-btn text-gray-400 hover:text-red-600 btn-bubbly"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg></button></div>`).join('') || '<p class="text-sm text-gray-500">No preset questions added yet.</p>'}</div><div class="flex space-x-2"><input type="text" id="new-preset-input" placeholder="e.g., I need help with Question 5" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"><button id="add-preset-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 whitespace-nowrap btn-bubbly">Add</button></div></div>`;
                 },
                 settingsDanger: (cls) => `<div class="bg-red-50 p-6 rounded-lg border border-red-200"><h3 class="text-lg font-semibold text-red-800 border-b border-red-200 pb-3 mb-4 font-poppins">Danger Zone</h3><div><p class="text-sm text-red-700">Deleting this class is permanent. All associated data will be lost, and students will be removed.</p><button id="delete-class-btn" class="mt-4 bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 btn-bubbly">Delete This Class</button></div></div>`,
-                newClassChoiceModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto modal-content-area"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><svg class="w-8 h-8 text-blue-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg><span class="font-semibold text-gray-700">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><img src="../images/google-classroom.png" class="w-8 h-8 mb-2" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"><svg class="w-8 h-8 text-green-600 mb-2 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><span class="font-semibold text-gray-700">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
+                newClassChoiceModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto modal-content-area"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><svg class="w-8 h-8 text-blue-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg><span class="font-semibold text-gray-700">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><img src="../images/google-classroom.png" class="w-8 h-8 mb-2" onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"><svg class="w-8 h-8 text-green-600 mb-2 hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg><span class="font-semibold text-gray-700">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
                 createClassModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Create New Class</h3><form id="create-class-form" class="mt-4 space-y-4"><div><label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="new-class-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 btn-bubbly">Create</button></div></form></div>`,
                 googleImportModal: () => `<div class="relative bg-white w-full max-w-2xl p-6 rounded-lg shadow-xl pointer-events-auto modal-content-area"><h3 class="text-xl font-semibold text-gray-800 font-poppins flex items-center"><svg class="w-6 h-6 text-green-600 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>Import from Google Classroom</h3><div id="g-import-content" class="mt-4"><div id="g-import-loading" class="text-center py-8"><div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div><p class="text-gray-600 mt-2">Connecting to Google Classroom...</p></div><p id="g-import-error" class="text-center text-red-600 bg-red-50 p-4 rounded-lg hidden"></p><div id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-3 custom-scrollbar"></div></div><div class="flex justify-between items-center mt-6"><p class="text-xs text-gray-500">Students from imported classes will receive email invitations</p><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
                 deleteConfirmModal: (cls) => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-red-800 font-poppins">Delete Class</h3><p class="mt-2 text-gray-600">Are you sure you want to permanently delete "${cls.name}"? This action cannot be undone.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 btn-bubbly">Yes, Delete</button></div></div>`
             };
-
-        });
-
-        // Run cookie check immediately when the document finishes loading.
-        document.addEventListener('DOMContentLoaded', () => {
-            const checkInterval = setInterval(() => {
-                if (typeof firebase !== 'undefined' && typeof firebase.initializeApp === 'function') {
-                    clearInterval(checkInterval);
-                    checkCookieConsent();
-                }
-            }, 100);
-        });
-
-        // Event listener for cookie consent buttons, must be global
-        document.body.addEventListener('click', (e) => {
-            if (e.target.id === 'cookie-accept-btn') {
-                acceptCookies();
-            } else if (e.target.id === 'cookie-deny-btn') {
-                denyCookies();
-            }
+            
         });
     </script>
 </body>
