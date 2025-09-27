@@ -1,4 +1,3 @@
-// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyCEMOXNV5CNK6ds4rXyzB2hX9EB36ZDpNQ",
   authDomain: "attentio-web.firebaseapp.com",
