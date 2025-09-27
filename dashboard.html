@@ -147,6 +147,10 @@
             let gapiInitialized = false;
             let googleUser = null;
 
+            // --- IMPORTANT: ACTION REQUIRED ---
+            // Replace this placeholder with your actual OAuth Client ID from Google Cloud Console
+            const GOOGLE_CLIENT_ID = "965345902625-4a4a06flil3vc4f78d6u1hrh4op63aea.apps.googleusercontent.com";
+
             // DOM Elements
             const loadingOverlay = document.getElementById('loading-overlay');
             const sidebar = document.getElementById('sidebar');
@@ -201,7 +205,6 @@
                 updateUserInfoUI();
                 setupEventListeners();
                 fetchAndDisplayClasses();
-                // Potentially fetch and display invitations for students
                 loadingOverlay.classList.add('hidden');
             }
 
@@ -265,7 +268,6 @@
 
             async function selectClass(classId) {
                 currentClassId = classId;
-                // Highlight in sidebar
                 document.querySelectorAll('.sidebar-item').forEach(item => {
                     item.classList.toggle('active', item.dataset.classId === classId);
                 });
@@ -274,14 +276,12 @@
                 if (!classDoc.exists) return;
                 const classData = classDoc.data();
 
-                // Update main view
                 document.getElementById('class-view-name').textContent = classData.name;
                 
                 if (userData.role === 'teacher') {
                     const codeContainer = document.getElementById('teacher-join-code-container');
                     codeContainer.classList.remove('hidden');
                     document.getElementById('class-join-code').textContent = classData.joinCode || 'N/A';
-                    // Add logic for refreshing code if needed
                 }
 
                 teacherNoClassView.classList.add('hidden');
@@ -291,17 +291,12 @@
 
             // --- EVENT LISTENERS ---
             function setupEventListeners() {
-                // Modals
                 document.querySelectorAll('.cancel-modal-btn').forEach(btn => btn.addEventListener('click', closeAllModals));
                 document.getElementById('create-class-btn')?.addEventListener('click', () => createClassModal.classList.remove('hidden'));
                 document.getElementById('join-class-btn')?.addEventListener('click', () => joinClassModal.classList.remove('hidden'));
                 document.getElementById('import-gclass-btn')?.addEventListener('click', handleGoogleImportClick);
                 document.getElementById('alert-ok-btn').addEventListener('click', () => alertModal.classList.add('hidden'));
-
-                // Forms
                 document.getElementById('create-class-form').addEventListener('submit', handleCreateClass);
-                
-                // Sidebar & Logout
                 menuToggle.addEventListener('click', () => sidebar.classList.toggle('-translate-x-full'));
                 document.getElementById('logout-btn').addEventListener('click', signOut);
                 document.getElementById('logout-btn-mobile').addEventListener('click', signOut);
@@ -316,68 +311,48 @@
                 e.preventDefault();
                 const className = document.getElementById('class-name-input').value.trim();
                 if(!className) return;
-
-                const newClass = {
-                    name: className,
-                    teacherId: user.uid,
-                    students: [],
-                    joinCode: generateJoinCode(),
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                };
-
+                const newClass = { name: className, teacherId: user.uid, students: [], joinCode: generateJoinCode(), createdAt: firebase.firestore.FieldValue.serverTimestamp() };
                 try {
                     await db.collection('classes').add(newClass);
                     closeAllModals();
-                    document.getElementById('create-class-form').reset();
+                    e.target.reset();
                 } catch (error) {
                     console.error("Error creating class: ", error);
                     showAlert("Failed to create class.");
                 }
             }
 
-            function generateJoinCode() {
-                return Math.random().toString(36).substring(2, 10).toUpperCase();
-            }
-
-            function showAlert(message) {
-                document.getElementById('alert-message').textContent = message;
-                alertModal.classList.remove('hidden');
-            }
-            
-            function closeAllModals() {
-                document.querySelectorAll('.fixed.inset-0').forEach(modal => modal.classList.add('hidden'));
-                loadingOverlay.classList.add('hidden'); // Also hide loading
-            }
+            function generateJoinCode() { return Math.random().toString(36).substring(2, 10).toUpperCase(); }
+            function showAlert(message) { document.getElementById('alert-message').textContent = message; alertModal.classList.remove('hidden'); }
+            function closeAllModals() { document.querySelectorAll('.fixed.inset-0').forEach(modal => modal.classList.add('hidden')); loadingOverlay.classList.add('hidden'); }
             
             // --- GOOGLE CLASSROOM INTEGRATION ---
             async function handleGoogleImportClick() {
+                if (GOOGLE_CLIENT_ID.startsWith("YOUR_OAUTH_CLIENT_ID")) {
+                    showAlert("Configuration needed: Please replace the placeholder Google Client ID in the dashboard.html file.");
+                    return;
+                }
                 loadingOverlay.classList.remove('hidden');
                 if (!gapiInitialized) {
                     try {
                         const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
-                        if (!secretsDoc.exists) throw new Error("API Key not found");
+                        if (!secretsDoc.exists) throw new Error("API Key not found in Firestore.");
                         const apiKey = secretsDoc.data().GoogleClassroomAPIKey;
-                        const CLIENT_ID = "YOUR_OAUTH_CLIENT_ID.apps.googleusercontent.com"; // REPLACE THIS
                         const SCOPES = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.announcements';
                         
                         await new Promise((resolve, reject) => gapi.load('client:auth2', resolve, reject));
-                        await gapi.client.init({ apiKey, clientId: CLIENT_ID, scope: SCOPES, discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest"] });
+                        await gapi.client.init({ apiKey, clientId: GOOGLE_CLIENT_ID, scope: SCOPES, discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest"] });
                         gapiInitialized = true;
                     } catch(err) {
                         console.error("GAPI Init Error:", err);
-                        showAlert("Could not connect to Google Classroom.");
+                        showAlert(`Could not connect to Google Classroom. Error: ${err.message || 'Check console for details.'}`);
                         loadingOverlay.classList.add('hidden');
                         return;
                     }
                 }
                 
                 const googleAuth = gapi.auth2.getAuthInstance();
-                if (!googleAuth.isSignedIn.get()) {
-                    googleUser = await googleAuth.signIn();
-                } else {
-                    googleUser = googleAuth.currentUser.get();
-                }
-
+                googleUser = googleAuth.isSignedIn.get() ? googleAuth.currentUser.get() : await googleAuth.signIn();
                 listGoogleCourses();
             }
 
@@ -386,23 +361,20 @@
                     const response = await gapi.client.classroom.courses.list({ teacherId: 'me', courseStates: 'ACTIVE' });
                     const courses = response.result.courses || [];
                     const listContainer = document.getElementById('gclass-courses-list');
-                    listContainer.innerHTML = ''; // Clear previous list
-
-                    if (courses.length === 0) {
-                        listContainer.innerHTML = '<p class="text-gray-500">No active Google Classroom courses found.</p>';
-                    } else {
-                        courses.forEach(course => {
-                            const courseDiv = document.createElement('div');
-                            courseDiv.className = 'p-3 border rounded-md flex justify-between items-center';
-                            courseDiv.innerHTML = `<span class="font-semibold">${course.name}</span>`;
-                            const importBtn = document.createElement('button');
-                            importBtn.textContent = 'Import';
-                            importBtn.className = 'bg-blue-500 text-white py-1 px-3 rounded-md text-sm hover:bg-blue-600';
-                            importBtn.onclick = () => handleImportAndPost(course);
-                            courseDiv.appendChild(importBtn);
-                            listContainer.appendChild(courseDiv);
-                        });
-                    }
+                    listContainer.innerHTML = courses.length === 0 ? '<p class="text-gray-500">No active Google Classroom courses found.</p>' : '';
+                    
+                    courses.forEach(course => {
+                        const courseDiv = document.createElement('div');
+                        courseDiv.className = 'p-3 border rounded-md flex justify-between items-center';
+                        courseDiv.innerHTML = `<span class="font-semibold">${course.name}</span>`;
+                        const importBtn = document.createElement('button');
+                        importBtn.textContent = 'Import';
+                        importBtn.className = 'bg-blue-500 text-white py-1 px-3 rounded-md text-sm hover:bg-blue-600';
+                        importBtn.onclick = () => handleImportAndPost(course);
+                        courseDiv.appendChild(importBtn);
+                        listContainer.appendChild(courseDiv);
+                    });
+                    
                     loadingOverlay.classList.add('hidden');
                     importGClassModal.classList.remove('hidden');
                 } catch(err) {
@@ -413,42 +385,23 @@
             }
 
             async function handleImportAndPost(gclassCourse) {
-                // This is a simplified import. A real one would handle students, etc.
-                const className = gclassCourse.name;
-                const newNotifyClass = {
-                    name: className,
-                    teacherId: user.uid,
-                    students: [],
-                    joinCode: generateJoinCode(),
-                    googleClassroomId: gclassCourse.id, // Link to GClass
-                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                };
-
+                const newNotifyClass = { name: gclassCourse.name, teacherId: user.uid, students: [], joinCode: generateJoinCode(), googleClassroomId: gclassCourse.id, createdAt: firebase.firestore.FieldValue.serverTimestamp() };
                 try {
                     const docRef = await db.collection('classes').add(newNotifyClass);
                     closeAllModals();
                     
-                    // Now show post modal
                     const inviteLink = `${window.location.origin}/invite.html?classId=${docRef.id}`;
-                    document.getElementById('post-title-input').value = `Join our Notify class for "${className}"`;
+                    document.getElementById('post-title-input').value = `Join our Notify class for "${gclassCourse.name}"`;
                     document.getElementById('post-description-input').value = `Hi everyone,\n\nPlease join our companion class on Notify to ask for help during lessons. Click the link below to accept the invitation.\n\nThank you!`;
                     postInviteModal.classList.remove('hidden');
                     
                     document.getElementById('post-invite-form').onsubmit = async (e) => {
                         e.preventDefault();
                         loadingOverlay.classList.remove('hidden');
-                        
                         const title = document.getElementById('post-title-input').value;
                         const description = document.getElementById('post-description-input').value;
-
                         try {
-                            await gapi.client.classroom.courses.announcements.create({
-                                courseId: gclassCourse.id,
-                                resource: {
-                                    text: description,
-                                    materials: [{ link: { url: inviteLink, title: title } }]
-                                }
-                            });
+                            await gapi.client.classroom.courses.announcements.create({ courseId: gclassCourse.id, resource: { text: description, materials: [{ link: { url: inviteLink, title: title } }] } });
                             showAlert("Invitation posted to Google Classroom!");
                         } catch(err) {
                             console.error("Error posting to classroom:", err);
@@ -462,7 +415,6 @@
                     showAlert("Failed to import the class.");
                 }
             }
-
 
             // --- START APP ---
             initializeApp();
