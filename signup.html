@@ -47,9 +47,8 @@
                         Create your account
                     </h2>
                 </div>
-                <div class="bg-white p-8 rounded-xl shadow-md">
+                <div id="signup-container" class="bg-white p-8 rounded-xl shadow-md">
                     <form id="signup-form" class="space-y-6">
-                        <input type="hidden" name="remember" value="true">
                         <div class="rounded-md -space-y-px">
                             
                             <!-- Role Selection -->
@@ -135,13 +134,13 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
         import { getAuth, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, sendEmailVerification } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
-        import { getFirestore, collection, query, where, getDocs, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
         // --- Firebase Initialization and Config Check ---
-        // The firebase-config.js file should ONLY contain 'const firebaseConfig = { ... };'
         if (typeof firebaseConfig === 'undefined') {
             console.error("Firebase config is not defined. Make sure firebase-config.js is loaded correctly and defines the firebaseConfig constant.");
-            document.querySelector('main').innerHTML = '<div class="max-w-md w-full mx-auto text-center"><h2 class="text-red-600 text-2xl font-bold">Configuration Error</h2><p class="text-gray-700 mt-4">Firebase configuration is missing or invalid. Please ensure <code>firebase-config.js</code> is correct and loaded properly. Check the console for more details.</p></div>';
+            const container = document.getElementById('signup-container');
+            container.innerHTML = '<div class="text-center"><h2 class="text-red-600 text-2xl font-bold">Configuration Error</h2><p class="text-gray-700 mt-4">Firebase configuration is missing or invalid. Please ensure <code>firebase-config.js</code> is correct and that you have replaced the placeholder values with your project\'s credentials. Check the console for more details.</p></div>';
         }
 
         const app = initializeApp(firebaseConfig);
@@ -184,9 +183,11 @@
 
         // --- Username Availability Check ---
         const checkUsername = async () => {
-            const username = usernameInput.value.trim().toLowerCase();
+            const username = usernameInput.value.trim();
+            const usernameLower = username.toLowerCase();
             usernameSuggestion.textContent = '';
             isUsernameAvailable = false;
+
             if (username.length < 3) {
                  usernameSuggestion.textContent = 'Username must be at least 3 characters long.';
                  usernameSuggestion.style.color = 'red';
@@ -194,16 +195,15 @@
             }
 
             try {
-                const usersRef = collection(db, "users");
-                const q = query(usersRef, where("username_lowercase", "==", username));
-                const querySnapshot = await getDocs(q);
+                const usernameRef = doc(db, "usernames", usernameLower);
+                const docSnap = await getDoc(usernameRef);
 
-                if (querySnapshot.empty) {
+                if (!docSnap.exists()) {
                     usernameSuggestion.textContent = 'Username is available!';
                     usernameSuggestion.style.color = 'green';
                     isUsernameAvailable = true;
                 } else {
-                    const suggestion = `${usernameInput.value.trim()}${generateRandomChars(3)}`;
+                    const suggestion = `${username}${generateRandomChars(3)}`;
                     usernameSuggestion.innerHTML = `Username is taken. Try: <a href="#" id="suggestion-link" class="underline">${suggestion}</a>`;
                     usernameSuggestion.style.color = 'red';
                     document.getElementById('suggestion-link').onclick = (e) => {
@@ -257,14 +257,12 @@
             }
 
             try {
-                // 1. Create user in Firebase Auth
                 const userCredential = await createUserWithEmailAndPassword(auth, email, password);
                 const user = userCredential.user;
                 
-                // 2. Send verification email
-                await sendEmailVerification(user);
-
-                // 3. Store user info in Firestore
+                // You would typically use a Cloud Function to create the /usernames/{username} document
+                // For client-side only, this is a placeholder to show data structure.
+                await setDoc(doc(db, "usernames", username.toLowerCase()), { uid: user.uid });
                 await setDoc(doc(db, "users", user.uid), {
                     uid: user.uid,
                     username: username,
@@ -275,18 +273,15 @@
                     emailVerified: false
                 });
 
-                // Hide form and show verification message
+                await sendEmailVerification(user);
+
                 document.getElementById('signup-form').classList.add('hidden');
                 document.getElementById('social-signup-section').classList.add('hidden');
                 document.getElementById('login-prompt').classList.add('hidden');
                 document.getElementById('verification-message').classList.remove('hidden');
 
             } catch (error) {
-                if (error.code === 'auth/email-already-in-use') {
-                    formError.textContent = 'This email is already in use.';
-                } else {
-                    formError.textContent = 'Failed to create account. Please try again.';
-                }
+                formError.textContent = 'Failed to create account. Please try again.';
                 console.error("Signup error: ", error);
             }
         });
@@ -296,7 +291,6 @@
             const role = roleInput.value;
             if (!role) {
                 roleError.classList.remove('hidden');
-                formError.textContent = 'Please select a role first.';
                 return;
             }
             
@@ -311,22 +305,20 @@
                 const userDoc = await getDoc(userDocRef);
 
                 if (!userDoc.exists()) {
-                    let username = user.displayName.replace(/\s/g, '') || `user${generateRandomChars(5)}`;
-                    let username_lowercase = username.toLowerCase();
+                    let username = user.displayName.replace(/\s/g, '').toLowerCase() || `user${generateRandomChars(5)}`;
+                    
+                    const usernameRef = doc(db, "usernames", username);
+                    const usernameDoc = await getDoc(usernameRef);
 
-                    const usersRef = collection(db, "users");
-                    let q = query(usersRef, where("username_lowercase", "==", username_lowercase));
-                    let querySnapshot = await getDocs(q);
-
-                    if (!querySnapshot.empty) {
+                    if (usernameDoc.exists()) {
                         username = `${username}${generateRandomChars(3)}`;
-                        username_lowercase = username.toLowerCase();
                     }
                     
+                    await setDoc(doc(db, "usernames", username), { uid: user.uid });
                     await setDoc(userDocRef, {
                         uid: user.uid,
                         username: username,
-                        username_lowercase: username_lowercase,
+                        username_lowercase: username.toLowerCase(),
                         email: user.email,
                         role: role,
                         createdAt: new Date(),
@@ -337,9 +329,9 @@
                  window.location.href = 'dashboard.html';
 
             } catch (error) {
-                if (error.code === 'auth/popup-closed-by-user' || error.code === 'auth/cancelled-popup-request') {
-                     formError.textContent = 'Sign-up process was cancelled.';
-                } else if (error.code === 'auth/operation-not-allowed') {
+                if (error.code === 'auth/popup-closed-by-user') return;
+                
+                if (error.code === 'auth/operation-not-allowed') {
                     formError.textContent = 'Google Sign-In is not enabled for this app.';
                     console.error('Firebase Error: Please enable Google Sign-In in your Firebase Console (Authentication > Sign-in method).');
                 } else {
