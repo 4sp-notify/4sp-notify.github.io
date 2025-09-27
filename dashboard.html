@@ -38,18 +38,6 @@
         /* Bubbly Button Animation */
         .btn-bubbly { transition: transform 0.1s ease-out; }
         .btn-bubbly:active { transform: scale(0.95); }
-
-        /* Custom Time Picker Styling */
-        .time-picker-select {
-            -webkit-appearance: none;
-            -moz-appearance: none;
-            appearance: none;
-            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' class='h-5 w-5' viewBox='0 0 20 20' fill='%236B7280'%3E%3Cpath fill-rule='evenodd' d='M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z' clip-rule='evenodd' /%3E%3C/svg%3E");
-            background-repeat: no-repeat;
-            background-position: right 0.5rem center;
-            background-size: 1.5em 1.5em;
-            padding-right: 2.5rem;
-        }
     </style>
 </head>
 <body class="bg-gray-100 h-screen overflow-hidden">
@@ -126,7 +114,9 @@
     
     <!-- Modals Container -->
     <div id="modal-backdrop" class="fixed inset-0 bg-gray-900 bg-opacity-60 z-40 hidden"></div>
-    <div id="modal-container"></div>
+    <div id="modal-container" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
+        <!-- Modal Content Injected Here -->
+    </div>
 
 
     <!-- Firebase SDKs -->
@@ -226,7 +216,8 @@
                         if (currentClassId && !allLoadedClasses[currentClassId]) {
                             selectClass(null);
                         } else if (currentClassId) {
-                            selectClass(allLoadedClasses[currentClassId]);
+                            currentClassData = allLoadedClasses[currentClassId];
+                            selectClass(currentClassData);
                         } else {
                             renderMainContent();
                         }
@@ -235,11 +226,8 @@
                     const teacherQuery = db.collection('classes').where('teacherId', '==', uid);
                     unsubscribes.push(teacherQuery.onSnapshot(snapshot => {
                         snapshot.docChanges().forEach(change => {
-                            if (change.type === 'removed') {
-                                delete allLoadedClasses[change.doc.id];
-                            } else {
-                                allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
-                            }
+                            if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
+                            else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
                         });
                         reRender();
                     }));
@@ -247,11 +235,8 @@
                     const studentQuery = db.collection('classes').where('studentIds', 'array-contains', uid);
                     unsubscribes.push(studentQuery.onSnapshot(snapshot => {
                         snapshot.docChanges().forEach(change => {
-                           if (change.type === 'removed') {
-                                delete allLoadedClasses[change.doc.id];
-                            } else {
-                                allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
-                            }
+                           if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
+                           else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
                         });
                         reRender();
                     }));
@@ -295,9 +280,7 @@
                     if(e.target.closest('#logout-btn')) auth.signOut();
                     
                     const classBtn = e.target.closest('#class-list button');
-                    if (classBtn) {
-                        selectClass(allLoadedClasses[classBtn.dataset.classId]);
-                    }
+                    if (classBtn) selectClass(allLoadedClasses[classBtn.dataset.classId]);
                     
                     if(e.target.closest('#new-class-btn')) showModal(TPL.newClassChoiceModal());
                     if(e.target.closest('#join-class-btn')) showModal(TPL.joinClassModal());
@@ -315,6 +298,23 @@
                     if(e.target.closest('#save-schedule-btn')) saveClassSchedule();
                     if(e.target.closest('#delete-class-btn')) showModal(TPL.deleteConfirmModal(currentClassData));
                     if(e.target.closest('#confirm-delete-class-btn')) deleteClass();
+                    
+                    // Custom Dropdown Logic
+                    const dropdownBtn = e.target.closest('.custom-dropdown-btn');
+                    if (dropdownBtn) {
+                        const options = dropdownBtn.nextElementSibling;
+                        options.classList.toggle('hidden');
+                    } else if (!e.target.closest('.custom-dropdown-options')) {
+                        document.querySelectorAll('.custom-dropdown-options').forEach(el => el.classList.add('hidden'));
+                    }
+
+                    const dropdownOption = e.target.closest('.custom-dropdown-option');
+                    if (dropdownOption) {
+                        const dropdown = dropdownOption.closest('.relative');
+                        const btnText = dropdown.querySelector('.custom-dropdown-btn span');
+                        btnText.textContent = dropdownOption.dataset.value;
+                        dropdown.querySelector('.custom-dropdown-options').classList.add('hidden');
+                    }
                 });
                 
                 document.body.addEventListener('submit', e => {
@@ -356,10 +356,10 @@
                 async function saveClassSchedule() {
                     const startHour = document.getElementById('start-hour').value;
                     const startMinute = document.getElementById('start-minute').value;
-                    const startPeriod = document.getElementById('start-period').value;
+                    const startPeriod = document.getElementById('start-period-text').textContent;
                     const endHour = document.getElementById('end-hour').value;
                     const endMinute = document.getElementById('end-minute').value;
-                    const endPeriod = document.getElementById('end-period').value;
+                    const endPeriod = document.getElementById('end-period-text').textContent;
                     
                     const schedule = {
                         start: `${startHour}:${startMinute} ${startPeriod}`,
@@ -473,7 +473,6 @@
                     modalBackdrop.classList.remove('hidden', 'fade-leave-to');
                     modalBackdrop.classList.add('fade-enter-active');
                     const modalDialog = modalContainer.firstElementChild;
-                    modalDialog.classList.remove('hidden');
                     modalDialog.classList.add('fade-enter-active');
                     setTimeout(() => {
                         modalBackdrop.classList.remove('fade-enter-active');
@@ -542,23 +541,23 @@
                         const [startHour, startMinute] = startTime.split(':');
                         const [endTime, endPeriod] = end.split(' ');
                         const [endHour, endMinute] = endTime.split(':');
-                        
-                        const hourOpts = [...Array(12)].map((_,i) => `<option value="${String(i+1).padStart(2,'0')}" ${startHour == i+1 ? 'selected':''}>${String(i+1).padStart(2,'0')}</option>`).join('');
-                        const minOpts = [...Array(60)].map((_,i) => `<option value="${String(i).padStart(2,'0')}" ${startMinute == i ? 'selected':''}>${String(i).padStart(2,'0')}</option>`).join('');
-                        const endHourOpts = [...Array(12)].map((_,i) => `<option value="${String(i+1).padStart(2,'0')}" ${endHour == i+1 ? 'selected':''}>${String(i+1).padStart(2,'0')}</option>`).join('');
-                        const endMinOpts = [...Array(60)].map((_,i) => `<option value="${String(i).padStart(2,'0')}" ${endMinute == i ? 'selected':''}>${String(i).padStart(2,'0')}</option>`).join('');
 
-                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Class Schedule</h3><div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Starts at</label><div class="mt-1 flex gap-2"><select id="start-hour" class="time-picker-select block w-full rounded-md border-gray-300 shadow-sm">${hourOpts}</select><select id="start-minute" class="time-picker-select block w-full rounded-md border-gray-300 shadow-sm">${minOpts}</select><select id="start-period" class="time-picker-select block w-full rounded-md border-gray-300 shadow-sm"><option ${startPeriod === 'AM' ? 'selected':''}>AM</option><option ${startPeriod === 'PM' ? 'selected':''}>PM</option></select></div></div><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Ends at</label><div class="mt-1 flex gap-2"><select id="end-hour" class="time-picker-select block w-full rounded-md border-gray-300 shadow-sm">${endHourOpts}</select><select id="end-minute" class="time-picker-select block w-full rounded-md border-gray-300 shadow-sm">${endMinOpts}</select><select id="end-period" class="time-picker-select block w-full rounded-md border-gray-300 shadow-sm"><option ${endPeriod === 'AM' ? 'selected':''}>AM</option><option ${endPeriod === 'PM' ? 'selected':''}>PM</option></select></div></div></div><p class="mt-3 text-xs text-gray-500">Note: Uses local device time, assumed for weekdays.</p><button id="save-schedule-btn" class="mt-4 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button></div>`;
+                        const timeInputClasses = 'w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
+                        const dropdownBtnClasses = 'relative w-24 cursor-pointer rounded-md border border-gray-300 bg-white py-2 pl-3 pr-10 text-left shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+                        const dropdownOptionsClasses = 'absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden';
+                        const dropdownOptionClasses = 'cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50';
+
+                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Class Schedule</h3><div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Starts at</label><div class="mt-1 flex items-center gap-2"><input type="text" id="start-hour" value="${startHour}" maxlength="2" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="text" id="start-minute" value="${startMinute}" maxlength="2" class="${timeInputClasses}"><div class="relative"><button type="button" class="custom-dropdown-btn ${dropdownBtnClasses}"><span id="start-period-text">${startPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a.75.75 0 01.53.22l3.5 3.5a.75.75 0 01-1.06 1.06L10 4.81V16.5a.75.75 0 01-1.5 0V4.81L5.53 7.78a.75.75 0 01-1.06-1.06l3.5-3.5A.75.75 0 0110 3z" clip-rule="evenodd" /></svg></span></button><ul class="custom-dropdown-options ${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Ends at</label><div class="mt-1 flex items-center gap-2"><input type="text" id="end-hour" value="${endHour}" maxlength="2" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="text" id="end-minute" value="${endMinute}" maxlength="2" class="${timeInputClasses}"><div class="relative"><button type="button" class="custom-dropdown-btn ${dropdownBtnClasses}"><span id="end-period-text">${endPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a.75.75 0 01.53.22l3.5 3.5a.75.75 0 01-1.06 1.06L10 4.81V16.5a.75.75 0 01-1.5 0V4.81L5.53 7.78a.75.75 0 01-1.06-1.06l3.5-3.5A.75.75 0 0110 3z" clip-rule="evenodd" /></svg></span></button><ul class="custom-dropdown-options ${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div></div><p class="mt-3 text-xs text-gray-500">Note: Uses local device time, assumed for weekdays.</p><button id="save-schedule-btn" class="mt-4 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button></div>`;
                     },
                     settingsPresets: (cls) => {
                         const presets = cls.presetQuestions || [];
                         return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Preset Questions</h3><div id="preset-questions-list" class="space-y-3 mb-4">${presets.map(p => `<div class="flex items-center justify-between bg-gray-50 p-2 rounded-md"><span class="text-sm text-gray-800">${p}</span><button data-preset="${p}" class="remove-preset-btn text-gray-400 hover:text-red-600 btn-bubbly"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg></button></div>`).join('') || '<p class="text-sm text-gray-500">No preset questions added yet.</p>'}</div><div class="flex space-x-2"><input type="text" id="new-preset-input" placeholder="e.g., I need help with Question 5" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"><button id="add-preset-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 whitespace-nowrap btn-bubbly">Add</button></div></div>`;
                     },
                     settingsDanger: (cls) => `<div class="bg-red-50 p-6 rounded-lg border border-red-200"><h3 class="text-lg font-semibold text-red-800 border-b border-red-200 pb-3 mb-4 font-poppins">Danger Zone</h3><div><p class="text-sm text-red-700">Deleting this class is permanent. All associated data will be lost, and students will be removed.</p><button id="delete-class-btn" class="mt-4 bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 btn-bubbly">Delete This Class</button></div></div>`,
-                    newClassChoiceModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><svg class="w-8 h-8 text-blue-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg><span class="font-semibold text-gray-700">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><img src="../images/google-classroom.png" class="w-8 h-8 mb-2"><span class="font-semibold text-gray-700">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
-                    createClassModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Create New Class</h3><form id="create-class-form" class="mt-4 space-y-4"><div><label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="new-class-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 btn-bubbly">Create</button></div></form></div>`,
-                    googleImportModal: () => `<div class="relative bg-white w-full max-w-lg p-6 rounded-lg shadow-xl"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Import from Google Classroom</h3><div id="g-import-content" class="mt-4"><div id="g-import-loading" class="text-center"><p class="text-gray-600">Connecting...</p></div><p id="g-import-error" class="text-center text-red-600 hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul></div><div class="flex justify-end mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
-                    deleteConfirmModal: (cls) => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl"><h3 class="text-xl font-semibold text-red-800 font-poppins">Delete Class</h3><p class="mt-2 text-gray-600">Are you sure you want to permanently delete "${cls.name}"? This action cannot be undone.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 btn-bubbly">Yes, Delete</button></div></div>`
+                    newClassChoiceModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><svg class="w-8 h-8 text-blue-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg><span class="font-semibold text-gray-700">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><img src="../images/google-classroom.png" class="w-8 h-8 mb-2"><span class="font-semibold text-gray-700">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
+                    createClassModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Create New Class</h3><form id="create-class-form" class="mt-4 space-y-4"><div><label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="new-class-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 btn-bubbly">Create</button></div></form></div>`,
+                    googleImportModal: () => `<div class="relative bg-white w-full max-w-lg p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Import from Google Classroom</h3><div id="g-import-content" class="mt-4"><div id="g-import-loading" class="text-center"><p class="text-gray-600">Connecting...</p></div><p id="g-import-error" class="text-center text-red-600 hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul></div><div class="flex justify-end mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
+                    deleteConfirmModal: (cls) => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-red-800 font-poppins">Delete Class</h3><p class="mt-2 text-gray-600">Are you sure you want to permanently delete "${cls.name}"? This action cannot be undone.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 btn-bubbly">Yes, Delete</button></div></div>`
                 };
 
             });
