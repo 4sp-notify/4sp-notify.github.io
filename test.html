@@ -9,6 +9,9 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
     
+    <!-- Font Awesome for Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" integrity="sha512-SnH5WK+bZxgPHs44uWIX+LLMDJzL/G6S8jH9D/gU2FowM9I5yT8W4j6P3+9zW5gH6K9z5Yl+O0s/v6y4g==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+
     <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://apis.google.com/js/api.js" async defer></script>
     
@@ -37,6 +40,20 @@
             display: flex;
             align-items: center;
             justify-content: center;
+            transition: opacity 0.5s ease-out;
+        }
+
+        /* Cookie Icon Styles */
+        .cookie-icon {
+            color: #d1d5db; /* light-gray-300 */
+            transition: transform 0.3s ease-out;
+        }
+        .cookie-accepted {
+            transform: scale(1.1) rotate(5deg);
+        }
+        .cookie-denied {
+            transform: scale(1.0);
+            transition: transform 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55);
         }
 
         /* Custom Scrollbar */
@@ -90,13 +107,35 @@
         .btn-bubbly:active { 
             transform: scale(0.95); 
         }
+
+        /* Particle CSS */
+        .particle {
+            position: absolute;
+            width: 8px;
+            height: 8px;
+            background-color: #fca5a5; /* Cookie color */
+            border-radius: 50%;
+            pointer-events: none;
+            opacity: 0;
+            animation: explode 0.8s forwards;
+        }
+        @keyframes explode {
+            0% {
+                transform: translate(0, 0) scale(1);
+                opacity: 1;
+            }
+            100% {
+                transform: translate(var(--x), var(--y)) scale(0);
+                opacity: 0;
+            }
+        }
     </style>
 </head>
 <body class="bg-gray-100 h-screen overflow-hidden">
 
     <!-- Cookie Consent Screen -->
     <div id="cookie-consent-overlay" class="cookie-overlay">
-        <!-- Content will be inserted by TPL.cookieConsentModal -->
+        <!-- Content will be inserted by TPL.cookieConsentModal on load -->
     </div>
 
     <!-- Main Application Content (Initially hidden until consent) -->
@@ -175,7 +214,8 @@
         <div id="modal-container" class="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none">
             <!-- Modal Content Injected Here -->
         </div>
-    </div>
+        
+    <!-- Main Application Content End -->
 
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
@@ -190,7 +230,9 @@
         function initializeApp() {
             if (firebaseInitialized) return;
 
-            // This function contains the original onFirebaseReady logic
+            // Show main app content
+            document.getElementById('app-main-content').classList.remove('hidden');
+
             const app = firebase.initializeApp(firebaseConfig);
             const auth = firebase.auth();
             const db = firebase.firestore();
@@ -340,13 +382,11 @@
                 if(e.target.closest('#new-class-btn')) showModal(TPL.newClassChoiceModal());
                 if(e.target.closest('#join-class-btn')) showModal(TPL.joinClassModal());
                 
-                // --- Cookie-specific logic for New Class button inside the modal ---
                 const modalTarget = e.target.closest('.modal-content-area');
                 if (modalTarget) {
                     if (e.target.closest('#create-manual-btn')) showModal(TPL.createClassModal());
                     if (e.target.closest('#import-gclass-btn')) handleGoogleImportClick();
                 }
-                // --- End Cookie-specific logic ---
 
                 if(e.target.closest('.modal-cancel-btn') || e.target.id === 'modal-backdrop') hideModal();
 
@@ -377,10 +417,8 @@
                     dropdown.querySelector('.custom-dropdown-options').classList.add('hidden');
                 }
                 
-                // Cookie consent button handling
-                if (e.target.id === 'cookie-accept-btn') acceptCookies();
-                if (e.target.id === 'cookie-deny-btn') denyCookies();
-
+                // Cookie consent button handling is outside of app initialization
+                // as it runs before Firebase is guaranteed to be ready.
             });
             
             document.body.addEventListener('submit', e => {
@@ -393,13 +431,12 @@
 
             function copyInviteLink() {
                 const inviteURL = `${window.location.origin}/invite.html?classId=${currentClassId}`;
-                navigator.clipboard.writeText(inviteURL).then(() => {
-                    const msg = document.getElementById('invite-copied-msg');
-                    if (msg) {
-                        msg.classList.remove('hidden');
-                        setTimeout(() => msg.classList.add('hidden'), 2000);
-                    }
-                });
+                document.execCommand('copy');
+                const msg = document.getElementById('invite-copied-msg');
+                if (msg) {
+                    msg.classList.remove('hidden');
+                    setTimeout(() => msg.classList.add('hidden'), 2000);
+                }
             }
             
             async function addPresetQuestion() {
@@ -482,17 +519,17 @@
 
             // --- REWRITTEN AND ROBUST GOOGLE IMPORT LOGIC ---
             async function handleGoogleImportClick() {
+                // Ensure the modal is immediately visible and showing connecting state
                 showModal(TPL.googleImportModal());
                 
                 const loadingEl = document.getElementById('g-import-loading');
                 const errorEl = document.getElementById('g-import-error');
                 
-                // Show loading state immediately
                 if (loadingEl) loadingEl.classList.remove('hidden');
                 if (errorEl) errorEl.classList.add('hidden');
 
                 try {
-                    // 1. Pre-Check Authentication and Role
+                    // 1. Pre-Check Authentication and Role (CRITICAL)
                     if (!currentUser || !currentUser.uid) {
                          throw new Error('User is not authenticated. Please log in first.');
                     }
@@ -505,10 +542,10 @@
                     try {
                         const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
                         
-                        // Check 2a: Document Existence
+                        // Check 2a: Document Existence (this is the key check)
                         if (!secretsDoc.exists) {
                             console.error("Firebase Document Path Error: secrets/wUTBTbjuNLueOfhgHXEE");
-                            throw new Error("Missing Setup: The required configuration document was not found in Firestore.");
+                            throw new Error("MISSING FIREBASE SECRET: The required configuration document was not found at 'secrets/wUTBTbjuNLueOFhgHXEE'.");
                         }
                         
                         const secrets = secretsDoc.data();
@@ -517,14 +554,15 @@
 
                         // Check 2b: Field Existence
                         if (!API_KEY || !CLIENT_ID) {
-                            throw new Error("Incomplete Setup: API Key or Client ID fields are empty in the Firestore document.");
+                            throw new Error("INCOMPLETE FIREBASE SECRET: API Key or Client ID fields are empty in the Firebase document.");
                         }
                     } catch (secretsError) {
-                        // Check for Permission Denied explicitly
+                        console.error('Error fetching Firebase secrets:', secretsError);
+                        // Permission denied usually means the rule is failing (even with correct data)
                         if (secretsError.code === 'permission-denied') {
-                            throw new Error(`Security Error: Firebase blocked access. Your document is correct, but the Firestore security rule for /secrets/ is failing for your account.`);
+                            throw new Error("SECURITY RULE FAILURE: Permission denied when accessing Firebase secrets. Please verify the 'teacher' role condition in your Firestore rules.");
                         }
-                        // Re-throw other errors (like the Missing Setup error)
+                        // Re-throw other errors
                         throw secretsError;
                     }
 
@@ -546,13 +584,11 @@
                     
                     if (!auth2.isSignedIn.get()) {
                         try {
-                            // This triggers the consent screen if needed
                             await auth2.signIn();
                         } catch (signInError) {
-                            // This catches the 'Not a valid origin for the client' error
                             const errorDetails = signInError.details || signInError.message || 'Unknown sign-in failure.';
                             if (errorDetails.includes('Not a valid origin for the client')) {
-                                throw new Error(`OAuth Misconfiguration: The application URL (${window.location.origin}) is not registered in your Google Cloud Console. Please check Authorized JavaScript Origins.`);
+                                throw new Error(`OAuth Misconfiguration: The application URL (${window.location.origin}) is not registered as an Authorized JavaScript Origin in your Google Cloud Console.`);
                             }
                             throw new Error('Google Sign-in failed: ' + errorDetails);
                         }
@@ -565,7 +601,7 @@
                     console.error('Final Google import process failure:', error);
                     if (loadingEl) loadingEl.classList.add('hidden');
                     
-                    const errorMessage = error.message || "Unknown error occurred while connecting to Google Classroom.";
+                    const errorMessage = error.message || (error.result && error.result.error && error.result.error.message) || "Unknown error occurred while connecting to Google Classroom.";
                     
                     // Display detailed error in the modal
                     if (errorEl) {
@@ -836,15 +872,75 @@
             }
 
             // --- COOKIE CONSENT FUNCTIONS ---
+            function createParticle(x, y) {
+                const particle = document.createElement('div');
+                particle.classList.add('particle');
+                particle.style.left = `${x}px`;
+                particle.style.top = `${y}px`;
+                
+                // Randomize trajectory within a 100px radius
+                const angle = Math.random() * 2 * Math.PI;
+                const distance = Math.random() * 100 + 50;
+                particle.style.setProperty('--x', `${Math.cos(angle) * distance}px`);
+                particle.style.setProperty('--y', `${Math.sin(angle) * distance}px`);
+                
+                document.body.appendChild(particle);
+                setTimeout(() => particle.remove(), 800);
+            }
+
             function acceptCookies() {
                 localStorage.setItem('cookie_consent', 'accepted');
-                document.getElementById('cookie-consent-overlay').classList.add('hidden');
-                document.getElementById('app-main-content').classList.remove('hidden');
+                const overlayEl = document.getElementById('cookie-consent-overlay');
+                const iconEl = overlayEl.querySelector('#cookie-icon-bitten');
+                
+                if (iconEl) {
+                    iconEl.classList.add('cookie-accepted');
+                    // Create particle burst from the center of the icon
+                    const rect = iconEl.getBoundingClientRect();
+                    const centerX = rect.left + rect.width / 2;
+                    const centerY = rect.top + rect.height / 2;
+
+                    for (let i = 0; i < 20; i++) {
+                        createParticle(centerX, centerY);
+                    }
+                }
+                
+                // Fade out the overlay and initialize the app
+                overlayEl.style.opacity = '0';
+                setTimeout(() => {
+                    overlayEl.classList.add('hidden');
+                    initializeApp();
+                }, 500);
             }
 
             function denyCookies() {
                 localStorage.setItem('cookie_consent', 'denied');
-                alert("You have denied consent. The application requires cookies for sign-in and Google Classroom integration and will not function properly.");
+                const overlayEl = document.getElementById('cookie-consent-overlay');
+                const iconBitten = overlayEl.querySelector('#cookie-icon-bitten');
+                const iconWhole = overlayEl.querySelector('#cookie-icon-whole');
+                const denyText = overlayEl.querySelector('#cookie-deny-text');
+                const denyWarning = overlayEl.querySelector('#cookie-deny-warning');
+                
+                // Show denial warning
+                if (denyWarning) denyWarning.classList.remove('hidden');
+                
+                // Hide bitten cookie and show whole cookie with a spring animation
+                if (iconBitten) iconBitten.classList.add('hidden');
+                if (iconWhole) {
+                    iconWhole.classList.remove('hidden');
+                    iconWhole.classList.add('cookie-denied');
+                }
+                
+                // Hide main modal content and fade away the denial menu
+                const modalContent = overlayEl.querySelector('.p-8');
+                if (modalContent) modalContent.style.opacity = '0';
+
+                // Prevent app initialization
+                setTimeout(() => {
+                    overlayEl.classList.add('hidden');
+                    // Show a persistent, simple denial banner or keep app hidden until accepted
+                    // For this exercise, we simply hide the overlay and rely on the local storage check
+                }, 1500);
             }
 
             function checkCookieConsent() {
@@ -852,29 +948,36 @@
                 const overlay = document.getElementById('cookie-consent-overlay');
 
                 if (consent === 'accepted') {
+                    // Start the app immediately
                     overlay.classList.add('hidden');
-                    document.getElementById('app-main-content').classList.remove('hidden');
-                } else if (consent === 'denied') {
-                    // Show consent screen but keep app hidden until accepted
-                    overlay.innerHTML = TPL.cookieConsentModal();
+                    initializeApp();
                 } else {
-                    // No choice made yet
+                    // Show consent screen (either denied or no choice)
                     overlay.innerHTML = TPL.cookieConsentModal();
+                    // Keep app hidden until accepted
                 }
             }
             // --- END COOKIE CONSENT FUNCTIONS ---
 
             const TPL = {
                 cookieConsentModal: () => `
-                    <div class="p-8 max-w-lg mx-auto bg-white rounded-xl shadow-2xl border border-gray-200">
-                        <h2 class="text-3xl font-bold font-poppins text-gray-800 mb-4">Privacy Consent Required</h2>
+                    <div class="p-8 max-w-lg mx-auto bg-white rounded-xl shadow-2xl border border-gray-200 text-center">
+                        <div id="cookie-icon-container" class="relative inline-block mb-4">
+                            <!-- Bitten Cookie (Visible by default) -->
+                            <i id="cookie-icon-bitten" class="fa-solid fa-cookie-bite fa-4x cookie-icon"></i>
+                            <!-- Whole Cookie (Initially Hidden) -->
+                            <i id="cookie-icon-whole" class="fa-solid fa-cookie fa-4x cookie-icon absolute top-0 left-0 hidden"></i>
+                        </div>
+
+                        <h2 class="text-3xl font-bold font-poppins text-gray-800 mb-2">Privacy Consent Required</h2>
                         <p class="text-gray-700 mb-6 leading-relaxed">
-                            To function correctly and allow you to sign in securely and import classes from Google Classroom, this application needs your permission to store a small piece of data (a "cookie") on your device.
+                            To function correctly and allow you to sign in securely and integrate with services like Google Classroom, this application needs your permission to store data (a "cookie") on your device.
                         </p>
-                        <p class="text-sm text-gray-600 mb-8">
-                            This data is only used to remember that you are logged in and to securely connect with Google's services. We do not use it for tracking or advertising. By accepting, you enable full application functionality.
+                        <p id="cookie-deny-warning" class="text-sm font-medium text-red-600 mb-4 hidden">
+                            **Warning:** Denying consent means the app cannot maintain your login session or save personalization like theme preferences, severely limiting functionality.
                         </p>
-                        <div class="flex justify-end space-x-4">
+                        
+                        <div class="flex justify-center space-x-4">
                             <button id="cookie-deny-btn" class="px-5 py-2 bg-gray-200 text-gray-700 font-medium rounded-lg hover:bg-gray-300 transition-colors btn-bubbly">
                                 Deny Consent
                             </button>
@@ -955,17 +1058,13 @@
 
         // Run cookie check immediately when the document finishes loading.
         document.addEventListener('DOMContentLoaded', () => {
-            if (typeof firebase !== 'undefined') {
-                checkCookieConsent();
-            } else {
-                // Fallback for extremely fast script loading
-                const checkInterval = setInterval(() => {
-                    if (typeof firebase !== 'undefined') {
-                        clearInterval(checkInterval);
-                        checkCookieConsent();
-                    }
-                }, 100);
-            }
+            const checkInterval = setInterval(() => {
+                // Wait for Firebase configuration to be defined before calling checkCookieConsent
+                if (typeof firebase !== 'undefined' && typeof firebase.initializeApp === 'function') {
+                    clearInterval(checkInterval);
+                    checkCookieConsent();
+                }
+            }, 100);
         });
     </script>
 </body>
