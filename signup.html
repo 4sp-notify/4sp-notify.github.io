@@ -88,26 +88,33 @@
                         </div>
                     </form>
                     
-                    <div class="relative my-6">
-                      <div class="absolute inset-0 flex items-center">
-                        <div class="w-full border-t border-gray-300"></div>
-                      </div>
-                      <div class="relative flex justify-center text-sm">
-                        <span class="px-2 bg-white text-gray-500">
-                          OR
-                        </span>
-                      </div>
+                    <div id="social-signup-section">
+                        <div class="relative my-6">
+                          <div class="absolute inset-0 flex items-center">
+                            <div class="w-full border-t border-gray-300"></div>
+                          </div>
+                          <div class="relative flex justify-center text-sm">
+                            <span class="px-2 bg-white text-gray-500">
+                              OR
+                            </span>
+                          </div>
+                        </div>
+
+                        <div>
+                             <button id="google-signup-btn" disabled class="group relative w-full flex justify-center items-center py-2 px-4 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
+                                <img src="../images/google-icon.png" class="h-5 w-5 mr-2" alt="Google icon">
+                                Sign up with Google
+                            </button>
+                        </div>
                     </div>
 
-                    <div>
-                         <button id="google-signup-btn" disabled class="group relative w-full flex justify-center items-center py-2 px-4 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 disabled:cursor-not-allowed">
-                            <img src="../images/google-icon.png" class="h-5 w-5 mr-2" alt="Google icon">
-                            Sign up with Google
-                        </button>
+                    <div id="verification-message" class="hidden text-center py-8">
+                        <h3 class="text-2xl font-bold text-gray-900">Check your inbox!</h3>
+                        <p class="mt-4 text-gray-600">We've sent a verification link to your email address. Please follow the link to activate your account before logging in.</p>
                     </div>
 
                 </div>
-                 <p class="text-center text-sm text-gray-600">
+                 <p id="login-prompt" class="text-center text-sm text-gray-600">
                     Already have an account?
                     <a href="#" class="font-medium text-blue-600 hover:text-blue-500">
                         Log in
@@ -127,7 +134,7 @@
     <script src="../firebase-config.js"></script>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
-        import { getAuth, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
+        import { getAuth, createUserWithEmailAndPassword, GoogleAuthProvider, signInWithPopup, sendEmailVerification } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
         import { getFirestore, collection, query, where, getDocs, doc, setDoc, getDoc } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
 
         // Initialize Firebase
@@ -230,7 +237,6 @@
             const email = signupForm.email.value;
             const password = signupForm.password.value;
 
-            // Final validation checks are implicitly handled by button state, but good to double check
             if (!role) {
                 roleError.classList.remove('hidden');
                 return;
@@ -248,19 +254,26 @@
                 // 1. Create user in Firebase Auth
                 const userCredential = await createUserWithEmailAndPassword(auth, email, password);
                 const user = userCredential.user;
+                
+                // 2. Send verification email
+                await sendEmailVerification(user);
 
-                // 2. Store user info in Firestore
+                // 3. Store user info in Firestore
                 await setDoc(doc(db, "users", user.uid), {
                     uid: user.uid,
                     username: username,
                     username_lowercase: username.toLowerCase(),
                     email: email,
                     role: role,
-                    createdAt: new Date()
+                    createdAt: new Date(),
+                    emailVerified: false
                 });
 
-                alert('Account created successfully!');
-                window.location.href = '#'; // Redirect to dashboard
+                // Hide form and show verification message
+                document.getElementById('signup-form').classList.add('hidden');
+                document.getElementById('social-signup-section').classList.add('hidden');
+                document.getElementById('login-prompt').classList.add('hidden');
+                document.getElementById('verification-message').classList.remove('hidden');
 
             } catch (error) {
                 if (error.code === 'auth/email-already-in-use') {
@@ -288,22 +301,18 @@
                 const result = await signInWithPopup(auth, provider);
                 const user = result.user;
 
-                // Check if user already exists in Firestore
                 const userDocRef = doc(db, "users", user.uid);
                 const userDoc = await getDoc(userDocRef);
 
                 if (!userDoc.exists()) {
-                    // This is a new user, create a document for them
-                    let username = user.displayName || `user${generateRandomChars(5)}`;
+                    let username = user.displayName.replace(/\s/g, '') || `user${generateRandomChars(5)}`;
                     let username_lowercase = username.toLowerCase();
 
-                    // Ensure username is unique
                     const usersRef = collection(db, "users");
-                    const q = query(usersRef, where("username_lowercase", "==", username_lowercase));
-                    const querySnapshot = await getDocs(q);
+                    let q = query(usersRef, where("username_lowercase", "==", username_lowercase));
+                    let querySnapshot = await getDocs(q);
 
                     if (!querySnapshot.empty) {
-                        // Username taken, generate a new one
                         username = `${username}${generateRandomChars(3)}`;
                         username_lowercase = username.toLowerCase();
                     }
@@ -314,12 +323,12 @@
                         username_lowercase: username_lowercase,
                         email: user.email,
                         role: role,
-                        createdAt: new Date()
+                        createdAt: new Date(),
+                        emailVerified: true
                     });
                 }
                 
-                alert('Signed up successfully!');
-                 window.location.href = 'dashboard.html'; // Redirect to dashboard
+                 window.location.href = 'dashboard.html';
 
             } catch (error) {
                 formError.textContent = 'Failed to sign up with Google. Please try again.';
