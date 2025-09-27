@@ -126,453 +126,504 @@
     
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            function onFirebaseReady(callback) {
-                const interval = setInterval(() => {
-                    if (typeof firebase !== 'undefined' && typeof firebase.initializeApp === 'function' && typeof firebaseConfig !== 'undefined') {
-                        clearInterval(interval);
-                        callback();
-                    }
-                }, 50);
+    function onFirebaseReady(callback) {
+            const interval = setInterval(() => {
+                if (typeof firebase !== 'undefined' && typeof firebase.initializeApp === 'function' && typeof firebaseConfig !== 'undefined') {
+                    clearInterval(interval);
+                    callback();
+                }
+            }, 50);
+        }
+
+        onFirebaseReady(() => {
+            const app = firebase.initializeApp(firebaseConfig);
+            const auth = firebase.auth();
+            const db = firebase.firestore();
+
+            let currentUser = null;
+            let userData = null;
+            let currentClassId = null;
+            let currentClassData = null;
+            let unsubscribes = [];
+            let allLoadedClasses = {};
+
+            const userProfileBtn = document.getElementById('user-profile-btn');
+            const userProfileMenu = document.getElementById('user-profile-menu');
+            const mainContentArea = document.getElementById('main-content-area');
+
+            auth.onAuthStateChanged(user => {
+                if (user) {
+                    currentUser = user;
+                    fetchUserData(user.uid);
+                } else {
+                    window.location.href = 'login.html';
+                }
+            });
+
+            async function fetchUserData(uid) {
+                const userDoc = await db.collection('users').doc(uid).get();
+                if (userDoc.exists) {
+                    userData = { uid, ...userDoc.data() };
+                    updateProfileUI(currentUser, userData);
+                    listenForClasses(uid, userData.role);
+                    renderMainContent();
+                } else {
+                    auth.signOut();
+                }
             }
 
-            onFirebaseReady(() => {
-                const app = firebase.initializeApp(firebaseConfig);
-                const auth = firebase.auth();
-                const db = firebase.firestore();
+            function applyMarqueeIfNeeded(textEl, containerEl) {
+                setTimeout(() => {
+                    if (textEl.scrollWidth > containerEl.clientWidth) textEl.classList.add('marquee');
+                    else textEl.classList.remove('marquee');
+                }, 100);
+            }
 
-                let currentUser = null;
-                let userData = null;
-                let currentClassId = null;
-                let currentClassData = null;
-                let unsubscribes = [];
-                let allLoadedClasses = {};
+            function updateProfileUI(user, data) {
+                const displayNameEl = document.getElementById('user-display-name-menu');
+                const emailEl = document.getElementById('user-email-menu');
+                if (displayNameEl && emailEl) {
+                    displayNameEl.textContent = data.username;
+                    emailEl.textContent = user.email;
+                    applyMarqueeIfNeeded(displayNameEl, document.getElementById('user-display-name-container'));
+                    applyMarqueeIfNeeded(emailEl, document.getElementById('user-email-container'));
+                }
+                
+                const picEls = [document.getElementById('user-profile-pic'), document.getElementById('user-profile-pic-menu')];
+                const initialEls = [document.getElementById('user-profile-initial'), document.getElementById('user-profile-initial-menu')];
 
-                const userProfileBtn = document.getElementById('user-profile-btn');
-                const userProfileMenu = document.getElementById('user-profile-menu');
-                const mainContentArea = document.getElementById('main-content-area');
+                if (user.photoURL) {
+                    picEls.forEach(el => { el.src = user.photoURL; el.classList.remove('hidden'); });
+                    initialEls.forEach(el => el.classList.add('hidden'));
+                } else {
+                    const initial = data.username.charAt(0).toUpperCase();
+                    initialEls.forEach(el => { el.textContent = initial; el.classList.remove('hidden'); });
+                    picEls.forEach(el => el.classList.add('hidden'));
+                }
+                
+                document.getElementById('teacher-sidebar-actions').classList.toggle('hidden', data.role !== 'teacher');
+            }
 
-                auth.onAuthStateChanged(user => {
-                    if (user) {
-                        currentUser = user;
-                        fetchUserData(user.uid);
+            function listenForClasses(uid, role) {
+                unsubscribes.forEach(unsub => unsub());
+                unsubscribes = [];
+                allLoadedClasses = {};
+
+                const reRender = () => {
+                    const classesArray = Object.values(allLoadedClasses);
+                    renderClassList(classesArray);
+                    if (currentClassId && !allLoadedClasses[currentClassId]) {
+                        selectClass(null);
+                    } else if (currentClassId) {
+                        currentClassData = allLoadedClasses[currentClassId];
+                        renderMainContent(document.querySelector('#class-tabs .border-blue-500')?.dataset.tab || 'requests');
                     } else {
-                        window.location.href = 'login.html';
+                        renderMainContent();
+                    }
+                };
+                
+                const teacherQuery = db.collection('classes').where('teacherId', '==', uid);
+                unsubscribes.push(teacherQuery.onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                        if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
+                        else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
+                    });
+                    reRender();
+                }));
+
+                const studentQuery = db.collection('classes').where('studentIds', 'array-contains', uid);
+                unsubscribes.push(studentQuery.onSnapshot(snapshot => {
+                    snapshot.docChanges().forEach(change => {
+                       if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
+                       else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
+                    });
+                    reRender();
+                }));
+            }
+
+            function renderClassList(classes) {
+                const classListEl = document.getElementById('class-list');
+                document.getElementById('no-classes-sidebar').classList.toggle('hidden', classes.length > 0);
+                classListEl.innerHTML = '';
+                classes.sort((a,b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0)).forEach(cls => {
+                    const li = document.createElement('li');
+                    const isActive = currentClassId === cls.id;
+                    li.innerHTML = `<button data-class-id="${cls.id}" class="w-full text-left px-3 py-2 rounded-md font-medium text-sm transition-colors btn-bubbly ${isActive ? 'bg-blue-100 text-blue-800 font-semibold' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">${cls.name}</button>`;
+                    classListEl.appendChild(li);
+                });
+            }
+            
+            function selectClass(classData) {
+                currentClassId = classData ? classData.id : null;
+                currentClassData = classData;
+                renderClassList(Object.values(allLoadedClasses)); 
+                renderMainContent();
+            }
+
+            function renderMainContent(tab = 'requests') {
+                if (currentClassData) {
+                    mainContentArea.innerHTML = TPL.classView(currentClassData, userData, tab);
+                } else {
+                    mainContentArea.innerHTML = TPL.emptyState(userData);
+                }
+            }
+            
+            document.body.addEventListener('click', e => {
+                if (e.target.closest('#user-profile-btn')) {
+                    toggleComponent('user-profile-menu');
+                    return;
+                }
+                if (!e.target.closest('#user-profile-menu')) {
+                    hideComponent('user-profile-menu');
+                }
+                if(e.target.closest('#logout-btn')) auth.signOut();
+                
+                const classBtn = e.target.closest('#class-list button');
+                if (classBtn) selectClass(allLoadedClasses[classBtn.dataset.classId]);
+                
+                if(e.target.closest('#new-class-btn')) showModal(TPL.newClassChoiceModal());
+                if(e.target.closest('#join-class-btn')) showModal(TPL.joinClassModal());
+                if(e.target.closest('#create-manual-btn')) showModal(TPL.createClassModal());
+                if(e.target.closest('#import-gclass-btn')) handleGoogleImportClick();
+                if(e.target.closest('.modal-cancel-btn') || e.target.id === 'modal-backdrop') hideModal();
+
+                if(e.target.closest('#invite-link-btn')) copyInviteLink();
+                const tabBtn = e.target.closest('#class-tabs button');
+                if(tabBtn) renderMainContent(tabBtn.dataset.tab);
+                
+                if(e.target.closest('#add-preset-btn')) addPresetQuestion();
+                const removePresetBtn = e.target.closest('.remove-preset-btn');
+                if(removePresetBtn) removePresetQuestion(removePresetBtn.dataset.preset);
+                if(e.target.closest('#save-schedule-btn')) saveClassSchedule();
+                if(e.target.closest('#delete-class-btn')) showModal(TPL.deleteConfirmModal(currentClassData));
+                if(e.target.closest('#confirm-delete-class-btn')) deleteClass();
+                
+                const dropdownBtn = e.target.closest('.custom-dropdown-btn');
+                if (dropdownBtn) {
+                    const options = dropdownBtn.nextElementSibling;
+                    options.classList.toggle('hidden');
+                } else if (!e.target.closest('.custom-dropdown-options')) {
+                    document.querySelectorAll('.custom-dropdown-options').forEach(el => el.classList.add('hidden'));
+                }
+
+                const dropdownOption = e.target.closest('.custom-dropdown-option');
+                if (dropdownOption) {
+                    const dropdown = dropdownOption.closest('.relative');
+                    const btnText = dropdown.querySelector('.custom-dropdown-btn span');
+                    btnText.textContent = dropdownOption.dataset.value;
+                    dropdown.querySelector('.custom-dropdown-options').classList.add('hidden');
+                }
+            });
+            
+            document.body.addEventListener('submit', e => {
+                if(e.target.id === 'create-class-form') {
+                    e.preventDefault();
+                    const className = e.target.querySelector('#new-class-name').value.trim();
+                    if(className) createNewClass(className);
+                }
+            });
+
+            function copyInviteLink() {
+                const inviteURL = `${window.location.origin}/invite.html?classId=${currentClassId}`;
+                navigator.clipboard.writeText(inviteURL).then(() => {
+                    const msg = document.getElementById('invite-copied-msg');
+                    if (msg) {
+                        msg.classList.remove('hidden');
+                        setTimeout(() => msg.classList.add('hidden'), 2000);
                     }
                 });
+            }
+            
+            async function addPresetQuestion() {
+                const input = document.getElementById('new-preset-input');
+                const presetText = input.value.trim();
+                if (!presetText || !currentClassId) return;
+                
+                await db.collection('classes').doc(currentClassId).update({
+                    presetQuestions: firebase.firestore.FieldValue.arrayUnion(presetText)
+                });
+                input.value = '';
+            }
 
-                async function fetchUserData(uid) {
-                    const userDoc = await db.collection('users').doc(uid).get();
-                    if (userDoc.exists) {
-                        userData = { uid, ...userDoc.data() };
-                        updateProfileUI(currentUser, userData);
-                        listenForClasses(uid, userData.role);
-                        renderMainContent();
-                    } else {
-                        auth.signOut();
-                    }
-                }
+            async function removePresetQuestion(presetText) {
+                await db.collection('classes').doc(currentClassId).update({
+                    presetQuestions: firebase.firestore.FieldValue.arrayRemove(presetText)
+                });
+            }
+            
+            async function saveClassSchedule() {
+                const startHour = document.getElementById('start-hour').value;
+                const startMinute = document.getElementById('start-minute').value;
+                const startPeriod = document.getElementById('start-period-text').textContent;
+                const endHour = document.getElementById('end-hour').value;
+                const endMinute = document.getElementById('end-minute').value;
+                const endPeriod = document.getElementById('end-period-text').textContent;
+                
+                const schedule = {
+                    start: `${startHour}:${startMinute} ${startPeriod}`,
+                    end: `${endHour}:${endMinute} ${endPeriod}`
+                };
+                
+                await db.collection('classes').doc(currentClassId).update({ schedule });
+                alert('Schedule saved!');
+            }
+            
+            async function deleteClass() {
+                await db.collection('classes').doc(currentClassId).delete();
+                hideModal();
+            }
 
-                function applyMarqueeIfNeeded(textEl, containerEl) {
-                    setTimeout(() => {
-                        if (textEl.scrollWidth > containerEl.clientWidth) textEl.classList.add('marquee');
-                        else textEl.classList.remove('marquee');
-                    }, 100);
-                }
+            async function createNewClass(className) {
+                const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+                await db.collection('classes').add({
+                    name: className,
+                    teacherId: currentUser.uid,
+                    code: classCode,
+                    studentIds: [],
+                    presetQuestions: [],
+                    schedule: { start: "09:00 AM", end: "03:00 PM" },
+                    createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                });
+                hideModal();
+            }
+            
+            // --- MODIFIED GOOGLE API INTEGRATION ---
+            let auth2;
+            const SCOPE = 'https://www.googleapis.com/auth/classroom.courses.readonly';
 
-                function updateProfileUI(user, data) {
-                    const displayNameEl = document.getElementById('user-display-name-menu');
-                    const emailEl = document.getElementById('user-email-menu');
-                    if (displayNameEl && emailEl) {
-                         displayNameEl.textContent = data.username;
-                         emailEl.textContent = user.email;
-                         applyMarqueeIfNeeded(displayNameEl, document.getElementById('user-display-name-container'));
-                         applyMarqueeIfNeeded(emailEl, document.getElementById('user-email-container'));
-                    }
-                    
-                    const picEls = [document.getElementById('user-profile-pic'), document.getElementById('user-profile-pic-menu')];
-                    const initialEls = [document.getElementById('user-profile-initial'), document.getElementById('user-profile-initial-menu')];
+            async function handleGoogleImportClick() {
+                showModal(TPL.googleImportModal());
+                
+                const loadingEl = document.getElementById('g-import-loading');
+                const errorEl = document.getElementById('g-import-error');
+                loadingEl.classList.remove('hidden');
+                errorEl.classList.add('hidden');
+                
+                try {
+                    const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
+                    if (!secretsDoc.exists) throw new Error("Secrets doc not found.");
+                    const secrets = secretsDoc.data();
+                    const API_KEY = secrets.GoogleClassroomAPIKey;
+                    const CLIENT_ID = secrets.GoogleClientID;
+                    if (!API_KEY || !CLIENT_ID) throw new Error("API Key or Client ID missing.");
 
-                    if (user.photoURL) {
-                        picEls.forEach(el => { el.src = user.photoURL; el.classList.remove('hidden'); });
-                        initialEls.forEach(el => el.classList.add('hidden'));
-                    } else {
-                        const initial = data.username.charAt(0).toUpperCase();
-                        initialEls.forEach(el => { el.textContent = initial; el.classList.remove('hidden'); });
-                        picEls.forEach(el => el.classList.add('hidden'));
-                    }
-                    
-                    document.getElementById('teacher-sidebar-actions').classList.toggle('hidden', data.role !== 'teacher');
-                }
-
-                function listenForClasses(uid, role) {
-                    unsubscribes.forEach(unsub => unsub());
-                    unsubscribes = [];
-                    allLoadedClasses = {};
-
-                    const reRender = () => {
-                        const classesArray = Object.values(allLoadedClasses);
-                        renderClassList(classesArray);
-                        if (currentClassId && !allLoadedClasses[currentClassId]) {
-                            selectClass(null);
-                        } else if (currentClassId) {
-                            currentClassData = allLoadedClasses[currentClassId];
-                            renderMainContent(document.querySelector('#class-tabs .border-blue-500')?.dataset.tab || 'requests');
-                        } else {
-                            renderMainContent();
-                        }
-                    };
-                    
-                    const teacherQuery = db.collection('classes').where('teacherId', '==', uid);
-                    unsubscribes.push(teacherQuery.onSnapshot(snapshot => {
-                        snapshot.docChanges().forEach(change => {
-                            if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
-                            else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
-                        });
-                        reRender();
-                    }));
-
-                    const studentQuery = db.collection('classes').where('studentIds', 'array-contains', uid);
-                    unsubscribes.push(studentQuery.onSnapshot(snapshot => {
-                        snapshot.docChanges().forEach(change => {
-                           if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
-                           else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
-                        });
-                        reRender();
-                    }));
-                }
-
-                function renderClassList(classes) {
-                    const classListEl = document.getElementById('class-list');
-                    document.getElementById('no-classes-sidebar').classList.toggle('hidden', classes.length > 0);
-                    classListEl.innerHTML = '';
-                    classes.sort((a,b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0)).forEach(cls => {
-                        const li = document.createElement('li');
-                        const isActive = currentClassId === cls.id;
-                        li.innerHTML = `<button data-class-id="${cls.id}" class="w-full text-left px-3 py-2 rounded-md font-medium text-sm transition-colors btn-bubbly ${isActive ? 'bg-blue-100 text-blue-800 font-semibold' : 'text-gray-600 hover:bg-gray-100 hover:text-gray-900'}">${cls.name}</button>`;
-                        classListEl.appendChild(li);
+                    // Initialize the gapi client and auth2 library
+                    await new Promise(resolve => gapi.load('client:auth2', resolve));
+                    await gapi.client.init({
+                        apiKey: API_KEY,
+                        clientId: CLIENT_ID,
+                        scope: SCOPE,
+                        discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest"]
                     });
+                    
+                    auth2 = gapi.auth2.getAuthInstance();
+                    
+                    if (auth2.isSignedIn.get()) {
+                        await listGoogleCourses();
+                    } else {
+                        // Sign in the user, prompting for consent
+                        await auth2.signIn();
+                        await listGoogleCourses();
+                    }
+                } catch (error) {
+                    loadingEl.classList.add('hidden');
+                    errorEl.textContent = `Error: ${error.message}`;
+                    errorEl.classList.remove('hidden');
                 }
-                
-                function selectClass(classData) {
-                    currentClassId = classData ? classData.id : null;
-                    currentClassData = classData;
-                    renderClassList(Object.values(allLoadedClasses)); 
-                    renderMainContent();
+            }
+            
+            async function listGoogleCourses() {
+                const listEl = document.getElementById('g-import-list');
+                const loadingEl = document.getElementById('g-import-loading');
+                const errorEl = document.getElementById('g-import-error');
+
+                try {
+                    const response = await gapi.client.classroom.courses.list({ teacherId: 'me', courseStates: 'ACTIVE' });
+                    loadingEl.classList.add('hidden');
+                    const courses = response.result.courses;
+
+                    if (courses && courses.length > 0) {
+                        listEl.innerHTML = courses.map(c => `
+                            <li class="flex justify-between items-center p-3 bg-gray-50 rounded-md">
+                                <span class="font-medium text-gray-800">${c.name}</span>
+                                <button data-course-id="${c.id}" data-course-name="${c.name}" class="import-g-class-btn bg-blue-500 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-600 btn-bubbly">Import</button>
+                            </li>`).join('');
+                        
+                        document.querySelectorAll('.import-g-class-btn').forEach(button => {
+                            button.addEventListener('click', () => importGoogleClass(button.dataset.courseId, button.dataset.courseName));
+                        });
+
+                    } else {
+                        listEl.innerHTML = '<p class="text-center text-gray-500">No active courses found.</p>';
+                    }
+                } catch (err) {
+                    loadingEl.classList.add('hidden');
+                    errorEl.textContent = `Error fetching courses: ${err.message || err.result.error.message}`;
+                    errorEl.classList.remove('hidden');
+                }
+            }
+
+            async function importGoogleClass(googleCourseId, googleCourseName) {
+                // Show a loading state in the modal
+                const importBtn = document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);
+                if (importBtn) {
+                    importBtn.textContent = 'Importing...';
+                    importBtn.disabled = true;
                 }
 
-                function renderMainContent(tab = 'requests') {
-                    if (currentClassData) {
-                        mainContentArea.innerHTML = TPL.classView(currentClassData, userData, tab);
-                    } else {
-                        mainContentArea.innerHTML = TPL.emptyState(userData);
-                    }
-                }
-                
-                document.body.addEventListener('click', e => {
-                    if (e.target.closest('#user-profile-btn')) {
-                        toggleComponent('user-profile-menu');
+                try {
+                    // Check if the class already exists in Firestore
+                    const existingClass = await db.collection('classes').where('googleCourseId', '==', googleCourseId).limit(1).get();
+                    if (!existingClass.empty) {
+                        alert('This class has already been imported.');
                         return;
                     }
-                    if (!e.target.closest('#user-profile-menu')) {
-                        hideComponent('user-profile-menu');
-                    }
-                    if(e.target.closest('#logout-btn')) auth.signOut();
                     
-                    const classBtn = e.target.closest('#class-list button');
-                    if (classBtn) selectClass(allLoadedClasses[classBtn.dataset.classId]);
-                    
-                    if(e.target.closest('#new-class-btn')) showModal(TPL.newClassChoiceModal());
-                    if(e.target.closest('#join-class-btn')) showModal(TPL.joinClassModal());
-                    if(e.target.closest('#create-manual-btn')) showModal(TPL.createClassModal());
-                    if(e.target.closest('#import-gclass-btn')) handleGoogleImportClick();
-                    if(e.target.closest('.modal-cancel-btn') || e.target.id === 'modal-backdrop') hideModal();
-
-                    if(e.target.closest('#invite-link-btn')) copyInviteLink();
-                    const tabBtn = e.target.closest('#class-tabs button');
-                    if(tabBtn) renderMainContent(tabBtn.dataset.tab);
-                    
-                    if(e.target.closest('#add-preset-btn')) addPresetQuestion();
-                    const removePresetBtn = e.target.closest('.remove-preset-btn');
-                    if(removePresetBtn) removePresetQuestion(removePresetBtn.dataset.preset);
-                    if(e.target.closest('#save-schedule-btn')) saveClassSchedule();
-                    if(e.target.closest('#delete-class-btn')) showModal(TPL.deleteConfirmModal(currentClassData));
-                    if(e.target.closest('#confirm-delete-class-btn')) deleteClass();
-                    
-                    const dropdownBtn = e.target.closest('.custom-dropdown-btn');
-                    if (dropdownBtn) {
-                        const options = dropdownBtn.nextElementSibling;
-                        options.classList.toggle('hidden');
-                    } else if (!e.target.closest('.custom-dropdown-options')) {
-                        document.querySelectorAll('.custom-dropdown-options').forEach(el => el.classList.add('hidden'));
-                    }
-
-                    const dropdownOption = e.target.closest('.custom-dropdown-option');
-                    if (dropdownOption) {
-                        const dropdown = dropdownOption.closest('.relative');
-                        const btnText = dropdown.querySelector('.custom-dropdown-btn span');
-                        btnText.textContent = dropdownOption.dataset.value;
-                        dropdown.querySelector('.custom-dropdown-options').classList.add('hidden');
-                    }
-                });
-                
-                document.body.addEventListener('submit', e => {
-                    if(e.target.id === 'create-class-form') {
-                        e.preventDefault();
-                        const className = e.target.querySelector('#new-class-name').value.trim();
-                        if(className) createNewClass(className);
-                    }
-                });
-
-                function copyInviteLink() {
-                    const inviteURL = `${window.location.origin}/invite.html?classId=${currentClassId}`;
-                    navigator.clipboard.writeText(inviteURL).then(() => {
-                        const msg = document.getElementById('invite-copied-msg');
-                        if (msg) {
-                             msg.classList.remove('hidden');
-                             setTimeout(() => msg.classList.add('hidden'), 2000);
-                        }
-                    });
-                }
-                
-                async function addPresetQuestion() {
-                    const input = document.getElementById('new-preset-input');
-                    const presetText = input.value.trim();
-                    if (!presetText || !currentClassId) return;
-                    
-                    await db.collection('classes').doc(currentClassId).update({
-                        presetQuestions: firebase.firestore.FieldValue.arrayUnion(presetText)
-                    });
-                    input.value = '';
-                }
-
-                async function removePresetQuestion(presetText) {
-                    await db.collection('classes').doc(currentClassId).update({
-                        presetQuestions: firebase.firestore.FieldValue.arrayRemove(presetText)
-                    });
-                }
-                
-                async function saveClassSchedule() {
-                    const startHour = document.getElementById('start-hour').value;
-                    const startMinute = document.getElementById('start-minute').value;
-                    const startPeriod = document.getElementById('start-period-text').textContent;
-                    const endHour = document.getElementById('end-hour').value;
-                    const endMinute = document.getElementById('end-minute').value;
-                    const endPeriod = document.getElementById('end-period-text').textContent;
-                    
-                    const schedule = {
-                        start: `${startHour}:${startMinute} ${startPeriod}`,
-                        end: `${endHour}:${endMinute} ${endPeriod}`
-                    };
-                    
-                    await db.collection('classes').doc(currentClassId).update({ schedule });
-                    alert('Schedule saved!');
-                }
-                
-                async function deleteClass() {
-                    await db.collection('classes').doc(currentClassId).delete();
-                    hideModal();
-                }
-
-                async function createNewClass(className) {
+                    // Create a new class in your Firestore database
                     const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
                     await db.collection('classes').add({
-                        name: className,
+                        name: googleCourseName,
                         teacherId: currentUser.uid,
-                        code: classCode,
+                        code: classCode, // This can be a separate field or generated
+                        googleCourseId: googleCourseId,
                         studentIds: [],
                         presetQuestions: [],
                         schedule: { start: "09:00 AM", end: "03:00 PM" },
                         createdAt: firebase.firestore.FieldValue.serverTimestamp()
                     });
-                    hideModal();
-                }
-                
-                let gapiInited = false;
-                let tokenClient;
-                function ensureGapiIsReady(callback) {
-                    const interval = setInterval(() => {
-                        if(typeof gapi !== 'undefined' && typeof gapi.load === 'function' && typeof google !== 'undefined' && typeof google.accounts.oauth2.initTokenModelClient === 'function') {
-                            clearInterval(interval);
-                            callback();
-                        }
-                    }, 100);
-                }
-
-                async function handleGoogleImportClick() {
-                    showModal(TPL.googleImportModal());
                     
-                    ensureGapiIsReady(async () => {
-                         try {
-                            const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
-                            if (!secretsDoc.exists) throw new Error("Secrets doc not found.");
-                            const secrets = secretsDoc.data();
-                            const API_KEY = secrets.GoogleClassroomAPIKey;
-                            const CLIENT_ID = secrets.GoogleClientID;
-                            if (!API_KEY || !CLIENT_ID) throw new Error("API Key or Client ID missing.");
-
-                            if (!gapiInited) {
-                                await new Promise((resolve, reject) => gapi.load('client', {callback: resolve, onerror: reject}));
-                                await gapi.client.init({ apiKey: API_KEY, discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest"] });
-                                gapiInited = true;
-                            }
-
-                            tokenClient = google.accounts.oauth2.initTokenModelClient({
-                                client_id: CLIENT_ID,
-                                scope: 'https://www.googleapis.com/auth/classroom.courses.readonly',
-                                callback: async (tokenResponse) => {
-                                    if (tokenResponse.error) throw new Error(tokenResponse.error);
-                                    await listGoogleCourses();
-                                },
-                            });
-                            tokenClient.requestAccessToken({prompt: ''});
-                        } catch (error) {
-                            const errorDiv = document.getElementById('g-import-error');
-                            if(errorDiv) errorDiv.textContent = `Error: ${error.message}`;
-                        }
-                    });
-                }
-                
-                async function listGoogleCourses() {
-                    const listEl = document.getElementById('g-import-list');
-                    try {
-                        const response = await gapi.client.classroom.courses.list({ teacherId: 'me', courseStates: 'ACTIVE' });
-                        document.getElementById('g-import-loading').classList.add('hidden');
-                        const courses = response.result.courses;
-                        if (courses && courses.length > 0) {
-                            listEl.innerHTML = courses.map(c => `
-                                <li class="flex justify-between items-center p-3 bg-gray-50 rounded-md">
-                                    <span class="font-medium text-gray-800">${c.name}</span>
-                                    <button data-course-name="${c.name}" class="import-g-class-btn bg-blue-500 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-600 btn-bubbly">Import</button>
-                                </li>`).join('');
-                        } else {
-                            listEl.innerHTML = '<p class="text-center text-gray-500">No active courses found.</p>';
-                        }
-                    } catch (err) {
-                        document.getElementById('g-import-error').textContent = `Error fetching courses: ${err.result.error.message}`;
+                    alert(`Successfully imported "${googleCourseName}"!`);
+                    hideModal();
+                } catch (error) {
+                    console.error("Error importing Google Classroom:", error);
+                    alert(`Failed to import class: ${error.message}`);
+                    if (importBtn) {
+                        importBtn.textContent = 'Import';
+                        importBtn.disabled = false;
                     }
                 }
+            }
+            
+            // ... (Your remaining showComponent, hideComponent, toggleComponent, showModal, hideModal, and TPL objects go here) ...
+            function showComponent(elementId) {
+                const el = document.getElementById(elementId);
+                if (!el || !el.classList.contains('hidden')) return;
+                el.classList.remove('hidden');
+                el.classList.add('fade-enter-active');
+                setTimeout(() => el.classList.remove('fade-enter-active'), 200);
+            }
+            
+            function hideComponent(elementId) {
+                const el = document.getElementById(elementId);
+                if (!el || el.classList.contains('hidden')) return;
+                el.classList.add('fade-leave-active');
+                setTimeout(() => {
+                    el.classList.add('hidden');
+                    el.classList.remove('fade-leave-active');
+                }, 200);
+            }
 
-                function showComponent(elementId) {
-                    const el = document.getElementById(elementId);
-                    if (!el || !el.classList.contains('hidden')) return;
-                    el.classList.remove('hidden');
-                    el.classList.add('fade-enter-active');
-                    setTimeout(() => el.classList.remove('fade-enter-active'), 200);
-                }
-                
-                function hideComponent(elementId) {
-                    const el = document.getElementById(elementId);
-                    if (!el || el.classList.contains('hidden')) return;
-                    el.classList.add('fade-leave-active');
+            function toggleComponent(elementId) {
+                const el = document.getElementById(elementId);
+                if (el.classList.contains('hidden')) showComponent(elementId);
+                else hideComponent(elementId);
+            }
+            
+            const modalContainer = document.getElementById('modal-container');
+            const modalBackdrop = document.getElementById('modal-backdrop');
+            function showModal(modalHTML) {
+                modalContainer.innerHTML = modalHTML;
+                modalBackdrop.classList.remove('hidden', 'fade-leave-to');
+                modalBackdrop.classList.add('fade-enter-active');
+                const modalDialog = modalContainer.firstElementChild;
+                modalDialog.classList.add('fade-enter-active');
+                setTimeout(() => {
+                    modalBackdrop.classList.remove('fade-enter-active');
+                    modalDialog.classList.remove('fade-enter-active');
+                }, 200);
+            }
+            
+            function hideModal() {
+                const modalDialog = modalContainer.firstElementChild;
+                if(modalDialog) {
+                    modalBackdrop.classList.add('fade-leave-active');
+                    modalDialog.classList.add('fade-leave-active');
                     setTimeout(() => {
-                        el.classList.add('hidden');
-                        el.classList.remove('fade-leave-active');
+                        modalContainer.innerHTML = '';
+                        modalBackdrop.classList.add('hidden');
+                        modalBackdrop.classList.remove('fade-leave-active');
                     }, 200);
                 }
+            }
 
-                function toggleComponent(elementId) {
-                    const el = document.getElementById(elementId);
-                    if (el.classList.contains('hidden')) showComponent(elementId);
-                    else hideComponent(elementId);
-                }
-                
-                const modalContainer = document.getElementById('modal-container');
-                const modalBackdrop = document.getElementById('modal-backdrop');
-                function showModal(modalHTML) {
-                    modalContainer.innerHTML = modalHTML;
-                    modalBackdrop.classList.remove('hidden', 'fade-leave-to');
-                    modalBackdrop.classList.add('fade-enter-active');
-                    const modalDialog = modalContainer.firstElementChild;
-                    modalDialog.classList.add('fade-enter-active');
-                    setTimeout(() => {
-                        modalBackdrop.classList.remove('fade-enter-active');
-                        modalDialog.classList.remove('fade-enter-active');
-                    }, 200);
-                }
-                
-                function hideModal() {
-                    const modalDialog = modalContainer.firstElementChild;
-                    if(modalDialog) {
-                         modalBackdrop.classList.add('fade-leave-active');
-                         modalDialog.classList.add('fade-leave-active');
-                         setTimeout(() => {
-                            modalContainer.innerHTML = '';
-                            modalBackdrop.classList.add('hidden');
-                            modalBackdrop.classList.remove('fade-leave-active');
-                        }, 200);
-                    }
-                }
-
-                const TPL = {
-                    emptyState: (user) => `
-                        <div class="h-full flex items-center justify-center text-center fade-enter-active">
-                            <div>
-                                 <svg class="w-16 h-16 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
-                                 <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome, ${user?.username || ''}!</h2>
-                                 <p class="mt-1 text-gray-500">Select a class from the sidebar or create a new one to get started.</p>
-                            </div>
+            const TPL = {
+                emptyState: (user) => `
+                    <div class="h-full flex items-center justify-center text-center fade-enter-active">
+                        <div>
+                            <svg class="w-16 h-16 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+                            <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome, ${user?.username || ''}!</h2>
+                            <p class="mt-1 text-gray-500">Select a class from the sidebar or create a new one to get started.</p>
                         </div>
-                    `,
-                    classView: (cls, user, tab) => `
-                        <div class="fade-enter-active">
-                            <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-6">
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <h2 id="class-name-header" class="text-2xl font-bold text-gray-800 font-poppins">${cls.name}</h2>
-                                        <div class="flex items-center space-x-2 mt-1">
-                                            <p class="text-sm text-gray-500">Code: ${cls.code}</p>
-                                            ${user.role === 'teacher' ? `<button id="invite-link-btn" title="Copy Invite Link" class="text-gray-400 hover:text-blue-600 btn-bubbly"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg></button>` : ''}
-                                            <span id="invite-copied-msg" class="text-xs text-green-600 font-medium hidden">Copied!</span>
-                                        </div>
-                                    </div>
-                                    <div id="class-tabs" class="border-b border-gray-200">
-                                        <nav class="-mb-px flex space-x-6" aria-label="Tabs">
-                                            <button data-tab="requests" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'requests' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Requests</button>
-                                            ${user.role === 'teacher' ? `<button data-tab="settings" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'settings' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Settings</button>` : ''}
-                                        </nav>
+                    </div>
+                `,
+                classView: (cls, user, tab) => `
+                    <div class="fade-enter-active">
+                        <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-6">
+                            <div class="flex justify-between items-start">
+                                <div>
+                                    <h2 id="class-name-header" class="text-2xl font-bold text-gray-800 font-poppins">${cls.name}</h2>
+                                    <div class="flex items-center space-x-2 mt-1">
+                                        <p class="text-sm text-gray-500">Code: ${cls.code}</p>
+                                        ${user.role === 'teacher' ? `<button id="invite-link-btn" title="Copy Invite Link" class="text-gray-400 hover:text-blue-600 btn-bubbly"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg></button>` : ''}
+                                        <span id="invite-copied-msg" class="text-xs text-green-600 font-medium hidden">Copied!</span>
                                     </div>
                                 </div>
+                                <div id="class-tabs" class="border-b border-gray-200">
+                                    <nav class="-mb-px flex space-x-6" aria-label="Tabs">
+                                        <button data-tab="requests" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'requests' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Requests</button>
+                                        ${user.role === 'teacher' ? `<button data-tab="settings" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'settings' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Settings</button>` : ''}
+                                    </nav>
+                                </div>
                             </div>
-                            ${tab === 'requests' ? TPL.requestsView(cls) : TPL.settingsView(cls)}
                         </div>
-                    `,
-                    requestsView: (cls) => `<div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200"><h3 class="text-lg font-semibold text-gray-800">Student Requests</h3><p class="text-gray-500 mt-2">Coming Soon: A real-time list of student help requests will appear here.</p></div>`,
-                    settingsView: (cls) => `
-                        <div class="max-w-4xl mx-auto space-y-8">
-                           ${TPL.settingsGeneral(cls)}
-                           ${TPL.settingsSchedule(cls)}
-                           ${TPL.settingsPresets(cls)}
-                           ${TPL.settingsDanger(cls)}
-                        </div>`,
-                    settingsGeneral: (cls) => `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">General</h3><div class="space-y-4"><div><label for="class-name-input" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="class-name-input" value="${cls.name}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"></div><button class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Changes</button></div></div>`,
-                    settingsSchedule: (cls) => {
-                        const { start = '09:00 AM', end = '03:00 PM' } = cls.schedule || {};
-                        const [startTime, startPeriod] = start.split(' ');
-                        const [startHour, startMinute] = startTime.split(':');
-                        const [endTime, endPeriod] = end.split(' ');
-                        const [endHour, endMinute] = endTime.split(':');
+                        ${tab === 'requests' ? TPL.requestsView(cls) : TPL.settingsView(cls)}
+                    </div>
+                `,
+                requestsView: (cls) => `<div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200"><h3 class="text-lg font-semibold text-gray-800">Student Requests</h3><p class="text-gray-500 mt-2">Coming Soon: A real-time list of student help requests will appear here.</p></div>`,
+                settingsView: (cls) => `
+                    <div class="max-w-4xl mx-auto space-y-8">
+                        ${TPL.settingsGeneral(cls)}
+                        ${TPL.settingsSchedule(cls)}
+                        ${TPL.settingsPresets(cls)}
+                        ${TPL.settingsDanger(cls)}
+                    </div>`,
+                settingsGeneral: (cls) => `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">General</h3><div class="space-y-4"><div><label for="class-name-input" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="class-name-input" value="${cls.name}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"></div><button class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Changes</button></div></div>`,
+                settingsSchedule: (cls) => {
+                    const { start = '09:00 AM', end = '03:00 PM' } = cls.schedule || {};
+                    const [startTime, startPeriod] = start.split(' ');
+                    const [startHour, startMinute] = startTime.split(':');
+                    const [endTime, endPeriod] = end.split(' ');
+                    const [endHour, endMinute] = endTime.split(':');
 
-                        const timeInputClasses = 'w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
-                        const dropdownBtnClasses = 'relative w-24 cursor-pointer rounded-md border border-gray-300 bg-white py-2 pl-3 pr-10 text-left shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
-                        const dropdownOptionsClasses = 'absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden';
-                        const dropdownOptionClasses = 'cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50';
+                    const timeInputClasses = 'w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
+                    const dropdownBtnClasses = 'relative w-24 cursor-pointer rounded-md border border-gray-300 bg-white py-2 pl-3 pr-10 text-left shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
+                    const dropdownOptionsClasses = 'absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden';
+                    const dropdownOptionClasses = 'cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50';
 
-                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Class Schedule</h3><div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Starts at</label><div class="mt-1 flex items-center gap-2"><input type="text" id="start-hour" value="${startHour}" maxlength="2" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="text" id="start-minute" value="${startMinute}" maxlength="2" class="${timeInputClasses}"><div class="relative"><button type="button" class="custom-dropdown-btn ${dropdownBtnClasses}"><span id="start-period-text">${startPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" /></svg></span></button><ul class="custom-dropdown-options ${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Ends at</label><div class="mt-1 flex items-center gap-2"><input type="text" id="end-hour" value="${endHour}" maxlength="2" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="text" id="end-minute" value="${endMinute}" maxlength="2" class="${timeInputClasses}"><div class="relative"><button type="button" class="custom-dropdown-btn ${dropdownBtnClasses}"><span id="end-period-text">${endPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" /></svg></span></button><ul class="custom-dropdown-options ${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div></div><p class="mt-3 text-xs text-gray-500">Note: Uses local device time, assumed for weekdays.</p><button id="save-schedule-btn" class="mt-4 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button></div>`;
-                    },
-                    settingsPresets: (cls) => {
-                        const presets = cls.presetQuestions || [];
-                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Preset Questions</h3><div id="preset-questions-list" class="space-y-3 mb-4">${presets.map(p => `<div class="flex items-center justify-between bg-gray-50 p-2 rounded-md"><span class="text-sm text-gray-800">${p}</span><button data-preset="${p}" class="remove-preset-btn text-gray-400 hover:text-red-600 btn-bubbly"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg></button></div>`).join('') || '<p class="text-sm text-gray-500">No preset questions added yet.</p>'}</div><div class="flex space-x-2"><input type="text" id="new-preset-input" placeholder="e.g., I need help with Question 5" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"><button id="add-preset-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 whitespace-nowrap btn-bubbly">Add</button></div></div>`;
-                    },
-                    settingsDanger: (cls) => `<div class="bg-red-50 p-6 rounded-lg border border-red-200"><h3 class="text-lg font-semibold text-red-800 border-b border-red-200 pb-3 mb-4 font-poppins">Danger Zone</h3><div><p class="text-sm text-red-700">Deleting this class is permanent. All associated data will be lost, and students will be removed.</p><button id="delete-class-btn" class="mt-4 bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 btn-bubbly">Delete This Class</button></div></div>`,
-                    newClassChoiceModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><svg class="w-8 h-8 text-blue-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg><span class="font-semibold text-gray-700">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><img src="../images/google-classroom.png" class="w-8 h-8 mb-2"><span class="font-semibold text-gray-700">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
-                    createClassModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Create New Class</h3><form id="create-class-form" class="mt-4 space-y-4"><div><label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="new-class-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 btn-bubbly">Create</button></div></form></div>`,
-                    googleImportModal: () => `<div class="relative bg-white w-full max-w-lg p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Import from Google Classroom</h3><div id="g-import-content" class="mt-4"><div id="g-import-loading" class="text-center"><p class="text-gray-600">Connecting...</p></div><p id="g-import-error" class="text-center text-red-600 hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul></div><div class="flex justify-end mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
-                    deleteConfirmModal: (cls) => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-red-800 font-poppins">Delete Class</h3><p class="mt-2 text-gray-600">Are you sure you want to permanently delete "${cls.name}"? This action cannot be undone.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 btn-bubbly">Yes, Delete</button></div></div>`
-                };
-
-            });
+                    return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Class Schedule</h3><div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Starts at</label><div class="mt-1 flex items-center gap-2"><input type="text" id="start-hour" value="${startHour}" maxlength="2" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="text" id="start-minute" value="${startMinute}" maxlength="2" class="${timeInputClasses}"><div class="relative"><button type="button" class="custom-dropdown-btn ${dropdownBtnClasses}"><span id="start-period-text">${startPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" /></svg></span></button><ul class="custom-dropdown-options ${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Ends at</label><div class="mt-1 flex items-center gap-2"><input type="text" id="end-hour" value="${endHour}" maxlength="2" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="text" id="end-minute" value="${endMinute}" maxlength="2" class="${timeInputClasses}"><div class="relative"><button type="button" class="custom-dropdown-btn ${dropdownBtnClasses}"><span id="end-period-text">${endPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" /></svg></span></button><ul class="custom-dropdown-options ${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div></div><p class="mt-3 text-xs text-gray-500">Note: Uses local device time, assumed for weekdays.</p><button id="save-schedule-btn" class="mt-4 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button></div>`;
+                },
+                settingsPresets: (cls) => {
+                    const presets = cls.presetQuestions || [];
+                    return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Preset Questions</h3><div id="preset-questions-list" class="space-y-3 mb-4">${presets.map(p => `<div class="flex items-center justify-between bg-gray-50 p-2 rounded-md"><span class="text-sm text-gray-800">${p}</span><button data-preset="${p}" class="remove-preset-btn text-gray-400 hover:text-red-600 btn-bubbly"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg></button></div>`).join('') || '<p class="text-sm text-gray-500">No preset questions added yet.</p>'}</div><div class="flex space-x-2"><input type="text" id="new-preset-input" placeholder="e.g., I need help with Question 5" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"><button id="add-preset-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 whitespace-nowrap btn-bubbly">Add</button></div></div>`;
+                },
+                settingsDanger: (cls) => `<div class="bg-red-50 p-6 rounded-lg border border-red-200"><h3 class="text-lg font-semibold text-red-800 border-b border-red-200 pb-3 mb-4 font-poppins">Danger Zone</h3><div><p class="text-sm text-red-700">Deleting this class is permanent. All associated data will be lost, and students will be removed.</p><button id="delete-class-btn" class="mt-4 bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 btn-bubbly">Delete This Class</button></div></div>`,
+                newClassChoiceModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><svg class="w-8 h-8 text-blue-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z"></path></svg><span class="font-semibold text-gray-700">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><img src="../images/google-classroom.png" class="w-8 h-8 mb-2"><span class="font-semibold text-gray-700">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
+                createClassModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Create New Class</h3><form id="create-class-form" class="mt-4 space-y-4"><div><label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="new-class-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 btn-bubbly">Create</button></div></form></div>`,
+                googleImportModal: () => `<div class="relative bg-white w-full max-w-lg p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Import from Google Classroom</h3><div id="g-import-content" class="mt-4"><div id="g-import-loading" class="text-center"><p class="text-gray-600">Connecting...</p></div><p id="g-import-error" class="text-center text-red-600 hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul></div><div class="flex justify-end mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
+                deleteConfirmModal: (cls) => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-red-800 font-poppins">Delete Class</h3><p class="mt-2 text-gray-600">Are you sure you want to permanently delete "${cls.name}"? This action cannot be undone.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 btn-bubbly">Yes, Delete</button></div></div>`
+            };
         });
-    </script>
+    });
+</script>
 </body>
 </html>
-
