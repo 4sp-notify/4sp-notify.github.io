@@ -118,7 +118,6 @@
         <!-- Modal Content Injected Here -->
     </div>
 
-
     <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
@@ -217,7 +216,7 @@
                             selectClass(null);
                         } else if (currentClassId) {
                             currentClassData = allLoadedClasses[currentClassId];
-                            selectClass(currentClassData);
+                            renderMainContent(document.querySelector('#class-tabs .border-blue-500')?.dataset.tab || 'requests');
                         } else {
                             renderMainContent();
                         }
@@ -299,7 +298,6 @@
                     if(e.target.closest('#delete-class-btn')) showModal(TPL.deleteConfirmModal(currentClassData));
                     if(e.target.closest('#confirm-delete-class-btn')) deleteClass();
                     
-                    // Custom Dropdown Logic
                     const dropdownBtn = e.target.closest('.custom-dropdown-btn');
                     if (dropdownBtn) {
                         const options = dropdownBtn.nextElementSibling;
@@ -391,35 +389,47 @@
                 
                 let gapiInited = false;
                 let tokenClient;
+                function ensureGapiIsReady(callback) {
+                    const interval = setInterval(() => {
+                        if(typeof gapi !== 'undefined' && typeof gapi.load === 'function' && typeof google !== 'undefined' && typeof google.accounts.oauth2.initTokenModelClient === 'function') {
+                            clearInterval(interval);
+                            callback();
+                        }
+                    }, 100);
+                }
+
                 async function handleGoogleImportClick() {
                     showModal(TPL.googleImportModal());
-                    try {
-                        const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
-                        if (!secretsDoc.exists) throw new Error("Secrets doc not found.");
-                        const secrets = secretsDoc.data();
-                        const API_KEY = secrets.GoogleClassroomAPIKey;
-                        const CLIENT_ID = secrets.GoogleClientID;
-                        if (!API_KEY || !CLIENT_ID) throw new Error("API Key or Client ID missing.");
+                    
+                    ensureGapiIsReady(async () => {
+                         try {
+                            const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
+                            if (!secretsDoc.exists) throw new Error("Secrets doc not found.");
+                            const secrets = secretsDoc.data();
+                            const API_KEY = secrets.GoogleClassroomAPIKey;
+                            const CLIENT_ID = secrets.GoogleClientID;
+                            if (!API_KEY || !CLIENT_ID) throw new Error("API Key or Client ID missing.");
 
-                        if (!gapiInited) {
-                            await new Promise((resolve) => gapi.load('client', resolve));
-                            await gapi.client.init({ apiKey: API_KEY, discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest"] });
-                            gapiInited = true;
+                            if (!gapiInited) {
+                                await new Promise((resolve, reject) => gapi.load('client', {callback: resolve, onerror: reject}));
+                                await gapi.client.init({ apiKey: API_KEY, discoveryDocs: ["https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest"] });
+                                gapiInited = true;
+                            }
+
+                            tokenClient = google.accounts.oauth2.initTokenModelClient({
+                                client_id: CLIENT_ID,
+                                scope: 'https://www.googleapis.com/auth/classroom.courses.readonly',
+                                callback: async (tokenResponse) => {
+                                    if (tokenResponse.error) throw new Error(tokenResponse.error);
+                                    await listGoogleCourses();
+                                },
+                            });
+                            tokenClient.requestAccessToken({prompt: ''});
+                        } catch (error) {
+                            const errorDiv = document.getElementById('g-import-error');
+                            if(errorDiv) errorDiv.textContent = `Error: ${error.message}`;
                         }
-
-                        tokenClient = google.accounts.oauth2.initTokenModelClient({
-                            client_id: CLIENT_ID,
-                            scope: 'https://www.googleapis.com/auth/classroom.courses.readonly',
-                            callback: async (tokenResponse) => {
-                                if (tokenResponse.error) throw new Error(tokenResponse.error);
-                                await listGoogleCourses();
-                            },
-                        });
-                        tokenClient.requestAccessToken({prompt: ''});
-                    } catch (error) {
-                        const errorDiv = document.getElementById('g-import-error');
-                        if(errorDiv) errorDiv.textContent = `Error: ${error.message}`;
-                    }
+                    });
                 }
                 
                 async function listGoogleCourses() {
@@ -547,7 +557,7 @@
                         const dropdownOptionsClasses = 'absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden';
                         const dropdownOptionClasses = 'cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50';
 
-                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Class Schedule</h3><div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Starts at</label><div class="mt-1 flex items-center gap-2"><input type="text" id="start-hour" value="${startHour}" maxlength="2" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="text" id="start-minute" value="${startMinute}" maxlength="2" class="${timeInputClasses}"><div class="relative"><button type="button" class="custom-dropdown-btn ${dropdownBtnClasses}"><span id="start-period-text">${startPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a.75.75 0 01.53.22l3.5 3.5a.75.75 0 01-1.06 1.06L10 4.81V16.5a.75.75 0 01-1.5 0V4.81L5.53 7.78a.75.75 0 01-1.06-1.06l3.5-3.5A.75.75 0 0110 3z" clip-rule="evenodd" /></svg></span></button><ul class="custom-dropdown-options ${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Ends at</label><div class="mt-1 flex items-center gap-2"><input type="text" id="end-hour" value="${endHour}" maxlength="2" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="text" id="end-minute" value="${endMinute}" maxlength="2" class="${timeInputClasses}"><div class="relative"><button type="button" class="custom-dropdown-btn ${dropdownBtnClasses}"><span id="end-period-text">${endPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M10 3a.75.75 0 01.53.22l3.5 3.5a.75.75 0 01-1.06 1.06L10 4.81V16.5a.75.75 0 01-1.5 0V4.81L5.53 7.78a.75.75 0 01-1.06-1.06l3.5-3.5A.75.75 0 0110 3z" clip-rule="evenodd" /></svg></span></button><ul class="custom-dropdown-options ${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div></div><p class="mt-3 text-xs text-gray-500">Note: Uses local device time, assumed for weekdays.</p><button id="save-schedule-btn" class="mt-4 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button></div>`;
+                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Class Schedule</h3><div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Starts at</label><div class="mt-1 flex items-center gap-2"><input type="text" id="start-hour" value="${startHour}" maxlength="2" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="text" id="start-minute" value="${startMinute}" maxlength="2" class="${timeInputClasses}"><div class="relative"><button type="button" class="custom-dropdown-btn ${dropdownBtnClasses}"><span id="start-period-text">${startPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" /></svg></span></button><ul class="custom-dropdown-options ${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Ends at</label><div class="mt-1 flex items-center gap-2"><input type="text" id="end-hour" value="${endHour}" maxlength="2" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="text" id="end-minute" value="${endMinute}" maxlength="2" class="${timeInputClasses}"><div class="relative"><button type="button" class="custom-dropdown-btn ${dropdownBtnClasses}"><span id="end-period-text">${endPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" /></svg></span></button><ul class="custom-dropdown-options ${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div></div><p class="mt-3 text-xs text-gray-500">Note: Uses local device time, assumed for weekdays.</p><button id="save-schedule-btn" class="mt-4 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button></div>`;
                     },
                     settingsPresets: (cls) => {
                         const presets = cls.presetQuestions || [];
