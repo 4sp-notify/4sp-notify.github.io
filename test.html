@@ -424,12 +424,6 @@
                 let auth2Initialized = false;
                 const SCOPE = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
 
-                // Fallback configuration for when secrets aren't available
-                const FALLBACK_CONFIG = {
-                    API_KEY: 'AIzaSyAFBxFtaKTocJmEQACFIVSkntw9TalX8iY', // You'll need to provide this
-                    CLIENT_ID: '965345902625-afte0p7d3mpf1dv4ajp1vm43qsi85ucj.apps.googleusercontent.com' // You'll need to provide this
-                };
-
                 function loadGoogleAPIs() {
                     return new Promise((resolve, reject) => {
                         if (gapiLoaded) {
@@ -454,7 +448,6 @@
                 async function handleGoogleImportClick() {
                     showModal(TPL.newClassChoiceModal());
                     
-                    // Display loading state
                     const importBtn = document.getElementById('import-gclass-btn');
                     importBtn.innerHTML = '<span class="font-semibold text-gray-700">Connecting...</span>';
                     importBtn.disabled = true;
@@ -464,34 +457,34 @@
                              throw new Error('You must be a teacher to import classes.');
                         }
 
-                        // Switch to the actual import modal
-                        showModal(TPL.googleImportModal());
-
+                        // --- NEW LOGIC: FETCH SECRETS AND VALIDATE BEFORE PROCEEDING ---
                         let API_KEY, CLIENT_ID;
-                        
-                        // Try to fetch from secrets document first
                         try {
                             const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOfhgHXEE').get();
-                            if (secretsDoc.exists) {
-                                const secrets = secretsDoc.data();
-                                API_KEY = secrets.GoogleClassroomAPIKey;
-                                CLIENT_ID = secrets.GoogleClientID;
+                            if (!secretsDoc.exists) {
+                                throw new Error("Firebase 'secrets' document not found. Please ensure it exists.");
+                            }
+                            const secrets = secretsDoc.data();
+                            API_KEY = secrets.GoogleClassroomAPIKey;
+                            CLIENT_ID = secrets.GoogleClientID;
+                            if (!API_KEY || !CLIENT_ID) {
+                                throw new Error("API Key or Client ID missing from Firebase secrets document.");
                             }
                         } catch (secretsError) {
-                            console.warn('Could not fetch secrets document:', secretsError);
+                            // This catch block handles both 'not found' and permission errors
+                            console.error('Error fetching Firebase secrets:', secretsError);
+                            // Re-throw with a more user-friendly message
+                            if (secretsError.code === 'permission-denied') {
+                                throw new Error("Permission denied when accessing Firebase secrets. Check your Firestore security rules.");
+                            } else {
+                                throw new Error("Google Classroom integration is not properly configured. Please contact your administrator.");
+                            }
                         }
+                        // --- END OF NEW LOGIC ---
 
-                        // Fallback to hardcoded config if secrets aren't available
-                        if (!API_KEY || !CLIENT_ID) {
-                            API_KEY = FALLBACK_CONFIG.API_KEY;
-                            CLIENT_ID = FALLBACK_CONFIG.CLIENT_ID;
-                        }
-
-                        // Check if we have valid configuration
-                        if (!API_KEY || !CLIENT_ID) {
-                            throw new Error('Google Classroom integration is not properly configured. Please contact your administrator.');
-                        }
-
+                        // Now that secrets are verified, switch to the import modal and proceed
+                        showModal(TPL.googleImportModal());
+                        
                         await loadGoogleAPIs();
                         
                         if (!auth2Initialized) {
@@ -517,7 +510,7 @@
                         await listGoogleCourses();
                         
                     } catch (error) {
-                        console.error('Google import error:', error);
+                        console.error('Google import process error:', error);
                         const loadingEl = document.getElementById('g-import-loading');
                         const errorEl = document.getElementById('g-import-error');
                         if (loadingEl) loadingEl.classList.add('hidden');
@@ -536,22 +529,18 @@
                                         <h3 class="text-sm font-medium text-red-800">Connection Failed</h3>
                                         <div class="mt-2 text-sm text-red-700">
                                             <p><strong>Error:</strong> ${errorMessage}</p>
-                                            ${errorMessage.includes('not properly configured') ? `
-                                                <div class="mt-3 p-3 bg-yellow-50 border border-yellow-200 rounded">
-                                                    <p class="text-sm text-yellow-800"><strong>For developers:</strong> To enable Google Classroom import, you need to:</p>
-                                                    <ul class="mt-1 text-xs text-yellow-700 list-disc list-inside space-y-1">
-                                                        <li>Create a project in Google Cloud Console</li>
-                                                        <li>Enable the Google Classroom API</li>
-                                                        <li>Create OAuth 2.0 credentials</li>
-                                                        <li>Add your API key and Client ID to the FALLBACK_CONFIG object</li>
-                                                    </ul>
-                                                </div>
-                                            ` : ''}
                                         </div>
                                     </div>
                                 </div>
                             </div>`;
                             errorEl.classList.remove('hidden');
+                        }
+                    } finally {
+                        const newClassBtn = document.getElementById('new-class-btn');
+                        if (newClassBtn) {
+                            // Reset the New Class button state
+                            newClassBtn.innerHTML = '<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg><span>New Class</span>';
+                            newClassBtn.disabled = false;
                         }
                     }
                 }
@@ -574,7 +563,6 @@
                         const courses = response.result.courses || [];
 
                         if (courses.length > 0) {
-                            // Check which courses are already imported
                             const existingImports = new Set();
                             const existingClassesSnapshot = await db.collection('classes')
                                 .where('teacherId', '==', currentUser.uid)
@@ -609,12 +597,10 @@
                                     `;
                                 }).join('');
                                 
-                                // Add event listeners to import buttons
                                 document.querySelectorAll('.import-g-class-btn:not([disabled])').forEach(button => {
                                     button.addEventListener('click', () => importGoogleClass(button.dataset.courseId, button.dataset.courseName));
                                 });
                             }
-
                         } else {
                             if (listEl) listEl.innerHTML = '<p class="text-center text-gray-500 py-4">No active courses found in your Google Classroom.</p>';
                         }
@@ -655,7 +641,6 @@
                         importBtn.classList.add('bg-gray-400', 'cursor-not-allowed');
                         importBtn.classList.remove('bg-blue-500', 'hover:bg-blue-600');
 
-                        // Check if already imported (extra safety check)
                         const existingClass = await db.collection('classes')
                             .where('googleCourseId', '==', googleCourseId)
                             .where('teacherId', '==', currentUser.uid)
@@ -666,7 +651,6 @@
                             throw new Error('This class has already been imported.');
                         }
                         
-                        // Fetch students from Google Classroom
                         let students = [];
                         try {
                             importBtn.textContent = 'Fetching students...';
@@ -684,12 +668,10 @@
                             }
                         } catch (studentError) {
                             console.warn('Could not fetch students:', studentError);
-                            // Continue with import even if students can't be fetched
                         }
                         
                         importBtn.textContent = 'Creating class...';
                         
-                        // Create the class
                         const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
                         const classRef = await db.collection('classes').add({
                             name: googleCourseName,
@@ -704,7 +686,6 @@
                             importedStudentCount: students.length
                         });
                         
-                        // Create invitations for students
                         if (students.length > 0) {
                             importBtn.textContent = `Creating invitations (${students.length})...`;
                             
@@ -733,7 +714,6 @@
                             hideModal();
                         }, 1500);
                         
-                        // Show success message with student count
                         const studentText = students.length === 0 ? 'No students found' : 
                                          students.length === 1 ? '1 student invitation created' : 
                                          `${students.length} student invitations created`;
