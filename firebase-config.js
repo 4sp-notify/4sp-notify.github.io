@@ -1,5 +1,4 @@
-// firebase-config.js
-
+// Your web app's Firebase configuration
 const firebaseConfig = {
   apiKey: "AIzaSyCEMOXNV5CNK6ds4rXyzB2hX9EB36ZDpNQ",
   authDomain: "attentio-web.firebaseapp.com",
@@ -10,10 +9,4 @@ const firebaseConfig = {
 };
 
 // Initialize Firebase
-const app = firebase.initializeApp(firebaseConfig);
-
-// Get a reference to the authentication service
-const auth = firebase.auth();
-
-// Get a reference to the Firestore service
-const db = firebase.firestore();
+const app = initializeApp(firebaseConfig);
