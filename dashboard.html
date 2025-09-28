@@ -61,22 +61,21 @@
             position: relative;
             z-index: 10;
         }
-
+        
         .request-meta-overlay {
             opacity: 0;
             transition: opacity 0.3s ease-in-out;
             position: absolute;
-            top: 0;
-            left: 0;
-            right: 0;
             bottom: 0;
-            border-radius: 12px;
-            z-index: 30; /* Above card content but below circle buttons */
+            right: 0;
+            border-radius: 0 0 12px 0;
+            z-index: 30;
             pointer-events: none;
             display: flex;
-            justify-content: flex-end; /* Align content right */
-            align-items: flex-end; /* Align content bottom */
-            padding: 1rem;
+            padding: 0.5rem 1rem;
+            background-color: rgba(0, 0, 0, 0.85);
+            color: #fff;
+            border-top-left-radius: 12px;
         }
 
         .teacher-request-card:hover .request-meta-overlay {
@@ -95,7 +94,7 @@
             position: relative;
             z-index: 40; /* Ensure buttons are above the overlay */
         }
-
+        
         /* Custom Checkbox */
         .custom-checkbox {
             appearance: none;
@@ -219,10 +218,9 @@
     
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            // Set up a simple cache for Firestore configuration details
             const today = new Date().toDateString();
-            let currentClassUsers = {}; // Cache for all users in the currently selected class
-            let nameChangeSettings = {}; // Cache for name change limits
+            let currentClassUsers = {};
+            let nameChangeSettings = {};
 
             function onFirebaseReady(callback) {
                 const interval = setInterval(() => {
@@ -268,7 +266,6 @@
                         listenForClasses(uid);
                         renderMainContent();
                         
-                        // Delete requests older than 1 day
                         deleteOldRequests();
                     } else {
                         auth.signOut();
@@ -281,14 +278,10 @@
                 }
 
                 function applyMarqueeIfNeeded(textEl, containerEl) {
-                    // Marquee only works if the parent container is smaller than the text width
                     setTimeout(() => {
-                        // Check if the element has rendered and is wider than its container
                         const isTruncated = textEl.scrollWidth > containerEl.clientWidth;
-                        // To get the marquee effect, the text element needs the 'marquee' class
                         if (isTruncated) {
                             textEl.classList.add('marquee');
-                            // Ensure the animation starts from the padding-left: 100% defined in CSS
                             textEl.style.animationPlayState = 'running'; 
                         } else {
                             textEl.classList.remove('marquee');
@@ -298,15 +291,11 @@
                 }
 
                 function updateProfileUI(user, data) {
-                    // This section is now split for students and teachers
-                    // Teachers get the username in the footer, students get the dropdown menu
                     if (data.role === 'teacher') {
-                        // For teachers, hide the dropdown button and show the footer
                         document.getElementById('user-profile-btn').classList.add('hidden');
                         teacherUserFooter.classList.remove('hidden');
                         document.getElementById('teacher-username-footer-text').textContent = data.username;
                     } else {
-                        // For students, show the dropdown button and hide the footer
                         document.getElementById('user-profile-btn').classList.remove('hidden');
                         teacherUserFooter.classList.add('hidden');
                         
@@ -332,7 +321,6 @@
 
                     document.getElementById('teacher-sidebar-actions').classList.toggle('hidden', data.role !== 'teacher');
                     
-                    // Update join button text based on role
                     const joinBtn = document.getElementById('join-class-btn-main');
                     if (joinBtn) {
                         joinBtn.querySelector('span').textContent = data.role === 'teacher' ? 'Join Class/Co-Teacher' : 'Join a Class with Code';
@@ -351,24 +339,20 @@
                         if (currentClassId && !allLoadedClasses[currentClassId]) {
                             selectClass(null);
                         } else if (currentClassId) {
-                            // Ensure the latest data is used for currentClassData
                             currentClassData = allLoadedClasses[currentClassId];
                             
                             const isTeacher = currentClassData.teacherId === uid || (currentClassData.teacherIds || []).includes(uid);
                             
-                            // Re-fetch users for the selected class when class data changes (for Users/Teachers tab)
                             if (isTeacher) {
                                 const allUids = [...(currentClassData.studentIds || []), currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
                                 await fetchClassUsers(allUids);
                             } else {
-                                // Students only need teacher list
                                 const teacherUids = [currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
                                 await fetchClassUsers(teacherUids);
                             }
 
                             const currentTab = document.querySelector('#class-tabs .border-blue-500')?.dataset.tab || 'requests';
-                            // Only re-render if it's not just a status change (or if we are on a tab that needs refreshing)
-                            if (!updateOnlyRequests || currentTab === 'requests' || currentTab === 'users' || currentTab === 'teachers') {
+                            if (!updateOnlyRequests || currentTab === 'requests' || currentTab === 'members' || currentTab === 'teachers') {
                                 renderMainContent(currentTab);
                             }
                         } else {
@@ -376,7 +360,6 @@
                         }
                     };
                     
-                    // --- Listener for Teacher Classes (Owned by User) ---
                     const teacherQuery = db.collection('classes').where('teacherId', '==', uid);
                     unsubscribes.push(teacherQuery.onSnapshot(snapshot => {
                         snapshot.docChanges().forEach(change => {
@@ -386,7 +369,6 @@
                         reRender();
                     }));
 
-                    // --- Listener for Member Classes (Students) ---
                     const studentQuery = db.collection('classes').where('studentIds', 'array-contains', uid);
                     unsubscribes.push(studentQuery.onSnapshot(snapshot => {
                        snapshot.docChanges().forEach(change => {
@@ -396,19 +378,16 @@
                        reRender();
                     }));
                     
-                    // --- Secondary listener for co-teachers (R3) ---
                     const coTeacherQuery = db.collection('classes').where('teacherIds', 'array-contains', uid);
                     unsubscribes.push(coTeacherQuery.onSnapshot(snapshot => {
                        snapshot.docChanges().forEach(change => {
                            if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
-                           // Merge with existing data if already loaded via student/owner query
                            else allLoadedClasses[change.doc.id] = { ...allLoadedClasses[change.doc.id], id: change.doc.id, ...change.doc.data(), isTeacher: true }; 
                        });
                        reRender();
                     }));
                     
-                    // Listener for all requests associated with the user's classes (to update sidebar counts)
-                    unsubscribes.push(db.collection('requests').onSnapshot(() => reRender(true))); // Global request listener for dynamic sidebar badge updates
+                    unsubscribes.push(db.collection('requests').onSnapshot(() => reRender(true)));
                 }
 
                 async function renderClassList(classes) {
@@ -423,7 +402,7 @@
                         if (isTeacherRole) {
                             const requestsSnapshot = await db.collection('requests').where('classId', '==', cls.id).where('status', '==', 'held').get();
                             requestCount = requestsSnapshot.size;
-                        } else { // Student role - count their own active requests
+                        } else {
                             const requestsSnapshot = await db.collection('requests').where('classId', '==', cls.id).where('studentId', '==', currentUser.uid).where('status', 'in', ['held', 'accepted']).get();
                             requestCount = requestsSnapshot.size;
                         }
@@ -444,7 +423,6 @@
 
                     if (uniqueUids.length === 0) return;
 
-                    // Batch fetch user data
                     const userPromises = uniqueUids.map(uid => db.collection('users').doc(uid).get());
                     const userDocs = await Promise.all(userPromises);
                     
@@ -453,10 +431,9 @@
                             const data = doc.data();
                             const uid = doc.id;
                             
-                            // Determine user role relative to this class
                             let role = 'student';
                             if (uid === currentClassData.teacherId) {
-                                role = 'owner'; // Owner is a type of teacher
+                                role = 'owner';
                             } else if ((currentClassData.teacherIds || []).includes(uid)) {
                                 role = 'teacher';
                             }
@@ -470,7 +447,7 @@
                     unsubscribes.forEach(unsub => unsub()); 
                     currentClassId = classData ? classData.id : null;
                     currentClassData = classData;
-                    currentClassUsers = {}; // Clear user cache on class switch
+                    currentClassUsers = {};
                     renderClassList(Object.values(allLoadedClasses)); 
                     renderMainContent();
                 }
@@ -486,22 +463,22 @@
                             } else {
                                 listenForStudentRequests();
                             }
-                        } else if (tab === 'users' || tab === 'teachers') {
-                             // Re-fetch data for the user list when moving to the user tab
+                        } else if (tab === 'members' || tab === 'teachers') {
                              const isTeacher = currentClassData.teacherId === currentUser.uid || (currentClassData.teacherIds || []).includes(currentUser.uid);
                              
                              if (isTeacher) {
                                  const allUids = [...(currentClassData.studentIds || []), currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
                                  fetchClassUsers(allUids).then(() => {
-                                     document.getElementById('requests-or-settings-container').innerHTML = TPL.usersView(userData, currentClassData.teacherId);
+                                     document.getElementById('requests-or-settings-container').innerHTML = TPL.membersView(userData, currentClassData.teacherId);
                                  });
                              } else {
-                                 // Students only need teacher list
                                  const teacherUids = [currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
                                  fetchClassUsers(teacherUids).then(() => {
-                                     document.getElementById('requests-or-settings-container').innerHTML = TPL.usersView(userData, currentClassData.teacherId);
+                                     document.getElementById('requests-or-settings-container').innerHTML = TPL.membersView(userData, currentClassData.teacherId);
                                  });
                              }
+                        } else if (tab === 'settings') {
+                            document.getElementById('requests-or-settings-container').innerHTML = TPL.settingsView(currentClassData);
                         }
                     } else {
                         mainContentArea.innerHTML = TPL.emptyState(userData);
@@ -514,7 +491,6 @@
                     if (currentClassData) {
                         const isTeacher = currentClassData.isTeacher || currentClassData.isOwner;
                         if (isTeacher) {
-                            // Get live request count for title update
                             db.collection('requests').where('classId', '==', currentClassId).where('status', '==', 'held').get().then(snapshot => {
                                 newTitle = `(${snapshot.size}) - Notify`;
                                 document.title = newTitle;
@@ -526,31 +502,6 @@
                     } else {
                         document.title = newTitle;
                     }
-                }
-                
-                // Helper functions for modal/component handling (showComponent/hideComponent/toggleComponent/showModal/hideModal - retained from previous version)
-                function showComponent(elementId) {
-                    const el = document.getElementById(elementId);
-                    if (!el || !el.classList.contains('hidden')) return;
-                    el.classList.remove('hidden', 'fade-leave-to');
-                    el.classList.add('fade-enter-active');
-                    setTimeout(() => el.classList.remove('fade-enter-active'), 200);
-                }
-                
-                function hideComponent(elementId) {
-                    const el = document.getElementById(elementId);
-                    if (!el || el.classList.contains('hidden')) return;
-                    el.classList.add('fade-leave-active');
-                    setTimeout(() => {
-                        el.classList.add('hidden');
-                        el.classList.remove('fade-leave-active');
-                    }, 200);
-                }
-
-                function toggleComponent(elementId) {
-                    const el = document.getElementById(elementId);
-                    if (el.classList.contains('hidden')) showComponent(elementId);
-                    else hideComponent(elementId);
                 }
                 
                 const modalContainer = document.getElementById('modal-container');
@@ -604,17 +555,16 @@
                     }
                 }
                 
-                // --- Class Management Functions ---
                 async function createNewClass(className) {
                     const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
                     await db.collection('classes').add({
                         name: className,
                         teacherId: currentUser.uid,
-                        teacherIds: [], // New array for co-teachers
+                        teacherIds: [],
                         code: classCode,
                         studentIds: [],
-                        pendingStudentEmails: [], // For Google Classroom imports
-                        requestStatus: 'open', // New request status
+                        pendingStudentEmails: [],
+                        requestStatus: 'open',
                         presetQuestions: [],
                         schedule: { start: "09:00 AM", end: "03:00 PM" },
                         createdAt: firebase.firestore.FieldValue.serverTimestamp()
@@ -622,7 +572,6 @@
                     hideModal();
                 }
 
-                // Updated joinClass for both roles (R3)
                 async function joinClass(classCode) {
                     const classQuery = await db.collection('classes').where('code', '==', classCode).limit(1).get();
                     if (classQuery.empty) {
@@ -633,7 +582,6 @@
                     const classId = classDoc.id;
                     const classData = classDoc.data();
 
-                    // Check if user is already a member/teacher
                     const isAlreadyMember = classData.studentIds.includes(currentUser.uid) || (classData.teacherIds || []).includes(currentUser.uid) || classData.teacherId === currentUser.uid;
                     if (isAlreadyMember) {
                         alert('You are already a member of this class.');
@@ -641,10 +589,8 @@
                     }
                     
                     if (userData.role === 'teacher') {
-                        // Teacher wants to join: show confirmation modal
                         showModal(TPL.joinClassAsTeacherConfirm(classId, classData.name));
                     } else {
-                        // Student wants to join: proceed directly
                         const classRef = db.collection('classes').doc(classId);
                         await classRef.update({ studentIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
                         hideModal();
@@ -652,7 +598,6 @@
                     }
                 }
 
-                // New function for teacher confirmation (R3)
                 async function joinClassAsTeacher(classId, className) {
                     const classRef = db.collection('classes').doc(classId);
                     
@@ -664,11 +609,9 @@
                     alert(`Successfully joined class ${className} as co-teacher! You now have full request management privileges.`);
                 }
                 
-                // Settings Functionality (R2)
                 async function saveClassName(className) {
                     if (!currentClassId || !className) return;
                     
-                    // Client-side limit check (R2)
                     const settingsDocRef = db.collection('settings').doc(currentUser.uid);
                     const changesToday = nameChangeSettings.nameChanges[today] || 0;
 
@@ -679,7 +622,6 @@
                     
                     await db.collection('classes').doc(currentClassId).update({ name: className });
                     
-                    // Update change counter
                     nameChangeSettings.nameChanges[today] = changesToday + 1;
                     await settingsDocRef.set(nameChangeSettings, { merge: true });
 
@@ -695,7 +637,6 @@
                     
                     const startHour = document.getElementById('start-hour').value;
                     const startMinute = document.getElementById('start-minute').value;
-                    // Get value from dropdown text (R2)
                     const startPeriod = document.getElementById('start-period-dropdown').querySelector('.custom-dropdown-btn span').textContent.trim();
                     
                     const endHour = document.getElementById('end-hour').value;
@@ -717,7 +658,6 @@
                     alert('Schedule saved!');
                 }
                 
-                // Toggle Request Status (Pause Button) (R2)
                 async function toggleRequestStatus() {
                     if (!currentClassId || userData.role !== 'teacher') return;
                     const currentStatus = currentClassData.requestStatus || 'open';
@@ -727,12 +667,11 @@
                         requestStatus: newStatus 
                     });
                     
-                    currentClassData.requestStatus = newStatus; // Local update
+                    currentClassData.requestStatus = newStatus;
                     alert(`Requests are now ${newStatus.toUpperCase()}.`);
-                    renderMainContent('settings'); // Re-render to update the status text/button
+                    renderMainContent('settings');
                 }
 
-                // Fullscreen Mode (R3)
                 function requestClassFullscreen() {
                     if (!currentClassId || userData.role !== 'teacher') return;
                     showModal(TPL.fullscreenCodeModal(currentClassData.code));
@@ -760,9 +699,6 @@
                         presetQuestions: firebase.firestore.FieldValue.arrayRemove(presetText)
                     });
                 }
-
-
-                // --- Request Management Functions ---
                 
                 async function raiseHand(classId, title, message) {
                     if (!classId || !currentUser.uid) return;
@@ -770,7 +706,7 @@
                     const existingRequest = await db.collection('requests')
                         .where('classId', '==', classId)
                         .where('studentId', '==', currentUser.uid)
-                        .where('status', '==', 'held')
+                        .where('status', 'in', ['held', 'accepted'])
                         .limit(1)
                         .get();
                         
@@ -785,7 +721,7 @@
                         title: title,
                         message: message,
                         status: 'held',
-                        comments: [], // Initialize with an empty array
+                        comments: [],
                         timestamp: firebase.firestore.FieldValue.serverTimestamp()
                     });
                     hideModal();
@@ -810,7 +746,6 @@
                     const requestDoc = await requestRef.get();
                     let comments = requestDoc.data().comments || [];
                     
-                    // Check if a comment already exists, if not, add it
                     if (comments.length < 3) {
                         comments.push(commentText);
                         await requestRef.update({
@@ -838,13 +773,11 @@
                         const requests = [];
                         snapshot.forEach(doc => requests.push({ id: doc.id, ...doc.data() }));
                         
-                        // Use pre-fetched user map (currentClassUsers)
                         requestsList.innerHTML = requests.length === 0 ? TPL.noRequestsMessage() : requests.map(req => {
                             const studentInfo = currentClassUsers[req.studentId] || { username: 'Unknown User', email: 'N/A' };
-                            return TPL.teacherRequestCard(req, studentInfo.username, studentInfo.email);
+                            return TPL.teacherRequestCard(req, studentInfo.username);
                         }).join('');
                         
-                        // Re-attach comment listeners after rendering
                         document.querySelectorAll('.add-comment-btn').forEach(button => {
                             button.addEventListener('click', () => {
                                 const requestId = button.dataset.requestId;
@@ -870,7 +803,6 @@
                         const requests = [];
                         snapshot.forEach(doc => requests.push({ id: doc.id, ...doc.data() }));
                         
-                        // Sort: Held requests first, then by latest timestamp
                         requests.sort((a, b) => {
                             if (a.status === 'held' && b.status !== 'held') return -1;
                             if (a.status !== 'held' && b.status === 'held') return 1;
@@ -885,7 +817,6 @@
                     }));
                 }
                 
-                // Event Listeners
                 document.body.addEventListener('click', async e => {
                     const target = e.target.closest('button, a, input[type="submit"], .custom-dropdown-option, label');
                     if (!target) return;
@@ -915,7 +846,6 @@
                     
                     if(target.id === 'raise-hand-btn') showModal(TPL.raiseHandModal());
 
-                    // Request actions
                     if (target.classList.contains('accept-request-btn')) acceptRequest(target.dataset.requestId);
                     if (target.classList.contains('deny-request-btn')) denyRequest(target.dataset.requestId);
                     if (target.classList.contains('cancel-request-btn')) cancelRequest(target.dataset.requestId);
@@ -936,7 +866,6 @@
                     if(target.id === 'delete-class-btn') showModal(TPL.deleteConfirmModal(currentClassData));
                     if(target.id === 'confirm-delete-class-btn') deleteClass();
 
-                    // Dropdown Handling (R2)
                     if (target.classList.contains('custom-dropdown-btn')) {
                         const options = target.nextElementSibling;
                         document.querySelectorAll('.custom-dropdown-options').forEach(el => {
@@ -964,9 +893,8 @@
                         joinClassAsTeacher(classId, className);
                     }
                     
-                    // Handle "select all" checkbox logic for Google Classroom import
                     if (target.id === 'select-all-g-classes') {
-                        const checkboxes = document.querySelectorAll('.g-class-checkbox');
+                        const checkboxes = document.querySelectorAll('.g-class-checkbox:not(:disabled)');
                         checkboxes.forEach(checkbox => {
                             checkbox.checked = target.checked;
                         });
@@ -975,7 +903,7 @@
                         if (!target.checked) {
                             allCheckbox.checked = false;
                         } else {
-                            const allOtherCheckboxes = document.querySelectorAll('.g-class-checkbox');
+                            const allOtherCheckboxes = document.querySelectorAll('.g-class-checkbox:not(:disabled)');
                             const allChecked = Array.from(allOtherCheckboxes).every(cb => cb.checked);
                             if (allChecked) {
                                 allCheckbox.checked = true;
@@ -983,7 +911,6 @@
                         }
                     }
 
-                    // Handle importing selected Google Classroom courses
                     if (target.id === 'import-selected-g-classes-btn') {
                         const selectedClasses = Array.from(document.querySelectorAll('.g-class-checkbox:checked')).map(cb => ({
                             id: cb.dataset.courseId,
@@ -1029,7 +956,6 @@
                     });
                 }
                 
-                // Google Classroom Integration (New implementation)
                 let gapiLoaded = false;
                 let googleAuth = null;
                 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest';
@@ -1048,11 +974,10 @@
                                             discoveryDocs: [DISCOVERY_DOC]
                                         });
                                         
-                                        // Initialize Google Identity Services
                                         googleAuth = google.accounts.oauth2.initTokenClient({
                                             client_id: clientId,
                                             scope: SCOPES,
-                                            callback: '', // Will be set per request
+                                            callback: '',
                                         });
                                         
                                         gapiLoaded = true;
@@ -1156,7 +1081,6 @@
                                     ${existingGoogleClassIds.has(course.id) ? '<span class="text-xs text-green-500 font-semibold">Already Imported</span>' : ''}
                                 </li>`).join('');
                                 
-                            // Add event listeners for the "Select All" checkbox
                             selectAllCheckbox.addEventListener('change', () => {
                                 const checkboxes = document.querySelectorAll('.g-class-checkbox:not(:disabled)');
                                 checkboxes.forEach(cb => {
@@ -1164,7 +1088,6 @@
                                 });
                             });
                             
-                            // Update "Select All" state when individual checkboxes are changed
                             document.querySelectorAll('.g-class-checkbox:not(:disabled)').forEach(checkbox => {
                                 checkbox.addEventListener('change', () => {
                                     if (!checkbox.checked) {
@@ -1258,29 +1181,29 @@
                         message += ` Failed to import ${failedImports.length} class(es). Check the console for details.`;
                     }
                     alert(message);
-                    renderMainContent(); // Reload the main content to show new classes
+                    renderMainContent();
                 }
 
 
                 // Templating functions (HTML strings)
                 const TPL = {
                     statusIcon: (req) => {
-                        const hasComments = req.comments && req.comments.filter(Boolean).length > 0;
+                        const hasComments = req.comments && req.comments.length > 0;
                         if (req.status === 'accepted') {
-                            return `<i class="fa-regular fa-thumbs-up text-green-600"></i>`;
+                            return `<i class="fa-regular fa-thumbs-up fa-xl text-green-600"></i>`;
                         } else if (req.status === 'denied') {
-                            return `<i class="fa-regular fa-thumbs-down text-red-600"></i>`;
-                        } else if (hasComments && req.status === 'held') { // Check for held status specifically
-                            return `<i class="fa-regular fa-comment text-blue-500"></i>`;
+                            return `<i class="fa-regular fa-thumbs-down fa-xl text-red-600"></i>`;
+                        } else if (hasComments) {
+                            return `<i class="fa-regular fa-comment fa-xl text-blue-500"></i>`;
                         } else {
-                            return `<i class="fa-regular fa-hand-paper text-yellow-500"></i>`;
+                            return `<i class="fa-regular fa-hand fa-xl text-yellow-500"></i>`;
                         }
                     },
 
                     emptyState: (user) => `
                         <div class="h-full flex items-center justify-center text-center fade-enter-active">
                             <div>
-                                <svg class="w-16 h-16 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"></path></svg>
+                                <i class="fa-solid fa-graduation-cap text-gray-300 fa-4x mx-auto"></i>
                                 <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome, ${user?.username || ''}!</h2>
                                 <p class="mt-1 text-gray-500">Select a class from the sidebar or get started below.</p>
                                 <div class="mt-6 flex flex-col items-center space-y-4">
@@ -1301,6 +1224,7 @@
                         const isAdmin = isOwner || isCoTeacher;
                         
                         const requestStatusText = cls.requestStatus === 'paused' ? 'Paused' : 'Open';
+                        const tabContent = TPL.getTabContent(tab, cls, user);
 
                         return `
                             <div class="fade-enter-active">
@@ -1320,7 +1244,7 @@
                                         <div id="class-tabs" class="border-b border-gray-200">
                                             <nav class="-mb-px flex space-x-6" aria-label="Tabs">
                                                 <button data-tab="requests" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'requests' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Requests <span class="ml-1 text-xs px-2 py-0.5 rounded-full ${cls.requestStatus === 'paused' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}">${requestStatusText}</span></button>
-                                                ${isAdmin ? `<button data-tab="users" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'users' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Users</button>` : ''}
+                                                ${isAdmin ? `<button data-tab="members" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'members' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Members</button>` : ''}
                                                 ${!isAdmin ? `<button data-tab="teachers" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'teachers' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Teachers</button>` : ''}
                                                 ${isAdmin ? `<button data-tab="settings" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'settings' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Settings</button>` : ''}
                                             </nav>
@@ -1328,10 +1252,24 @@
                                     </div>
                                 </div>
                                 <div id="requests-or-settings-container">
-                                    ${tab === 'requests' ? TPL.requestsView(user, cls.requestStatus) : (tab === 'settings' ? TPL.settingsView(cls) : TPL.usersView(user, cls.teacherId))}
+                                    ${tabContent}
                                 </div>
                             </div>
                         `;
+                    },
+                    getTabContent: (tab, cls, user) => {
+                        switch (tab) {
+                            case 'requests':
+                                return TPL.requestsView(user, cls.requestStatus);
+                            case 'members':
+                                return TPL.membersView(user, cls.teacherId, true);
+                            case 'teachers':
+                                return TPL.membersView(user, cls.teacherId, false);
+                            case 'settings':
+                                return TPL.settingsView(cls);
+                            default:
+                                return TPL.requestsView(user, cls.requestStatus);
+                        }
                     },
                     requestsView: (user, requestStatus) => `
                         <div class="space-y-6">
@@ -1355,11 +1293,10 @@
                             </div>
                         </div>
                     `,
-                    teacherRequestCard: (req, studentUsername, studentEmail) => {
+                    teacherRequestCard: (req, studentUsername) => {
                         const commentsCount = req.comments ? req.comments.filter(Boolean).length : 0;
                         const timeString = req.timestamp ? new Date(req.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A';
                         const statusColor = { 'held': 'border-gray-300', 'accepted': 'border-green-300', 'denied': 'border-red-300' }[req.status] || 'border-gray-300';
-                        const overlayColor = { 'held': 'rgba(0,0,0,0.85)', 'accepted': 'rgba(16,185,129,0.85)', 'denied': 'rgba(239,68,68,0.85)' }[req.status] || 'rgba(0,0,0,0.85)';
                         
                         const commentsHtml = req.comments ? req.comments.filter(Boolean).map(comment => `<p class="text-sm text-gray-600 italic mt-1">${escapeHtml(comment)}</p>`).join('') : '';
 
@@ -1367,7 +1304,7 @@
                             <div class="absolute top-4 left-4 text-xl z-20">
                                 ${TPL.statusIcon(req)}
                             </div>
-                            <div class="request-meta-overlay absolute rounded-xl bg-gray-900 bg-opacity-70 text-white p-4" style="background-color: ${overlayColor};">
+                            <div class="request-meta-overlay">
                                 <p class="text-lg font-bold truncate">${escapeHtml(studentUsername)}</p>
                             </div>
 
@@ -1390,13 +1327,13 @@
                             <div class="mt-1 md:ml-4 flex-shrink-0 space-y-3 flex flex-col items-end">
                                 ${req.status === 'held' ? `
                                     <button data-request-id="${req.id}" class="accept-request-btn circle-btn bg-green-500 text-white hover:bg-green-600 btn-bubbly" title="Accept Request">
-                                        <i class="fa-regular fa-thumbs-up fa-lg"></i>
+                                        <i class="fa-regular fa-thumbs-up fa-xl"></i>
                                     </button>
                                     <button data-request-id="${req.id}" class="add-comment-btn circle-btn bg-yellow-500 text-white hover:bg-yellow-600 btn-bubbly" title="Add/Manage Comments (${commentsCount}/3)">
-                                        <i class="fa-regular fa-comment fa-lg"></i>
+                                        <i class="fa-regular fa-comment fa-xl"></i>
                                     </button>
                                     <button data-request-id="${req.id}" class="deny-request-btn circle-btn bg-red-500 text-white hover:bg-red-600 btn-bubbly" title="Deny Request">
-                                        <i class="fa-regular fa-thumbs-down fa-lg"></i>
+                                        <i class="fa-regular fa-thumbs-down fa-xl"></i>
                                     </button>
                                 ` : ''}
                             </div>
@@ -1409,7 +1346,7 @@
                         let cardClasses = 'bg-blue-50 border-blue-200';
                         if (req.status === 'accepted') cardClasses = 'bg-green-50 border-green-200';
                         if (req.status === 'denied') cardClasses = 'bg-red-50 border-red-200';
-                        if (req.status === 'cancelled') return ''; // Don't show cancelled requests to students
+                        if (req.status === 'cancelled') return '';
 
                         return `<div class="${cardClasses} p-4 rounded-xl border flex items-start">
                             <div class="flex-shrink-0 mr-4 mt-1">
@@ -1426,95 +1363,118 @@
                     },
                     noRequestsMessage: () => `<p class="text-center text-gray-500 py-8">No active requests at this time. Go ahead and get started!</p>`,
 
-                    // --- New/Updated Settings Templates ---
-
-                    settingsView: (cls) => `
-                        <div class="max-w-4xl mx-auto space-y-8">
-                            ${TPL.settingsGeneral(cls)}
-                            ${TPL.settingsControl(cls)}
-                            ${TPL.settingsSchedule(cls)}
-                            ${TPL.settingsPresets(cls)}
-                            ${TPL.settingsDanger(cls)}
-                        </div>`,
-
-                    settingsGeneral: (cls) => {
+                    // --- Redesigned Settings View ---
+                    settingsView: (cls) => {
+                        const isTeacher = userData.role === 'teacher';
+                        const isOwner = cls.teacherId === userData.uid;
                         const changesToday = nameChangeSettings.nameChanges[today] || 0;
                         const changesRemaining = 3 - changesToday;
-                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">General</h3><div class="space-y-4"><div><label for="class-name-input" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="class-name-input" value="${escapeHtml(cls.name)}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"><p class="text-xs text-gray-500 mt-1">You can change the class name 3 times per day (Changes remaining: <span class="${changesRemaining <= 0 ? 'text-red-500 font-bold' : 'text-green-500 font-bold'}">${changesRemaining}</span>)</p></div><button id="save-class-name-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly" ${changesRemaining <= 0 ? 'disabled' : ''}>Save Changes</button></div></div>`;
-                    },
-
-                    settingsControl: (cls) => {
+                        const [startTime, startPeriod] = (cls.schedule?.start || '09:00 AM').split(' ');
+                        const [startHour, startMinute] = startTime.split(':');
+                        const [endTime, endPeriod] = (cls.schedule?.end || '03:00 PM').split(' ');
+                        const [endHour, endMinute] = endTime.split(':');
+                        const presets = cls.presetQuestions || [];
                         const isPaused = cls.requestStatus === 'paused';
                         const buttonText = isPaused ? 'Resume Requests' : 'Pause Requests';
-                        const buttonIcon = isPaused ? 'M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z' : 'M10 9l5 7m-5-7v7m5 0l-5-7';
                         const buttonColor = isPaused ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700';
-                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Request Control</h3><p class="text-sm text-gray-700">Current Status: <span class="font-bold ${isPaused ? 'text-red-500' : 'text-green-500'}">${isPaused ? 'PAUSED' : 'ACTIVE'}</span></p><button id="toggle-request-status-btn" class="mt-4 text-white font-bold py-2 px-4 rounded-lg ${buttonColor} btn-bubbly flex items-center space-x-2"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${buttonIcon}"></path></svg><span>${buttonText}</span></button></div>`;
-                    },
 
-                    settingsSchedule: (cls) => {
-                        const { start = '09:00 AM', end = '03:00 PM' } = cls.schedule || {};
-                        const [startTime, startPeriod] = start.split(' ');
-                        const [startHour, startMinute] = startTime.split(':');
-                        const [endTime, endPeriod] = end.split(' ');
-                        const [endHour, endMinute] = endTime.split(':');
-
-                        const timeInputClasses = 'w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500';
-                        const dropdownBtnClasses = 'custom-dropdown-btn relative w-24 cursor-pointer rounded-md border border-gray-300 bg-white py-2 pl-3 pr-10 text-left shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500';
-                        const dropdownOptionsClasses = 'custom-dropdown-options absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden';
-                        const dropdownOptionClasses = 'custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50';
-
-                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Class Schedule</h3><div class="grid grid-cols-1 md:grid-cols-2 gap-6"><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Starts at</label><div class="mt-1 flex items-center gap-2"><input type="number" id="start-hour" value="${startHour}" min="1" max="12" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="number" id="start-minute" value="${startMinute}" min="0" max="59" class="${timeInputClasses}"><div id="start-period-dropdown" class="relative"><button type="button" class="${dropdownBtnClasses}"><span id="start-period-text">${startPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" /></svg></span></button><ul class="${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div><div class="font-poppins"><label class="block text-sm font-medium text-gray-700">Ends at</label><div class="mt-1 flex items-center gap-2"><input type="number" id="end-hour" value="${endHour}" min="1" max="12" class="${timeInputClasses}"><span class="text-gray-400 font-bold">:</span><input type="number" id="end-minute" value="${endMinute}" min="0" max="59" class="${timeInputClasses}"><div id="end-period-dropdown" class="relative"><button type="button" class="${dropdownBtnClasses}"><span id="end-period-text">${endPeriod}</span><span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><svg class="h-5 w-5 text-gray-400" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor"><path fill-rule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clip-rule="evenodd" /></svg></span></button><ul class="${dropdownOptionsClasses}"><li data-value="AM" class="${dropdownOptionClasses}">AM</li><li data-value="PM" class="${dropdownOptionClasses}">PM</li></ul></div></div></div></div><p class="mt-3 text-xs text-gray-500">Note: Uses local device time, assumed for weekdays.</p><button id="save-schedule-btn" class="mt-4 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button></div>`;
-                    },
-
-                    // --- New Users/Teachers View (R2, R4) ---
-                    usersView: (user, ownerId) => {
-                        const isTeacher = user.role === 'teacher';
-                        const users = Object.values(currentClassUsers);
-                        
-                        // Filter users based on tab view (Teachers see all, Students see only Teachers)
-                        let displayUsers = [];
-                        if (isTeacher) { 
-                            displayUsers = users;
-                        } else { 
-                            displayUsers = users.filter(u => u.role === 'owner' || u.role === 'teacher');
-                        }
-
-                        displayUsers.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
-                        
-                        return `<div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                            <h3 class="text-lg font-semibold text-gray-800">${isTeacher ? 'Class Roster' : 'Class Teachers'}</h3>
-                            <p class="text-sm text-gray-500">${isTeacher ? `Showing ${displayUsers.length} total users in this class.` : `Your class is managed by ${displayUsers.length} teacher(s).`}</p>
+                        return `
+                        <div class="max-w-4xl mx-auto space-y-8">
+                            <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                                <h3 class="text-lg font-bold text-gray-800 font-poppins mb-2">Class Settings</h3>
+                                <p class="text-sm text-gray-500">Manage your class details, request settings, and more.</p>
+                            </div>
                             
-                            ${isTeacher ? `
-                                <div class="mt-4 mb-6">
-                                    <button id="join-class-btn-main" class="bg-indigo-500 text-white font-medium py-2 px-4 rounded-lg hover:bg-indigo-600 btn-bubbly text-sm">Add Co-Teacher by Code</button>
+                            <div class="bg-white p-6 rounded-lg shadow-sm border">
+                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">General</h3>
+                                <div class="space-y-4">
+                                    <div>
+                                        <label for="class-name-input" class="block text-sm font-medium text-gray-700">Class Name</label>
+                                        <input type="text" id="class-name-input" value="${escapeHtml(cls.name)}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                        <p class="text-xs text-gray-500 mt-1">You can change the class name 3 times per day (Changes remaining: <span class="${changesRemaining <= 0 ? 'text-red-500 font-bold' : 'text-green-500 font-bold'}">${changesRemaining}</span>)</p>
+                                    </div>
+                                    <button id="save-class-name-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly" ${changesRemaining <= 0 ? 'disabled' : ''}>Save Changes</button>
                                 </div>
-                            ` : ''}
+                            </div>
 
-                            <ul class="divide-y divide-gray-200 mt-4">
-                                ${displayUsers.map(u => {
-                                    const isOwner = u.role === 'owner';
-                                    const roleBadge = u.role !== 'student' 
-                                        ? `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${isOwner ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800'}">${isOwner ? 'Class Owner' : 'Teacher'}</span>`
-                                        : `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-700">Student</span>`;
-                                    
-                                    return `<li class="py-3 flex justify-between items-center">
-                                        <div class="flex items-center min-w-0">
-                                            <div class="h-10 w-10 flex items-center justify-center rounded-full bg-blue-500 text-white font-bold text-lg flex-shrink-0">${(u.username || '?').charAt(0).toUpperCase()}</div>
-                                            <div class="ml-4 min-w-0">
-                                                <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(u.username)}</p>
-                                                ${isTeacher ? `<p class="text-xs text-gray-500 truncate">${escapeHtml(u.email)}</p>` : ''}
+                            <div class="bg-white p-6 rounded-lg shadow-sm border">
+                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Request Control</h3>
+                                <div class="space-y-4">
+                                    <div>
+                                        <p class="text-sm text-gray-700">Current Status: <span class="font-bold ${isPaused ? 'text-red-500' : 'text-green-500'}">${isPaused ? 'PAUSED' : 'ACTIVE'}</span></p>
+                                        <button id="toggle-request-status-btn" class="mt-4 text-white font-bold py-2 px-4 rounded-lg ${buttonColor} btn-bubbly flex items-center space-x-2">
+                                            <i class="fa-solid ${isPaused ? 'fa-play' : 'fa-pause'}"></i>
+                                            <span>${buttonText}</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="bg-white p-6 rounded-lg shadow-sm border">
+                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Class Schedule</h3>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                    <div class="font-poppins">
+                                        <label class="block text-sm font-medium text-gray-700">Starts at</label>
+                                        <div class="mt-1 flex items-center gap-2">
+                                            <input type="number" id="start-hour" value="${startHour}" min="1" max="12" class="w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                            <span class="text-gray-400 font-bold">:</span>
+                                            <input type="number" id="start-minute" value="${startMinute}" min="0" max="59" class="w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                            <div id="start-period-dropdown" class="relative">
+                                                <button type="button" class="custom-dropdown-btn relative w-24 cursor-pointer rounded-md border border-gray-300 bg-white py-2 pl-3 pr-10 text-left shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                                    <span id="start-period-text">${startPeriod}</span>
+                                                    <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><i class="fa-solid fa-chevron-down text-gray-400"></i></span>
+                                                </button>
+                                                <ul class="custom-dropdown-options absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden">
+                                                    <li data-value="AM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">AM</li>
+                                                    <li data-value="PM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">PM</li>
+                                                </ul>
                                             </div>
                                         </div>
-                                        <div class="ml-2 flex-shrink-0">
-                                            ${roleBadge}
+                                    </div>
+                                    <div class="font-poppins">
+                                        <label class="block text-sm font-medium text-gray-700">Ends at</label>
+                                        <div class="mt-1 flex items-center gap-2">
+                                            <input type="number" id="end-hour" value="${endHour}" min="1" max="12" class="w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                            <span class="text-gray-400 font-bold">:</span>
+                                            <input type="number" id="end-minute" value="${endMinute}" min="0" max="59" class="w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                            <div id="end-period-dropdown" class="relative">
+                                                <button type="button" class="custom-dropdown-btn relative w-24 cursor-pointer rounded-md border border-gray-300 bg-white py-2 pl-3 pr-10 text-left shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                                    <span id="end-period-text">${endPeriod}</span>
+                                                    <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><i class="fa-solid fa-chevron-down text-gray-400"></i></span>
+                                                </button>
+                                                <ul class="custom-dropdown-options absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden">
+                                                    <li data-value="AM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">AM</li>
+                                                    <li data-value="PM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">PM</li>
+                                                </ul>
+                                            </div>
                                         </div>
-                                    </li>`;
-                                }).join('')}
-                            </ul>
+                                    </div>
+                                </div>
+                                <p class="mt-3 text-xs text-gray-500">Note: Uses local device time, assumed for weekdays.</p>
+                                <button id="save-schedule-btn" class="mt-4 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button>
+                            </div>
+
+                            <div class="bg-white p-6 rounded-lg shadow-sm border">
+                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Preset Questions</h3>
+                                <p class="text-sm text-gray-700 mb-4">Preset questions help students quickly make a request without typing. They can select up to 3 presets.</p>
+                                <div id="preset-questions-list" class="space-y-3 mb-4">
+                                    ${presets.map(p => `<div class="flex items-center justify-between bg-gray-50 p-2 rounded-md"><span class="text-sm text-gray-800">${escapeHtml(p)}</span><button data-preset="${escapeHtml(p)}" class="remove-preset-btn text-gray-400 hover:text-red-600 btn-bubbly"><i class="fa-solid fa-trash-can"></i></button></div>`).join('') || '<p class="text-sm text-gray-500">No preset questions added yet.</p>'}
+                                </div>
+                                <div class="flex space-x-2">
+                                    <input type="text" id="new-preset-input" placeholder="e.g., I need help with Question 5" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                    <button id="add-preset-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 whitespace-nowrap btn-bubbly">Add</button>
+                                </div>
+                            </div>
+
+                            <div class="bg-red-50 p-6 rounded-lg border border-red-200">
+                                <h3 class="text-lg font-semibold text-red-800 border-b border-red-200 pb-3 mb-4 font-poppins">Danger Zone</h3>
+                                <div>
+                                    <p class="text-sm text-red-700">Deleting this class is permanent. All associated data will be lost, and students will be removed.</p>
+                                    <button id="delete-class-btn" class="mt-4 bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 btn-bubbly">Delete This Class</button>
+                                </div>
+                            </div>
                         </div>`;
                     },
-
 
                     // --- Modals ---
                     raiseHandModal: () => `
@@ -1541,10 +1501,10 @@
                     
                     fullscreenCodeModal: (code) => `<div class="relative bg-white w-full max-w-4xl h-full p-10 rounded-lg shadow-2xl pointer-events-auto flex items-center justify-center flex-col"><h3 class="text-3xl font-bold text-gray-800 font-poppins mb-6">Class Join Code</h3><p id="fullscreen-code" class="text-9xl font-extrabold tracking-widest text-indigo-600 select-all">${escapeHtml(code)}</p><p class="text-xl text-gray-500 mt-6">Share this code with your students.</p><button class="modal-cancel-btn mt-10 px-6 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Exit Fullscreen</button></div>`,
 
-                    addCommentModal: (requestId, commentIndex) => `
+                    addCommentModal: (requestId, commentCount) => `
                         <div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto">
                             <h3 class="text-xl font-semibold text-gray-800 font-poppins">Add Private Note</h3>
-                            <p class="mt-2 text-gray-600">The student will see this note on their request card. You have ${3 - parseInt(commentIndex)} remaining comment slots.</p>
+                            <p class="mt-2 text-gray-600">The student will see this note on their request card. You have ${3 - parseInt(commentCount)} remaining comment slots.</p>
                             <form id="add-comment-form" class="mt-4 space-y-4">
                                 <input type="hidden" id="comment-request-id" value="${requestId}">
                                 <div>
@@ -1560,7 +1520,7 @@
                     `,
                     settingsPresets: (cls) => {
                         const presets = cls.presetQuestions || [];
-                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Preset Questions</h3><div id="preset-questions-list" class="space-y-3 mb-4">${presets.map(p => `<div class="flex items-center justify-between bg-gray-50 p-2 rounded-md"><span class="text-sm text-gray-800">${escapeHtml(p)}</span><button data-preset="${escapeHtml(p)}" class="remove-preset-btn text-gray-400 hover:text-red-600 btn-bubbly"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clip-rule="evenodd"></path></svg></button></div>`).join('') || '<p class="text-sm text-gray-500">No preset questions added yet.</p>'}</div><div class="flex space-x-2"><input type="text" id="new-preset-input" placeholder="e.g., I need help with Question 5" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"><button id="add-preset-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 whitespace-nowrap btn-bubbly">Add</button></div></div>`;
+                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Preset Questions</h3><div id="preset-questions-list" class="space-y-3 mb-4">${presets.map(p => `<div class="flex items-center justify-between bg-gray-50 p-2 rounded-md"><span class="text-sm text-gray-800">${escapeHtml(p)}</span><button data-preset="${escapeHtml(p)}" class="remove-preset-btn text-gray-400 hover:text-red-600 btn-bubbly"><i class="fa-solid fa-trash-can"></i></button></div>`).join('') || '<p class="text-sm text-gray-500">No preset questions added yet.</p>'}</div><div class="flex space-x-2"><input type="text" id="new-preset-input" placeholder="e.g., I need help with Question 5" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"><button id="add-preset-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 whitespace-nowrap btn-bubbly">Add</button></div></div>`;
                     },
                     settingsDanger: (cls) => `<div class="bg-red-50 p-6 rounded-lg border border-red-200"><h3 class="text-lg font-semibold text-red-800 border-b border-red-200 pb-3 mb-4 font-poppins">Danger Zone</h3><div><p class="text-sm text-red-700">Deleting this class is permanent. All associated data will be lost, and students will be removed.</p><button id="delete-class-btn" class="mt-4 bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 btn-bubbly">Delete This Class</button></div></div>`,
                     
