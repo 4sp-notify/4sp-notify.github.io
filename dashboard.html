@@ -47,7 +47,7 @@
 
         /* Generic Button Style Reset to ensure Inter font */
         button, a.btn-bubbly {
-            font-family: 'Inter', sans-serif;
+             font-family: 'Inter', sans-serif;
         }
 
 
@@ -67,16 +67,6 @@
         }
 
         /* Animations */
-        /* Updated fade transitions for a smoother effect on all elements */
-        .fade-in-element {
-            opacity: 0;
-            transform: translateY(10px);
-            transition: opacity 0.3s ease-out, transform 0.3s ease-out;
-        }
-        .fade-in-element.is-visible {
-            opacity: 1;
-            transform: translateY(0);
-        }
         .fade-enter-from, .fade-leave-to { opacity: 0; transform: scale(0.95); }
         .fade-enter-active, .fade-leave-active { transition: opacity 200ms ease-out, transform 200ms ease-out; }
         .fade-enter-to, .fade-leave-from { opacity: 1; transform: scale(1); }
@@ -99,16 +89,6 @@
             margin-right: 0.75rem; /* mr-3 */
             align-items: center;
             justify-content: center;
-        }
-
-        .poppins-button {
-            font-family: 'Poppins', sans-serif;
-            font-weight: 600;
-        }
-        
-        .tab-button.active {
-            border-bottom: 2px solid #2563EB; /* blue-600 */
-            color: #1F2937; /* gray-800 */
         }
     </style>
 </head>
@@ -145,7 +125,7 @@
                                 </div>
                             </div>
                             <div class="py-1" role="none">
-                                <a href="#" id="settings-btn" class="font-medium text-gray-700 block px-4 py-2 text-sm hover:bg-gray-100 flex items-center" role="menuitem" tabindex="-1">
+                                <a href="settings.html" class="font-medium text-gray-700 block px-4 py-2 text-sm hover:bg-gray-100 flex items-center" role="menuitem" tabindex="-1">
                                     <span class="menu-item-icon"><i class="fa-solid fa-gear text-gray-400"></i></span>
                                     <span>Settings</span>
                                 </a>
@@ -174,7 +154,7 @@
                         <i class="fa-solid fa-plus w-5 h-5"></i>
                         <span>New Class</span>
                     </button>
-                    <button id="join-class-btn-main" class="mt-2 w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly">
+                    <button id="join-class-btn-main" class="mt-2 w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly text-sm">
                         <i class="fa-solid fa-user-plus w-5 h-5"></i>
                         <span>Join Class</span>
                     </button>
@@ -182,7 +162,7 @@
             </aside>
             <main class="flex-1 flex flex-col overflow-hidden">
                 <div id="main-content-area" class="flex-1 overflow-y-auto bg-gray-100 p-6 sm:p-8 custom-scrollbar">
-                    </div>
+                </div>
             </main>
         </div>
     </div>
@@ -204,7 +184,8 @@
             let currentClassId = null;
             let allLoadedClasses = {};
             let unsubscribes = [];
-            let activeTab = 'overview'; // New state variable to track active tab
+            // Cache loaded users for the roster tab
+            let loadedUsers = {};
 
             const userProfileMenu = document.getElementById('user-profile-menu');
             const mainContentArea = document.getElementById('main-content-area');
@@ -287,6 +268,10 @@
                             hasChanges = true;
                             if (change.type === 'removed') {
                                 delete allLoadedClasses[change.doc.id];
+                                if (currentClassId === change.doc.id) {
+                                    currentClassId = null;
+                                    renderMainContent();
+                                }
                             } else {
                                 allLoadedClasses[change.doc.id] = { 
                                     ...allLoadedClasses[change.doc.id], 
@@ -297,11 +282,7 @@
                             }
                         });
                         // Only re-render if there was an actual change
-                        if (hasChanges) {
-                             renderClassList(Object.values(allLoadedClasses));
-                             // Bug fix: Re-render main content after class list is updated, if a class is currently selected.
-                             if (currentClassId) renderMainContent();
-                        }
+                        if (hasChanges) renderClassList(Object.values(allLoadedClasses));
                     };
 
                     unsubscribes.push(classesQuery.onSnapshot(snapshot => processSnapshot(snapshot, 'Owner')));
@@ -325,86 +306,163 @@
                     }
                 }
                 
-                function selectClass(classData) {
+                async function selectClass(classData) {
                     currentClassId = classData ? classData.id : null;
-                    activeTab = 'overview'; // Reset to overview when a new class is selected
                     renderClassList(Object.values(allLoadedClasses)); 
                     renderMainContent();
+
+                    // Pre-load user data for the roster tab
+                    if (currentClassId) {
+                        await loadClassRoster(classData);
+                    }
                 }
+
+                let currentTab = 'overview'; // default tab
 
                 function renderMainContent() {
                     if (currentClassId) {
                         const classData = allLoadedClasses[currentClassId];
-                        mainContentArea.innerHTML = TPL.classViewWithTabs(classData, userData);
-                        setupTabListeners();
-                        if (activeTab === 'roster') {
-                             showTab('roster');
-                        } else if (activeTab === 'settings') {
-                             showTab('settings');
-                        } else {
-                            showTab('overview');
-                        }
+                        mainContentArea.innerHTML = TPL.classView(classData, userData, currentTab);
+                        setupClassViewListeners(classData);
+                        renderCurrentTabContent(classData);
                     } else {
                         mainContentArea.innerHTML = TPL.emptyState(userData);
                     }
                 }
 
-                function setupTabListeners() {
-                    const tabsContainer = document.querySelector('#class-view-tabs');
+                function setupClassViewListeners(classData) {
+                    const tabsContainer = document.getElementById('class-tabs');
                     if (tabsContainer) {
                         tabsContainer.addEventListener('click', e => {
-                            const tabBtn = e.target.closest('.tab-button');
+                            const tabBtn = e.target.closest('button[role="tab"]');
                             if (tabBtn) {
-                                const tab = tabBtn.dataset.tab;
-                                if (tab !== activeTab) {
-                                    activeTab = tab;
-                                    showTab(tab);
-                                }
+                                currentTab = tabBtn.dataset.tab;
+                                renderMainContent(); // Re-render to show the new tab content
                             }
                         });
                     }
                 }
+                
+                async function renderCurrentTabContent(classData) {
+                    const tabContentContainer = document.getElementById('tab-content');
+                    if (!tabContentContainer) return;
+                    
+                    tabContentContainer.innerHTML = '';
+                    
+                    switch (currentTab) {
+                        case 'overview':
+                            tabContentContainer.innerHTML = TPL.classOverview(classData);
+                            break;
+                        case 'roster':
+                            tabContentContainer.innerHTML = TPL.loadingState('Loading class roster...');
+                            await loadClassRoster(classData);
+                            tabContentContainer.innerHTML = TPL.classRoster(classData, loadedUsers, userData);
+                            break;
+                        case 'settings':
+                            // Only show settings to the owner
+                            if (classData.teacherId === userData.uid) {
+                                tabContentContainer.innerHTML = TPL.classSettings(classData);
+                            } else {
+                                tabContentContainer.innerHTML = TPL.permissionDenied();
+                            }
+                            break;
+                        default:
+                            tabContentContainer.innerHTML = TPL.classOverview(classData);
+                            break;
+                    }
+                    setupTabSpecificListeners(classData);
+                }
 
-                async function showTab(tabName) {
-                    // Update tab buttons
-                    document.querySelectorAll('.tab-button').forEach(btn => {
-                        if (btn.dataset.tab === tabName) {
-                            btn.classList.add('active');
-                            btn.classList.add('text-gray-800');
-                            btn.classList.remove('text-gray-500', 'hover:text-gray-800');
-                        } else {
-                            btn.classList.remove('active');
-                            btn.classList.remove('text-gray-800');
-                            btn.classList.add('text-gray-500', 'hover:text-gray-800');
+                function setupTabSpecificListeners(classData) {
+                    if (currentTab === 'settings') {
+                        const form = document.getElementById('class-settings-form');
+                        if (form) {
+                            form.addEventListener('submit', async (e) => {
+                                e.preventDefault();
+                                const newTitle = document.getElementById('class-title-input').value.trim();
+                                if (newTitle && newTitle !== classData.name) {
+                                    await updateClassTitle(classData.id, newTitle);
+                                }
+                                showModal(TPL.deleteClassModal(classData));
+                            });
                         }
-                    });
-
-                    // Update tab content
-                    document.querySelectorAll('.tab-content').forEach(content => {
-                        if (content.dataset.tab === tabName) {
-                            content.classList.remove('hidden');
-                        } else {
-                            content.classList.add('hidden');
-                        }
-                    });
-
-                    // If roster tab, fetch and display the roster
-                    if (tabName === 'roster') {
-                        const roster = await fetchRoster(currentClassId);
-                        const rosterContainer = document.querySelector('#roster-content');
-                        const classData = allLoadedClasses[currentClassId];
-                        if (rosterContainer) {
-                             rosterContainer.innerHTML = TPL.rosterList(roster, classData.teacherId === currentUser.uid);
+                    }
+                    if (currentTab === 'roster') {
+                        const rosterList = document.getElementById('roster-list');
+                        if (rosterList) {
+                            rosterList.addEventListener('click', async (e) => {
+                                const removeBtn = e.target.closest('.remove-student-btn, .remove-coteacher-btn');
+                                if (removeBtn) {
+                                    const userId = removeBtn.dataset.userId;
+                                    const userRole = removeBtn.dataset.userRole;
+                                    await removeUserFromClass(classData.id, userId, userRole);
+                                }
+                            });
                         }
                     }
                 }
 
+                async function loadClassRoster(classData) {
+                    const members = [...(classData.studentIds || []), ...(classData.teacherIds || [])];
+                    const ownerId = classData.teacherId;
+                    const allMemberIds = Array.from(new Set([...members, ownerId]));
+                    
+                    const newUsersToLoad = allMemberIds.filter(uid => !loadedUsers[uid]);
+                    
+                    if (newUsersToLoad.length === 0) return;
+                    
+                    const batchSize = 10;
+                    for (let i = 0; i < newUsersToLoad.length; i += batchSize) {
+                        const batchIds = newUsersToLoad.slice(i, i + batchSize);
+                        const usersQuery = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', batchIds).get();
+                        usersQuery.docs.forEach(doc => {
+                            loadedUsers[doc.id] = { id: doc.id, ...doc.data() };
+                        });
+                    }
+                }
 
+                async function updateClassTitle(classId, newTitle) {
+                    const classRef = db.collection('classes').doc(classId);
+                    await classRef.update({ name: newTitle });
+                    showModal(TPL.messageModal('Title Updated', 'Class title has been successfully updated!', 'green'));
+                }
+
+                async function deleteClass(classId) {
+                    await db.collection('classes').doc(classId).delete();
+                    hideModal();
+                    currentClassId = null;
+                    renderMainContent();
+                }
+
+                async function removeUserFromClass(classId, userId, userRole) {
+                    const classRef = db.collection('classes').doc(classId);
+                    let fieldToUpdate = '';
+                    if (userRole === 'student') {
+                        fieldToUpdate = 'studentIds';
+                    } else if (userRole === 'teacher') {
+                        fieldToUpdate = 'teacherIds';
+                    } else {
+                        return; // Invalid role
+                    }
+
+                    await classRef.update({
+                        [fieldToUpdate]: firebase.firestore.FieldValue.arrayRemove(userId)
+                    });
+                    
+                    // Force a re-render of the roster tab
+                    const classData = allLoadedClasses[classId];
+                    if (classData) {
+                        const updatedData = { ...classData };
+                        updatedData[fieldToUpdate] = (updatedData[fieldToUpdate] || []).filter(id => id !== userId);
+                        allLoadedClasses[classId] = updatedData;
+                        renderCurrentTabContent(updatedData);
+                    }
+                }
+                
                 // --- Modal Control ---
                 function showModal(modalHTML) {
                     modalContainer.innerHTML = modalHTML;
                     modalBackdrop.classList.remove('hidden');
-                    modalContainer.classList.remove('pointer-events-none');
                     modalBackdrop.classList.add('fade-enter-active');
                     const modalDialog = modalContainer.firstElementChild;
                     modalDialog.classList.add('fade-enter-from');
@@ -422,9 +480,7 @@
                         setTimeout(() => {
                             modalContainer.innerHTML = '';
                             modalBackdrop.classList.add('hidden');
-                            modalContainer.classList.add('pointer-events-none');
                             modalBackdrop.classList.remove('fade-leave-to');
-                            modalDialog.classList.remove('fade-leave-to');
                         }, 200);
                     }
                 }
@@ -445,8 +501,7 @@
                         code: classCode,
                         studentIds: [],
                         pendingStudentEmails: [],
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
-                        lastCodeRefresh: firebase.firestore.Timestamp.now()
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
                     });
                     hideModal();
                 }
@@ -454,6 +509,7 @@
                 async function joinClass(classCode) {
                     const classQuery = await db.collection('classes').where('code', '==', classCode).limit(1).get();
                     if (classQuery.empty) {
+                        // Using a custom modal/message box instead of alert()
                         showModal(TPL.messageModal('Error', 'Invalid class code. Please try again.', 'red'));
                         return;
                     }
@@ -463,10 +519,12 @@
 
                     const isAlreadyMember = (classData.studentIds || []).includes(currentUser.uid) || (classData.teacherIds || []).includes(currentUser.uid) || classData.teacherId === currentUser.uid;
                     if (isAlreadyMember) {
+                        // Using a custom modal/message box instead of alert()
                         showModal(TPL.messageModal('Already Enrolled', `You are already a member of the class: ${classData.name}.`, 'yellow'));
                         return;
                     }
                     
+                    // Logic: If user is a teacher, prompt for co-teacher join. Otherwise, join as student.
                     if (userData.role === 'teacher') {
                         showModal(TPL.joinClassAsTeacherConfirm(classId, classData.name));
                     } else {
@@ -482,125 +540,6 @@
                     await classRef.update({ teacherIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
                     hideModal();
                     showModal(TPL.messageModal('Success', `Successfully joined class ${className} as co-teacher!`, 'green'));
-                }
-
-                async function updateUsername(newUsername) {
-                    const usernameRef = db.collection('users').doc(currentUser.uid);
-                    const userDoc = await usernameRef.get();
-                    const data = userDoc.data();
-                    const lastUpdate = data.usernameLastUpdate?.toDate();
-                    const updateCount = data.usernameUpdateCount || 0;
-
-                    const isSameDay = lastUpdate && lastUpdate.toDateString() === today;
-
-                    if (isSameDay && updateCount >= 3) {
-                        showModal(TPL.messageModal('Update Limit Reached', 'You can only update your username 3 times per day. Please try again tomorrow.', 'yellow'));
-                        return;
-                    }
-                    
-                    await usernameRef.update({
-                        username: newUsername,
-                        usernameLastUpdate: new Date(),
-                        usernameUpdateCount: isSameDay ? firebase.firestore.FieldValue.increment(1) : 1
-                    });
-
-                    userData.username = newUsername;
-                    updateProfileUI(currentUser, userData);
-                    hideModal();
-                    showModal(TPL.messageModal('Success', 'Your username has been updated!', 'green'));
-                }
-
-                async function updateClassTitle(classId, newTitle) {
-                    const classRef = db.collection('classes').doc(classId);
-                    await classRef.update({ name: newTitle });
-                    renderMainContent(); // Re-render to show updated title
-                }
-
-                async function refreshClassCode(classId) {
-                    const classRef = db.collection('classes').doc(classId);
-                    const classDoc = await classRef.get();
-                    const classData = classDoc.data();
-                    const lastRefresh = classData.lastCodeRefresh?.toDate();
-                    
-                    if (lastRefresh && lastRefresh.toDateString() === today) {
-                        showModal(TPL.messageModal('Limit Reached', 'You can only refresh the join code once a day. Please try again tomorrow.', 'yellow'));
-                        return;
-                    }
-
-                    const newClassCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-                    await classRef.update({
-                        code: newClassCode,
-                        lastCodeRefresh: new Date()
-                    });
-                    
-                    showModal(TPL.messageModal('Code Refreshed', `The new join code for this class is: <strong>${newClassCode}</strong>`, 'green'));
-                    renderMainContent(); // Re-render to show new code
-                }
-
-                async function deleteClass(classId) {
-                    const classRef = db.collection('classes').doc(classId);
-                    await classRef.delete();
-                    hideModal();
-                    selectClass(null); // Deselect the class
-                    showModal(TPL.messageModal('Class Deleted', 'The class has been permanently deleted.', 'red'));
-                }
-
-                async function removeUserFromClass(classId, userId) {
-                    const classRef = db.collection('classes').doc(classId);
-                    const userDoc = await db.collection('users').doc(userId).get();
-                    const userData = userDoc.data();
-
-                    if (userId === allLoadedClasses[classId].teacherId) {
-                        showModal(TPL.messageModal('Error', 'The main teacher cannot be removed from a class. Please delete the class instead.', 'red'));
-                        return;
-                    }
-
-                    await classRef.update({
-                        studentIds: firebase.firestore.FieldValue.arrayRemove(userId),
-                        teacherIds: firebase.firestore.FieldValue.arrayRemove(userId)
-                    });
-                    
-                    hideModal();
-                    // Reload the roster tab to show the update
-                    showTab('roster');
-                }
-
-                async function fetchRoster(classId) {
-                    const rosterListEl = document.querySelector('#roster-content');
-                    if (!rosterListEl) return;
-                    rosterListEl.innerHTML = `<p class="text-center text-gray-500 py-8"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Loading roster...</p>`;
-
-                    const classData = allLoadedClasses[classId];
-                    if (!classData) return;
-
-                    const allUserIds = [classData.teacherId, ...(classData.teacherIds || []), ...(classData.studentIds || [])];
-                    const roster = [];
-                    const batchSize = 10;
-
-                    for (let i = 0; i < allUserIds.length; i += batchSize) {
-                        const batchIds = allUserIds.slice(i, i + batchSize);
-                        const usersSnapshot = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', batchIds).get();
-                        usersSnapshot.forEach(doc => {
-                            const user = doc.data();
-                            roster.push({
-                                uid: doc.id,
-                                username: user.username,
-                                email: user.email,
-                                role: 'Student'
-                            });
-                        });
-                    }
-
-                    // Assign correct roles
-                    roster.forEach(user => {
-                        if (user.uid === classData.teacherId) {
-                            user.role = 'Main Teacher';
-                        } else if ((classData.teacherIds || []).includes(user.uid)) {
-                            user.role = 'Co-Teacher';
-                        }
-                    });
-
-                    return roster;
                 }
 
                 // --- Google Classroom Integration (Full Implementation) ---
@@ -722,14 +661,14 @@
                             listEl.innerHTML = courses.map(course => {
                                 const isImported = existingGoogleIds.has(course.id);
                                 const buttonHtml = isImported
-                                    ? '<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-lg text-sm poppins-button">Imported</button>'
+                                    ? '<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>'
                                     : `<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" 
-                                        class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly poppins-button">Import</button>`; // Updated button styling
+                                        class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`; // Updated button styling
 
                                 return `
                                     <li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
                                         <div class="flex-1">
-                                            <p class="font-bold font-poppins text-gray-800">${escapeHtml(course.name)}</p>
+                                            <p class="font-bold text-gray-800">${escapeHtml(course.name)}</p>
                                             <p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section || 'No section')}</p>
                                         </div>
                                         ${buttonHtml}
@@ -826,7 +765,7 @@
                         // Fallback message, trying to extract error details if available
                         let errorMessage = 'Failed to import class. Please ensure Google Classroom API is enabled for your account.';
                         if (error.result && error.result.error) {
-                               errorMessage = error.result.error.message || errorMessage;
+                             errorMessage = error.result.error.message || errorMessage;
                         } else if (error.message) {
                             errorMessage = error.message;
                         }
@@ -863,6 +802,7 @@
                     
                     if(target.id === 'import-gclass-btn') handleGoogleImportClick();
                     
+                    // Added modal-cancel-btn style updates to modals below
                     if(target.classList.contains('modal-cancel-btn') || e.target.id === 'modal-backdrop' || target.classList.contains('modal-close-btn')) hideModal();
                     
                     if(target.id === 'confirm-join-teacher-btn') {
@@ -871,30 +811,13 @@
                         joinClassAsTeacher(classId, className);
                     }
                     
-                    if (target.id === 'update-username-btn') {
-                        showModal(TPL.updateUsernameModal(userData));
+                    if(target.id === 'delete-class-btn') {
+                         showModal(TPL.deleteClassConfirm(allLoadedClasses[currentClassId]));
                     }
 
-                    // New event listeners for in-page tab controls
-                    if (target.id === 'refresh-code-btn') {
-                        refreshClassCode(currentClassId);
-                    }
-
-                    if (target.id === 'delete-class-btn') {
-                        showModal(TPL.deleteClassConfirmModal(currentClassId));
-                    }
-                    if (target.id === 'confirm-delete-class-btn') {
-                        deleteClass(currentClassId);
-                    }
-
-                    if (target.classList.contains('remove-user-btn')) {
-                        const userId = target.dataset.uid;
-                        showModal(TPL.removeUserConfirmModal(currentClassId, userId));
-                    }
-                    if (target.id === 'confirm-remove-user-btn') {
+                    if(target.id === 'confirm-delete-class-btn') {
                         const classId = target.dataset.classId;
-                        const userId = target.dataset.uid;
-                        removeUserFromClass(classId, userId);
+                        deleteClass(classId);
                     }
                 });
                 
@@ -910,17 +833,12 @@
                         const classCode = e.target.querySelector('#class-code-input').value.trim().toUpperCase();
                         if(classCode) joinClass(classCode);
                     }
-
-                    if(e.target.id === 'update-class-title-form') {
+                    
+                    if(e.target.id === 'class-settings-form') {
                         const newTitle = e.target.querySelector('#class-title-input').value.trim();
                         if (newTitle) {
-                            await updateClassTitle(currentClassId, newTitle);
+                             await updateClassTitle(currentClassId, newTitle);
                         }
-                    }
-
-                    if(e.target.id === 'update-username-form') {
-                        const newUsername = e.target.querySelector('#new-username').value.trim();
-                        if (newUsername) updateUsername(newUsername);
                     }
                 });
 
@@ -940,25 +858,25 @@
                                 <div class="flex flex-col items-center justify-center">
                                     <i class="fa-solid ${icon} fa-3x ${colorMap[color].text}"></i>
                                     <h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">${escapeHtml(title)}</h3>
-                                    <p class="mt-2 text-gray-600">${message}</p>
+                                    <p class="mt-2 text-gray-600">${escapeHtml(message)}</p>
                                 </div>
                                 <div class="mt-6">
-                                    <button type="button" class="modal-close-btn px-6 py-2 ${bg} text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly poppins-button">OK</button>
+                                    <button type="button" class="modal-close-btn px-6 py-2 ${bg} text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly">OK</button>
                                 </div>
                             </div>
                         `;
                     },
                     emptyState: (user) => `
-                        <div class="h-full flex items-center justify-center text-center fade-in-element">
+                        <div class="h-full flex items-center justify-center text-center fade-enter-active">
                             <div>
                                 <svg class="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
                                 <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome, ${user?.username || ''}!</h2>
                                 <p class="mt-1 text-gray-500">Select a class from the sidebar or get started below.</p>
                                 <div class="mt-6 flex flex-col items-center space-y-4">
                                     ${user.role === 'teacher' ? 
-                                        `<button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`
+                                        `<button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`
                                         : ''}
-                                    <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 btn-bubbly flex items-center justify-center space-x-2">
+                                    <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 btn-bubbly flex items-center space-x-2">
                                         <i class="fa-solid fa-user-plus w-5 h-5"></i>
                                         <span>Join Class</span>
                                     </button>
@@ -966,122 +884,155 @@
                             </div>
                         </div>
                     `,
-                    classViewWithTabs: (cls, user) => {
-                        const isTeacher = user.role === 'teacher';
-                        const isOwner = isTeacher && cls.teacherId === user.uid;
-                        const isCoTeacher = isTeacher && cls.teacherIds.includes(user.uid);
-                        const canEdit = isOwner || isCoTeacher;
+                    classView: (cls, user, activeTab) => `
+                        <div class="fade-enter-active">
+                            <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                                <div class="flex items-center justify-between">
+                                    <h2 class="text-2xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
+                                    <p class="text-sm text-gray-500">Class Code: <span class="font-semibold text-gray-800">${escapeHtml(cls.code)}</span></p>
+                                </div>
+                                <div class="mt-6 border-b border-gray-200">
+                                    <nav class="-mb-px flex space-x-8" aria-label="Tabs">
+                                        <button class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'overview' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}" data-tab="overview" role="tab" aria-selected="${activeTab === 'overview'}">Overview</button>
+                                        <button class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'roster' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}" data-tab="roster" role="tab" aria-selected="${activeTab === 'roster'}">Roster</button>
+                                        ${cls.teacherId === user.uid ? `
+                                        <button class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'settings' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}" data-tab="settings" role="tab" aria-selected="${activeTab === 'settings'}">Settings</button>
+                                        ` : ''}
+                                    </nav>
+                                </div>
+                                <div id="tab-content" class="mt-6"></div>
+                            </div>
+                        </div>
+                    `,
+                    classOverview: (cls) => `
+                        <div class="space-y-4">
+                            <p class="text-sm text-gray-500">Welcome to your class overview. Here you can find important class information and a space for announcements or course materials.</p>
+                            <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                    <h4 class="text-sm font-semibold text-gray-700">Class Code</h4>
+                                    <p class="mt-1 text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.code)}</p>
+                                </div>
+                                <div class="p-4 bg-gray-50 rounded-lg border border-gray-200">
+                                    <h4 class="text-sm font-semibold text-gray-700">Class Title</h4>
+                                    <p class="mt-1 text-lg font-medium text-gray-800">${escapeHtml(cls.name)}</p>
+                                </div>
+                            </div>
+                            <div class="p-4 bg-gray-50 rounded-lg border border-gray-200 text-center text-gray-500">
+                                <p>Announcements and class materials will appear here.</p>
+                            </div>
+                        </div>
+                    `,
+                    classRoster: (cls, users, myUserData) => {
+                        const isOwnerOrCoTeacher = cls.teacherId === myUserData.uid || (cls.teacherIds && cls.teacherIds.includes(myUserData.uid));
+
+                        const getRosterList = (uids, title, role) => {
+                            if (!uids || uids.length === 0) return '';
+                            const userList = uids.map(uid => {
+                                const user = users[uid];
+                                if (!user) return '';
+                                const removeButton = (role === 'student' && (cls.teacherId === myUserData.uid || (cls.teacherIds || []).includes(myUserData.uid)))
+                                ? `<button class="remove-student-btn text-gray-400 hover:text-red-500 transition-colors" data-user-id="${user.id}" data-user-role="student" title="Remove student"><i class="fa-solid fa-user-minus"></i></button>`
+                                : '';
+                                
+                                const removeCoTeacherButton = (role === 'teacher' && cls.teacherId === myUserData.uid && uid !== myUserData.uid)
+                                ? `<button class="remove-coteacher-btn text-gray-400 hover:text-red-500 transition-colors" data-user-id="${user.id}" data-user-role="teacher" title="Remove co-teacher"><i class="fa-solid fa-user-minus"></i></button>`
+                                : '';
+
+                                return `
+                                    <li class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                                        <div class="flex items-center">
+                                            <div class="h-8 w-8 rounded-full flex items-center justify-center bg-gray-300 text-gray-700 font-bold text-sm mr-3">
+                                                ${user.photoURL ? `<img src="${user.photoURL}" alt="" class="h-full w-full rounded-full object-cover">` : user.username.charAt(0).toUpperCase()}
+                                            </div>
+                                            <div>
+                                                <p class="font-medium text-gray-800">${escapeHtml(user.username)}</p>
+                                                <p class="text-xs text-gray-500">${escapeHtml(user.email)}</p>
+                                            </div>
+                                        </div>
+                                        ${role === 'student' ? removeButton : removeCoTeacherButton}
+                                    </li>
+                                `;
+                            }).join('');
+                            return `
+                                <div>
+                                    <h4 class="text-sm font-semibold text-gray-600 uppercase mb-2">${title}</h4>
+                                    <ul class="space-y-2">
+                                        ${userList}
+                                    </ul>
+                                </div>
+                            `;
+                        };
+                        
+                        const teachers = (cls.teacherIds || []).filter(id => id !== cls.teacherId);
                         
                         return `
-                        <div class="fade-in-element">
-                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
-                                <h2 class="text-2xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
-                                </div>
-                            
-                            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
-                                <div id="class-view-tabs" class="flex border-b border-gray-200">
-                                    <button data-tab="overview" class="tab-button flex-1 py-3 px-4 text-center text-sm font-medium text-gray-500 hover:text-gray-800 transition-colors duration-150">Overview</button>
-                                    <button data-tab="roster" class="tab-button flex-1 py-3 px-4 text-center text-sm font-medium text-gray-500 hover:text-gray-800 transition-colors duration-150">Roster</button>
-                                    ${canEdit ? `
-                                        <button data-tab="settings" class="tab-button flex-1 py-3 px-4 text-center text-sm font-medium text-gray-500 hover:text-gray-800 transition-colors duration-150">Settings</button>
-                                    ` : ''}
-                                </div>
-                                <div class="p-6">
-                                    <div data-tab="overview" class="tab-content fade-in-element">
-                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                            <div class="bg-gray-50 p-6 rounded-lg border border-gray-200">
-                                                <h3 class="font-bold text-lg text-gray-800 mb-2">Class Code</h3>
-                                                <p class="text-gray-600">Share this code with students and co-teachers so they can join your class.</p>
-                                                <div class="mt-4 bg-gray-200 p-3 rounded-lg flex items-center justify-between">
-                                                    <span id="class-code" class="font-bold text-2xl tracking-widest text-gray-800">${escapeHtml(cls.code)}</span>
-                                                    <button type="button" class="btn-bubbly text-gray-600 hover:text-gray-800 transition-colors">
-                                                        <i class="fa-solid fa-clipboard fa-lg"></i>
-                                                    </button>
-                                                </div>
-                                            </div>
-                                            <div class="bg-gray-50 p-6 rounded-lg border border-gray-200">
-                                                <h3 class="font-bold text-lg text-gray-800 mb-2">Class Details</h3>
-                                                <div class="space-y-2 text-gray-600">
-                                                    <p><span class="font-semibold">Main Teacher:</span> ${escapeHtml(user.username)}</p>
-                                                    <p><span class="font-semibold">Students:</span> ${cls.studentIds.length}</p>
-                                                    <p><span class="font-semibold">Co-Teachers:</span> ${cls.teacherIds.length}</p>
-                                                    <p><span class="font-semibold">Created On:</span> ${new Date(cls.createdAt?.seconds * 1000).toLocaleDateString()}</p>
-                                                </div>
-                                            </div>
-                                        </div>
+                            <div class="space-y-6">
+                                ${getRosterList([cls.teacherId], 'Class Owner', 'owner')}
+                                ${getRosterList(teachers, 'Co-Teachers', 'teacher')}
+                                ${getRosterList(cls.studentIds, 'Students', 'student')}
+                                ${isOwnerOrCoTeacher && cls.pendingStudentEmails && cls.pendingStudentEmails.length > 0 ? `
+                                    <div>
+                                        <h4 class="text-sm font-semibold text-gray-600 uppercase mb-2">Pending Students</h4>
+                                        <ul class="space-y-2 text-gray-500 text-sm">
+                                            ${cls.pendingStudentEmails.map(email => `
+                                                <li class="p-3 bg-gray-50 rounded-lg truncate">${escapeHtml(email)}</li>
+                                            `).join('')}
+                                        </ul>
                                     </div>
-                                    
-                                    <div data-tab="roster" class="tab-content hidden fade-in-element">
-                                        <h3 class="text-xl font-semibold text-gray-800 font-poppins mb-4">Class Roster</h3>
-                                        <div id="roster-content" class="max-h-96 overflow-y-auto custom-scrollbar">
-                                            <p class="text-center text-gray-500 py-8"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Loading roster...</p>
-                                        </div>
+                                `: ''}
+                            </div>
+                        `;
+                    },
+                    classSettings: (cls) => `
+                        <div class="space-y-6">
+                            <div>
+                                <h3 class="text-lg font-semibold text-gray-800 mb-2">General Settings</h3>
+                                <form id="class-settings-form" class="space-y-4">
+                                    <div>
+                                        <label for="class-title-input" class="block text-sm font-medium text-gray-700">Class Title</label>
+                                        <input type="text" id="class-title-input" class="mt-1 block w-full app-input" value="${escapeHtml(cls.name)}" required>
                                     </div>
-
-                                    ${canEdit ? `
-                                    <div data-tab="settings" class="tab-content hidden fade-in-element">
-                                        <h3 class="text-xl font-semibold text-gray-800 font-poppins mb-4">Class Settings</h3>
-                                        <div class="space-y-6">
-                                            <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                                                <h4 class="font-semibold text-gray-700 mb-2">Change Class Title</h4>
-                                                <form id="update-class-title-form" class="flex space-x-2">
-                                                    <input type="text" id="class-title-input" class="flex-1 app-input" value="${escapeHtml(cls.name)}" required>
-                                                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Save</button>
-                                                </form>
-                                            </div>
-                                            <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                                                <h4 class="font-semibold text-gray-700 mb-2">Class Code</h4>
-                                                <div class="flex items-center justify-between">
-                                                    <p class="text-gray-800 font-semibold">${escapeHtml(cls.code)}</p>
-                                                    <button id="refresh-code-btn" type="button" class="btn-bubbly px-4 py-2 rounded-lg text-white font-medium ${!cls.lastCodeRefresh || cls.lastCodeRefresh.toDate().toDateString() !== today ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed'}" ${!cls.lastCodeRefresh || cls.lastCodeRefresh.toDate().toDateString() !== today ? '' : 'disabled'}>
-                                                        ${!cls.lastCodeRefresh || cls.lastCodeRefresh.toDate().toDateString() !== today ? 'Refresh Code' : 'Refreshed Today'}
-                                                    </button>
-                                                </div>
-                                                <p class="text-xs text-gray-500 mt-2">The join code can be refreshed once per day.</p>
-                                            </div>
-                                            ${isOwner ? `
-                                            <div class="bg-red-50 p-4 rounded-lg border border-red-200">
-                                                <h4 class="font-semibold text-red-700 mb-2">Danger Zone</h4>
-                                                <p class="text-sm text-red-500">This action cannot be undone and will permanently delete the class and all associated data.</p>
-                                                <button id="delete-class-btn" type="button" class="btn-bubbly w-full mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
-                                                    Delete Class
-                                                </button>
-                                            </div>
-                                            ` : `
-                                            <div class="bg-red-50 p-4 rounded-lg border border-red-200">
-                                                <h4 class="font-semibold text-red-700 mb-2">Danger Zone</h4>
-                                                <p class="text-sm text-red-500">Only the main teacher can delete the class.</p>
-                                            </div>
-                                            `}
-                                        </div>
+                                    <div class="flex justify-end">
+                                        <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Save Changes</button>
                                     </div>
-                                    ` : ''}
+                                </form>
+                            </div>
+                            <hr class="border-gray-200">
+                            <div>
+                                <h3 class="text-lg font-semibold text-red-700 mb-2">Danger Zone</h3>
+                                <div class="bg-red-50 p-4 rounded-lg border border-red-200 flex items-center justify-between">
+                                    <div>
+                                        <p class="text-sm font-medium text-red-800">Delete this class</p>
+                                        <p class="text-xs text-red-600">This action is permanent and cannot be undone.</p>
+                                    </div>
+                                    <button id="delete-class-btn" class="btn-bubbly px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors">Delete Class</button>
                                 </div>
                             </div>
                         </div>
-                        `;
-                    },
-                    rosterList: (roster, isOwner) => `
-                        <ul class="space-y-3">
-                            ${roster.length > 0 ? roster.map(user => `
-                                <li class="p-3 bg-gray-50 rounded-lg flex items-center justify-between">
-                                    <div>
-                                        <p class="font-medium text-gray-800">${escapeHtml(user.username)}</p>
-                                        <p class="text-sm text-gray-500">${escapeHtml(user.email)}</p>
-                                    </div>
-                                    <div class="flex items-center space-x-2">
-                                        <span class="inline-block px-2 py-1 text-xs font-semibold rounded-full ${user.role === 'Main Teacher' ? 'bg-blue-200 text-blue-800' : user.role === 'Co-Teacher' ? 'bg-indigo-200 text-indigo-800' : 'bg-green-200 text-green-800'}">
-                                            ${user.role}
-                                        </span>
-                                        ${isOwner && user.uid !== currentUser.uid && user.role !== 'Main Teacher' ? `
-                                            <button data-uid="${user.uid}" class="remove-user-btn text-red-500 hover:text-red-700 transition-colors btn-bubbly">
-                                                <i class="fa-solid fa-user-minus"></i>
-                                            </button>
-                                        ` : ''}
-                                    </div>
-                                </li>
-                            `).join('') : `<p class="text-center text-gray-500">No members in this class yet.</p>`}
-                        </ul>
+                    `,
+                    deleteClassConfirm: (cls) => `
+                        <div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-xl pointer-events-auto text-center">
+                            <i class="fa-solid fa-trash fa-3x text-red-600 mb-4"></i>
+                            <h3 class="text-xl font-bold text-gray-800 font-poppins">Delete Class</h3>
+                            <p class="mt-2 text-gray-600">Are you sure you want to delete <strong>${escapeHtml(cls.name)}</strong>? This action is permanent.</p>
+                            <div class="mt-6 flex justify-center space-x-3">
+                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
+                                <button id="confirm-delete-class-btn" data-class-id="${cls.id}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Delete</button>
+                            </div>
+                        </div>
+                    `,
+                    permissionDenied: () => `
+                        <div class="h-full flex items-center justify-center text-center text-gray-500">
+                            <p>You do not have permission to access these settings.</p>
+                        </div>
+                    `,
+                    loadingState: (message) => `
+                        <div class="h-full flex items-center justify-center text-center text-gray-500">
+                            <div>
+                                <i class="fa-solid fa-spinner fa-spin fa-2x text-blue-600 mb-2"></i>
+                                <p>${escapeHtml(message)}</p>
+                            </div>
+                        </div>
                     `,
                     newClassChoiceModal: (user) => `
                         <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
@@ -1167,58 +1118,6 @@
                             </div>
                             <div class="flex justify-center mt-6">
                                 <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button>
-                            </div>
-                        </div>
-                    `,
-                    updateUsernameModal: (user) => {
-                        const lastUpdate = user.usernameLastUpdate?.toDate();
-                        const updateCount = user.usernameUpdateCount || 0;
-                        const isSameDay = lastUpdate && lastUpdate.toDateString() === today;
-                        const updatesRemaining = 3 - updateCount;
-
-                        return `
-                            <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
-                                <h3 class="text-xl font-semibold text-gray-800 font-poppins">Update Username</h3>
-                                <p class="text-sm text-gray-500 mt-2">You can update your username up to 3 times per day.</p>
-                                <p class="text-xs text-gray-500 mt-1">Updates today: ${updateCount}/3</p>
-                                <form id="update-username-form" class="mt-4 space-y-4">
-                                    <div>
-                                        <label for="new-username" class="block text-sm font-medium text-gray-700">New Username</label>
-                                        <input type="text" id="new-username" required class="mt-1 block w-full app-input" placeholder="Enter new username...">
-                                    </div>
-                                    <div class="flex justify-end space-x-3">
-                                        <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
-                                        <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly" ${updatesRemaining <= 0 ? 'disabled' : ''}>
-                                            Save Changes
-                                        </button>
-                                    </div>
-                                </form>
-                            </div>
-                        `;
-                    },
-                    deleteClassConfirmModal: (classId) => `
-                        <div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-xl pointer-events-auto text-center">
-                            <div class="flex flex-col items-center justify-center">
-                                <i class="fa-solid fa-trash-can fa-3x text-red-600 mb-4"></i>
-                                <h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">Confirm Deletion</h3>
-                                <p class="mt-2 text-gray-600">Are you sure you want to permanently delete this class? This action cannot be undone.</p>
-                            </div>
-                            <div class="mt-6 flex justify-center space-x-3">
-                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
-                                <button id="confirm-delete-class-btn" data-class-id="${classId}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Delete</button>
-                            </div>
-                        </div>
-                    `,
-                    removeUserConfirmModal: (classId, userId) => `
-                        <div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-xl pointer-events-auto text-center">
-                            <div class="flex flex-col items-center justify-center">
-                                <i class="fa-solid fa-circle-question fa-3x text-yellow-600 mb-4"></i>
-                                <h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">Confirm Removal</h3>
-                                <p class="mt-2 text-gray-600">Are you sure you want to remove this user from the class?</p>
-                            </div>
-                            <div class="mt-6 flex justify-center space-x-3">
-                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
-                                <button id="confirm-remove-user-btn" data-class-id="${classId}" data-uid="${userId}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Remove User</button>
                             </div>
                         </div>
                     `
