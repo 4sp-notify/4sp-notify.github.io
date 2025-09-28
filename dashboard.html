@@ -47,7 +47,7 @@
 
         /* Generic Button Style Reset to ensure Inter font */
         button, a.btn-bubbly {
-             font-family: 'Inter', sans-serif;
+              font-family: 'Inter', sans-serif;
         }
 
 
@@ -67,6 +67,16 @@
         }
 
         /* Animations */
+        /* Updated fade transitions for a smoother effect on all elements */
+        .fade-in-element {
+            opacity: 0;
+            transform: translateY(10px);
+            transition: opacity 0.3s ease-out, transform 0.3s ease-out;
+        }
+        .fade-in-element.is-visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
         .fade-enter-from, .fade-leave-to { opacity: 0; transform: scale(0.95); }
         .fade-enter-active, .fade-leave-active { transition: opacity 200ms ease-out, transform 200ms ease-out; }
         .fade-enter-to, .fade-leave-from { opacity: 1; transform: scale(1); }
@@ -99,9 +109,7 @@
             <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between items-center h-16">
                     <a href="index.html" class="flex items-center space-x-3">
-                        <!-- Updated icon to match index.html: Blue Paperclip SVG -->
                         <svg class="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
-                        <!-- Removed font-poppins to use default Inter font for consistency -->
                         <h1 class="text-xl font-bold text-gray-800">Notify</h1>
                     </a>
                     <div class="relative">
@@ -126,10 +134,8 @@
                                     </div>
                                 </div>
                             </div>
-                            <!-- Mini Menu Items -->
                             <div class="py-1" role="none">
-                                <!-- Settings Button -->
-                                <a href="settings.html" class="font-medium text-gray-700 block px-4 py-2 text-sm hover:bg-gray-100 flex items-center" role="menuitem" tabindex="-1">
+                                <a href="#" id="settings-btn" class="font-medium text-gray-700 block px-4 py-2 text-sm hover:bg-gray-100 flex items-center" role="menuitem" tabindex="-1">
                                     <span class="menu-item-icon"><i class="fa-solid fa-gear text-gray-400"></i></span>
                                     <span>Settings</span>
                                 </a>
@@ -158,8 +164,7 @@
                         <i class="fa-solid fa-plus w-5 h-5"></i>
                         <span>New Class</span>
                     </button>
-                    <!-- Join Class button (sidebar) -->
-                    <button id="join-class-btn-main" class="mt-2 w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly text-sm">
+                    <button id="join-class-btn-main" class="mt-2 w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly">
                         <i class="fa-solid fa-user-plus w-5 h-5"></i>
                         <span>Join Class</span>
                     </button>
@@ -324,6 +329,7 @@
                 function showModal(modalHTML) {
                     modalContainer.innerHTML = modalHTML;
                     modalBackdrop.classList.remove('hidden');
+                    modalContainer.classList.remove('pointer-events-none');
                     modalBackdrop.classList.add('fade-enter-active');
                     const modalDialog = modalContainer.firstElementChild;
                     modalDialog.classList.add('fade-enter-from');
@@ -341,7 +347,9 @@
                         setTimeout(() => {
                             modalContainer.innerHTML = '';
                             modalBackdrop.classList.add('hidden');
+                            modalContainer.classList.add('pointer-events-none');
                             modalBackdrop.classList.remove('fade-leave-to');
+                            modalDialog.classList.remove('fade-leave-to');
                         }, 200);
                     }
                 }
@@ -362,7 +370,8 @@
                         code: classCode,
                         studentIds: [],
                         pendingStudentEmails: [],
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        lastCodeRefresh: firebase.firestore.Timestamp.now()
                     });
                     hideModal();
                 }
@@ -370,7 +379,6 @@
                 async function joinClass(classCode) {
                     const classQuery = await db.collection('classes').where('code', '==', classCode).limit(1).get();
                     if (classQuery.empty) {
-                        // Using a custom modal/message box instead of alert()
                         showModal(TPL.messageModal('Error', 'Invalid class code. Please try again.', 'red'));
                         return;
                     }
@@ -380,12 +388,10 @@
 
                     const isAlreadyMember = (classData.studentIds || []).includes(currentUser.uid) || (classData.teacherIds || []).includes(currentUser.uid) || classData.teacherId === currentUser.uid;
                     if (isAlreadyMember) {
-                        // Using a custom modal/message box instead of alert()
                         showModal(TPL.messageModal('Already Enrolled', `You are already a member of the class: ${classData.name}.`, 'yellow'));
                         return;
                     }
                     
-                    // Logic: If user is a teacher, prompt for co-teacher join. Otherwise, join as student.
                     if (userData.role === 'teacher') {
                         showModal(TPL.joinClassAsTeacherConfirm(classId, classData.name));
                     } else {
@@ -401,6 +407,114 @@
                     await classRef.update({ teacherIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
                     hideModal();
                     showModal(TPL.messageModal('Success', `Successfully joined class ${className} as co-teacher!`, 'green'));
+                }
+
+                async function updateUsername(newUsername) {
+                    const usernameRef = db.collection('users').doc(currentUser.uid);
+                    const userDoc = await usernameRef.get();
+                    const data = userDoc.data();
+                    const lastUpdate = data.usernameLastUpdate?.toDate();
+                    const updateCount = data.usernameUpdateCount || 0;
+
+                    const isSameDay = lastUpdate && lastUpdate.toDateString() === today;
+
+                    if (isSameDay && updateCount >= 3) {
+                        showModal(TPL.messageModal('Update Limit Reached', 'You can only update your username 3 times per day. Please try again tomorrow.', 'yellow'));
+                        return;
+                    }
+                    
+                    await usernameRef.update({
+                        username: newUsername,
+                        usernameLastUpdate: new Date(),
+                        usernameUpdateCount: isSameDay ? firebase.firestore.FieldValue.increment(1) : 1
+                    });
+
+                    userData.username = newUsername;
+                    updateProfileUI(currentUser, userData);
+                    hideModal();
+                    showModal(TPL.messageModal('Success', 'Your username has been updated!', 'green'));
+                }
+
+                async function refreshClassCode(classId) {
+                    const classRef = db.collection('classes').doc(classId);
+                    const classDoc = await classRef.get();
+                    const classData = classDoc.data();
+                    const lastRefresh = classData.lastCodeRefresh?.toDate();
+                    
+                    if (lastRefresh && lastRefresh.toDateString() === today) {
+                        showModal(TPL.messageModal('Limit Reached', 'You can only refresh the join code once a day. Please try again tomorrow.', 'yellow'));
+                        return;
+                    }
+
+                    const newClassCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+                    await classRef.update({
+                        code: newClassCode,
+                        lastCodeRefresh: new Date()
+                    });
+                    
+                    hideModal();
+                    showModal(TPL.messageModal('Code Refreshed', `The new join code for this class is: <strong>${newClassCode}</strong>`, 'green'));
+                }
+
+                async function deleteClass(classId) {
+                    const classRef = db.collection('classes').doc(classId);
+                    await classRef.delete();
+                    hideModal();
+                    selectClass(null); // Deselect the class
+                    showModal(TPL.messageModal('Class Deleted', 'The class has been permanently deleted.', 'red'));
+                }
+
+                async function removeUserFromClass(classId, userId) {
+                    const classRef = db.collection('classes').doc(classId);
+                    const userDoc = await db.collection('users').doc(userId).get();
+                    const userData = userDoc.data();
+
+                    if (userId === allLoadedClasses[classId].teacherId) {
+                        showModal(TPL.messageModal('Error', 'The main teacher cannot be removed from a class. Please delete the class instead.', 'red'));
+                        return;
+                    }
+
+                    await classRef.update({
+                        studentIds: firebase.firestore.FieldValue.arrayRemove(userId),
+                        teacherIds: firebase.firestore.FieldValue.arrayRemove(userId)
+                    });
+                    
+                    hideModal();
+                    showModal(TPL.messageModal('User Removed', `User ${userData.username} has been removed from the class.`, 'green'));
+                }
+
+                async function fetchRoster(classId) {
+                    const classData = allLoadedClasses[classId];
+                    if (!classData) return;
+
+                    const allUserIds = [classData.teacherId, ...classData.teacherIds, ...classData.studentIds];
+                    const roster = [];
+                    const batchSize = 10;
+
+                    for (let i = 0; i < allUserIds.length; i += batchSize) {
+                        const batchIds = allUserIds.slice(i, i + batchSize);
+                        const usersSnapshot = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', batchIds).get();
+                        usersSnapshot.forEach(doc => {
+                            const user = doc.data();
+                            roster.push({
+                                uid: doc.id,
+                                username: user.username,
+                                email: user.email,
+                                role: 'Student'
+                            });
+                        });
+                    }
+
+                    // Assign correct roles
+                    roster.forEach(user => {
+                        if (user.uid === classData.teacherId) {
+                            user.role = 'Main Teacher';
+                        } else if (classData.teacherIds.includes(user.uid)) {
+                            user.role = 'Co-Teacher';
+                        }
+                    });
+
+                    showModal(TPL.rosterModal(classData.name, roster, classData.teacherId === currentUser.uid));
                 }
 
                 // --- Google Classroom Integration (Full Implementation) ---
@@ -524,7 +638,7 @@
                                 const buttonHtml = isImported
                                     ? '<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>'
                                     : `<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" 
-                                            class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`; // Updated button styling
+                                        class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`; // Updated button styling
 
                                 return `
                                     <li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
@@ -626,7 +740,7 @@
                         // Fallback message, trying to extract error details if available
                         let errorMessage = 'Failed to import class. Please ensure Google Classroom API is enabled for your account.';
                         if (error.result && error.result.error) {
-                             errorMessage = error.result.error.message || errorMessage;
+                               errorMessage = error.result.error.message || errorMessage;
                         } else if (error.message) {
                             errorMessage = error.message;
                         }
@@ -663,13 +777,39 @@
                     
                     if(target.id === 'import-gclass-btn') handleGoogleImportClick();
                     
-                    // Added modal-cancel-btn style updates to modals below
                     if(target.classList.contains('modal-cancel-btn') || e.target.id === 'modal-backdrop' || target.classList.contains('modal-close-btn')) hideModal();
                     
                     if(target.id === 'confirm-join-teacher-btn') {
                         const classId = target.dataset.classId;
                         const className = target.dataset.className;
                         joinClassAsTeacher(classId, className);
+                    }
+                    if (target.id === 'class-settings-btn') {
+                        showModal(TPL.classSettingsModal(allLoadedClasses[currentClassId], userData, today));
+                    }
+                    if (target.id === 'update-username-btn') {
+                        showModal(TPL.updateUsernameModal(userData));
+                    }
+                    if (target.id === 'refresh-code-btn') {
+                        refreshClassCode(currentClassId);
+                    }
+                    if (target.id === 'delete-class-btn') {
+                        showModal(TPL.deleteClassConfirmModal(currentClassId));
+                    }
+                    if (target.id === 'confirm-delete-class-btn') {
+                        deleteClass(currentClassId);
+                    }
+                    if (target.id === 'view-roster-btn') {
+                        fetchRoster(currentClassId);
+                    }
+                    if (target.classList.contains('remove-user-btn')) {
+                        const userId = target.dataset.uid;
+                        showModal(TPL.removeUserConfirmModal(currentClassId, userId));
+                    }
+                    if (target.id === 'confirm-remove-user-btn') {
+                        const classId = target.dataset.classId;
+                        const userId = target.dataset.uid;
+                        removeUserFromClass(classId, userId);
                     }
                 });
                 
@@ -684,6 +824,10 @@
                     if(e.target.id === 'join-class-form') {
                         const classCode = e.target.querySelector('#class-code-input').value.trim().toUpperCase();
                         if(classCode) joinClass(classCode);
+                    }
+                    if(e.target.id === 'update-username-form') {
+                        const newUsername = e.target.querySelector('#new-username').value.trim();
+                        if (newUsername) updateUsername(newUsername);
                     }
                 });
 
@@ -703,7 +847,7 @@
                                 <div class="flex flex-col items-center justify-center">
                                     <i class="fa-solid ${icon} fa-3x ${colorMap[color].text}"></i>
                                     <h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">${escapeHtml(title)}</h3>
-                                    <p class="mt-2 text-gray-600">${escapeHtml(message)}</p>
+                                    <p class="mt-2 text-gray-600">${message}</p>
                                 </div>
                                 <div class="mt-6">
                                     <button type="button" class="modal-close-btn px-6 py-2 ${bg} text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly">OK</button>
@@ -712,7 +856,7 @@
                         `;
                     },
                     emptyState: (user) => `
-                        <div class="h-full flex items-center justify-center text-center fade-enter-active">
+                        <div class="h-full flex items-center justify-center text-center fade-in-element">
                             <div>
                                 <svg class="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
                                 <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome, ${user?.username || ''}!</h2>
@@ -721,7 +865,6 @@
                                     ${user.role === 'teacher' ? 
                                         `<button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`
                                         : ''}
-                                    <!-- Join Class button (main content area) with icon -->
                                     <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 btn-bubbly flex items-center space-x-2">
                                         <i class="fa-solid fa-user-plus w-5 h-5"></i>
                                         <span>Join Class</span>
@@ -731,9 +874,15 @@
                         </div>
                     `,
                     classView: (cls, user) => `
-                        <div class="fade-enter-active">
-                            <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                        <div class="fade-in-element">
+                            <div class="flex justify-between items-center bg-white p-6 rounded-lg shadow-sm border border-gray-200">
                                 <h2 class="text-2xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
+                                ${user.role === 'teacher' && (cls.teacherId === user.uid || cls.teacherIds.includes(user.uid)) ?
+                                    `<button id="class-settings-btn" class="text-gray-500 hover:text-gray-800 transition-colors btn-bubbly"><i class="fa-solid fa-gear fa-lg"></i></button>`
+                                    : ''
+                                }
+                            </div>
+                            <div class="mt-4 bg-white p-6 rounded-lg shadow-sm border border-gray-200">
                                 <p class="text-sm text-gray-500 mt-1">Class Code: <span class="font-semibold">${escapeHtml(cls.code)}</span></p>
                                 <div class="mt-4">
                                     <p class="text-sm text-gray-600">This is a simplified view. Your class features would be displayed here.</p>
@@ -751,7 +900,6 @@
                                     <span class="font-semibold text-gray-700">Create Manually</span>
                                 </button>
                                 <button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly">
-                                    <!-- Updated to use the PNG asset -->
                                     <img src="../images/google-classroom.png" alt="Google Classroom icon" class="w-8 h-8 mb-2">
                                     <span class="font-semibold text-gray-700">Import from Classroom</span>
                                 </button>
@@ -767,7 +915,6 @@
                             <form id="create-class-form" class="mt-4 space-y-4">
                                 <div>
                                     <label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label>
-                                    <!-- Applied custom app-input style -->
                                     <input type="text" id="new-class-name" required class="mt-1 block w-full app-input" placeholder="Enter class name...">
                                 </div>
                                 <div class="flex justify-end space-x-3">
@@ -778,7 +925,6 @@
                         </div>
                     `,
                     joinClassModal: () => `
-                        <!-- Redesigned Join Class Modal -->
                         <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-2xl pointer-events-auto">
                             <div class="text-center">
                                 <i class="fa-solid fa-link fa-3x text-green-600 mb-4"></i>
@@ -788,7 +934,6 @@
                             <form id="join-class-form" class="mt-6 space-y-6">
                                 <div>
                                     <label for="class-code-input" class="block text-sm font-medium text-gray-700 text-left mb-1">Class Code (8 Digits)</label>
-                                    <!-- Applied custom app-input style -->
                                     <input type="text" id="class-code-input" required minlength="8" maxlength="8" class="block w-full app-input text-center font-bold tracking-widest uppercase text-lg" placeholder="e.g., ABC12345">
                                 </div>
                                 <div class="flex justify-end space-x-3">
@@ -815,7 +960,6 @@
                     googleImportModal: () => `
                         <div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto">
                             <div class="flex items-center justify-center mb-4">
-                                <!-- Updated to use the PNG asset -->
                                 <img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4">
                                 <h3 class="text-2xl font-bold text-gray-800 font-poppins">Import from Classroom</h3>
                             </div>
@@ -830,6 +974,132 @@
                             </div>
                             <div class="flex justify-center mt-6">
                                 <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button>
+                            </div>
+                        </div>
+                    `,
+                    classSettingsModal: (cls, user, today) => {
+                        const canRefresh = !cls.lastCodeRefresh || cls.lastCodeRefresh.toDate().toDateString() !== today;
+                        const refreshButtonClasses = canRefresh ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed';
+                        const refreshButtonText = canRefresh ? 'Refresh Code' : 'Code Refreshed Today';
+                        const isOwner = cls.teacherId === user.uid;
+
+                        return `
+                            <div class="relative bg-white w-full max-w-xl p-6 rounded-xl shadow-xl pointer-events-auto">
+                                <h3 class="text-xl font-semibold text-gray-800 font-poppins text-center mb-4">Settings for ${escapeHtml(cls.name)}</h3>
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                    <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                        <h4 class="font-semibold text-gray-700 mb-2">Join Code</h4>
+                                        <div class="flex items-center justify-between">
+                                            <span class="font-bold text-lg text-gray-800">${escapeHtml(cls.code)}</span>
+                                            <button id="refresh-code-btn" type="button" ${isOwner ? '' : 'disabled'} class="btn-bubbly px-4 py-2 rounded-lg text-white font-medium ${refreshButtonClasses}">
+                                                ${refreshButtonText}
+                                            </button>
+                                        </div>
+                                        <p class="text-xs text-gray-500 mt-2">The join code can be refreshed once per day.</p>
+                                    </div>
+
+                                    <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                        <h4 class="font-semibold text-gray-700 mb-2">Class Roster</h4>
+                                        <p class="text-sm text-gray-500">View and manage the students and teachers in this class.</p>
+                                        <button id="view-roster-btn" class="mt-4 w-full px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">
+                                            View Roster
+                                        </button>
+                                    </div>
+                                    
+                                    <div class="bg-red-50 p-4 rounded-lg border border-red-200 col-span-2">
+                                        <h4 class="font-semibold text-red-700 mb-2">Danger Zone</h4>
+                                        <p class="text-sm text-red-500">This action cannot be undone.</p>
+                                        <button id="delete-class-btn" type="button" ${isOwner ? '' : 'disabled'} class="btn-bubbly w-full mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+                                            Delete Class
+                                        </button>
+                                        ${!isOwner ? `<p class="text-xs text-red-500 mt-2">Only the main teacher can delete the class.</p>` : ''}
+                                    </div>
+                                </div>
+                                <div class="flex justify-center mt-6">
+                                    <button type="button" class="modal-close-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button>
+                                </div>
+                            </div>
+                        `;
+                    },
+                    updateUsernameModal: (user) => {
+                        const lastUpdate = user.usernameLastUpdate?.toDate();
+                        const updateCount = user.usernameUpdateCount || 0;
+                        const isSameDay = lastUpdate && lastUpdate.toDateString() === today;
+                        const updatesRemaining = 3 - updateCount;
+
+                        return `
+                            <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
+                                <h3 class="text-xl font-semibold text-gray-800 font-poppins">Update Username</h3>
+                                <p class="text-sm text-gray-500 mt-2">You can update your username up to 3 times per day.</p>
+                                <p class="text-xs text-gray-500 mt-1">Updates today: ${updateCount}/3</p>
+                                <form id="update-username-form" class="mt-4 space-y-4">
+                                    <div>
+                                        <label for="new-username" class="block text-sm font-medium text-gray-700">New Username</label>
+                                        <input type="text" id="new-username" required class="mt-1 block w-full app-input" placeholder="Enter new username...">
+                                    </div>
+                                    <div class="flex justify-end space-x-3">
+                                        <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
+                                        <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly" ${updatesRemaining <= 0 ? 'disabled' : ''}>
+                                            Save Changes
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        `;
+                    },
+                    rosterModal: (className, roster, isOwner) => `
+                        <div class="relative bg-white w-full max-w-2xl p-6 rounded-xl shadow-xl pointer-events-auto">
+                            <h3 class="text-xl font-semibold text-gray-800 font-poppins">Roster for ${escapeHtml(className)}</h3>
+                            <div class="mt-4 max-h-96 overflow-y-auto custom-scrollbar">
+                                <ul class="space-y-3">
+                                    ${roster.length > 0 ? roster.map(user => `
+                                        <li class="p-3 bg-gray-50 rounded-lg flex items-center justify-between">
+                                            <div>
+                                                <p class="font-medium text-gray-800">${escapeHtml(user.username)}</p>
+                                                <p class="text-sm text-gray-500">${escapeHtml(user.email)}</p>
+                                            </div>
+                                            <div class="flex items-center space-x-2">
+                                                <span class="inline-block px-2 py-1 text-xs font-semibold rounded-full ${user.role === 'Main Teacher' ? 'bg-blue-200 text-blue-800' : user.role === 'Co-Teacher' ? 'bg-indigo-200 text-indigo-800' : 'bg-green-200 text-green-800'}">
+                                                    ${user.role}
+                                                </span>
+                                                ${isOwner && user.uid !== currentUser.uid && user.role !== 'Main Teacher' ? `
+                                                    <button data-uid="${user.uid}" class="remove-user-btn text-red-500 hover:text-red-700 transition-colors btn-bubbly">
+                                                        <i class="fa-solid fa-user-minus"></i>
+                                                    </button>
+                                                ` : ''}
+                                            </div>
+                                        </li>
+                                    `).join('') : `<p class="text-center text-gray-500">No members in this class yet.</p>`}
+                                </ul>
+                            </div>
+                            <div class="flex justify-end mt-6">
+                                <button type="button" class="modal-close-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button>
+                            </div>
+                        </div>
+                    `,
+                    deleteClassConfirmModal: (classId) => `
+                        <div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-xl pointer-events-auto text-center">
+                            <div class="flex flex-col items-center justify-center">
+                                <i class="fa-solid fa-trash-can fa-3x text-red-600 mb-4"></i>
+                                <h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">Confirm Deletion</h3>
+                                <p class="mt-2 text-gray-600">Are you sure you want to permanently delete this class? This action cannot be undone.</p>
+                            </div>
+                            <div class="mt-6 flex justify-center space-x-3">
+                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
+                                <button id="confirm-delete-class-btn" data-class-id="${classId}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Delete</button>
+                            </div>
+                        </div>
+                    `,
+                    removeUserConfirmModal: (classId, userId) => `
+                        <div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-xl pointer-events-auto text-center">
+                            <div class="flex flex-col items-center justify-center">
+                                <i class="fa-solid fa-circle-question fa-3x text-yellow-600 mb-4"></i>
+                                <h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">Confirm Removal</h3>
+                                <p class="mt-2 text-gray-600">Are you sure you want to remove this user from the class?</p>
+                            </div>
+                            <div class="mt-6 flex justify-center space-x-3">
+                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
+                                <button id="confirm-remove-user-btn" data-class-id="${classId}" data-uid="${userId}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Remove User</button>
                             </div>
                         </div>
                     `
