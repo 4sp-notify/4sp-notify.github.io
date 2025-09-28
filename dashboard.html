@@ -45,6 +45,12 @@
             outline: none;
         }
 
+        /* Generic Button Style Reset to ensure Inter font */
+        button, a.btn-bubbly {
+             font-family: 'Inter', sans-serif;
+        }
+
+
         .custom-scrollbar::-webkit-scrollbar { width: 8px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px;}
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
@@ -397,7 +403,7 @@
                     showModal(TPL.messageModal('Success', `Successfully joined class ${className} as co-teacher!`, 'green'));
                 }
 
-                // --- Google Classroom Integration ---
+                // --- Google Classroom Integration (Full Implementation) ---
                 let gapiLoaded = false;
                 let googleAuth = null;
                 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest';
@@ -457,6 +463,36 @@
                     });
                 }
                 
+                async function handleGoogleImportClick() {
+                    showModal(TPL.googleImportModal());
+                    
+                    const loadingEl = document.getElementById('g-import-loading');
+                    const errorEl = document.getElementById('g-import-error');
+                    loadingEl.classList.remove('hidden');
+                    errorEl.classList.add('hidden');
+                    
+                    try {
+                        const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOFhgHXEE').get();
+                        if (!secretsDoc.exists) throw new Error("Secrets document not found.");
+                        
+                        const secrets = secretsDoc.data();
+                        const API_KEY = secrets.GoogleClassroomAPIKey;
+                        const CLIENT_ID = secrets.GoogleClientID;
+                        
+                        if (!API_KEY || !CLIENT_ID) {
+                            throw new Error("Missing API Key or Client ID in secrets document.");
+                        }
+
+                        await initializeGAPI(API_KEY, CLIENT_ID);
+                        await requestAccessToken();
+                    } catch (error) {
+                        console.error('Google Classroom init error:', error);
+                        loadingEl.classList.add('hidden');
+                        errorEl.textContent = `Error: ${error.message}`;
+                        errorEl.classList.remove('hidden');
+                    }
+                }
+
                 async function listGoogleCourses() {
                     const listEl = document.getElementById('g-import-list');
                     const loadingEl = document.getElementById('g-import-loading');
@@ -488,7 +524,7 @@
                                 const buttonHtml = isImported
                                     ? '<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>'
                                     : `<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" 
-                                            class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-full text-sm hover:bg-blue-700 btn-bubbly">Import</button>`;
+                                            class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`; // Updated button styling
 
                                 return `
                                     <li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
@@ -541,11 +577,7 @@
                             return;
                         }
                         
-                        // 1. Get Course details (already implicitly done in listGoogleCourses, but good for completeness)
-                        // const courseResponse = await gapi.client.classroom.courses.get({ id: googleCourseId });
-                        // const fullCourse = courseResponse.result;
-
-                        // 2. Get students and map to existing Notify users/pending emails
+                        // 1. Get students and map to existing Notify users/pending emails
                         const studentsResponse = await gapi.client.classroom.courses.students.list({ courseId: googleCourseId });
                         const students = studentsResponse.result.students || [];
 
@@ -573,7 +605,7 @@
                             }
                         }
                         
-                        // 3. Create the new class document
+                        // 2. Create the new class document
                         const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
                         
                         await db.collection('classes').add({
@@ -631,6 +663,7 @@
                     
                     if(target.id === 'import-gclass-btn') handleGoogleImportClick();
                     
+                    // Added modal-cancel-btn style updates to modals below
                     if(target.classList.contains('modal-cancel-btn') || e.target.id === 'modal-backdrop' || target.classList.contains('modal-close-btn')) hideModal();
                     
                     if(target.id === 'confirm-join-teacher-btn') {
