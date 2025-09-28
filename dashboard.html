@@ -7,7 +7,7 @@
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
         script-src 'self' https://cdn.tailwindcss.com https://www.gstatic.com https://apis.google.com https://accounts.google.com https://kit.fontawesome.com 'unsafe-inline' 'unsafe-eval';
-        style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://kit-pro.fontawesome.com;
+        style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://ka-f.fontawesome.com;
         font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com https://ka-f.fontawesome.com;
         img-src 'self' data: https://www.gstatic.com https://lh3.googleusercontent.com;
         connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://content.googleapis.com https://classroom.googleapis.com https://ka-f.fontawesome.com;
@@ -189,11 +189,11 @@
                 </div>
                 <div id="teacher-sidebar-actions" class="p-4 border-t border-gray-200 hidden">
                     <button id="create-class-choice-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg>
+                        <i class="fa-solid fa-plus-circle"></i>
                         <span>New Class</span>
                     </button>
                     <button id="join-class-btn-main" class="mt-2 w-full bg-indigo-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-indigo-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly text-sm">
-                        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18 9v3m0 0v3m0-3h3m-3 0h-3m-2-5a4 4 0 11-8 0 4 4 0 018 0zM3 20a6 6 0 0112 0v1H3v-1z"></path></svg>
+                        <i class="fa-solid fa-user-plus"></i>
                         <span>Join Class/Co-Teacher</span>
                     </button>
                 </div>
@@ -1148,7 +1148,7 @@
                         if (courses.length > 0) {
                             listEl.innerHTML = courses.map(course => `
                                 <li class="flex items-center p-3 bg-gray-50 rounded-md">
-                                    <input type="checkbox" id="course-${course.id}" data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" class="custom-checkbox g-class-checkbox h-4 w-4 mr-3 text-blue-600 focus:ring-blue-500">
+                                    <input type="checkbox" id="course-${course.id}" data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" class="custom-checkbox g-class-checkbox h-4 w-4 mr-3 text-blue-600 focus:ring-blue-500" ${existingGoogleClassIds.has(course.id) ? 'disabled' : ''}>
                                     <div class="flex-1">
                                         <label for="course-${course.id}" class="block text-sm font-medium text-gray-800">${escapeHtml(course.name)}</label>
                                         <p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section || '')}</p>
@@ -1158,21 +1158,19 @@
                                 
                             // Add event listeners for the "Select All" checkbox
                             selectAllCheckbox.addEventListener('change', () => {
-                                const checkboxes = document.querySelectorAll('.g-class-checkbox');
+                                const checkboxes = document.querySelectorAll('.g-class-checkbox:not(:disabled)');
                                 checkboxes.forEach(cb => {
-                                    if (!cb.disabled) {
-                                        cb.checked = selectAllCheckbox.checked;
-                                    }
+                                    cb.checked = selectAllCheckbox.checked;
                                 });
                             });
                             
                             // Update "Select All" state when individual checkboxes are changed
-                            document.querySelectorAll('.g-class-checkbox').forEach(checkbox => {
+                            document.querySelectorAll('.g-class-checkbox:not(:disabled)').forEach(checkbox => {
                                 checkbox.addEventListener('change', () => {
                                     if (!checkbox.checked) {
                                         selectAllCheckbox.checked = false;
                                     } else {
-                                        const allOtherCheckboxes = document.querySelectorAll('.g-class-checkbox');
+                                        const allOtherCheckboxes = document.querySelectorAll('.g-class-checkbox:not(:disabled)');
                                         const allChecked = Array.from(allOtherCheckboxes).every(cb => cb.checked);
                                         if (allChecked) {
                                             selectAllCheckbox.checked = true;
@@ -1182,10 +1180,12 @@
                             });
                         } else {
                             listEl.innerHTML = '<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom.</p>';
+                            importBtnContainer.classList.add('hidden');
                         }
                     } catch (error) {
                         console.error('Error listing courses:', error);
                         loadingEl.classList.add('hidden');
+                        importBtnContainer.classList.add('hidden');
                         let errorMessage = 'Failed to load courses.';
                         
                         if (error.result && error.result.error) {
@@ -1199,10 +1199,8 @@
                 }
 
                 async function importGoogleClasses(selectedClasses) {
-                    const batch = db.batch();
-                    const importedCount = 0;
-                    
-                    for (const course of selectedClasses) {
+                    hideModal();
+                    const importPromises = selectedClasses.map(async course => {
                         try {
                             const studentsResponse = await gapi.client.classroom.courses.students.list({ courseId: course.id });
                             const students = studentsResponse.result.students || [];
@@ -1227,9 +1225,9 @@
                             }
 
                             const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-
-                            const classDocRef = db.collection('classes').doc();
-                            batch.set(classDocRef, {
+                            const newClassRef = db.collection('classes').doc();
+                            
+                            await newClassRef.set({
                                 name: course.name,
                                 teacherId: currentUser.uid,
                                 teacherIds: [],
@@ -1242,16 +1240,27 @@
                                 schedule: { start: "09:00 AM", end: "03:00 PM" },
                                 createdAt: firebase.firestore.FieldValue.serverTimestamp()
                             });
+
+                            console.log(`Successfully imported class: ${course.name}`);
+                            return { status: 'success', name: course.name };
                         } catch (error) {
                             console.error(`Error importing class ${course.name}:`, error);
-                            alert(`Failed to import class "${course.name}": ${error.message}`);
+                            return { status: 'error', name: course.name, message: error.message };
                         }
-                    }
+                    });
 
-                    await batch.commit();
-                    hideModal();
-                    alert(`Successfully imported ${selectedClasses.length} class(es)!`);
+                    const results = await Promise.all(importPromises);
+                    const successfulImports = results.filter(r => r.status === 'success');
+                    const failedImports = results.filter(r => r.status === 'error');
+                    
+                    let message = `Successfully imported ${successfulImports.length} class(es).`;
+                    if (failedImports.length > 0) {
+                        message += ` Failed to import ${failedImports.length} class(es). Check the console for details.`;
+                    }
+                    alert(message);
+                    renderMainContent(); // Reload the main content to show new classes
                 }
+
 
                 // Templating functions (HTML strings)
                 const TPL = {
@@ -1261,7 +1270,7 @@
                             return `<i class="fa-regular fa-thumbs-up text-green-600"></i>`;
                         } else if (req.status === 'denied') {
                             return `<i class="fa-regular fa-thumbs-down text-red-600"></i>`;
-                        } else if (hasComments) {
+                        } else if (hasComments && req.status === 'held') { // Check for held status specifically
                             return `<i class="fa-regular fa-comment text-blue-500"></i>`;
                         } else {
                             return `<i class="fa-regular fa-hand-paper text-yellow-500"></i>`;
@@ -1276,7 +1285,7 @@
                                 <p class="mt-1 text-gray-500">Select a class from the sidebar or get started below.</p>
                                 <div class="mt-6 flex flex-col items-center space-y-4">
                                     ${user.role === 'teacher' ? 
-                                        `<button id="create-class-choice-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center space-x-2 btn-bubbly"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"></path></svg><span>New Class</span></button>`
+                                        `<button id="create-class-choice-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus-circle"></i><span>New Class</span></button>`
                                         : ''}
                                     <button id="join-class-btn-main" class="bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors duration-150 btn-bubbly">
                                         <span>${user.role === 'teacher' ? 'Join Class/Co-Teacher' : 'Join a Class with Code'}</span>
@@ -1302,8 +1311,8 @@
                                             <div class="flex items-center space-x-2 mt-1">
                                                 ${isAdmin ? 
                                                     `<p class="text-sm text-gray-500">Code: ${escapeHtml(cls.code)}</p>
-                                                    <button id="invite-link-btn" title="Copy Invite Link" class="text-gray-400 hover:text-blue-600 btn-bubbly"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1"></path></svg></button>
-                                                    <button id="fullscreen-code-btn" title="Display Code Fullscreen" class="text-gray-400 hover:text-indigo-600 btn-bubbly"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-5v4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 0h-4m4 0l-5-5"></path></svg></button>`
+                                                    <button id="invite-link-btn" title="Copy Invite Link" class="text-gray-400 hover:text-blue-600 btn-bubbly"><i class="fa-solid fa-link w-4 h-4"></i></button>
+                                                    <button id="fullscreen-code-btn" title="Display Code Fullscreen" class="text-gray-400 hover:text-indigo-600 btn-bubbly"><i class="fa-solid fa-expand w-4 h-4"></i></button>`
                                                     : `<p class="text-sm text-gray-500">Code hidden</p>`}
                                                 <span id="invite-copied-msg" class="text-xs text-green-600 font-medium hidden">Copied!</span>
                                             </div>
@@ -1331,7 +1340,7 @@
                                     ${requestStatus === 'paused' ? 
                                         `<p class="bg-red-100 text-red-700 p-3 rounded-xl font-semibold shadow-sm">Requests are currently paused by the teacher.</p>` :
                                         `<button id="raise-hand-btn" class="bg-indigo-600 text-white font-semibold py-3 px-8 rounded-xl hover:bg-indigo-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly mx-auto shadow-md hover:shadow-lg">
-                                            <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"></path></svg>
+                                            <i class="fa-solid fa-hand-paper w-6 h-6"></i>
                                             <span>Raise Hand for Help</span>
                                         </button>`
                                     }
@@ -1358,12 +1367,8 @@
                             <div class="absolute top-4 left-4 text-xl z-20">
                                 ${TPL.statusIcon(req)}
                             </div>
-                            <div class="request-meta-overlay absolute rounded-xl" style="background-color: ${overlayColor};">
-                                <div class="request-meta-overlay-content">
-                                    <p class="text-sm font-medium text-gray-200">Student:</p>
-                                    <p class="text-xl font-bold text-white">${escapeHtml(studentUsername)}</p>
-                                    <p class="text-sm text-blue-200">${escapeHtml(studentEmail)}</p>
-                                </div>
+                            <div class="request-meta-overlay absolute rounded-xl bg-gray-900 bg-opacity-70 text-white p-4" style="background-color: ${overlayColor};">
+                                <p class="text-lg font-bold truncate">${escapeHtml(studentUsername)}</p>
                             </div>
 
                             <div class="flex items-start flex-1 min-w-0 pr-4">
@@ -1387,7 +1392,7 @@
                                     <button data-request-id="${req.id}" class="accept-request-btn circle-btn bg-green-500 text-white hover:bg-green-600 btn-bubbly" title="Accept Request">
                                         <i class="fa-regular fa-thumbs-up fa-lg"></i>
                                     </button>
-                                    <button data-request-id="${req.id}" data-comment-index="${commentsCount}" class="add-comment-btn circle-btn bg-yellow-500 text-white hover:bg-yellow-600 btn-bubbly" title="Add/Manage Comments (${commentsCount}/3)">
+                                    <button data-request-id="${req.id}" class="add-comment-btn circle-btn bg-yellow-500 text-white hover:bg-yellow-600 btn-bubbly" title="Add/Manage Comments (${commentsCount}/3)">
                                         <i class="fa-regular fa-comment fa-lg"></i>
                                     </button>
                                     <button data-request-id="${req.id}" class="deny-request-btn circle-btn bg-red-500 text-white hover:bg-red-600 btn-bubbly" title="Deny Request">
