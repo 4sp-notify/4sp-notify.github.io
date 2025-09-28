@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notify Dashboard</title>
+    <title>Notify</title>
     <meta http-equiv="Content-Security-Policy" content="
         default-src 'self';
         script-src 'self' https://cdn.tailwindcss.com https://www.gstatic.com https://kit.fontawesome.com https://apis.google.com https://accounts.google.com 'unsafe-inline' 'unsafe-eval';
@@ -38,6 +38,14 @@
         @keyframes marquee {
             0% { transform: translate(0, 0); }
             100% { transform: translate(-100%, 0); }
+        }
+        
+        /* Button Centering Fix */
+        .btn-flex-center {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 0.5rem; /* Space between icon and text */
         }
 
         /* Animations */
@@ -169,12 +177,12 @@
                         <p>No classes yet.</p>
                     </div>
                 </div>
-                <div id="sidebar-actions" class="p-4 border-t border-gray-200">
-                    <button id="new-class-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly">
+                <div id="sidebar-actions" class="p-4 border-t border-gray-200 hidden">
+                    <button id="new-class-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 btn-bubbly btn-flex-center">
                         <i class="fas fa-plus w-4 h-4"></i>
                         <span>New Class</span>
                     </button>
-                    <button id="join-class-btn-main" class="mt-2 w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly text-sm">
+                    <button id="join-class-btn-main" class="mt-2 w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 btn-bubbly btn-flex-center text-sm">
                         <i class="fas fa-door-open w-4 h-4"></i>
                         <span>Join a Class</span>
                     </button>
@@ -323,69 +331,74 @@
                     
                     const sidebarActions = document.getElementById('sidebar-actions');
                     const newClassBtn = document.getElementById('new-class-btn');
-                    const joinClassBtn = document.getElementById('join-class-btn-main');
-
+                    
+                    sidebarActions.classList.remove('hidden');
                     if (data.role === 'teacher') {
-                        sidebarActions.classList.remove('hidden');
                         newClassBtn.classList.remove('hidden');
-                        joinClassBtn.querySelector('span').textContent = 'Join Class';
                     } else {
-                        sidebarActions.classList.remove('hidden');
                         newClassBtn.classList.add('hidden');
-                        joinClassBtn.querySelector('span').textContent = 'Join Class';
                     }
                 }
                 
-                // Unified Listener
                 function listenForClasses(uid) {
                     unsubscribes.forEach(unsub => unsub());
                     unsubscribes = [];
                     allLoadedClasses = {};
-                    lastUpdateTimestamp = Date.now();
-
-                    const userClassesRef = db.collection('classes').where('userRoles', 'array-contains', uid);
-                    unsubscribes.push(userClassesRef.onSnapshot(async snapshot => {
+                    
+                    const teacherQuery = db.collection('classes').where('teacherId', '==', uid);
+                    unsubscribes.push(teacherQuery.onSnapshot(snapshot => {
                         snapshot.docChanges().forEach(change => {
-                            const classData = { id: change.doc.id, ...change.doc.data() };
-                            const isOwner = classData.teacherId === uid;
-                            const isTeacher = isOwner || (classData.teacherIds || []).includes(uid);
-                            const isStudent = (classData.studentIds || []).includes(uid);
-                            
-                            classData.isOwner = isOwner;
-                            classData.isTeacher = isTeacher;
-                            classData.isStudent = isStudent;
-
-                            if (change.type === 'removed') {
-                                delete allLoadedClasses[change.doc.id];
-                            } else {
-                                allLoadedClasses[change.doc.id] = classData;
-                            }
+                            if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
+                            else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data(), isOwner: true, isTeacher: true };
                         });
-                        
-                        await renderClassList(Object.values(allLoadedClasses));
-
-                        if (currentClassId) {
-                             const latestClassData = allLoadedClasses[currentClassId];
-                            if (latestClassData) {
-                                currentClassData = latestClassData;
-                                const isTeacher = currentClassData.isTeacher;
-                                const allUids = isTeacher
-                                    ? [...(currentClassData.studentIds || []), currentClassData.teacherId, ...(currentClassData.teacherIds || [])]
-                                    : [currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
-                                await fetchClassUsers(allUids);
-                                const currentTab = document.querySelector('#class-tabs .border-blue-500')?.dataset.tab || 'requests';
-                                renderMainContent(currentTab);
-                            } else {
-                                selectClass(null);
-                            }
-                        } else {
-                            renderMainContent();
-                        }
-                        
-                        updateTitle();
-                        lastUpdateTimestamp = Date.now();
+                        reRender();
                     }));
+
+                    const studentQuery = db.collection('classes').where('studentIds', 'array-contains', uid);
+                    unsubscribes.push(studentQuery.onSnapshot(snapshot => {
+                       snapshot.docChanges().forEach(change => {
+                           if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
+                           else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data(), isStudent: true };
+                       });
+                       reRender();
+                    }));
+                    
+                    const coTeacherQuery = db.collection('classes').where('teacherIds', 'array-contains', uid);
+                    unsubscribes.push(coTeacherQuery.onSnapshot(snapshot => {
+                       snapshot.docChanges().forEach(change => {
+                           if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
+                           else allLoadedClasses[change.doc.id] = { ...allLoadedClasses[change.doc.id], id: change.doc.id, ...change.doc.data(), isTeacher: true }; 
+                       });
+                       reRender();
+                    }));
+                    
+                    unsubscribes.push(db.collection('requests').onSnapshot(() => reRender(true)));
                 }
+
+                const reRender = async (updateOnlyRequests = false) => {
+                    const classesArray = Object.values(allLoadedClasses);
+                    await renderClassList(classesArray);
+
+                    if (currentClassId && !allLoadedClasses[currentClassId]) {
+                        selectClass(null);
+                    } else if (currentClassId) {
+                        currentClassData = allLoadedClasses[currentClassId];
+                        
+                        const isTeacher = currentClassData.isTeacher || currentClassData.isOwner;
+                        const allUids = isTeacher
+                            ? [...(currentClassData.studentIds || []), currentClassData.teacherId, ...(currentClassData.teacherIds || [])]
+                            : [currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
+                        await fetchClassUsers(allUids);
+                        
+                        const currentTab = document.querySelector('#class-tabs .border-blue-500')?.dataset.tab || 'requests';
+                        if (!updateOnlyRequests || currentTab === 'requests' || currentTab === 'users' || currentTab === 'teachers') {
+                            renderMainContent(currentTab);
+                        }
+                    } else {
+                        renderMainContent();
+                    }
+                    updateTitle();
+                };
 
                 async function renderClassList(classes) {
                     document.getElementById('no-classes-sidebar').classList.toggle('hidden', classes.length > 0);
@@ -394,10 +407,12 @@
 
                     for (const cls of sortedClasses) {
                         let requestCount = 0;
-                        if (cls.isTeacher) {
+                        const isTeacherRole = cls.isTeacher;
+
+                        if (isTeacherRole) {
                             const requestsSnapshot = await db.collection('requests').where('classId', '==', cls.id).where('status', '==', 'held').get();
                             requestCount = requestsSnapshot.size;
-                        } else if (cls.isStudent) {
+                        } else {
                             const requestsSnapshot = await db.collection('requests').where('classId', '==', cls.id).where('studentId', '==', currentUser.uid).where('status', 'in', ['held', 'accepted']).get();
                             requestCount = requestsSnapshot.size;
                         }
@@ -453,18 +468,22 @@
                         updateTitle();
 
                         if (tab === 'requests') {
-                            if (userData.role === 'teacher') {
+                            if (currentClassData.isTeacher) {
                                 listenForTeacherRequests();
                             } else {
                                 listenForStudentRequests();
                             }
-                        } else if (tab === 'users' || tab === 'teachers') {
+                        } else if (tab === 'users' || tab === 'teachers' || tab === 'settings') {
                              const isTeacher = currentClassData.isTeacher;
                              const allUids = isTeacher
                                 ? [...(currentClassData.studentIds || []), currentClassData.teacherId, ...(currentClassData.teacherIds || [])]
                                 : [currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
                              fetchClassUsers(allUids).then(() => {
-                                 document.getElementById('requests-or-settings-container').innerHTML = TPL.usersView(userData, currentClassData.teacherId);
+                                 if (tab === 'users') {
+                                    document.getElementById('requests-or-settings-container').innerHTML = TPL.usersView(userData, currentClassData);
+                                 } else if (tab === 'settings') {
+                                    document.getElementById('requests-or-settings-container').innerHTML = TPL.settingsView(currentClassData);
+                                 }
                              });
                         }
                     } else {
@@ -476,7 +495,7 @@
                 function updateTitle() {
                     let newTitle = "Notify";
                     if (currentClassData) {
-                        const isTeacher = currentClassData.isTeacher;
+                        const isTeacher = currentClassData.isTeacher || currentClassData.isOwner;
                         if (isTeacher) {
                             db.collection('requests').where('classId', '==', currentClassId).where('status', '==', 'held').get().then(snapshot => {
                                 newTitle = `(${snapshot.size}) - Notify`;
@@ -567,7 +586,7 @@
                     const classId = classDoc.id;
                     const classData = classDoc.data();
 
-                    const isAlreadyMember = (classData.userRoles || []).includes(currentUser.uid);
+                    const isAlreadyMember = classData.studentIds?.includes(currentUser.uid) || classData.teacherIds?.includes(currentUser.uid) || classData.teacherId === currentUser.uid;
                     if (isAlreadyMember) {
                         showToast('You are already a member of this class.', 'info');
                         return;
@@ -584,6 +603,18 @@
                         hideModal();
                         showToast(`Successfully joined class: ${classData.name}!`, 'success');
                     }
+                }
+
+                async function joinClassAsTeacher(classId, className) {
+                    const classRef = db.collection('classes').doc(classId);
+                    
+                    await classRef.update({ 
+                        teacherIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid),
+                        userRoles: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
+                    });
+                    
+                    hideModal();
+                    showToast(`Successfully joined class ${className} as co-teacher!`, 'success');
                 }
 
                 async function saveClassName(className) {
@@ -773,7 +804,6 @@
                             });
                         });
                         
-                        // Apply marquee to usernames on request cards
                         document.querySelectorAll('.request-username-marquee').forEach(el => {
                             applyMarqueeIfNeeded(el, el.parentElement);
                         });
@@ -815,7 +845,7 @@
                     if (!target) return;
                     
                     if (target.id === 'user-profile-btn') {
-                        toggleComponent('user-profile-menu');
+                        userProfileMenu.classList.toggle('hidden');
                         const displayNameEl = document.getElementById('user-display-name-menu');
                         const emailEl = document.getElementById('user-email-menu');
                         if (displayNameEl && emailEl) {
@@ -824,12 +854,12 @@
                         }
                         return;
                     }
-                    if (!e.target.closest('#user-profile-menu')) hideComponent('user-profile-menu');
+                    if (!e.target.closest('#user-profile-menu')) userProfileMenu.classList.add('hidden');
 
                     if(target.id === 'logout-btn') auth.signOut();
                     
                     const classBtn = target.closest('#class-list button');
-                    if (classBtn) selectClass(allLoadedClasses[classBtn.dataset.class-id]);
+                    if (classBtn) selectClass(allLoadedClasses[classBtn.dataset.classId]);
                     
                     if(target.id === 'new-class-btn') showModal(TPL.newClassChoiceModal(userData));
                     if(target.id === 'join-class-btn-main') showModal(TPL.joinClassModal());
@@ -1117,7 +1147,6 @@
                             }
                             
                             const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-                            const userRoles = [currentUser.uid, ...existingStudentUids];
                             
                             await db.collection('classes').add({
                                 name: fullCourse.name,
@@ -1128,7 +1157,6 @@
                                 section: fullCourse.section || '',
                                 studentIds: existingStudentUids,
                                 pendingStudentEmails: pendingEmails,
-                                userRoles: userRoles,
                                 requestStatus: 'open',
                                 presetQuestions: [],
                                 schedule: { start: "09:00 AM", end: "03:00 PM" },
@@ -1178,11 +1206,11 @@
                                 <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome, ${user?.username || ''}!</h2>
                                 <p class="mt-1 text-gray-500">Select a class from the sidebar or get started below.</p>
                                 <div class="mt-6 flex flex-col items-center space-y-4">
-                                    <button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center space-x-2 btn-bubbly ${user.role === 'teacher' ? '' : 'hidden'}">
+                                    <button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 btn-bubbly btn-flex-center ${user.role === 'teacher' ? '' : 'hidden'}">
                                         <i class="fas fa-plus w-4 h-4"></i>
                                         <span>New Class</span>
                                     </button>
-                                    <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly text-sm">
+                                    <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 btn-bubbly btn-flex-center text-sm">
                                         <i class="fas fa-door-open w-4 h-4"></i>
                                         <span>Join a Class</span>
                                     </button>
@@ -1225,7 +1253,7 @@
                                     <div class="text-center">
                                         ${requestStatus === 'paused' ? 
                                             `<p class="bg-red-100 text-red-700 p-3 rounded-xl font-semibold shadow-sm">Requests are currently paused by the teacher.</p>` :
-                                            `<button id="raise-hand-btn" class="bg-indigo-600 text-white font-semibold py-3 px-8 rounded-xl hover:bg-indigo-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly mx-auto shadow-md hover:shadow-lg">
+                                            `<button id="raise-hand-btn" class="bg-indigo-600 text-white font-semibold py-3 px-8 rounded-xl hover:bg-indigo-700 transition-colors duration-150 btn-bubbly btn-flex-center mx-auto shadow-md hover:shadow-lg">
                                                 <i class="fas fa-hand-paper w-6 h-6"></i>
                                                 <span>Raise Hand for Help</span>
                                             </button>`
@@ -1312,8 +1340,7 @@
                             ${req.status === 'held' ? `<button data-request-id="${req.id}" class="cancel-request-btn mt-1 ml-4 flex-shrink-0 bg-gray-500 text-white font-medium py-2 px-4 rounded-lg hover:bg-gray-600 btn-bubbly text-sm">Cancel</button>` : ''}
                         </div>`;
                     },
-                    noRequestsMessage: () => `<p class="text-center text-gray-500 py-8">No active requests at this time. Go ahead and get started!</p>
-                    `,
+                    noRequestsMessage: () => `<p class="text-center text-gray-500 py-8">No active requests at this time. Go ahead and get started!</p>`,
                     settingsView: (cls) => {
                         const changesToday = nameChangeSettings.nameChanges[today] || 0;
                         const changesRemaining = 3 - changesToday;
@@ -1351,17 +1378,17 @@
                                     <div class="space-y-4">
                                         <p class="text-sm text-gray-500">Share these links to invite new users to your class.</p>
                                         <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-4">
-                                            <button id="copy-invite-link-btn" data-role="teacher" class="flex-1 bg-purple-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-purple-700 btn-bubbly">
-                                                <i class="fas fa-link mr-2"></i> Invite Co-Teacher
+                                            <button id="copy-invite-link-btn" data-role="teacher" class="flex-1 bg-purple-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-purple-700 btn-bubbly btn-flex-center">
+                                                <i class="fas fa-link"></i> Invite Co-Teacher
                                             </button>
-                                            <button id="copy-invite-link-btn" data-role="student" class="flex-1 bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700 btn-bubbly">
-                                                <i class="fas fa-link mr-2"></i> Invite Student
+                                            <button id="copy-invite-link-btn" data-role="student" class="flex-1 bg-indigo-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-indigo-700 btn-bubbly btn-flex-center">
+                                                <i class="fas fa-link"></i> Invite Student
                                             </button>
                                         </div>
                                         <div class="mt-4">
                                             <p class="text-sm text-gray-500">Your Class Code is: <span class="font-bold text-gray-800">${escapeHtml(cls.code)}</span></p>
-                                            <button id="fullscreen-code-btn" class="text-sm text-gray-500 hover:text-indigo-600 mt-1 btn-bubbly">
-                                                <i class="fas fa-expand-arrows-alt mr-1"></i> Display Fullscreen
+                                            <button id="fullscreen-code-btn" class="text-sm text-gray-500 hover:text-indigo-600 mt-1 btn-bubbly btn-flex-center">
+                                                <i class="fas fa-expand-arrows-alt"></i> Display Fullscreen
                                             </button>
                                         </div>
                                     </div>
@@ -1369,7 +1396,7 @@
                                 <div class="bg-white p-6 rounded-lg shadow-sm border">
                                     <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Request Control</h3>
                                     <p class="text-sm text-gray-700">Current Status: <span class="font-bold ${isPaused ? 'text-red-500' : 'text-green-500'}">${isPaused ? 'PAUSED' : 'ACTIVE'}</span></p>
-                                    <button id="toggle-request-status-btn" class="mt-4 text-white font-bold py-2 px-4 rounded-lg ${buttonColor} btn-bubbly flex items-center space-x-2">
+                                    <button id="toggle-request-status-btn" class="mt-4 text-white font-bold py-2 px-4 rounded-lg ${buttonColor} btn-bubbly btn-flex-center">
                                         <i class="fas ${buttonIcon} w-5 h-5"></i>
                                         <span>${buttonText}</span>
                                     </button>
