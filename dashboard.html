@@ -96,16 +96,20 @@
             z-index: 40; /* Ensure buttons are above the overlay */
         }
 
-        .class-title-marquee {
+        .class-title-marquee-container {
             overflow: hidden;
+            flex: 1;
             white-space: nowrap;
         }
-        .class-title-marquee span {
+
+        .class-title-marquee-container > span {
             display: inline-block;
         }
-        .class-title-marquee:hover span {
+        
+        .class-title-marquee-container.animate-marquee > span {
             animation: marquee-sidebar 10s linear infinite;
         }
+
         @keyframes marquee-sidebar {
             0% { transform: translateX(0); }
             100% { transform: translateX(-100%); }
@@ -265,6 +269,8 @@
                 let currentClassData = null;
                 let unsubscribes = [];
                 let allLoadedClasses = {};
+                let userUnsubs = []; // To store listeners for user documents
+                let classListeners = {}; // To store class listeners keyed by role
 
                 const userProfileMenu = document.getElementById('user-profile-menu');
                 const mainContentArea = document.getElementById('main-content-area');
@@ -304,7 +310,6 @@
                     setTimeout(() => {
                         const isTruncated = textEl.scrollWidth > containerEl.clientWidth;
                         if (isTruncated) {
-                            textEl.innerHTML = `<span>${textEl.textContent}</span><span>&nbsp;&nbsp;&nbsp; ${textEl.textContent}</span>`;
                             textEl.classList.add('marquee');
                             textEl.style.animationPlayState = 'running'; 
                         } else {
@@ -342,70 +347,63 @@
                         studentActions.classList.remove('hidden');
                     }
                 }
-
+                
+                // New consolidated listener function
                 function listenForClasses(uid) {
-                    unsubscribes.forEach(unsub => unsub());
-                    unsubscribes = [];
-                    allLoadedClasses = {};
+                    // Unsubscribe from all previous listeners
+                    Object.values(classListeners).forEach(unsub => unsub());
+                    classListeners = {};
 
-                    const reRender = async (updateOnlyRequests = false) => {
-                        const classesArray = Object.values(allLoadedClasses);
+                    const allClasses = {};
+
+                    const updateClassesAndRender = async () => {
+                        const classesArray = Object.values(allClasses);
                         await renderClassList(classesArray);
 
-                        if (currentClassId && !allLoadedClasses[currentClassId]) {
+                        if (currentClassId && !allClasses[currentClassId]) {
                             selectClass(null);
                         } else if (currentClassId) {
-                            currentClassData = allLoadedClasses[currentClassId];
+                            currentClassData = allClasses[currentClassId];
                             
                             const isTeacher = currentClassData.teacherId === uid || (currentClassData.teacherIds || []).includes(uid);
-                            
-                            if (isTeacher) {
-                                const allUids = [...(currentClassData.studentIds || []), currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
-                                await fetchClassUsers(allUids);
-                            } else {
-                                const teacherUids = [currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
-                                await fetchClassUsers(teacherUids);
-                            }
+                            const allUids = isTeacher
+                                ? [...(currentClassData.studentIds || []), currentClassData.teacherId, ...(currentClassData.teacherIds || [])]
+                                : [currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
 
+                            await fetchClassUsers(allUids);
                             const currentTab = document.querySelector('#class-tabs .border-blue-500')?.dataset.tab || 'requests';
-                            if (!updateOnlyRequests || currentTab === 'requests' || currentTab === 'users' || currentTab === 'teachers') {
-                                renderMainContent(currentTab);
-                            }
+                            renderMainContent(currentTab);
                         } else {
                             renderMainContent();
                         }
                     };
-                    
-                    const teacherQuery = db.collection('classes').where('teacherId', '==', uid);
-                    unsubscribes.push(teacherQuery.onSnapshot(snapshot => {
+
+                    // Define listeners and add to collection
+                    classListeners.teacher = db.collection('classes').where('teacherId', '==', uid).onSnapshot(snapshot => {
                         snapshot.docChanges().forEach(change => {
-                            if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
-                            else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data(), isOwner: true, isTeacher: true };
+                            if (change.type === 'removed') delete allClasses[change.doc.id];
+                            else allClasses[change.doc.id] = { ...allClasses[change.doc.id], id: change.doc.id, ...change.doc.data(), isOwner: true, isTeacher: true };
                         });
-                        reRender();
-                    }));
+                        updateClassesAndRender();
+                    });
 
-                    const studentQuery = db.collection('classes').where('studentIds', 'array-contains', uid);
-                    unsubscribes.push(studentQuery.onSnapshot(snapshot => {
+                    classListeners.student = db.collection('classes').where('studentIds', 'array-contains', uid).onSnapshot(snapshot => {
                        snapshot.docChanges().forEach(change => {
-                           if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
-                           else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data(), isStudent: true };
+                           if (change.type === 'removed') delete allClasses[change.doc.id];
+                           else allClasses[change.doc.id] = { ...allClasses[change.doc.id], id: change.doc.id, ...change.doc.data(), isStudent: true };
                        });
-                       reRender();
-                    }));
+                       updateClassesAndRender();
+                    });
                     
-                    const coTeacherQuery = db.collection('classes').where('teacherIds', 'array-contains', uid);
-                    unsubscribes.push(coTeacherQuery.onSnapshot(snapshot => {
+                    classListeners.coTeacher = db.collection('classes').where('teacherIds', 'array-contains', uid).onSnapshot(snapshot => {
                        snapshot.docChanges().forEach(change => {
-                           if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
-                           else allLoadedClasses[change.doc.id] = { ...allLoadedClasses[change.doc.id], id: change.doc.id, ...change.doc.data(), isTeacher: true }; 
+                           if (change.type === 'removed') delete allClasses[change.doc.id];
+                           else allClasses[change.doc.id] = { ...allClasses[change.doc.id], id: change.doc.id, ...change.doc.data(), isTeacher: true }; 
                        });
-                       reRender();
-                    }));
-                    
-                    unsubscribes.push(db.collection('requests').onSnapshot(() => reRender(true)));
+                       updateClassesAndRender();
+                    });
                 }
-
+                
                 async function renderClassList(classes) {
                     document.getElementById('no-classes-sidebar').classList.toggle('hidden', classes.length > 0);
                     classListEl.innerHTML = '';
@@ -1130,14 +1128,14 @@
                                 <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome!</h2>
                                 <p class="mt-1 text-gray-500">Select a class from the sidebar or get started below.</p>
                                 <div class="mt-6 flex flex-col items-center space-y-4">
-                                    <div id="empty-state-teacher-actions" class="hidden">
-                                        <button id="new-class-btn-empty" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>Create Class</span></button>
+                                    <div id="empty-state-teacher-actions" class="${user.role !== 'teacher' ? 'hidden' : ''} space-y-2">
+                                        <button id="new-class-btn-empty" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>Create Class</span></button>
                                         <button id="import-gclass-btn-empty" class="mt-2 w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly text-sm">
                                             <img src="https://www.gstatic.com/images/branding/product/2x/google_classroom_48dp.png" alt="Google Classroom Logo" class="w-5 h-5 invert" />
                                             <span>Import from Google</span>
                                         </button>
                                     </div>
-                                    <div id="empty-state-student-actions" class="hidden">
+                                    <div id="empty-state-student-actions" class="${user.role !== 'student' ? 'hidden' : ''}">
                                         <button id="join-class-btn-empty" class="bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors duration-150 btn-bubbly">
                                             <span>Join a Class</span>
                                         </button>
