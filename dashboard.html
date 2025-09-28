@@ -105,6 +105,11 @@
             font-family: 'Poppins', sans-serif;
             font-weight: 600;
         }
+        
+        .tab-button.active {
+            border-bottom: 2px solid #2563EB; /* blue-600 */
+            color: #1F2937; /* gray-800 */
+        }
     </style>
 </head>
 <body class="bg-gray-100 h-screen overflow-hidden">
@@ -199,6 +204,7 @@
             let currentClassId = null;
             let allLoadedClasses = {};
             let unsubscribes = [];
+            let activeTab = 'overview';
 
             const userProfileMenu = document.getElementById('user-profile-menu');
             const mainContentArea = document.getElementById('main-content-area');
@@ -320,6 +326,7 @@
                 
                 function selectClass(classData) {
                     currentClassId = classData ? classData.id : null;
+                    activeTab = 'overview'; // Reset to overview when a new class is selected
                     renderClassList(Object.values(allLoadedClasses)); 
                     renderMainContent();
                 }
@@ -327,11 +334,71 @@
                 function renderMainContent() {
                     if (currentClassId) {
                         const classData = allLoadedClasses[currentClassId];
-                        mainContentArea.innerHTML = TPL.classView(classData, userData);
+                        mainContentArea.innerHTML = TPL.classViewWithTabs(classData, userData);
+                        setupTabListeners();
+                        if (activeTab === 'roster') {
+                            showTab('roster');
+                            fetchRoster(currentClassId);
+                        } else if (activeTab === 'settings') {
+                            showTab('settings');
+                        } else {
+                            showTab('overview');
+                        }
                     } else {
                         mainContentArea.innerHTML = TPL.emptyState(userData);
                     }
                 }
+
+                function setupTabListeners() {
+                    const tabsContainer = document.querySelector('#class-view-tabs');
+                    if (tabsContainer) {
+                        tabsContainer.addEventListener('click', e => {
+                            const tabBtn = e.target.closest('.tab-button');
+                            if (tabBtn) {
+                                const tab = tabBtn.dataset.tab;
+                                if (tab !== activeTab) {
+                                    activeTab = tab;
+                                    showTab(tab);
+                                }
+                            }
+                        });
+                    }
+                }
+
+                async function showTab(tabName) {
+                    // Update tab buttons
+                    document.querySelectorAll('.tab-button').forEach(btn => {
+                        if (btn.dataset.tab === tabName) {
+                            btn.classList.add('active');
+                            btn.classList.add('text-gray-800');
+                            btn.classList.remove('text-gray-500', 'hover:text-gray-800');
+                        } else {
+                            btn.classList.remove('active');
+                            btn.classList.remove('text-gray-800');
+                            btn.classList.add('text-gray-500', 'hover:text-gray-800');
+                        }
+                    });
+
+                    // Update tab content
+                    document.querySelectorAll('.tab-content').forEach(content => {
+                        if (content.dataset.tab === tabName) {
+                            content.classList.remove('hidden');
+                        } else {
+                            content.classList.add('hidden');
+                        }
+                    });
+
+                    // If roster tab, fetch and display the roster
+                    if (tabName === 'roster') {
+                        const classData = allLoadedClasses[currentClassId];
+                        const roster = await fetchRoster(currentClassId);
+                        const rosterContainer = document.querySelector('#roster-content');
+                        if (rosterContainer) {
+                             rosterContainer.innerHTML = TPL.rosterList(roster, classData.teacherId === currentUser.uid);
+                        }
+                    }
+                }
+
 
                 // --- Modal Control ---
                 function showModal(modalHTML) {
@@ -443,6 +510,12 @@
                     showModal(TPL.messageModal('Success', 'Your username has been updated!', 'green'));
                 }
 
+                async function updateClassTitle(classId, newTitle) {
+                    const classRef = db.collection('classes').doc(classId);
+                    await classRef.update({ name: newTitle });
+                    renderMainContent(); // Re-render to show updated title
+                }
+
                 async function refreshClassCode(classId) {
                     const classRef = db.collection('classes').doc(classId);
                     const classDoc = await classRef.get();
@@ -460,8 +533,8 @@
                         lastCodeRefresh: new Date()
                     });
                     
-                    hideModal();
                     showModal(TPL.messageModal('Code Refreshed', `The new join code for this class is: <strong>${newClassCode}</strong>`, 'green'));
+                    renderMainContent(); // Re-render to show new code
                 }
 
                 async function deleteClass(classId) {
@@ -488,10 +561,15 @@
                     });
                     
                     hideModal();
-                    showModal(TPL.messageModal('User Removed', `User ${userData.username} has been removed from the class.`, 'green'));
+                    // Reload the roster tab to show the update
+                    showTab('roster');
                 }
 
                 async function fetchRoster(classId) {
+                    const rosterListEl = document.getElementById('roster-list');
+                    if (!rosterListEl) return;
+                    rosterListEl.innerHTML = `<p class="text-center text-gray-500 py-8"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Loading roster...</p>`;
+
                     const classData = allLoadedClasses[classId];
                     if (!classData) return;
 
@@ -522,7 +600,7 @@
                         }
                     });
 
-                    showModal(TPL.rosterModal(classData.name, roster, classData.teacherId === currentUser.uid));
+                    return roster;
                 }
 
                 // --- Google Classroom Integration (Full Implementation) ---
@@ -796,24 +874,22 @@
                         const className = target.dataset.className;
                         joinClassAsTeacher(classId, className);
                     }
-                    if (target.id === 'class-settings-btn') {
-                        showModal(TPL.classSettingsModal(allLoadedClasses[currentClassId], userData, today));
-                    }
+                    
                     if (target.id === 'update-username-btn') {
                         showModal(TPL.updateUsernameModal(userData));
                     }
+
                     if (target.id === 'refresh-code-btn') {
                         refreshClassCode(currentClassId);
                     }
+
                     if (target.id === 'delete-class-btn') {
                         showModal(TPL.deleteClassConfirmModal(currentClassId));
                     }
                     if (target.id === 'confirm-delete-class-btn') {
                         deleteClass(currentClassId);
                     }
-                    if (target.id === 'view-roster-btn') {
-                        fetchRoster(currentClassId);
-                    }
+
                     if (target.classList.contains('remove-user-btn')) {
                         const userId = target.dataset.uid;
                         showModal(TPL.removeUserConfirmModal(currentClassId, userId));
@@ -837,6 +913,14 @@
                         const classCode = e.target.querySelector('#class-code-input').value.trim().toUpperCase();
                         if(classCode) joinClass(classCode);
                     }
+
+                    if(e.target.id === 'update-class-title-form') {
+                        const newTitle = e.target.querySelector('#class-title-input').value.trim();
+                        if (newTitle) {
+                            await updateClassTitle(currentClassId, newTitle);
+                        }
+                    }
+
                     if(e.target.id === 'update-username-form') {
                         const newUsername = e.target.querySelector('#new-username').value.trim();
                         if (newUsername) updateUsername(newUsername);
@@ -885,22 +969,127 @@
                             </div>
                         </div>
                     `,
-                    classView: (cls, user) => `
+                    classViewWithTabs: (cls, user) => {
+                        const isTeacher = user.role === 'teacher';
+                        const isOwner = isTeacher && cls.teacherId === user.uid;
+                        const isCoTeacher = isTeacher && cls.teacherIds.includes(user.uid);
+                        const canEdit = isOwner || isCoTeacher;
+                        
+                        return `
                         <div class="fade-in-element">
-                            <div class="flex justify-between items-center bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
                                 <h2 class="text-2xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
-                                ${user.role === 'teacher' && (cls.teacherId === user.uid || cls.teacherIds.includes(user.uid)) ?
-                                    `<button id="class-settings-btn" class="text-gray-500 hover:text-gray-800 transition-colors btn-bubbly"><i class="fa-solid fa-gear fa-lg"></i></button>`
-                                    : ''
-                                }
+                                ${canEdit ? `
+                                    <div class="mt-4 sm:mt-0">
+                                        <button id="class-settings-btn" class="text-gray-500 hover:text-gray-800 transition-colors btn-bubbly"><i class="fa-solid fa-gear fa-lg"></i></button>
+                                    </div>
+                                ` : ''}
                             </div>
-                            <div class="mt-4 bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                                <p class="text-sm text-gray-500 mt-1">Class Code: <span class="font-semibold">${escapeHtml(cls.code)}</span></p>
-                                <div class="mt-4">
-                                    <p class="text-sm text-gray-600">This is a simplified view. Your class features would be displayed here.</p>
+                            
+                            <div class="bg-white rounded-lg shadow-sm border border-gray-200">
+                                <div id="class-view-tabs" class="flex border-b border-gray-200">
+                                    <button data-tab="overview" class="tab-button flex-1 py-3 px-4 text-center text-sm font-medium text-gray-500 hover:text-gray-800 transition-colors duration-150">Overview</button>
+                                    <button data-tab="roster" class="tab-button flex-1 py-3 px-4 text-center text-sm font-medium text-gray-500 hover:text-gray-800 transition-colors duration-150">Roster</button>
+                                    ${canEdit ? `
+                                        <button data-tab="settings" class="tab-button flex-1 py-3 px-4 text-center text-sm font-medium text-gray-500 hover:text-gray-800 transition-colors duration-150">Settings</button>
+                                    ` : ''}
+                                </div>
+                                <div class="p-6">
+                                    <div data-tab="overview" class="tab-content fade-in-element">
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                            <div class="bg-gray-50 p-6 rounded-lg border border-gray-200">
+                                                <h3 class="font-bold text-lg text-gray-800 mb-2">Class Code</h3>
+                                                <p class="text-gray-600">Share this code with students and co-teachers so they can join your class.</p>
+                                                <div class="mt-4 bg-gray-200 p-3 rounded-lg flex items-center justify-between">
+                                                    <span id="class-code" class="font-bold text-2xl tracking-widest text-gray-800">${escapeHtml(cls.code)}</span>
+                                                    <button type="button" class="btn-bubbly text-gray-600 hover:text-gray-800 transition-colors">
+                                                        <i class="fa-solid fa-clipboard fa-lg"></i>
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div class="bg-gray-50 p-6 rounded-lg border border-gray-200">
+                                                <h3 class="font-bold text-lg text-gray-800 mb-2">Class Details</h3>
+                                                <div class="space-y-2 text-gray-600">
+                                                    <p><span class="font-semibold">Main Teacher:</span> ${escapeHtml(user.username)}</p>
+                                                    <p><span class="font-semibold">Students:</span> ${cls.studentIds.length}</p>
+                                                    <p><span class="font-semibold">Co-Teachers:</span> ${cls.teacherIds.length}</p>
+                                                    <p><span class="font-semibold">Created On:</span> ${new Date(cls.createdAt?.seconds * 1000).toLocaleDateString()}</p>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    <div data-tab="roster" class="tab-content hidden fade-in-element">
+                                        <h3 class="text-xl font-semibold text-gray-800 font-poppins mb-4">Class Roster</h3>
+                                        <div id="roster-content" class="max-h-96 overflow-y-auto custom-scrollbar">
+                                            <p class="text-center text-gray-500 py-8"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Loading roster...</p>
+                                        </div>
+                                    </div>
+
+                                    ${canEdit ? `
+                                    <div data-tab="settings" class="tab-content hidden fade-in-element">
+                                        <h3 class="text-xl font-semibold text-gray-800 font-poppins mb-4">Class Settings</h3>
+                                        <div class="space-y-6">
+                                            <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                                <h4 class="font-semibold text-gray-700 mb-2">Change Class Title</h4>
+                                                <form id="update-class-title-form" class="flex space-x-2">
+                                                    <input type="text" id="class-title-input" class="flex-1 app-input" value="${escapeHtml(cls.name)}" required>
+                                                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Save</button>
+                                                </form>
+                                            </div>
+                                            <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
+                                                <h4 class="font-semibold text-gray-700 mb-2">Class Code</h4>
+                                                <div class="flex items-center justify-between">
+                                                    <p class="text-gray-800 font-semibold">${escapeHtml(cls.code)}</p>
+                                                    <button id="refresh-code-btn" type="button" class="btn-bubbly px-4 py-2 rounded-lg text-white font-medium ${!cls.lastCodeRefresh || cls.lastCodeRefresh.toDate().toDateString() !== today ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed'}" ${!cls.lastCodeRefresh || cls.lastCodeRefresh.toDate().toDateString() !== today ? '' : 'disabled'}>
+                                                        ${!cls.lastCodeRefresh || cls.lastCodeRefresh.toDate().toDateString() !== today ? 'Refresh Code' : 'Refreshed Today'}
+                                                    </button>
+                                                </div>
+                                                <p class="text-xs text-gray-500 mt-2">The join code can be refreshed once per day.</p>
+                                            </div>
+                                            ${isOwner ? `
+                                            <div class="bg-red-50 p-4 rounded-lg border border-red-200">
+                                                <h4 class="font-semibold text-red-700 mb-2">Danger Zone</h4>
+                                                <p class="text-sm text-red-500">This action cannot be undone and will permanently delete the class and all associated data.</p>
+                                                <button id="delete-class-btn" type="button" class="btn-bubbly w-full mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
+                                                    Delete Class
+                                                </button>
+                                            </div>
+                                            ` : `
+                                            <div class="bg-red-50 p-4 rounded-lg border border-red-200">
+                                                <h4 class="font-semibold text-red-700 mb-2">Danger Zone</h4>
+                                                <p class="text-sm text-red-500">Only the main teacher can delete the class.</p>
+                                            </div>
+                                            `}
+                                        </div>
+                                    </div>
+                                    ` : ''}
                                 </div>
                             </div>
                         </div>
+                        `;
+                    },
+                    rosterList: (roster, isOwner) => `
+                        <ul class="space-y-3">
+                            ${roster.length > 0 ? roster.map(user => `
+                                <li class="p-3 bg-gray-50 rounded-lg flex items-center justify-between">
+                                    <div>
+                                        <p class="font-medium text-gray-800">${escapeHtml(user.username)}</p>
+                                        <p class="text-sm text-gray-500">${escapeHtml(user.email)}</p>
+                                    </div>
+                                    <div class="flex items-center space-x-2">
+                                        <span class="inline-block px-2 py-1 text-xs font-semibold rounded-full ${user.role === 'Main Teacher' ? 'bg-blue-200 text-blue-800' : user.role === 'Co-Teacher' ? 'bg-indigo-200 text-indigo-800' : 'bg-green-200 text-green-800'}">
+                                            ${user.role}
+                                        </span>
+                                        ${isOwner && user.uid !== currentUser.uid && user.role !== 'Main Teacher' ? `
+                                            <button data-uid="${user.uid}" class="remove-user-btn text-red-500 hover:text-red-700 transition-colors btn-bubbly">
+                                                <i class="fa-solid fa-user-minus"></i>
+                                            </button>
+                                        ` : ''}
+                                    </div>
+                                </li>
+                            `).join('') : `<p class="text-center text-gray-500">No members in this class yet.</p>`}
+                        </ul>
                     `,
                     newClassChoiceModal: (user) => `
                         <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
@@ -989,50 +1178,6 @@
                             </div>
                         </div>
                     `,
-                    classSettingsModal: (cls, user, today) => {
-                        const canRefresh = !cls.lastCodeRefresh || cls.lastCodeRefresh.toDate().toDateString() !== today;
-                        const refreshButtonClasses = canRefresh ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed';
-                        const refreshButtonText = canRefresh ? 'Refresh Code' : 'Code Refreshed Today';
-                        const isOwner = cls.teacherId === user.uid;
-
-                        return `
-                            <div class="relative bg-white w-full max-w-xl p-6 rounded-xl shadow-xl pointer-events-auto">
-                                <h3 class="text-xl font-semibold text-gray-800 font-poppins text-center mb-4">Settings for ${escapeHtml(cls.name)}</h3>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                                        <h4 class="font-semibold text-gray-700 mb-2">Join Code</h4>
-                                        <div class="flex items-center justify-between">
-                                            <span class="font-bold text-lg text-gray-800">${escapeHtml(cls.code)}</span>
-                                            <button id="refresh-code-btn" type="button" ${isOwner ? '' : 'disabled'} class="btn-bubbly px-4 py-2 rounded-lg text-white font-medium ${refreshButtonClasses}">
-                                                ${refreshButtonText}
-                                            </button>
-                                        </div>
-                                        <p class="text-xs text-gray-500 mt-2">The join code can be refreshed once per day.</p>
-                                    </div>
-
-                                    <div class="bg-gray-50 p-4 rounded-lg border border-gray-200">
-                                        <h4 class="font-semibold text-gray-700 mb-2">Class Roster</h4>
-                                        <p class="text-sm text-gray-500">View and manage the students and teachers in this class.</p>
-                                        <button id="view-roster-btn" class="mt-4 w-full px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">
-                                            View Roster
-                                        </button>
-                                    </div>
-                                    
-                                    <div class="bg-red-50 p-4 rounded-lg border border-red-200 col-span-2">
-                                        <h4 class="font-semibold text-red-700 mb-2">Danger Zone</h4>
-                                        <p class="text-sm text-red-500">This action cannot be undone.</p>
-                                        <button id="delete-class-btn" type="button" ${isOwner ? '' : 'disabled'} class="btn-bubbly w-full mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700">
-                                            Delete Class
-                                        </button>
-                                        ${!isOwner ? `<p class="text-xs text-red-500 mt-2">Only the main teacher can delete the class.</p>` : ''}
-                                    </div>
-                                </div>
-                                <div class="flex justify-center mt-6">
-                                    <button type="button" class="modal-close-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button>
-                                </div>
-                            </div>
-                        `;
-                    },
                     updateUsernameModal: (user) => {
                         const lastUpdate = user.usernameLastUpdate?.toDate();
                         const updateCount = user.usernameUpdateCount || 0;
@@ -1059,36 +1204,6 @@
                             </div>
                         `;
                     },
-                    rosterModal: (className, roster, isOwner) => `
-                        <div class="relative bg-white w-full max-w-2xl p-6 rounded-xl shadow-xl pointer-events-auto">
-                            <h3 class="text-xl font-semibold text-gray-800 font-poppins">Roster for ${escapeHtml(className)}</h3>
-                            <div class="mt-4 max-h-96 overflow-y-auto custom-scrollbar">
-                                <ul class="space-y-3">
-                                    ${roster.length > 0 ? roster.map(user => `
-                                        <li class="p-3 bg-gray-50 rounded-lg flex items-center justify-between">
-                                            <div>
-                                                <p class="font-medium text-gray-800">${escapeHtml(user.username)}</p>
-                                                <p class="text-sm text-gray-500">${escapeHtml(user.email)}</p>
-                                            </div>
-                                            <div class="flex items-center space-x-2">
-                                                <span class="inline-block px-2 py-1 text-xs font-semibold rounded-full ${user.role === 'Main Teacher' ? 'bg-blue-200 text-blue-800' : user.role === 'Co-Teacher' ? 'bg-indigo-200 text-indigo-800' : 'bg-green-200 text-green-800'}">
-                                                    ${user.role}
-                                                </span>
-                                                ${isOwner && user.uid !== currentUser.uid && user.role !== 'Main Teacher' ? `
-                                                    <button data-uid="${user.uid}" class="remove-user-btn text-red-500 hover:text-red-700 transition-colors btn-bubbly">
-                                                        <i class="fa-solid fa-user-minus"></i>
-                                                    </button>
-                                                ` : ''}
-                                            </div>
-                                        </li>
-                                    `).join('') : `<p class="text-center text-gray-500">No members in this class yet.</p>`}
-                                </ul>
-                            </div>
-                            <div class="flex justify-end mt-6">
-                                <button type="button" class="modal-close-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button>
-                            </div>
-                        </div>
-                    `,
                     deleteClassConfirmModal: (classId) => `
                         <div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-xl pointer-events-auto text-center">
                             <div class="flex flex-col items-center justify-center">
