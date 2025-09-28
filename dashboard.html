@@ -17,7 +17,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" integrity="sha512-iecdLmaskl7CVkqkXNQ/h-fSQwFSt9B1tL3c+wz6t8v/Gz/L6g5v5g+zJz/dF8J5+R5o5I0l8t1e4h+wB2B2A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" xintegrity="sha512-iecdLmaskl7CVkqkXNQ/h-fSQwFSt9B1tL3c+wz6t8v/Gz/L6g5v5g+zJz/dF8J5+R5o5I0l8t1e4h+wB2B2A==" crossorigin="anonymous" referrerpolicy="no-referrer" />
     
     <script src="https://apis.google.com/js/api.js" async defer></script>
     <script src="https://accounts.google.com/gsi/client" async defer></script>
@@ -35,17 +35,30 @@
             transition: transform 0.2s ease-out, opacity 0.2s ease-out;
             transform-origin: top right;
         }
-        .text-marquee {
-            animation: marquee 10s linear infinite;
-        }
-        @keyframes marquee {
-            0% { transform: translateX(0); }
-            100% { transform: translateX(-100%); }
-        }
-        .marquee-container {
+        
+        /* Marquee for long class titles */
+        .class-title-marquee {
             overflow: hidden;
             white-space: nowrap;
+            animation: marquee-sidebar 10s linear infinite;
+            display: inline-block;
             width: 100%;
+        }
+
+        @keyframes marquee-sidebar {
+            0% { transform: translateX(0); }
+            50% { transform: translateX(-50%); }
+            100% { transform: translateX(0); }
+        }
+        
+        /* Dragging styles */
+        .dragging {
+            opacity: 0.5;
+            transform: scale(0.98);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+        }
+        .drag-over {
+            border-bottom: 2px solid theme('colors.blue.500');
         }
     </style>
 </head>
@@ -72,10 +85,10 @@
                                          <div id="user-profile-initial-menu" class="h-12 w-12 rounded-full flex items-center justify-center bg-gradient-to-br from-blue-600 to-indigo-700 text-white font-bold text-xl hidden"></div>
                                     </div>
                                     <div class="ml-3 min-w-0">
-                                        <div id="user-display-name-container" class="marquee-container">
+                                        <div id="user-display-name-container" class="truncate">
                                             <p id="user-display-name-menu" class="text-lg font-bold font-poppins text-gray-800 truncate">Loading...</p>
                                         </div>
-                                        <div id="user-email-container" class="marquee-container">
+                                        <div id="user-email-container" class="truncate">
                                             <p id="user-email-menu" class="text-sm text-gray-500 truncate">Loading...</p>
                                         </div>
                                     </div>
@@ -161,7 +174,7 @@
                         </div>
                         <div id="teacher-panel" class="hidden flex-1 flex flex-col">
                             <h3 id="requests-header" class="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4"></h3>
-                            <div id="student-requests-grid" class="flex-1 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-6 content-start">
+                            <div id="student-requests-grid" class="flex-1 grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-6 content-start">
                             </div>
                             <div id="no-requests-message" class="flex-1 flex items-center justify-center text-center hidden">
                                 <div class="text-gray-400">
@@ -174,6 +187,7 @@
                             <div class="flex flex-col items-center">
                                 <div id="hand-raised-container" class="hidden">
                                     <div class="relative w-40 h-40">
+                                        <!-- This SVG for the spinning circle remains as it's a structural element -->
                                         <svg class="w-full h-full text-gray-300 animate-spin-slow" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
                                             <circle cx="50" cy="50" r="45" fill="none" stroke="currentColor" stroke-width="5" stroke-dasharray="282.7" stroke-dashoffset="0" stroke-linecap="round"></circle>
                                         </svg>
@@ -220,6 +234,12 @@
             let requestUnsub = null;
             let classUnsub = null;
             let lastRequestTime = 0;
+            let draggingItem = null; // for drag and drop
+
+            // Local storage keys for persistent client-side features
+            const CLASS_ORDER_KEY = () => `classOrder_${currentUser.uid}`;
+            const LOCAL_REQUESTS_KEY = () => `localRequests_${currentUser.uid}`;
+            const TWENTY_FOUR_HOURS_MS = 24 * 60 * 60 * 1000;
 
             const userProfileMenu = document.getElementById('user-profile-menu');
             const classListEl = document.getElementById('class-list');
@@ -227,16 +247,13 @@
             const studentActions = document.getElementById('student-actions');
             const emptyStateTeacherActions = [document.getElementById('new-class-btn-empty'), document.getElementById('import-gclass-btn-empty')];
             const emptyStateStudentActions = [document.getElementById('join-class-btn-empty')];
-            const joinClassMainBtn = document.getElementById('join-class-btn-main');
-
+            
             const classViewContainer = document.getElementById('class-view-container');
             const emptyStateEl = document.getElementById('empty-state');
             const teacherPanelEl = document.getElementById('teacher-panel');
             const studentPanelEl = document.getElementById('student-panel');
             const studentRequestsGrid = document.getElementById('student-requests-grid');
             const noRequestsMessage = document.getElementById('no-requests-message');
-            const raiseHandBtn = document.getElementById('raise-hand-btn');
-            const lowerHandBtn = document.getElementById('lower-hand-btn');
             const handRaisedContainer = document.getElementById('hand-raised-container');
             const notRaisedContainer = document.getElementById('not-raised-container');
 
@@ -257,11 +274,47 @@
                 auth.onAuthStateChanged(user => {
                     if (user) {
                         currentUser = user;
+                        // Run cleanup immediately after auth
+                        cleanUpOldRequests(); 
                         fetchUserData(user.uid);
                     } else {
                         window.location.href = 'login.html';
                     }
                 });
+
+                // Function to delete old requests (client-side simulation of a cron job)
+                async function cleanUpOldRequests() {
+                    if (!currentUser) return;
+
+                    const now = Date.now();
+                    const twentyFourHoursAgo = now - TWENTY_FOUR_HOURS_MS;
+                    
+                    // 1. Check current user's *made* requests (student)
+                    let localRequests = JSON.parse(localStorage.getItem(LOCAL_REQUESTS_KEY()) || '{}');
+                    let updatedLocalRequests = { ...localRequests };
+                    let shouldUpdateLocal = false;
+
+                    for (const reqId in localRequests) {
+                        const reqTimestamp = localRequests[reqId].timestamp;
+                        if (reqTimestamp < twentyFourHoursAgo) {
+                            try {
+                                await db.collection('requests').doc(reqId).delete();
+                            } catch (error) {
+                                // Request might have already been deleted by a teacher/another client. Safe to ignore.
+                                console.log(`Attempted to delete expired request ${reqId}.`);
+                            }
+                            delete updatedLocalRequests[reqId];
+                            shouldUpdateLocal = true;
+                        }
+                    }
+
+                    if (shouldUpdateLocal) {
+                        localStorage.setItem(LOCAL_REQUESTS_KEY(), JSON.stringify(updatedLocalRequests));
+                    }
+                }
+                
+                // Set interval to check for old requests every hour
+                setInterval(cleanUpOldRequests, 60 * 60 * 1000); 
 
                 async function fetchUserData(uid) {
                     const userDoc = await db.collection('users').doc(uid).get();
@@ -312,40 +365,133 @@
 
                 function listenForClasses(uid) {
                     if (classUnsub) classUnsub();
-                    classUnsub = db.collection('classes').where('teacherId', '==', uid).onSnapshot(snapshot => {
+                    
+                    // Teachers' classes
+                    const teacherClassesUnsub = db.collection('classes').where('teacherId', '==', uid).onSnapshot(snapshot => {
                         snapshot.docChanges().forEach(change => {
                             if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
                             else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
                         });
                         renderClassList(Object.values(allLoadedClasses));
-                        if (currentClassId && allLoadedClasses[currentClassId]) {
-                            selectClass(currentClassId);
-                        }
                     });
                     
-                    db.collection('classes').where('studentIds', 'array-contains', uid).onSnapshot(snapshot => {
+                    // Students' classes
+                    const studentClassesUnsub = db.collection('classes').where('studentIds', 'array-contains', uid).onSnapshot(snapshot => {
                        snapshot.docChanges().forEach(change => {
                            if (change.type === 'removed') delete allLoadedClasses[change.doc.id];
                            else allLoadedClasses[change.doc.id] = { id: change.doc.id, ...change.doc.data() };
                        });
                        renderClassList(Object.values(allLoadedClasses));
-                       if (currentClassId && allLoadedClasses[currentClassId]) {
-                           selectClass(currentClassId);
-                       }
                    });
+
+                   classUnsub = () => { teacherClassesUnsub(); studentClassesUnsub(); };
                 }
 
                 function renderClassList(classes) {
                     document.getElementById('no-classes-sidebar').classList.toggle('hidden', classes.length > 0);
-                    classListEl.innerHTML = '';
-                    const sortedClasses = classes.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+                    
+                    const classOrder = JSON.parse(localStorage.getItem(CLASS_ORDER_KEY()) || '[]');
+                    const sortedClassesMap = new Map(classes.map(cls => [cls.id, cls]));
+                    
+                    let sortedClasses = classOrder
+                        .map(id => sortedClassesMap.get(id))
+                        .filter(cls => cls !== undefined);
+                        
+                    const existingIds = new Set(classOrder);
+                    classes.forEach(cls => {
+                        if (!existingIds.has(cls.id)) {
+                            sortedClasses.push(cls);
+                        }
+                    });
 
+                    // Update the local storage with the final order to save new classes
+                    localStorage.setItem(CLASS_ORDER_KEY(), JSON.stringify(sortedClasses.map(cls => cls.id)));
+
+
+                    classListEl.innerHTML = '';
+                    
                     for (const cls of sortedClasses) {
                         const isActive = cls.id === currentClassId;
                         const li = document.createElement('li');
-                        li.innerHTML = `<button data-class-id="${cls.id}" class="w-full text-left px-3 py-2 rounded-md font-medium text-sm transition-colors text-gray-600 hover:bg-gray-100 hover:text-gray-900 btn-bubbly relative flex justify-between items-center ${isActive ? 'bg-gray-100 text-gray-900' : ''}">${escapeHtml(cls.name)}</button>`;
+                        li.setAttribute('draggable', true);
+                        li.dataset.classId = cls.id;
+                        
+                        const classTitle = escapeHtml(cls.name);
+                        // Apply marquee if the title is longer than 20 characters
+                        const titleContent = cls.name.length > 20 
+                            ? `<span class="class-title-marquee">${classTitle} &nbsp;&nbsp;&nbsp; ${classTitle}</span>` 
+                            : `<span class="truncate">${classTitle}</span>`;
+
+
+                        li.innerHTML = `<button data-class-id="${cls.id}" class="w-full text-left px-3 py-2 rounded-md font-medium text-sm transition-colors text-gray-600 hover:bg-gray-100 hover:text-gray-900 btn-bubbly relative flex justify-between items-center ${isActive ? 'bg-gray-100 text-gray-900' : ''}">${titleContent}</button>`;
                         classListEl.appendChild(li);
                     }
+
+                    // Re-apply drag/drop listeners
+                    addDragDropListeners();
+                    
+                    // Attempt to auto-select last class
+                    if (currentClassId && allLoadedClasses[currentClassId]) {
+                        selectClass(currentClassId);
+                    } else if (currentClassId) {
+                         // If the last class ID exists locally but not in the list (e.g., archived/deleted), clear it.
+                         localStorage.removeItem('lastClassId');
+                         currentClassId = null;
+                         showComponent('empty-state');
+                         hideComponent('class-view-container');
+                    }
+                }
+
+                function addDragDropListeners() {
+                    const listItems = classListEl.querySelectorAll('li');
+
+                    listItems.forEach(item => {
+                        item.addEventListener('dragstart', (e) => {
+                            draggingItem = item;
+                            e.dataTransfer.effectAllowed = 'move';
+                            setTimeout(() => item.classList.add('dragging'), 0);
+                        });
+
+                        item.addEventListener('dragend', () => {
+                            draggingItem.classList.remove('dragging');
+                            draggingItem = null;
+                            saveClassOrder();
+                        });
+
+                        item.addEventListener('dragover', (e) => {
+                            e.preventDefault();
+                            if (item === draggingItem) return;
+                            const rect = item.getBoundingClientRect();
+                            const isAfter = e.clientY > rect.top + rect.height / 2;
+                            item.classList.toggle('drag-over', isAfter);
+                        });
+
+                        item.addEventListener('dragleave', () => {
+                            item.classList.remove('drag-over');
+                        });
+
+                        item.addEventListener('drop', (e) => {
+                            e.preventDefault();
+                            item.classList.remove('drag-over');
+                            if (draggingItem === item) return;
+
+                            const isAfter = e.clientY > item.getBoundingClientRect().top + item.getBoundingClientRect().height / 2;
+                            
+                            if (isAfter) {
+                                classListEl.insertBefore(draggingItem, item.nextSibling);
+                            } else {
+                                classListEl.insertBefore(draggingItem, item);
+                            }
+                        });
+                    });
+                }
+                
+                function saveClassOrder() {
+                    if (!currentUser) return;
+                    const newOrder = Array.from(classListEl.children).map(li => li.dataset.classId);
+                    localStorage.setItem(CLASS_ORDER_KEY(), JSON.stringify(newOrder));
+                    // Re-render to ensure marquee is applied correctly after reorder (optional, but good practice)
+                    renderClassList(Object.values(allLoadedClasses));
                 }
 
                 async function selectClass(classId) {
@@ -390,20 +536,42 @@
                     if (requestUnsub) requestUnsub();
                     requestUnsub = db.collection('requests').where('classId', '==', classId).orderBy('timestamp').onSnapshot(async snapshot => {
                         const requests = [];
+                        const now = firebase.firestore.Timestamp.now().toMillis();
+                        const twentyFourHoursAgo = now - TWENTY_FOUR_HOURS_MS;
+
                         snapshot.forEach(doc => {
-                            requests.push({ id: doc.id, ...doc.data() });
+                            const reqData = doc.data();
+                            const reqTimestamp = reqData.timestamp?.toMillis() || 0;
+                            
+                            // 24-hour expiration check (Teacher side)
+                            if (reqTimestamp < twentyFourHoursAgo) {
+                                // Delete expired request from Firestore
+                                doc.ref.delete().catch(e => console.error("Error deleting old request:", e));
+                            } else {
+                                requests.push({ id: doc.id, ...reqData });
+                            }
                         });
 
                         studentRequestsGrid.innerHTML = '';
                         noRequestsMessage.classList.toggle('hidden', requests.length > 0);
                         document.getElementById('requests-header').textContent = requests.length > 0 ? `Help Requests (${requests.length})` : 'Help Requests';
                         
-                        const requestsWithUser = await Promise.all(requests.map(async req => {
-                            const userDoc = await db.collection('users').doc(req.studentId).get();
-                            return { ...req, studentName: userDoc.data()?.username || 'Unknown Student' };
-                        }));
+                        const studentIds = requests.map(req => req.studentId);
+                        const userMap = {};
+
+                        if (studentIds.length > 0) {
+                            // Fetch all student data in one go if possible (Firestore max 10 in-queries)
+                            const uniqueIds = [...new Set(studentIds)].slice(0, 10);
+                            if (uniqueIds.length > 0) {
+                                const usersSnapshot = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', uniqueIds).get();
+                                usersSnapshot.forEach(doc => {
+                                    userMap[doc.id] = doc.data().username;
+                                });
+                            }
+                        }
                         
-                        requestsWithUser.forEach(req => {
+                        requests.forEach(req => {
+                            req.studentName = userMap[req.studentId] || 'Unknown Student';
                             studentRequestsGrid.appendChild(renderStudentRequest(req));
                         });
                     });
@@ -412,53 +580,53 @@
                 function renderStudentRequest(request) {
                     const statusColors = {
                         'held-up': 'bg-gray-200 text-gray-700',
-                        'accepted': 'bg-green-100 text-green-700',
-                        'denied': 'bg-red-100 text-red-700',
-                        'commented': 'bg-blue-100 text-blue-700'
+                        'accepted': 'bg-green-100 border-green-300 text-green-700',
+                        'denied': 'bg-red-100 border-red-300 text-red-700',
+                        'commented': 'bg-blue-100 border-blue-300 text-blue-700'
                     };
 
                     const statusIcons = {
-                        'held-up': `<i class="fa-solid fa-hand-raised w-6 h-6"></i>`,
-                        'accepted': `<i class="fa-solid fa-thumbs-up w-6 h-6"></i>`,
-                        'denied': `<i class="fa-solid fa-thumbs-down w-6 h-6"></i>`,
-                        'commented': `<i class="fa-solid fa-comment w-6 h-6"></i>`
+                        'held-up': `<i class="fa-solid fa-hand-raised w-6 h-6 text-gray-500"></i>`,
+                        'accepted': `<i class="fa-solid fa-thumbs-up w-6 h-6 text-green-600"></i>`,
+                        'denied': `<i class="fa-solid fa-thumbs-down w-6 h-6 text-red-600"></i>`,
+                        'commented': `<i class="fa-solid fa-comment w-6 h-6 text-blue-600"></i>`
                     };
 
                     const card = document.createElement('div');
-                    card.className = `relative p-5 rounded-xl shadow-md transition-all duration-200 ${statusColors[request.status]}`;
+                    card.className = `relative p-4 rounded-xl shadow-md transition-all duration-200 border-2 ${statusColors[request.status]}`;
                     card.innerHTML = `
-                        <div class="flex items-center space-x-4 mb-4">
-                            <div class="w-10 h-10 rounded-full flex items-center justify-center bg-gray-400 text-white font-bold text-lg">${request.studentName.charAt(0).toUpperCase()}</div>
-                            <div>
+                        <div class="flex items-center space-x-3 mb-3">
+                            <div class="w-8 h-8 rounded-full flex items-center justify-center bg-gray-400 text-white font-bold text-sm">${request.studentName.charAt(0).toUpperCase()}</div>
+                            <div class="truncate">
                                 <h4 class="text-base font-semibold truncate">${escapeHtml(request.studentName)}</h4>
-                                <p class="text-xs mt-1 opacity-75">${new Date(request.timestamp.seconds * 1000).toLocaleTimeString()}</p>
+                                <p class="text-xs mt-0.5 opacity-75">${new Date(request.timestamp.seconds * 1000).toLocaleTimeString()}</p>
                             </div>
                         </div>
-                        <div class="flex items-center justify-between text-sm font-medium mb-4">
+                        <div class="flex items-center space-x-2 text-sm font-medium mb-3 p-2 rounded-lg bg-white/70 backdrop-blur-sm border border-gray-100">
                             <span>Status:</span>
-                            <span class="flex items-center space-x-1">
+                            <span class="flex items-center space-x-1 font-bold">
                                 ${statusIcons[request.status]}
-                                <span>${request.status.replace('-', ' ')}</span>
+                                <span class="capitalize">${request.status.replace('-', ' ')}</span>
                             </span>
                         </div>
-                        <div class="absolute top-2 right-2 flex space-x-2">
+                        
+                        <div class="mt-4">
+                            <p class="text-sm font-medium text-gray-800 p-2 bg-white/70 rounded-md border border-gray-100">${escapeHtml(request.requestText || 'No specific question.')}</p>
+                            ${request.comment ? `<p class="mt-2 text-xs text-blue-700 font-medium italic p-2 bg-blue-50 rounded-md border border-blue-200"><i class="fa-solid fa-note-sticky mr-1"></i> Teacher Note: ${escapeHtml(request.comment)}</p>` : ''}
+                        </div>
+
+                        <div class="mt-4 flex space-x-2 justify-end">
                              ${request.status === 'held-up' ? `
-                                <button data-request-id="${request.id}" data-action="accept" class="teacher-action-btn w-8 h-8 flex items-center justify-center rounded-full text-green-600 hover:bg-green-200 btn-bubbly">
-                                    <i class="fa-solid fa-thumbs-up w-5 h-5"></i>
+                                <button data-request-id="${request.id}" data-action="accept" title="Accept Request" class="teacher-action-btn w-10 h-10 flex items-center justify-center rounded-full text-white bg-green-500 hover:bg-green-600 transition-colors duration-150 shadow-md btn-bubbly">
+                                    <i class="fa-solid fa-check w-5 h-5"></i>
                                 </button>
-                                <button data-request-id="${request.id}" data-action="deny" class="teacher-action-btn w-8 h-8 flex items-center justify-center rounded-full text-red-600 hover:bg-red-200 btn-bubbly">
-                                    <i class="fa-solid fa-thumbs-down w-5 h-5"></i>
+                                <button data-request-id="${request.id}" data-action="deny" title="Deny/Clear Request" class="teacher-action-btn w-10 h-10 flex items-center justify-center rounded-full text-white bg-red-500 hover:bg-red-600 transition-colors duration-150 shadow-md btn-bubbly">
+                                    <i class="fa-solid fa-xmark w-5 h-5"></i>
                                 </button>
                              ` : ''}
-                             ${request.status !== 'commented' ? `
-                                <button data-request-id="${request.id}" data-action="comment" class="teacher-action-btn w-8 h-8 flex items-center justify-center rounded-full text-blue-600 hover:bg-blue-200 btn-bubbly">
-                                    <i class="fa-solid fa-comment w-5 h-5"></i>
-                                </button>
-                            ` : ''}
-                        </div>
-                        <div class="mt-4">
-                            <p class="text-sm text-gray-800">${escapeHtml(request.requestText || 'No specific question.')}</p>
-                            ${request.comment ? `<p class="mt-2 text-xs text-blue-500 font-medium italic">Teacher Note: ${escapeHtml(request.comment)}</p>` : ''}
+                             <button data-request-id="${request.id}" data-action="comment" title="Add Private Note" class="teacher-action-btn w-10 h-10 flex items-center justify-center rounded-full text-blue-600 bg-blue-50 hover:bg-blue-100 transition-colors duration-150 shadow-md btn-bubbly">
+                                <i class="fa-solid fa-comment-dots w-5 h-5"></i>
+                            </button>
                         </div>
                     `;
 
@@ -474,12 +642,18 @@
                     if (action === 'accept') {
                         await requestRef.update({ status: 'accepted', handledBy: currentUser.uid });
                     } else if (action === 'deny') {
-                        await requestRef.update({ status: 'denied', handledBy: currentUser.uid });
+                        // Deleting the request is equivalent to clearing/denying
+                        await requestRef.delete();
                     } else if (action === 'comment') {
-                        const comment = prompt("Enter a private note for the student:");
-                        if (comment) {
-                            await requestRef.update({ status: 'commented', handledBy: currentUser.uid, comment: comment });
-                        }
+                        // Use a custom modal for input instead of prompt()
+                        showModal(TPL.commentModal(requestId));
+                        document.getElementById('save-comment-btn').addEventListener('click', async () => {
+                            const commentText = document.getElementById('comment-input').value.trim();
+                            if (commentText) {
+                                await requestRef.update({ status: 'commented', handledBy: currentUser.uid, comment: commentText });
+                                hideModal();
+                            }
+                        });
                     }
                 }
                 
@@ -490,20 +664,41 @@
                         .where('studentId', '==', studentId)
                         .orderBy('timestamp', 'desc')
                         .limit(1)
-                        .onSnapshot(snapshot => {
-                            if (snapshot.empty) {
-                                renderStudentPanel('not-raised');
-                                return;
+                        .onSnapshot(async snapshot => {
+                            let isRaised = false;
+                            let requestData = null;
+
+                            if (!snapshot.empty) {
+                                const doc = snapshot.docs[0];
+                                requestData = doc.data();
+                                const reqTimestamp = requestData.timestamp?.toMillis() || 0;
+                                const twentyFourHoursAgo = Date.now() - TWENTY_FOUR_HOURS_MS;
+                                
+                                // 24-hour expiration check (Student side)
+                                if (reqTimestamp < twentyFourHoursAgo) {
+                                    // Delete expired request from Firestore and local storage
+                                    doc.ref.delete().catch(e => console.error("Error deleting old student request:", e));
+                                    let localRequests = JSON.parse(localStorage.getItem(LOCAL_REQUESTS_KEY()) || '{}');
+                                    delete localRequests[doc.id];
+                                    localStorage.setItem(LOCAL_REQUESTS_KEY(), JSON.stringify(localRequests));
+                                } else {
+                                    isRaised = true;
+                                    lastRequestTime = reqTimestamp;
+                                }
                             }
                             
-                            const requestDoc = snapshot.docs[0];
-                            const requestData = requestDoc.data();
-                            lastRequestTime = requestData.timestamp.seconds * 1000;
-                            renderStudentPanel('raised', requestData.status);
+                            if (isRaised) {
+                                renderStudentPanel('raised', requestData.status);
+                            } else {
+                                renderStudentPanel('not-raised');
+                                lastRequestTime = 0;
+                            }
                         });
                 }
                 
                 function renderStudentPanel(state, status = '') {
+                    const handRaisedIconEl = document.getElementById('hand-raised-icon');
+
                     if (state === 'raised') {
                         handRaisedContainer.classList.remove('hidden');
                         notRaisedContainer.classList.add('hidden');
@@ -515,24 +710,26 @@
                             'commented': 'text-blue-600'
                         };
                         const statusText = {
-                            'held-up': 'Hand Raised',
-                            'accepted': 'Teacher is on the way!',
-                            'denied': 'Request Denied',
-                            'commented': 'Teacher left a note'
+                            'held-up': 'Hand Raised - Waiting',
+                            'accepted': 'Teacher Accepted! On the Way.',
+                            'denied': 'Request Denied. Try again later.',
+                            'commented': 'Teacher Left a Note'
                         };
                         const statusSubtext = {
-                            'held-up': 'Waiting for a teacher...',
-                            'accepted': 'Your teacher has accepted your request.',
-                            'denied': 'Your teacher has denied your request.',
+                            'held-up': `You've been waiting for 0m 0s`,
+                            'accepted': 'Your teacher has acknowledged your request.',
+                            'denied': 'Your teacher has cleared your request.',
                             'commented': 'Check for a private note from your teacher.'
                         };
                         
                         document.getElementById('request-status-text').textContent = statusText[status] || 'Hand Raised';
                         document.getElementById('waiting-time-text').textContent = statusSubtext[status] || 'Waiting for a teacher...';
-                        document.getElementById('hand-raised-icon').classList.forEach(cls => {
-                            if (cls.startsWith('text-')) document.getElementById('hand-raised-icon').classList.remove(cls);
+                        
+                        // Update icon color dynamically
+                        handRaisedIconEl.classList.forEach(cls => {
+                            if (cls.startsWith('text-')) handRaisedIconEl.classList.remove(cls);
                         });
-                        document.getElementById('hand-raised-icon').classList.add(statusColors[status] || 'text-blue-600');
+                        handRaisedIconEl.classList.add(statusColors[status] || 'text-blue-600');
                         
                     } else {
                         handRaisedContainer.classList.add('hidden');
@@ -571,6 +768,8 @@
                     modalContainer.innerHTML = modalHTML;
                     modalBackdrop.classList.remove('hidden');
                     modalBackdrop.classList.add('fade-enter-active');
+                    modalContainer.classList.remove('pointer-events-none'); // Enable interactions
+                    
                     const modalDialog = modalContainer.firstElementChild;
                     modalDialog.classList.add('fade-enter-from');
                     setTimeout(() => {
@@ -588,6 +787,7 @@
                             modalContainer.innerHTML = '';
                             modalBackdrop.classList.add('hidden');
                             modalBackdrop.classList.remove('fade-leave-to');
+                            modalContainer.classList.add('pointer-events-none'); // Disable interactions
                         }, 200);
                     }
                 }
@@ -615,7 +815,7 @@
                 async function joinClass(classCode) {
                     const classQuery = await db.collection('classes').where('code', '==', classCode).limit(1).get();
                     if (classQuery.empty) {
-                        alert('Invalid class code. Please try again.');
+                        showModal(TPL.alertModal('Error', 'Invalid class code. Please try again.'));
                         return;
                     }
                     const classDoc = classQuery.docs[0];
@@ -624,7 +824,7 @@
 
                     const isAlreadyMember = classData.studentIds.includes(currentUser.uid) || (classData.teacherIds || []).includes(currentUser.uid) || classData.teacherId === currentUser.uid;
                     if (isAlreadyMember) {
-                        alert('You are already a member of this class.');
+                        showModal(TPL.alertModal('Already Joined', `You are already a member of class: ${classData.name}.`));
                         return;
                     }
                     
@@ -634,7 +834,7 @@
                         const classRef = db.collection('classes').doc(classId);
                         await classRef.update({ studentIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
                         hideModal();
-                        alert(`Successfully joined class: ${classData.name}!`);
+                        showModal(TPL.alertModal('Success!', `Successfully joined class: ${classData.name}!`));
                     }
                 }
 
@@ -644,7 +844,7 @@
                         teacherIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) 
                     });
                     hideModal();
-                    alert(`Successfully joined class ${className} as co-teacher!`);
+                    showModal(TPL.alertModal('Success!', `Successfully joined class ${className} as co-teacher!`));
                 }
                 
                 let gapiLoaded = false;
@@ -653,6 +853,7 @@
                 const SCOPES = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
 
                 async function initializeGAPI(apiKey, clientId) {
+                    // ... (GAPI initialization logic remains the same)
                     if (gapiLoaded) return Promise.resolve();
                     
                     return new Promise((resolve, reject) => {
@@ -717,6 +918,7 @@
                 }
 
                 function requestAccessToken() {
+                    // ... (Request Access Token logic remains the same)
                     return new Promise((resolve, reject) => {
                         try {
                             googleAuth.callback = async (response) => {
@@ -743,6 +945,7 @@
                 }
                 
                 async function listGoogleCourses() {
+                    // ... (List Google Courses logic remains the same, adjusted modal for better aesthetics)
                     const listEl = document.getElementById('g-import-list');
                     const loadingEl = document.getElementById('g-import-loading');
                     const errorEl = document.getElementById('g-import-error');
@@ -759,14 +962,17 @@
                         const courses = response.result.courses || [];
 
                         if (courses.length > 0) {
+                            listEl.classList.remove('hidden');
                             listEl.innerHTML = courses.map(course => `
-                                <li class="flex justify-between items-center p-3 bg-gray-50 rounded-md">
-                                    <div class="flex-1">
-                                        <span class="font-medium text-gray-800">${escapeHtml(course.name)}</span>
-                                        <p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section || '')}</p>
+                                <li class="flex justify-between items-center p-4 bg-white rounded-xl shadow-sm border border-gray-200 transition-shadow hover:shadow-lg">
+                                    <div class="flex-1 mr-4">
+                                        <span class="font-bold text-gray-800">${escapeHtml(course.name)}</span>
+                                        <p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section || 'No Section')}</p>
                                     </div>
                                     <button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" 
-                                            class="import-g-class-btn bg-blue-500 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-600 btn-bubbly">Import</button>
+                                            class="import-g-class-btn bg-green-500 text-white px-4 py-2 rounded-lg text-sm font-semibold hover:bg-green-600 btn-bubbly">
+                                            <i class="fa-solid fa-cloud-arrow-down mr-1"></i> Import
+                                    </button>
                                 </li>`).join('');
                             
                             document.querySelectorAll('.import-g-class-btn').forEach(button => {
@@ -774,7 +980,7 @@
                             });
 
                         } else {
-                            listEl.innerHTML = '<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom.</p>';
+                            listEl.innerHTML = '<p class="text-center text-gray-500 py-8"><i class="fa-solid fa-magnifying-glass-chart mb-2 text-2xl"></i><br>No active courses found in your Google Classroom.</p>';
                         }
                     } catch (error) {
                         console.error('Error listing courses:', error);
@@ -793,18 +999,19 @@
                 }
 
                 async function importGoogleClass(googleCourseId, googleCourseName) {
+                    // ... (Import Google Class logic remains the same)
                     const importBtn = document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);
                     if (importBtn) {
-                        importBtn.textContent = 'Importing...';
+                        importBtn.innerHTML = '<i class="fa-solid fa-spinner fa-spin mr-1"></i> Importing...';
                         importBtn.disabled = true;
                     }
 
                     try {
                         const existingClass = await db.collection('classes').where('googleCourseId', '==', googleCourseId).limit(1).get();
                         if (!existingClass.empty) {
-                            alert('This class has already been imported.');
+                            showModal(TPL.alertModal('Duplicate Class', 'This class has already been imported.'));
                             if (importBtn) {
-                                importBtn.textContent = 'Import';
+                                importBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-down mr-1"></i> Import';
                                 importBtn.disabled = false;
                             }
                             return;
@@ -848,47 +1055,27 @@
                             createdAt: firebase.firestore.FieldValue.serverTimestamp()
                         });
                         
-                        alert(`Successfully imported "${fullCourse.name}"! ${pendingEmails.length} non-Notify users added to pending list.`);
                         hideModal();
+                        showModal(TPL.alertModal('Import Complete', `Successfully imported "${fullCourse.name}"! ${pendingEmails.length} non-Notify users added to pending list.`));
                     } catch (error) {
                         console.error("Error importing Google Classroom:", error);
-                        alert(`Failed to import class: ${error.message}`);
                         if (importBtn) {
-                            importBtn.textContent = 'Import';
+                            importBtn.innerHTML = '<i class="fa-solid fa-cloud-arrow-down mr-1"></i> Import';
                             importBtn.disabled = false;
                         }
+                        showModal(TPL.alertModal('Import Failed', `Failed to import class: ${error.message}`));
                     }
                 }
 
+                // --- MODAL TEMPLATES (TPL) ---
                 const TPL = {
-                    emptyState: (user) => `
-                        <div id="empty-state-content" class="h-full flex items-center justify-center text-center fade-enter-active">
-                            <div>
-                                <i class="fa-solid fa-school w-16 h-16 mx-auto text-gray-300"></i>
-                                <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome!</h2>
-                                <p class="mt-1 text-gray-500">Select a class from the sidebar or get started below.</p>
-                                <div class="mt-6 flex flex-col items-center space-y-4">
-                                    <div id="empty-state-teacher-actions" class="hidden">
-                                        <button id="new-class-btn-empty" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>Create Class</span></button>
-                                        <button id="import-gclass-btn-empty" class="mt-2 w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly text-sm">
-                                            <img src="https://www.gstatic.com/images/branding/product/2x/google_classroom_48dp.png" alt="Google Classroom Logo" class="w-5 h-5 invert" />
-                                            <span>Import from Google</span>
-                                        </button>
-                                    </div>
-                                    <div id="empty-state-student-actions" class="hidden">
-                                        <button id="join-class-btn-empty" class="bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors duration-150 btn-bubbly">
-                                            <span>Join a Class</span>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    `,
-                    joinClassAsTeacherConfirm: (classId, className) => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-red-800 font-poppins">Confirm Co-Teacher Role</h3><p class="mt-2 text-gray-600">You are joining class <strong>${escapeHtml(className)}</strong> as a co-teacher. This grants you full permissions to manage student requests, just like the class owner.</p><p class="mt-3 font-semibold text-red-600">Confirm you wish to proceed and gain teacher privileges for this class.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-join-teacher-btn" data-class-id="${classId}" data-class-name="${escapeHtml(className)}" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 btn-bubbly">Confirm Co-Teacher Join</button></div></div>`,
-                    newClassChoiceModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><i class="fa-solid fa-pen-to-square w-8 h-8 text-blue-600 mb-2"></i><span class="font-semibold text-gray-700">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><img src="https://www.gstatic.com/images/branding/product/2x/google_classroom_48dp.png" alt="Google Classroom icon" class="w-8 h-8 mb-2"><span class="font-semibold text-gray-700">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
-                    createClassModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Create New Class</h3><form id="create-class-form" class="mt-4 space-y-4"><div><label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="new-class-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="Enter class name..."></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 btn-bubbly">Create</button></div></form></div>`,
-                    joinClassModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Join a Class</h3><p class="text-gray-500 mt-2">Enter the 8-digit class code provided by your teacher or co-teacher.</p><form id="join-class-form" class="mt-4 space-y-4"><div><label for="class-code-input" class="block text-sm font-medium text-gray-700">Class Code</label><input type="text" id="class-code-input" required minlength="8" maxlength="8" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm text-center font-bold tracking-widest uppercase focus:border-blue-500 focus:ring-blue-500" placeholder="e.g., ABC12345"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 btn-bubbly">Join</button></div></form></div>`,
-                    googleImportModal: () => `<div class="relative bg-white w-full max-w-lg p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Import from Google Classroom</h3><div id="g-import-content" class="mt-4"><div id="g-import-loading" class="text-center py-8"><div class="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mx-auto mb-2"></div><p class="text-gray-600">Connecting to Google Classroom...</p></div><p id="g-import-error" class="text-center text-red-600 bg-red-50 p-3 rounded-md hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto"></ul></div><div class="flex justify-end mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Close</button></div></div>`
+                    alertModal: (title, message) => `<div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-2xl pointer-events-auto transform transition-all"><h3 class="text-xl font-bold font-poppins text-gray-800">${title}</h3><p class="mt-3 text-gray-600">${message}</p><div class="mt-6 flex justify-end"><button class="modal-cancel-btn px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold btn-bubbly">OK</button></div></div>`,
+                    commentModal: (requestId) => `<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-2xl pointer-events-auto transform transition-all"><h3 class="text-xl font-bold font-poppins text-blue-600">Add Private Note</h3><p class="mt-2 text-gray-600">This note is only visible to the student and will change the status to 'Commented'.</p><div class="mt-4"><textarea id="comment-input" rows="3" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3" placeholder="Type your private note here..."></textarea></div><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-semibold btn-bubbly">Cancel</button><button id="save-comment-btn" data-request-id="${requestId}" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold btn-bubbly"><i class="fa-solid fa-paper-plane mr-1"></i> Save Note</button></div></div>`,
+                    joinClassAsTeacherConfirm: (classId, className) => `<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-2xl pointer-events-auto"><h3 class="text-xl font-bold text-red-700 font-poppins"><i class="fa-solid fa-triangle-exclamation mr-2"></i> Confirm Co-Teacher Role</h3><p class="mt-3 text-gray-600">You are joining class <strong>${escapeHtml(className)}</strong> as a co-teacher. This grants you full administrative permissions to manage students and requests.</p><p class="mt-3 font-semibold text-red-600">Proceed to gain teacher privileges for this class.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-semibold btn-bubbly">Cancel</button><button id="confirm-join-teacher-btn" data-class-id="${classId}" data-class-name="${escapeHtml(className)}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-semibold btn-bubbly"><i class="fa-solid fa-chalkboard-user mr-1"></i> Confirm Co-Teacher Join</button></div></div>`,
+                    newClassChoiceModal: () => `<div class="relative bg-white w-full max-w-lg p-8 rounded-xl shadow-2xl pointer-events-auto"><h3 class="text-3xl font-bold font-poppins text-gray-800 text-center">Setup a New Class</h3><p class="text-center text-gray-500 mt-2">Choose the fastest way to get your students connected.</p><div class="mt-8 grid grid-cols-1 sm:grid-cols-2 gap-6"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-blue-50 rounded-xl hover:bg-blue-100 border-2 border-blue-200 transition-all shadow-md hover:shadow-lg btn-bubbly"><i class="fa-solid fa-pencil-ruler w-10 h-10 text-blue-600 mb-3"></i><span class="text-lg font-bold text-gray-700">Create Manually</span><span class="text-sm text-gray-500 mt-1">Add students later with a code.</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-green-50 rounded-xl hover:bg-green-100 border-2 border-green-200 transition-all shadow-md hover:shadow-lg btn-bubbly"><img src="https://www.gstatic.com/images/branding/product/2x/google_classroom_48dp.png" alt="Google Classroom icon" class="w-10 h-10 mb-3"><span class="text-lg font-bold text-gray-700">Import from Classroom</span><span class="text-sm text-gray-500 mt-1">Sync students and roster automatically.</span></button></div><div class="mt-8 text-center"><button class="modal-cancel-btn text-base font-medium text-gray-600 hover:text-gray-800 underline">Cancel</button></div></div>`,
+                    createClassModal: () => `<div class="relative bg-white w-full max-w-md p-8 rounded-xl shadow-2xl pointer-events-auto"><h3 class="text-2xl font-bold text-gray-800 font-poppins">Create New Class</h3><p class="text-gray-500 mt-2">Enter a descriptive name for your new class.</p><form id="create-class-form" class="mt-6 space-y-4"><div><label for="new-class-name" class="block text-sm font-semibold text-gray-700">Class Name (e.g., Algebra 1 - Period 3)</label><input type="text" id="new-class-name" required class="mt-1 block w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3" placeholder="Enter class name..."></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-semibold btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold btn-bubbly"><i class="fa-solid fa-plus mr-1"></i> Create Class</button></div></form></div>`,
+                    joinClassModal: () => `<div class="relative bg-white w-full max-w-md p-8 rounded-xl shadow-2xl pointer-events-auto"><h3 class="text-2xl font-bold text-gray-800 font-poppins">Join a Class</h3><p class="text-gray-500 mt-2">Enter the unique 8-digit class code.</p><form id="join-class-form" class="mt-6 space-y-4"><div><label for="class-code-input" class="block text-sm font-semibold text-gray-700">Class Code</label><input type="text" id="class-code-input" required minlength="8" maxlength="8" class="mt-1 block w-full rounded-lg border-gray-300 shadow-xl text-center text-xl font-bold tracking-widest uppercase focus:border-indigo-500 focus:ring-indigo-500 p-3" placeholder="E.g., ABC12345"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-semibold btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 font-semibold btn-bubbly"><i class="fa-solid fa-user-plus mr-1"></i> Join</button></div></form></div>`,
+                    googleImportModal: () => `<div class="relative bg-white w-full max-w-lg p-8 rounded-xl shadow-2xl pointer-events-auto"><h3 class="text-2xl font-bold text-gray-800 font-poppins">Import from Google Classroom</h3><p class="text-gray-500 mt-2">Select the courses you want to import into Notify.</p><div id="g-import-content" class="mt-6 space-y-4"><div id="g-import-loading" class="text-center py-8"><div class="animate-spin rounded-full h-10 w-10 border-b-4 border-blue-600 mx-auto mb-4"></div><p class="text-lg text-gray-600 font-medium">Connecting to Google Classroom...</p></div><p id="g-import-error" class="text-center text-red-700 bg-red-100 p-3 rounded-lg border border-red-300 hidden"></p><ul id="g-import-list" class="mt-4 space-y-3 max-h-96 overflow-y-auto p-2"></ul></div><div class="flex justify-end mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-semibold btn-bubbly">Close</button></div></div>`
                 };
 
                 // Time tracking for student requests
@@ -916,7 +1103,7 @@
                     if(target.id === 'new-class-btn' || target.id === 'new-class-btn-empty') showModal(TPL.newClassChoiceModal());
                     if(target.id === 'join-class-btn-main' || target.id === 'join-class-btn-empty') showModal(TPL.joinClassModal());
                     if(target.id === 'create-manual-btn') showModal(TPL.createClassModal());
-                    if(target.id === 'import-gclass-btn' || target.id === 'import-gclass-btn-empty') handleGoogleImportClick();
+                    if(target.id === 'import-gclass-btn' || target.id === 'import-gclass-btn-empty' || target.id === 'import-gclass-btn-sidebar') handleGoogleImportClick();
                     if(target.classList.contains('modal-cancel-btn') || e.target.id === 'modal-backdrop') hideModal();
                     
                     if(target.id === 'confirm-join-teacher-btn') {
@@ -924,26 +1111,48 @@
                         const className = target.dataset.className;
                         joinClassAsTeacher(classId, className);
                     }
-                    
+
+                    // --- STUDENT REQUEST ACTION ---
                     if (target.id === 'raise-hand-btn') {
-                        if (!currentClassId) return alert('Please select a class first.');
-                        await db.collection('requests').add({
-                            studentId: currentUser.uid,
-                            classId: currentClassId,
-                            status: 'held-up',
-                            timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                        if (!currentClassId) return showModal(TPL.alertModal('Error', 'Please select a class first to raise your hand.'));
+                        
+                        // Use a custom modal to get request text
+                        showModal(TPL.requestTextModal(currentClassId));
+                        document.getElementById('submit-request-btn').addEventListener('click', async () => {
+                            const requestText = document.getElementById('request-text-input').value.trim();
+                            if (requestText.length > 255) return showModal(TPL.alertModal('Error', 'Request message is too long (max 255 characters).'));
+                            
+                            const docRef = await db.collection('requests').add({
+                                studentId: currentUser.uid,
+                                classId: currentClassId,
+                                status: 'held-up',
+                                requestText: requestText,
+                                timestamp: firebase.firestore.FieldValue.serverTimestamp()
+                            });
+                            
+                            // Save locally for client-side expiration check (Student)
+                            let localRequests = JSON.parse(localStorage.getItem(LOCAL_REQUESTS_KEY()) || '{}');
+                            localRequests[docRef.id] = { timestamp: Date.now(), classId: currentClassId };
+                            localStorage.setItem(LOCAL_REQUESTS_KEY(), JSON.stringify(localRequests));
+
+                            hideModal();
+                            renderStudentPanel('raised');
                         });
-                        lastRequestTime = Date.now();
-                        renderStudentPanel('raised');
                     }
-                    
+
                     if (target.id === 'lower-hand-btn') {
                         if (!currentClassId) return;
-                        const requestRef = await db.collection('requests').where('classId', '==', currentClassId).where('studentId', '==', currentUser.uid).limit(1).get();
-                        if (!requestRef.empty) {
-                            await requestRef.docs[0].ref.delete();
+                        const requestQuery = await db.collection('requests').where('classId', '==', currentClassId).where('studentId', '==', currentUser.uid).limit(1).get();
+                        if (!requestQuery.empty) {
+                            await requestQuery.docs[0].ref.delete();
+                            
+                            // Clear local storage record upon successful deletion
+                            let localRequests = JSON.parse(localStorage.getItem(LOCAL_REQUESTS_KEY()) || '{}');
+                            delete localRequests[requestQuery.docs[0].id];
+                            localStorage.setItem(LOCAL_REQUESTS_KEY(), JSON.stringify(localRequests));
                         }
                     }
+                    // -----------------------------
                     
                     if (target.dataset.classId) {
                         selectClass(target.dataset.classId);
@@ -963,6 +1172,9 @@
                         if(classCode) joinClass(classCode);
                     }
                 });
+                
+                // Helper modal for student request text
+                TPL.requestTextModal = (classId) => `<div class="relative bg-white w-full max-w-md p-8 rounded-xl shadow-2xl pointer-events-auto"><h3 class="text-2xl font-bold font-poppins text-blue-600">What do you need help with?</h3><p class="mt-2 text-gray-600">Your teacher will see this request immediately.</p><div class="mt-4"><textarea id="request-text-input" rows="4" class="w-full rounded-lg border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 p-3" placeholder="E.g., 'I am stuck on problem 5.b of the worksheet.'"></textarea></div><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 font-semibold btn-bubbly">Cancel</button><button id="submit-request-btn" data-class-id="${classId}" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-semibold btn-bubbly"><i class="fa-solid fa-hand-point-up mr-1"></i> Send Request</button></div></div>`;
             });
         });
     </script>
