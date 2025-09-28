@@ -454,31 +454,21 @@
 
                 function renderMainContent(tab = 'requests') {
                     if (currentClassData) {
-                        mainContentArea.innerHTML = TPL.classView(currentClassData, userData, tab);
+                        mainContentArea.innerHTML = TPL.classView(currentClassData, userData);
                         updateTitle();
-
-                        if (tab === 'requests') {
-                            if (userData.role === 'teacher') {
-                                listenForTeacherRequests();
-                            } else {
+                        
+                        if (userData.role === 'teacher') {
+                             const allUids = [...(currentClassData.studentIds || []), currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
+                             fetchClassUsers(allUids).then(() => {
+                                 listenForTeacherRequests();
+                                 renderMembersList();
+                                 renderSettings();
+                             });
+                        } else {
+                            const teacherUids = [currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
+                            fetchClassUsers(teacherUids).then(() => {
                                 listenForStudentRequests();
-                            }
-                        } else if (tab === 'members' || tab === 'teachers') {
-                             const isTeacher = currentClassData.teacherId === currentUser.uid || (currentClassData.teacherIds || []).includes(currentUser.uid);
-                             
-                             if (isTeacher) {
-                                 const allUids = [...(currentClassData.studentIds || []), currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
-                                 fetchClassUsers(allUids).then(() => {
-                                     document.getElementById('requests-or-settings-container').innerHTML = TPL.membersView(userData, currentClassData.teacherId);
-                                 });
-                             } else {
-                                 const teacherUids = [currentClassData.teacherId, ...(currentClassData.teacherIds || [])];
-                                 fetchClassUsers(teacherUids).then(() => {
-                                     document.getElementById('requests-or-settings-container').innerHTML = TPL.membersView(userData, currentClassData.teacherId);
-                                 });
-                             }
-                        } else if (tab === 'settings') {
-                            document.getElementById('requests-or-settings-container').innerHTML = TPL.settingsView(currentClassData);
+                            });
                         }
                     } else {
                         mainContentArea.innerHTML = TPL.emptyState(userData);
@@ -486,6 +476,40 @@
                     }
                 }
                 
+                function renderMembersList() {
+                     const membersListEl = document.getElementById('members-list');
+                     if (!membersListEl) return;
+                     const users = Object.values(currentClassUsers);
+                     users.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+
+                     membersListEl.innerHTML = users.map(u => {
+                         const isOwner = u.role === 'owner';
+                         const roleBadge = u.role !== 'student' 
+                             ? `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${isOwner ? 'bg-yellow-100 text-yellow-800' : 'bg-blue-100 text-blue-800'}">${isOwner ? 'Class Owner' : 'Teacher'}</span>`
+                             : `<span class="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-gray-100 text-gray-700">Student</span>`;
+                         
+                         return `<li class="py-3 flex justify-between items-center">
+                             <div class="flex items-center min-w-0">
+                                 <div class="h-10 w-10 flex items-center justify-center rounded-full bg-blue-500 text-white font-bold text-lg flex-shrink-0">${(u.username || '?').charAt(0).toUpperCase()}</div>
+                                 <div class="ml-4 min-w-0">
+                                     <p class="text-sm font-medium text-gray-900 truncate">${escapeHtml(u.username)}</p>
+                                     <p class="text-xs text-gray-500 truncate">${escapeHtml(u.email)}</p>
+                                 </div>
+                             </div>
+                             <div class="ml-2 flex-shrink-0">
+                                 ${roleBadge}
+                             </div>
+                         </li>`;
+                     }).join('');
+                }
+                
+                function renderSettings() {
+                     if (userData.role !== 'teacher') return;
+                     const settingsContainer = document.getElementById('settings-container');
+                     if (!settingsContainer) return;
+                     settingsContainer.innerHTML = TPL.settingsView(currentClassData);
+                }
+
                 function updateTitle() {
                     let newTitle = "Notify";
                     if (currentClassData) {
@@ -669,7 +693,7 @@
                     
                     currentClassData.requestStatus = newStatus;
                     alert(`Requests are now ${newStatus.toUpperCase()}.`);
-                    renderMainContent('settings');
+                    renderMainContent();
                 }
 
                 function requestClassFullscreen() {
@@ -781,6 +805,7 @@
                         document.querySelectorAll('.add-comment-btn').forEach(button => {
                             button.addEventListener('click', () => {
                                 const requestId = button.dataset.requestId;
+                                const req = requests.find(r => r.id === requestId);
                                 showModal(TPL.addCommentModal(requestId, req.comments.length));
                             });
                         });
@@ -853,12 +878,10 @@
                     if(target.id === 'fullscreen-code-btn') requestClassFullscreen();
                     
                     if(target.id === 'invite-link-btn') copyInviteLink();
-                    const tabBtn = target.closest('#class-tabs button');
-                    if(tabBtn) renderMainContent(tabBtn.dataset.tab);
                     
                     if(target.id === 'add-preset-btn') addPresetQuestion();
-                    const removePresetBtn = target.classList.contains('remove-preset-btn');
-                    if(removePresetBtn) removePresetQuestion(target.dataset.preset);
+                    const removePresetBtn = target.closest('.remove-preset-btn');
+                    if(removePresetBtn) removePresetQuestion(removePresetBtn.dataset.preset);
                     
                     if(target.id === 'save-class-name-btn') saveClassName(document.getElementById('class-name-input').value);
                     if(target.id === 'save-schedule-btn') saveClassSchedule();
@@ -1184,8 +1207,6 @@
                     renderMainContent();
                 }
 
-
-                // Templating functions (HTML strings)
                 const TPL = {
                     statusIcon: (req) => {
                         const hasComments = req.comments && req.comments.length > 0;
@@ -1193,7 +1214,7 @@
                             return `<i class="fa-regular fa-thumbs-up fa-xl text-green-600"></i>`;
                         } else if (req.status === 'denied') {
                             return `<i class="fa-regular fa-thumbs-down fa-xl text-red-600"></i>`;
-                        } else if (hasComments) {
+                        } else if (req.status === 'held' && hasComments) {
                             return `<i class="fa-regular fa-comment fa-xl text-blue-500"></i>`;
                         } else {
                             return `<i class="fa-regular fa-hand fa-xl text-yellow-500"></i>`;
@@ -1217,82 +1238,89 @@
                             </div>
                         </div>
                     `,
-                    classView: (cls, user, tab) => {
+                    classView: (cls, user) => {
                         const isTeacher = user.role === 'teacher';
                         const isOwner = cls.teacherId === user.uid;
-                        const isCoTeacher = isTeacher && (cls.teacherIds || []).includes(user.uid);
-                        const isAdmin = isOwner || isCoTeacher;
-                        
+                        const isAdmin = isOwner || (cls.teacherIds || []).includes(user.uid);
                         const requestStatusText = cls.requestStatus === 'paused' ? 'Paused' : 'Open';
-                        const tabContent = TPL.getTabContent(tab, cls, user);
 
                         return `
-                            <div class="fade-enter-active">
-                                <div class="bg-white p-4 rounded-lg shadow-sm border border-gray-200 mb-6">
-                                    <div class="flex justify-between items-start">
-                                        <div>
-                                            <h2 id="class-name-header" class="text-2xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
-                                            <div class="flex items-center space-x-2 mt-1">
-                                                ${isAdmin ? 
-                                                    `<p class="text-sm text-gray-500">Code: ${escapeHtml(cls.code)}</p>
-                                                    <button id="invite-link-btn" title="Copy Invite Link" class="text-gray-400 hover:text-blue-600 btn-bubbly"><i class="fa-solid fa-link w-4 h-4"></i></button>
-                                                    <button id="fullscreen-code-btn" title="Display Code Fullscreen" class="text-gray-400 hover:text-indigo-600 btn-bubbly"><i class="fa-solid fa-expand w-4 h-4"></i></button>`
-                                                    : `<p class="text-sm text-gray-500">Code hidden</p>`}
-                                                <span id="invite-copied-msg" class="text-xs text-green-600 font-medium hidden">Copied!</span>
-                                            </div>
-                                        </div>
-                                        <div id="class-tabs" class="border-b border-gray-200">
-                                            <nav class="-mb-px flex space-x-6" aria-label="Tabs">
-                                                <button data-tab="requests" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'requests' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Requests <span class="ml-1 text-xs px-2 py-0.5 rounded-full ${cls.requestStatus === 'paused' ? 'bg-red-100 text-red-600' : 'bg-green-100 text-green-600'}">${requestStatusText}</span></button>
-                                                ${isAdmin ? `<button data-tab="members" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'members' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Members</button>` : ''}
-                                                ${!isAdmin ? `<button data-tab="teachers" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'teachers' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Teachers</button>` : ''}
-                                                ${isAdmin ? `<button data-tab="settings" class="whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm ${tab === 'settings' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Settings</button>` : ''}
-                                            </nav>
-                                        </div>
+                        <div class="fade-enter-active space-y-6">
+                            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-between">
+                                    <div>
+                                        <h2 id="class-name-header" class="text-2xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
+                                        ${isAdmin ? `
+                                            <p class="text-sm text-gray-500 mt-1 flex items-center">
+                                                Code: <strong class="ml-1 text-gray-700">${escapeHtml(cls.code)}</strong>
+                                                <button id="invite-link-btn" title="Copy Invite Link" class="text-gray-400 hover:text-blue-600 ml-2 btn-bubbly"><i class="fa-solid fa-link"></i></button>
+                                                <button id="fullscreen-code-btn" title="Display Code Fullscreen" class="text-gray-400 hover:text-indigo-600 ml-2 btn-bubbly"><i class="fa-solid fa-expand"></i></button>
+                                            </p>
+                                        ` : ''}
+                                    </div>
+                                    <div class="mt-4 flex flex-col sm:flex-row sm:items-center space-y-2 sm:space-y-0 sm:space-x-4">
+                                        <span class="text-sm text-gray-700">Requests are: <span class="font-bold ${cls.requestStatus === 'paused' ? 'text-red-500' : 'text-green-500'}">${requestStatusText}</span></span>
+                                        ${isAdmin ? `
+                                        <button id="toggle-request-status-btn" class="text-white font-bold py-2 px-4 rounded-lg ${cls.requestStatus === 'paused' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'} btn-bubbly flex items-center space-x-2 w-full sm:w-auto justify-center">
+                                            <i class="fa-solid ${cls.requestStatus === 'paused' ? 'fa-play' : 'fa-pause'}"></i>
+                                            <span>${cls.requestStatus === 'paused' ? 'Resume' : 'Pause'}</span>
+                                        </button>
+                                        ` : `<button id="raise-hand-btn" class="bg-indigo-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-indigo-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly w-full sm:w-auto"><i class="fa-solid fa-hand"></i><span>Raise Hand</span></button>`}
                                     </div>
                                 </div>
-                                <div id="requests-or-settings-container">
-                                    ${tabContent}
+                                
+                                ${isAdmin ? `
+                                <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200 flex flex-col justify-between">
+                                    <div>
+                                        <h3 class="text-lg font-semibold text-gray-800 font-poppins flex items-center space-x-2"><i class="fa-solid fa-cog"></i> <span>Quick Settings</span></h3>
+                                        <div class="mt-4 space-y-4">
+                                            <div>
+                                                <label for="class-name-input" class="block text-sm font-medium text-gray-700">Class Name</label>
+                                                <div class="flex space-x-2 mt-1">
+                                                    <input type="text" id="class-name-input" value="${escapeHtml(cls.name)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                                    <button id="save-class-name-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly whitespace-nowrap" ${changesRemaining <= 0 ? 'disabled' : ''}>Save</button>
+                                                </div>
+                                                <p class="text-xs text-gray-500 mt-1">Changes remaining: <span class="${changesRemaining <= 0 ? 'text-red-500 font-bold' : 'text-green-500 font-bold'}">${changesRemaining}</span></p>
+                                            </div>
+                                            <div>
+                                                <label for="new-preset-input" class="block text-sm font-medium text-gray-700">Add Preset Question</label>
+                                                <div class="flex space-x-2 mt-1">
+                                                    <input type="text" id="new-preset-input" placeholder="e.g., I need help with Question 5" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                                    <button id="add-preset-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 whitespace-nowrap btn-bubbly">Add</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="mt-4 flex justify-end">
+                                        <button id="view-full-settings-btn" class="text-sm text-blue-600 hover:text-blue-800 font-medium">View Full Settings</button>
+                                    </div>
                                 </div>
+                                ` : ''}
                             </div>
-                        `;
-                    },
-                    getTabContent: (tab, cls, user) => {
-                        switch (tab) {
-                            case 'requests':
-                                return TPL.requestsView(user, cls.requestStatus);
-                            case 'members':
-                                return TPL.membersView(user, cls.teacherId, true);
-                            case 'teachers':
-                                return TPL.membersView(user, cls.teacherId, false);
-                            case 'settings':
-                                return TPL.settingsView(cls);
-                            default:
-                                return TPL.requestsView(user, cls.requestStatus);
-                        }
-                    },
-                    requestsView: (user, requestStatus) => `
-                        <div class="space-y-6">
-                            ${user.role === 'student' ? `
-                                <div class="text-center">
-                                    ${requestStatus === 'paused' ? 
-                                        `<p class="bg-red-100 text-red-700 p-3 rounded-xl font-semibold shadow-sm">Requests are currently paused by the teacher.</p>` :
-                                        `<button id="raise-hand-btn" class="bg-indigo-600 text-white font-semibold py-3 px-8 rounded-xl hover:bg-indigo-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly mx-auto shadow-md hover:shadow-lg">
-                                            <i class="fa-solid fa-hand-paper w-6 h-6"></i>
-                                            <span>Raise Hand for Help</span>
-                                        </button>`
-                                    }
-                                </div>
-                            ` : ''}
+
                             <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                                <h3 class="text-lg font-semibold text-gray-800">${user.role === 'teacher' ? 'Student Help Requests' : 'My Recent Requests'}</h3>
-                                <p class="text-sm text-gray-500">${user.role === 'teacher' ? 'List of all held, accepted, or denied requests in this class.' : 'The most recent requests you have made for this class.'}</p>
+                                <h3 class="text-lg font-semibold text-gray-800 flex items-center space-x-2 font-poppins"><i class="fa-solid fa-list-check"></i><span>${isTeacher ? 'Student Help Requests' : 'My Recent Requests'}</span></h3>
+                                <p class="text-sm text-gray-500">${isTeacher ? 'List of all held, accepted, or denied requests in this class.' : 'The most recent requests you have made for this class.'}</p>
                                 <div id="requests-list" class="mt-4 space-y-4">
                                     <p class="text-center text-gray-500 py-8">Loading requests...</p>
                                 </div>
                             </div>
+                            
+                            ${isAdmin ? `
+                            <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                                <h3 class="text-lg font-semibold text-gray-800 flex items-center space-x-2 font-poppins"><i class="fa-solid fa-users"></i><span>Class Roster</span></h3>
+                                <p class="text-sm text-gray-500 mb-4">Showing all students and teachers in this class. You can search for specific users.</p>
+                                <div id="members-list-container">
+                                    <ul id="members-list" class="divide-y divide-gray-200">
+                                        <p class="text-center text-gray-500 py-8">Loading members...</p>
+                                    </ul>
+                                </div>
+                            </div>
+                            ` : ''}
+
                         </div>
-                    `,
+                        `;
+                    },
                     teacherRequestCard: (req, studentUsername) => {
                         const commentsCount = req.comments ? req.comments.filter(Boolean).length : 0;
                         const timeString = req.timestamp ? new Date(req.timestamp.seconds * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A';
@@ -1363,10 +1391,7 @@
                     },
                     noRequestsMessage: () => `<p class="text-center text-gray-500 py-8">No active requests at this time. Go ahead and get started!</p>`,
 
-                    // --- Redesigned Settings View ---
                     settingsView: (cls) => {
-                        const isTeacher = userData.role === 'teacher';
-                        const isOwner = cls.teacherId === userData.uid;
                         const changesToday = nameChangeSettings.nameChanges[today] || 0;
                         const changesRemaining = 3 - changesToday;
                         const [startTime, startPeriod] = (cls.schedule?.start || '09:00 AM').split(' ');
@@ -1379,83 +1404,66 @@
                         const buttonColor = isPaused ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700';
 
                         return `
-                        <div class="max-w-4xl mx-auto space-y-8">
+                        <div class="space-y-6">
                             <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                                <h3 class="text-lg font-bold text-gray-800 font-poppins mb-2">Class Settings</h3>
-                                <p class="text-sm text-gray-500">Manage your class details, request settings, and more.</p>
-                            </div>
-                            
-                            <div class="bg-white p-6 rounded-lg shadow-sm border">
-                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">General</h3>
+                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins flex items-center space-x-2"><i class="fa-solid fa-cog"></i> <span>General Settings</span></h3>
                                 <div class="space-y-4">
                                     <div>
                                         <label for="class-name-input" class="block text-sm font-medium text-gray-700">Class Name</label>
-                                        <input type="text" id="class-name-input" value="${escapeHtml(cls.name)}" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                        <div class="flex space-x-2 mt-1">
+                                            <input type="text" id="class-name-input" value="${escapeHtml(cls.name)}" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500">
+                                            <button id="save-class-name-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly whitespace-nowrap" ${changesRemaining <= 0 ? 'disabled' : ''}>Save</button>
+                                        </div>
                                         <p class="text-xs text-gray-500 mt-1">You can change the class name 3 times per day (Changes remaining: <span class="${changesRemaining <= 0 ? 'text-red-500 font-bold' : 'text-green-500 font-bold'}">${changesRemaining}</span>)</p>
                                     </div>
-                                    <button id="save-class-name-btn" class="bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly" ${changesRemaining <= 0 ? 'disabled' : ''}>Save Changes</button>
-                                </div>
-                            </div>
-
-                            <div class="bg-white p-6 rounded-lg shadow-sm border">
-                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Request Control</h3>
-                                <div class="space-y-4">
-                                    <div>
-                                        <p class="text-sm text-gray-700">Current Status: <span class="font-bold ${isPaused ? 'text-red-500' : 'text-green-500'}">${isPaused ? 'PAUSED' : 'ACTIVE'}</span></p>
-                                        <button id="toggle-request-status-btn" class="mt-4 text-white font-bold py-2 px-4 rounded-lg ${buttonColor} btn-bubbly flex items-center space-x-2">
-                                            <i class="fa-solid ${isPaused ? 'fa-play' : 'fa-pause'}"></i>
-                                            <span>${buttonText}</span>
-                                        </button>
+                                    <div class="font-poppins">
+                                        <label class="block text-sm font-medium text-gray-700">Class Schedule</label>
+                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mt-1">
+                                            <div>
+                                                <label class="block text-xs font-medium text-gray-500">Starts at</label>
+                                                <div class="flex items-center gap-2">
+                                                    <input type="number" id="start-hour" value="${startHour}" min="1" max="12" class="w-16 text-center font-medium text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                                    <span class="text-gray-400">:</span>
+                                                    <input type="number" id="start-minute" value="${startMinute}" min="0" max="59" class="w-16 text-center font-medium text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                                    <div id="start-period-dropdown" class="relative">
+                                                        <button type="button" class="custom-dropdown-btn relative w-16 cursor-pointer rounded-md border border-gray-300 bg-white py-2 pl-3 pr-10 text-left shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                                            <span id="start-period-text">${startPeriod}</span>
+                                                            <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><i class="fa-solid fa-chevron-down text-gray-400 text-xs"></i></span>
+                                                        </button>
+                                                        <ul class="custom-dropdown-options absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden">
+                                                            <li data-value="AM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">AM</li>
+                                                            <li data-value="PM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">PM</li>
+                                                        </ul>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <label class="block text-xs font-medium text-gray-500">Ends at</label>
+                                                <div class="flex items-center gap-2">
+                                                    <input type="number" id="end-hour" value="${endHour}" min="1" max="12" class="w-16 text-center font-medium text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                                    <span class="text-gray-400">:</span>
+                                                    <input type="number" id="end-minute" value="${endMinute}" min="0" max="59" class="w-16 text-center font-medium text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
+                                                    <div id="end-period-dropdown" class="relative">
+                                                        <button type="button" class="custom-dropdown-btn relative w-16 cursor-pointer rounded-md border border-gray-300 bg-white py-2 pl-3 pr-10 text-left shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
+                                                            <span id="end-period-text">${endPeriod}</span>
+                                                            <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><i class="fa-solid fa-chevron-down text-gray-400 text-xs"></i></span>
+                                                        </button>
+                                                        <ul class="custom-dropdown-options absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden">
+                                                            <li data-value="AM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">AM</li>
+                                                            <li data-value="PM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">PM</li>
+                                                        </ul>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <p class="mt-3 text-xs text-gray-500">Note: Uses local device time, assumed for weekdays.</p>
+                                        <button id="save-schedule-btn" class="mt-4 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button>
                                     </div>
                                 </div>
                             </div>
                             
                             <div class="bg-white p-6 rounded-lg shadow-sm border">
-                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Class Schedule</h3>
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div class="font-poppins">
-                                        <label class="block text-sm font-medium text-gray-700">Starts at</label>
-                                        <div class="mt-1 flex items-center gap-2">
-                                            <input type="number" id="start-hour" value="${startHour}" min="1" max="12" class="w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                                            <span class="text-gray-400 font-bold">:</span>
-                                            <input type="number" id="start-minute" value="${startMinute}" min="0" max="59" class="w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                                            <div id="start-period-dropdown" class="relative">
-                                                <button type="button" class="custom-dropdown-btn relative w-24 cursor-pointer rounded-md border border-gray-300 bg-white py-2 pl-3 pr-10 text-left shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                                                    <span id="start-period-text">${startPeriod}</span>
-                                                    <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><i class="fa-solid fa-chevron-down text-gray-400"></i></span>
-                                                </button>
-                                                <ul class="custom-dropdown-options absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden">
-                                                    <li data-value="AM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">AM</li>
-                                                    <li data-value="PM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">PM</li>
-                                                </ul>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div class="font-poppins">
-                                        <label class="block text-sm font-medium text-gray-700">Ends at</label>
-                                        <div class="mt-1 flex items-center gap-2">
-                                            <input type="number" id="end-hour" value="${endHour}" min="1" max="12" class="w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                                            <span class="text-gray-400 font-bold">:</span>
-                                            <input type="number" id="end-minute" value="${endMinute}" min="0" max="59" class="w-20 text-center font-medium font-poppins text-gray-800 bg-gray-50 rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-1 focus:ring-blue-500">
-                                            <div id="end-period-dropdown" class="relative">
-                                                <button type="button" class="custom-dropdown-btn relative w-24 cursor-pointer rounded-md border border-gray-300 bg-white py-2 pl-3 pr-10 text-left shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500">
-                                                    <span id="end-period-text">${endPeriod}</span>
-                                                    <span class="pointer-events-none absolute inset-y-0 right-0 flex items-center pr-2"><i class="fa-solid fa-chevron-down text-gray-400"></i></span>
-                                                </button>
-                                                <ul class="custom-dropdown-options absolute z-10 mt-1 max-h-60 w-full overflow-auto rounded-md bg-white py-1 text-base shadow-lg ring-1 ring-black ring-opacity-5 focus:outline-none hidden">
-                                                    <li data-value="AM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">AM</li>
-                                                    <li data-value="PM" class="custom-dropdown-option cursor-pointer select-none relative py-2 pl-3 pr-9 text-gray-900 hover:bg-blue-50">PM</li>
-                                                </ul>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                                <p class="mt-3 text-xs text-gray-500">Note: Uses local device time, assumed for weekdays.</p>
-                                <button id="save-schedule-btn" class="mt-4 bg-blue-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button>
-                            </div>
-
-                            <div class="bg-white p-6 rounded-lg shadow-sm border">
-                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Preset Questions</h3>
+                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins flex items-center space-x-2"><i class="fa-solid fa-message"></i> <span>Preset Questions</span></h3>
                                 <p class="text-sm text-gray-700 mb-4">Preset questions help students quickly make a request without typing. They can select up to 3 presets.</p>
                                 <div id="preset-questions-list" class="space-y-3 mb-4">
                                     ${presets.map(p => `<div class="flex items-center justify-between bg-gray-50 p-2 rounded-md"><span class="text-sm text-gray-800">${escapeHtml(p)}</span><button data-preset="${escapeHtml(p)}" class="remove-preset-btn text-gray-400 hover:text-red-600 btn-bubbly"><i class="fa-solid fa-trash-can"></i></button></div>`).join('') || '<p class="text-sm text-gray-500">No preset questions added yet.</p>'}
@@ -1465,65 +1473,28 @@
                                     <button id="add-preset-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 whitespace-nowrap btn-bubbly">Add</button>
                                 </div>
                             </div>
+                            
+                            <div class="bg-white p-6 rounded-lg shadow-sm border">
+                                <h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins flex items-center space-x-2"><i class="fa-solid fa-users"></i> <span>Class Members</span></h3>
+                                <p class="text-sm text-gray-500 mb-4">Showing all students and teachers in this class. You can search for specific users.</p>
+                                <div id="members-list-container">
+                                    <ul id="members-list" class="divide-y divide-gray-200">
+                                        <p class="text-center text-gray-500 py-8">Loading members...</p>
+                                    </ul>
+                                </div>
+                            </div>
 
                             <div class="bg-red-50 p-6 rounded-lg border border-red-200">
-                                <h3 class="text-lg font-semibold text-red-800 border-b border-red-200 pb-3 mb-4 font-poppins">Danger Zone</h3>
+                                <h3 class="text-lg font-semibold text-red-800 border-b border-red-200 pb-3 mb-4 font-poppins flex items-center space-x-2"><i class="fa-solid fa-triangle-exclamation"></i> <span>Danger Zone</span></h3>
                                 <div>
                                     <p class="text-sm text-red-700">Deleting this class is permanent. All associated data will be lost, and students will be removed.</p>
                                     <button id="delete-class-btn" class="mt-4 bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 btn-bubbly">Delete This Class</button>
                                 </div>
                             </div>
-                        </div>`;
+                        </div>
+                        `;
                     },
 
-                    // --- Modals ---
-                    raiseHandModal: () => `
-                        <div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto">
-                            <h3 class="text-xl font-semibold text-indigo-700 font-poppins">Request Help</h3>
-                            <p class="mt-2 text-gray-600">Raise your hand! Describe what you need assistance with.</p>
-                            <form id="raise-hand-form" class="mt-4 space-y-4">
-                                <div>
-                                    <label for="request-title" class="block text-sm font-medium text-gray-700">Optional Title</label>
-                                    <input type="text" id="request-title" class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="e.g., Question about #3">
-                                </div>
-                                <div>
-                                    <label for="request-message" class="block text-sm font-medium text-gray-700">Your Question / Need (Required)</label>
-                                    <textarea id="request-message" rows="3" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="I am stuck on calculating the average in the last section..."></textarea>
-                                </div>
-                                <div class="flex justify-end space-x-3">
-                                    <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button>
-                                    <button type="submit" class="px-4 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 btn-bubbly">Submit Request</button>
-                                </div>
-                            </form>
-                        </div>
-                    `,
-                    joinClassAsTeacherConfirm: (classId, className) => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-red-800 font-poppins">Confirm Co-Teacher Role</h3><p class="mt-2 text-gray-600">You are joining class <strong>${escapeHtml(className)}</strong> as a co-teacher. This grants you full permissions to accept, deny, and comment on student requests, just like the class owner.</p><p class="mt-3 font-semibold text-red-600">Confirm you wish to proceed and gain teacher privileges for this class.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-join-teacher-btn" data-class-id="${classId}" data-class-name="${escapeHtml(className)}" class="px-4 py-2 bg-red-600 text-white rounded-md hover:bg-red-700 btn-bubbly">Confirm Co-Teacher Join</button></div></div>`,
-                    
-                    fullscreenCodeModal: (code) => `<div class="relative bg-white w-full max-w-4xl h-full p-10 rounded-lg shadow-2xl pointer-events-auto flex items-center justify-center flex-col"><h3 class="text-3xl font-bold text-gray-800 font-poppins mb-6">Class Join Code</h3><p id="fullscreen-code" class="text-9xl font-extrabold tracking-widest text-indigo-600 select-all">${escapeHtml(code)}</p><p class="text-xl text-gray-500 mt-6">Share this code with your students.</p><button class="modal-cancel-btn mt-10 px-6 py-3 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Exit Fullscreen</button></div>`,
-
-                    addCommentModal: (requestId, commentCount) => `
-                        <div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto">
-                            <h3 class="text-xl font-semibold text-gray-800 font-poppins">Add Private Note</h3>
-                            <p class="mt-2 text-gray-600">The student will see this note on their request card. You have ${3 - parseInt(commentCount)} remaining comment slots.</p>
-                            <form id="add-comment-form" class="mt-4 space-y-4">
-                                <input type="hidden" id="comment-request-id" value="${requestId}">
-                                <div>
-                                    <label for="comment-text-input" class="block text-sm font-medium text-gray-700">Note</label>
-                                    <textarea id="comment-text-input" rows="3" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="e.g., Check the example on page 42..."></textarea>
-                                </div>
-                                <div class="flex justify-end space-x-3">
-                                    <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button>
-                                    <button type="button" id="add-comment-btn-submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 btn-bubbly">Add Note</button>
-                                </div>
-                            </form>
-                        </div>
-                    `,
-                    settingsPresets: (cls) => {
-                        const presets = cls.presetQuestions || [];
-                        return `<div class="bg-white p-6 rounded-lg shadow-sm border"><h3 class="text-lg font-semibold text-gray-800 border-b pb-3 mb-4 font-poppins">Preset Questions</h3><div id="preset-questions-list" class="space-y-3 mb-4">${presets.map(p => `<div class="flex items-center justify-between bg-gray-50 p-2 rounded-md"><span class="text-sm text-gray-800">${escapeHtml(p)}</span><button data-preset="${escapeHtml(p)}" class="remove-preset-btn text-gray-400 hover:text-red-600 btn-bubbly"><i class="fa-solid fa-trash-can"></i></button></div>`).join('') || '<p class="text-sm text-gray-500">No preset questions added yet.</p>'}</div><div class="flex space-x-2"><input type="text" id="new-preset-input" placeholder="e.g., I need help with Question 5" class="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"><button id="add-preset-btn" class="bg-green-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-green-700 whitespace-nowrap btn-bubbly">Add</button></div></div>`;
-                    },
-                    settingsDanger: (cls) => `<div class="bg-red-50 p-6 rounded-lg border border-red-200"><h3 class="text-lg font-semibold text-red-800 border-b border-red-200 pb-3 mb-4 font-poppins">Danger Zone</h3><div><p class="text-sm text-red-700">Deleting this class is permanent. All associated data will be lost, and students will be removed.</p><button id="delete-class-btn" class="mt-4 bg-red-600 text-white font-bold py-2 px-4 rounded-lg hover:bg-red-700 btn-bubbly">Delete This Class</button></div></div>`,
-                    
                     newClassChoiceModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><i class="fa-solid fa-pen-to-square text-blue-600 text-3xl mb-2"></i><span class="font-semibold text-gray-700">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><i class="fa-solid fa-cloud-arrow-down text-green-600 text-3xl mb-2"></i><span class="font-semibold text-gray-700">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
                     
                     createClassModal: () => `<div class="relative bg-white w-full max-w-md p-6 rounded-lg shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins">Create New Class</h3><form id="create-class-form" class="mt-4 space-y-4"><div><label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="new-class-name" required class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500" placeholder="Enter class name..."></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-md hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 btn-bubbly">Create</button></div></form></div>`,
