@@ -204,7 +204,7 @@
             let currentClassId = null;
             let allLoadedClasses = {};
             let unsubscribes = [];
-            let activeTab = 'overview';
+            let activeTab = 'overview'; // New state variable to track active tab
 
             const userProfileMenu = document.getElementById('user-profile-menu');
             const mainContentArea = document.getElementById('main-content-area');
@@ -296,10 +296,11 @@
                                 };
                             }
                         });
+                        // Only re-render if there was an actual change
                         if (hasChanges) {
-                            renderClassList(Object.values(allLoadedClasses));
-                            // This is the bug fix: Re-render main content after class list is updated
-                            if(currentClassId) renderMainContent();
+                             renderClassList(Object.values(allLoadedClasses));
+                             // Bug fix: Re-render main content after class list is updated, if a class is currently selected.
+                             if (currentClassId) renderMainContent();
                         }
                     };
 
@@ -337,10 +338,9 @@
                         mainContentArea.innerHTML = TPL.classViewWithTabs(classData, userData);
                         setupTabListeners();
                         if (activeTab === 'roster') {
-                            showTab('roster');
-                            fetchRoster(currentClassId);
+                             showTab('roster');
                         } else if (activeTab === 'settings') {
-                            showTab('settings');
+                             showTab('settings');
                         } else {
                             showTab('overview');
                         }
@@ -390,9 +390,9 @@
 
                     // If roster tab, fetch and display the roster
                     if (tabName === 'roster') {
-                        const classData = allLoadedClasses[currentClassId];
                         const roster = await fetchRoster(currentClassId);
                         const rosterContainer = document.querySelector('#roster-content');
+                        const classData = allLoadedClasses[currentClassId];
                         if (rosterContainer) {
                              rosterContainer.innerHTML = TPL.rosterList(roster, classData.teacherId === currentUser.uid);
                         }
@@ -566,14 +566,14 @@
                 }
 
                 async function fetchRoster(classId) {
-                    const rosterListEl = document.getElementById('roster-list');
+                    const rosterListEl = document.querySelector('#roster-content');
                     if (!rosterListEl) return;
                     rosterListEl.innerHTML = `<p class="text-center text-gray-500 py-8"><i class="fa-solid fa-spinner fa-spin mr-2"></i>Loading roster...</p>`;
 
                     const classData = allLoadedClasses[classId];
                     if (!classData) return;
 
-                    const allUserIds = [classData.teacherId, ...classData.teacherIds, ...classData.studentIds];
+                    const allUserIds = [classData.teacherId, ...(classData.teacherIds || []), ...(classData.studentIds || [])];
                     const roster = [];
                     const batchSize = 10;
 
@@ -595,7 +595,7 @@
                     roster.forEach(user => {
                         if (user.uid === classData.teacherId) {
                             user.role = 'Main Teacher';
-                        } else if (classData.teacherIds.includes(user.uid)) {
+                        } else if ((classData.teacherIds || []).includes(user.uid)) {
                             user.role = 'Co-Teacher';
                         }
                     });
@@ -855,11 +855,7 @@
                     if(target.id === 'logout-btn') auth.signOut();
                     
                     const classBtn = target.closest('#class-list button');
-                    if (classBtn) {
-                        currentClassId = classBtn.dataset.classId;
-                        renderClassList(Object.values(allLoadedClasses)); 
-                        renderMainContent();
-                    }
+                    if (classBtn) selectClass(allLoadedClasses[classBtn.dataset.classId]);
                     
                     if(target.id === 'new-class-btn') showModal(TPL.newClassChoiceModal(userData));
                     if(target.id === 'join-class-btn-main') showModal(TPL.joinClassModal());
@@ -879,6 +875,7 @@
                         showModal(TPL.updateUsernameModal(userData));
                     }
 
+                    // New event listeners for in-page tab controls
                     if (target.id === 'refresh-code-btn') {
                         refreshClassCode(currentClassId);
                     }
@@ -979,12 +976,7 @@
                         <div class="fade-in-element">
                             <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center bg-white p-6 rounded-lg shadow-sm border border-gray-200 mb-6">
                                 <h2 class="text-2xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
-                                ${canEdit ? `
-                                    <div class="mt-4 sm:mt-0">
-                                        <button id="class-settings-btn" class="text-gray-500 hover:text-gray-800 transition-colors btn-bubbly"><i class="fa-solid fa-gear fa-lg"></i></button>
-                                    </div>
-                                ` : ''}
-                            </div>
+                                </div>
                             
                             <div class="bg-white rounded-lg shadow-sm border border-gray-200">
                                 <div id="class-view-tabs" class="flex border-b border-gray-200">
