@@ -276,6 +276,7 @@
                 }
 
                 async function checkAndAutoEnroll(uid, email) {
+                    // NEW: Defensive check for email
                     if (!email || userData.role !== 'student') return;
 
                     try {
@@ -324,7 +325,7 @@
                     if (userDoc.exists) {
                         userData = { uid, ...userDoc.data() };
                         // NEW: Ensure classChanges field exists
-                        if (typeof userData.classChanges === 'undefined') {
+                        if (!userData.classChanges) {
                             userData.classChanges = { count: 0, lastChangeDate: null };
                             await db.collection('users').doc(uid).set({ classChanges: userData.classChanges }, { merge: true });
                         }
@@ -368,6 +369,12 @@
                     unsubscribes.forEach(unsub => unsub());
                     unsubscribes = [];
                     allLoadedClasses = {};
+                    
+                    // NEW: Add defensive checks to ensure uid is not undefined
+                    if (!uid) {
+                        console.error("User ID is not available for class queries.");
+                        return;
+                    }
 
                     const classesQuery = db.collection('classes').where('teacherId', '==', uid);
                     const classesQuery2 = db.collection('classes').where('studentIds', 'array-contains', uid);
@@ -609,7 +616,7 @@
                             case 'title_asc':
                                 return a.title.localeCompare(b.title);
                             case 'title_desc':
-                                return b.title.localeCompare(a.title);
+                                return b.title.locale(a.title);
                             case 'timestamp_desc':
                             default:
                                 return (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0);
@@ -621,6 +628,9 @@
                     const studentIds = requests.map(r => r.studentId).filter(uid => uid);
                     const allRequestUids = Array.from(new Set(studentIds));
 
+                    // NEW: Defensive check for empty uid array
+                    if (allRequestUids.length === 0) return;
+                    
                     const newUsersToLoad = allRequestUids.filter(uid => !loadedUsers[uid]);
                     
                     if (newUsersToLoad.length === 0) return;
@@ -969,6 +979,11 @@
                         loadingEl.classList.add('hidden');
                         const courses = response.result.courses || [];
 
+                        // NEW: Defensive check before calling where()
+                        if (!currentUser || !currentUser.uid) {
+                            console.error("User is not authenticated. Cannot query Firestore.");
+                            throw new Error("Authentication error. Please log in again.");
+                        }
                         const notifyClassesSnapshot = await db.collection('classes').where('teacherId', '==', currentUser.uid).get();
                         const existingGoogleIds = new Set();
                         notifyClassesSnapshot.forEach(doc => {
@@ -1048,19 +1063,22 @@
                             const batchSize = 10;
                             for (let i = 0; i < uniqueEmails.length; i += batchSize) {
                                 const batchEmails = uniqueEmails.slice(i, i + batchSize);
-                                const usersSnapshot = await db.collection('users').where('email', 'in', batchEmails).get();
-                                const existingEmailsBatch = new Set();
-                                
-                                usersSnapshot.forEach(doc => {
-                                    existingStudentUids.push(doc.id);
-                                    existingEmailsBatch.add(doc.data().email);
-                                });
+                                // NEW: Defensive check for empty email array to prevent Firestore error
+                                if (batchEmails.length > 0) {
+                                    const usersSnapshot = await db.collection('users').where('email', 'in', batchEmails).get();
+                                    const existingEmailsBatch = new Set();
+                                    
+                                    usersSnapshot.forEach(doc => {
+                                        existingStudentUids.push(doc.id);
+                                        existingEmailsBatch.add(doc.data().email);
+                                    });
 
-                                batchEmails.forEach(email => {
-                                    if (!existingEmailsBatch.has(email)) {
-                                        pendingEmails.push(email);
-                                    }
-                                });
+                                    batchEmails.forEach(email => {
+                                        if (!existingEmailsBatch.has(email)) {
+                                            pendingEmails.push(email);
+                                        }
+                                    });
+                                }
                             }
                         }
                         
