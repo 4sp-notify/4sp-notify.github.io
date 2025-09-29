@@ -150,6 +150,7 @@
                     </div>
                 </div>
                 <div id="teacher-sidebar-actions" class="p-4 border-t border-gray-200 hidden">
+                    <!-- Added w-full to ensure both buttons are the same width -->
                     <button id="new-class-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly">
                         <i class="fa-solid fa-plus w-5 h-5"></i>
                         <span>New Class</span>
@@ -178,12 +179,13 @@
     
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            const today = new Date().toDateString();
             let currentUser = null;
             let userData = null;
             let currentClassId = null;
             let allLoadedClasses = {};
             let unsubscribes = [];
+            // Listener for the current request list
+            let currentRequestsUnsubscribe = null; 
             // Cache loaded users for the roster tab and requests
             let loadedUsers = {};
 
@@ -217,11 +219,67 @@
                     }
                 });
 
+                function cleanupListeners() {
+                    if (currentRequestsUnsubscribe) {
+                        currentRequestsUnsubscribe();
+                        currentRequestsUnsubscribe = null;
+                    }
+                }
+
+                async function checkAndAutoEnroll(uid, email) {
+                    if (!email || userData.role !== 'student') return;
+
+                    try {
+                        // Query classes where the current user's email is in pendingStudentEmails
+                        const querySnapshot = await db.collection('classes')
+                            .where('pendingStudentEmails', 'array-contains', email)
+                            .get();
+
+                        if (querySnapshot.empty) return;
+
+                        const batch = db.batch();
+                        let enrolledCount = 0;
+
+                        querySnapshot.forEach(doc => {
+                            const classData = doc.data();
+                            
+                            // Prevent double enrollment if somehow the student is already in studentIds
+                            if (classData.studentIds && classData.studentIds.includes(uid)) {
+                                console.log(`User ${uid} already in class ${doc.id}. Removing from pending list.`);
+                                batch.update(doc.ref, {
+                                    pendingStudentEmails: firebase.firestore.FieldValue.arrayRemove(email)
+                                });
+                                return;
+                            }
+                            
+                            // 1. Remove the email from pending list
+                            // 2. Add the UID to studentIds list
+                            batch.update(doc.ref, {
+                                pendingStudentEmails: firebase.firestore.FieldValue.arrayRemove(email),
+                                studentIds: firebase.firestore.FieldValue.arrayUnion(uid)
+                            });
+                            enrolledCount++;
+                        });
+
+                        if (enrolledCount > 0) {
+                            await batch.commit();
+                            console.log(`Auto-enrolled into ${enrolledCount} classes.`);
+                            // The main class listener will automatically update the UI.
+                        }
+                    } catch (error) {
+                        console.error("Error during auto-enrollment:", error);
+                    }
+                }
+
                 async function fetchUserData(uid) {
                     const userDoc = await db.collection('users').doc(uid).get();
                     if (userDoc.exists) {
                         userData = { uid, ...userDoc.data() };
                         updateProfileUI(currentUser, userData);
+                        
+                        // New: Check and auto-enroll students from Google Classroom imports
+                        await checkAndAutoEnroll(uid, currentUser.email);
+                        
                         listenForClasses(uid);
                         renderMainContent();
                     } else {
@@ -273,6 +331,7 @@
                                     renderMainContent();
                                 }
                             } else {
+                                // Merge data and ensure role flags are correct
                                 allLoadedClasses[change.doc.id] = { 
                                     ...allLoadedClasses[change.doc.id], 
                                     id: change.doc.id, 
@@ -281,10 +340,20 @@
                                 };
                             }
                         });
-                        // Only re-render if there was an actual change
-                        if (hasChanges) renderClassList(Object.values(allLoadedClasses));
+                        // Only re-render if there was an actual change and a class is currently selected
+                        if (hasChanges) {
+                             renderClassList(Object.values(allLoadedClasses));
+                            if (currentClassId && allLoadedClasses[currentClassId]) {
+                                renderCurrentTabContent(allLoadedClasses[currentClassId]);
+                            } else if (currentClassId && !allLoadedClasses[currentClassId]) {
+                                // If the selected class was deleted, clear view
+                                currentClassId = null;
+                                renderMainContent();
+                            }
+                        }
                     };
 
+                    // Firestore requires separate listeners for separate 'where' clauses.
                     unsubscribes.push(classesQuery.onSnapshot(snapshot => processSnapshot(snapshot, 'Owner')));
                     unsubscribes.push(classesQuery2.onSnapshot(snapshot => processSnapshot(snapshot, 'Student')));
                     unsubscribes.push(classesQuery3.onSnapshot(snapshot => processSnapshot(snapshot, 'Teacher')));
@@ -307,7 +376,9 @@
                 }
                 
                 async function selectClass(classData) {
+                    cleanupListeners(); // Stop listening to old class's requests
                     currentClassId = classData ? classData.id : null;
+                    currentTab = 'overview'; // Reset to default tab when a new class is selected
                     renderClassList(Object.values(allLoadedClasses)); 
                     renderMainContent();
                 }
@@ -321,6 +392,7 @@
                         setupClassViewListeners(classData);
                         renderCurrentTabContent(classData);
                     } else {
+                        cleanupListeners();
                         mainContentArea.innerHTML = TPL.emptyState(userData);
                     }
                 }
@@ -332,7 +404,8 @@
                             const tabBtn = e.target.closest('button[role="tab"]');
                             if (tabBtn) {
                                 currentTab = tabBtn.dataset.tab;
-                                renderMainContent(); // Re-render to show the new tab content
+                                cleanupListeners(); // Clean up request listener before changing tab content
+                                renderCurrentTabContent(classData); // Only re-render the tab content, not the whole class shell
                             }
                         });
                     }
@@ -342,16 +415,16 @@
                     const tabContentContainer = document.getElementById('tab-content');
                     if (!tabContentContainer) return;
                     
-                    tabContentContainer.innerHTML = '';
+                    // Display loading state first, which is better UX
+                    tabContentContainer.innerHTML = TPL.loadingState(`Loading ${currentTab} content...`);
                     
                     switch (currentTab) {
                         case 'overview':
-                            tabContentContainer.innerHTML = TPL.loadingState('Loading requests...');
-                            await listenForRequests(classData.id, tabContentContainer);
+                            // Data fetching handled by onSnapshot in listenForRequests (real-time updates)
+                            listenForRequests(classData.id, tabContentContainer);
                             break;
                         case 'roster':
-                            tabContentContainer.innerHTML = TPL.loadingState('Loading class roster...');
-                            await loadClassRoster(classData);
+                            await loadClassRoster(classData); // Ensure all users are loaded
                             tabContentContainer.innerHTML = TPL.classRoster(classData, loadedUsers, userData);
                             break;
                         case 'settings':
@@ -363,14 +436,14 @@
                             }
                             break;
                         default:
-                            tabContentContainer.innerHTML = TPL.classOverview(classData);
+                            tabContentContainer.innerHTML = TPL.emptyState(classData);
                             break;
                     }
                     setupTabSpecificListeners(classData);
                 }
 
                 function setupTabSpecificListeners(classData) {
-                    if (currentTab === 'settings') {
+                    if (currentTab === 'settings' && classData.teacherId === userData.uid) {
                         const form = document.getElementById('class-settings-form');
                         if (form) {
                             form.addEventListener('submit', async (e) => {
@@ -379,7 +452,6 @@
                                 if (newTitle && newTitle !== classData.name) {
                                     await updateClassTitle(classData.id, newTitle);
                                 }
-                                showModal(TPL.deleteClassModal(classData));
                             });
                         }
                     }
@@ -413,14 +485,16 @@
                 }
 
                 async function loadClassRoster(classData) {
+                    // Collect all member UIDs
                     const members = [...(classData.studentIds || []), ...(classData.teacherIds || [])];
                     const ownerId = classData.teacherId;
                     const allMemberIds = Array.from(new Set([...members, ownerId]));
                     
-                    const newUsersToLoad = allMemberIds.filter(uid => !loadedUsers[uid]);
+                    const newUsersToLoad = allMemberIds.filter(uid => uid && !loadedUsers[uid]);
                     
                     if (newUsersToLoad.length === 0) return;
                     
+                    // Fetch users in batches of 10 (Firestore limit)
                     const batchSize = 10;
                     for (let i = 0; i < newUsersToLoad.length; i += batchSize) {
                         const batchIds = newUsersToLoad.slice(i, i + batchSize);
@@ -431,19 +505,33 @@
                     }
                 }
 
-                // --- NEW REQUESTS FUNCTIONALITY ---
+                // --- REQUESTS FUNCTIONALITY (Using onSnapshot for real-time updates) ---
                 function listenForRequests(classId, container) {
+                    // Cleanup previous listener
+                    cleanupListeners();
+                    
                     const requestsQuery = db.collection('classes').doc(classId).collection('requests').orderBy('timestamp', 'desc');
-                    unsubscribes.push(requestsQuery.onSnapshot(async (snapshot) => {
+                    
+                    currentRequestsUnsubscribe = requestsQuery.onSnapshot(async (snapshot) => {
                         const requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        await loadRequestUsers(requests); // Pre-load all user data for requests
-                        container.innerHTML = TPL.classOverview(allLoadedClasses[classId], userData, requests);
-                        setupTabSpecificListeners(allLoadedClasses[classId]); // Re-attach listeners for the new content
-                    }));
+                        await loadRequestUsers(requests); // Pre-load all required user data
+                        
+                        // Check if the current tab is still 'overview' before rendering to prevent conflicts
+                        if (currentTab === 'overview') {
+                            container.innerHTML = TPL.classOverview(allLoadedClasses[classId], userData, requests);
+                            setupTabSpecificListeners(allLoadedClasses[classId]); 
+                        }
+                    }, error => {
+                        console.error("Error listening to requests:", error);
+                        container.innerHTML = TPL.messageModal('Error Loading Requests', 'Failed to load requests in real-time.', 'red');
+                    });
                 }
 
                 async function loadRequestUsers(requests) {
-                    const newUsersToLoad = requests.map(r => r.studentId).filter(uid => uid && !loadedUsers[uid]);
+                    const studentIds = requests.map(r => r.studentId).filter(uid => uid);
+                    const allRequestUids = Array.from(new Set(studentIds));
+
+                    const newUsersToLoad = allRequestUids.filter(uid => !loadedUsers[uid]);
                     
                     if (newUsersToLoad.length === 0) return;
                     
@@ -480,7 +568,7 @@
                             comment: '',
                             timestamp: firebase.firestore.FieldValue.serverTimestamp()
                         });
-                        showModal(TPL.messageModal('Success', 'Your request has been submitted!', 'green'));
+                        showModal(TPL.messageModal('Success', 'Your request has been submitted! We\'ll notify you when your teacher responds.', 'green'));
                         document.getElementById('new-request-form').reset();
                     } catch (error) {
                         console.error('Error submitting request:', error);
@@ -492,25 +580,27 @@
                 }
                 
                 async function handleRequestActions(e) {
-                    const target = e.target.closest('button, a, input[type="submit"]');
-                    if (!target) return;
+                    const target = e.target.closest('button');
+                    if (!target || !target.dataset.requestId) return;
 
-                    const requestId = target.dataset.requestId;
-                    if (!requestId) return;
-
+                    const { requestId, action, comment } = target.dataset;
                     const requestRef = db.collection('classes').doc(currentClassId).collection('requests').doc(requestId);
 
-                    if (target.dataset.action === 'accept') {
-                        await requestRef.update({ status: 'accepted', comment: '' });
-                    } else if (target.dataset.action === 'deny') {
-                        await requestRef.update({ status: 'denied', comment: '' });
-                    } else if (target.dataset.action === 'add-comment') {
-                        showModal(TPL.commentModal(requestId, ''));
-                    } else if (target.dataset.action === 'edit-comment') {
-                        const comment = target.dataset.comment;
-                        showModal(TPL.commentModal(requestId, comment));
-                    } else if (target.dataset.action === 'delete-comment') {
-                        await requestRef.update({ status: 'pending', comment: '' });
+                    try {
+                        if (action === 'accept') {
+                            await requestRef.update({ status: 'accepted', comment: '' });
+                        } else if (action === 'deny') {
+                            await requestRef.update({ status: 'denied', comment: '' });
+                        } else if (action === 'add-comment') {
+                            showModal(TPL.commentModal(requestId, ''));
+                        } else if (action === 'edit-comment') {
+                            showModal(TPL.commentModal(requestId, comment));
+                        } else if (action === 'delete-comment') {
+                            await requestRef.update({ status: 'pending', comment: '' });
+                        }
+                    } catch (error) {
+                         console.error(`Error performing action ${action}:`, error);
+                         showModal(TPL.messageModal('Action Failed', `Could not complete the action: ${error.message}`, 'red'));
                     }
                 }
                 
@@ -546,22 +636,16 @@
 
                 async function removeUserFromClass(classId, userId, userRole) {
                     const classRef = db.collection('classes').doc(classId);
-                    let fieldToUpdate = '';
-                    if (userRole === 'student') {
-                        fieldToUpdate = 'studentIds';
-                    } else if (userRole === 'teacher') {
-                        fieldToUpdate = 'teacherIds';
-                    } else {
-                        return; // Invalid role
-                    }
-
+                    let fieldToUpdate = userRole === 'student' ? 'studentIds' : 'teacherIds';
+                    
                     await classRef.update({
                         [fieldToUpdate]: firebase.firestore.FieldValue.arrayRemove(userId)
                     });
                     
-                    // Force a re-render of the roster tab
+                    // Force a re-render of the roster tab by reloading data (will be picked up by main class listener)
                     const classData = allLoadedClasses[classId];
                     if (classData) {
+                        // Optimistic UI update before database reflects the change
                         const updatedData = { ...classData };
                         updatedData[fieldToUpdate] = (updatedData[fieldToUpdate] || []).filter(id => id !== userId);
                         allLoadedClasses[classId] = updatedData;
@@ -619,7 +703,6 @@
                 async function joinClass(classCode) {
                     const classQuery = await db.collection('classes').where('code', '==', classCode).limit(1).get();
                     if (classQuery.empty) {
-                        // Using a custom modal/message box instead of alert()
                         showModal(TPL.messageModal('Error', 'Invalid class code. Please try again.', 'red'));
                         return;
                     }
@@ -629,12 +712,10 @@
 
                     const isAlreadyMember = (classData.studentIds || []).includes(currentUser.uid) || (classData.teacherIds || []).includes(currentUser.uid) || classData.teacherId === currentUser.uid;
                     if (isAlreadyMember) {
-                        // Using a custom modal/message box instead of alert()
                         showModal(TPL.messageModal('Already Enrolled', `You are already a member of the class: ${classData.name}.`, 'yellow'));
                         return;
                     }
                     
-                    // Logic: If user is a teacher, prompt for co-teacher join. Otherwise, join as student.
                     if (userData.role === 'teacher') {
                         showModal(TPL.joinClassAsTeacherConfirm(classId, classData.name));
                     } else {
@@ -750,7 +831,6 @@
                     try {
                         loadingEl.textContent = 'Loading courses...';
                         
-                        // Fetch courses the authenticated user teaches
                         const response = await gapi.client.classroom.courses.list({
                             teacherId: 'me',
                             courseStates: 'ACTIVE'
@@ -759,7 +839,6 @@
                         loadingEl.classList.add('hidden');
                         const courses = response.result.courses || [];
 
-                        // Fetch currently imported classes to check for duplicates
                         const notifyClassesSnapshot = await db.collection('classes').where('teacherId', '==', currentUser.uid).get();
                         const existingGoogleIds = new Set();
                         notifyClassesSnapshot.forEach(doc => {
@@ -773,7 +852,7 @@
                                 const buttonHtml = isImported
                                     ? '<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>'
                                     : `<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" 
-                                        class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`; // Updated button styling
+                                        class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`;
 
                                 return `
                                     <li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
@@ -815,7 +894,6 @@
                     }
 
                     try {
-                        // Check again in case of rapid clicks
                         const existingClass = await db.collection('classes').where('googleCourseId', '==', googleCourseId).limit(1).get();
                         if (!existingClass.empty) {
                             showModal(TPL.messageModal('Duplicate', 'This class has already been imported.', 'yellow'));
@@ -831,21 +909,25 @@
                         const students = studentsResponse.result.students || [];
 
                         const studentEmails = students.map(s => s.profile.emailAddress);
-                        const existingStudentUids = [];
-                        const pendingEmails = [];
-
+                        let existingStudentUids = [];
+                        let pendingEmails = [];
+                        
                         if (studentEmails.length > 0) {
-                            // Firestore supports 'in' query on up to 10 emails
+                            const uniqueEmails = Array.from(new Set(studentEmails));
+                            // Firestore does not allow 'in' queries on arrays larger than 10, but the classroom students list can be huge.
+                            // We will process in batches of 10.
                             const batchSize = 10;
-                            for (let i = 0; i < studentEmails.length; i += batchSize) {
-                                const batchEmails = studentEmails.slice(i, i + batchSize);
+                            for (let i = 0; i < uniqueEmails.length; i += batchSize) {
+                                const batchEmails = uniqueEmails.slice(i, i + batchSize);
                                 const usersSnapshot = await db.collection('users').where('email', 'in', batchEmails).get();
                                 const existingEmailsBatch = new Set();
-                                usersSnapshot.docs.forEach(doc => {
+                                
+                                usersSnapshot.forEach(doc => {
                                     existingStudentUids.push(doc.id);
                                     existingEmailsBatch.add(doc.data().email);
                                 });
 
+                                // Check which emails are not yet registered in our user database
                                 batchEmails.forEach(email => {
                                     if (!existingEmailsBatch.has(email)) {
                                         pendingEmails.push(email);
@@ -863,17 +945,16 @@
                             teacherIds: [],
                             code: classCode, 
                             googleCourseId: googleCourseId,
-                            studentIds: existingStudentUids,
-                            pendingStudentEmails: pendingEmails,
+                            studentIds: existingStudentUids, // Already existing Notify users
+                            pendingStudentEmails: pendingEmails, // Emails that need to be auto-enrolled on their first login
                             createdAt: firebase.firestore.FieldValue.serverTimestamp()
                         });
                         
-                        showModal(TPL.messageModal('Import Successful', `Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`, 'green'));
+                        showModal(TPL.messageModal('Import Successful', `Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing Notify students and ${pendingEmails.length} students pending automatic enrollment!`, 'green'));
                         hideModal();
                     } catch (error) {
                         console.error("Error importing Google Classroom:", error);
-                        // Fallback message, trying to extract error details if available
-                        let errorMessage = 'Failed to import class. Please ensure Google Classroom API is enabled for your account.';
+                        let errorMessage = 'Failed to import class. Please check your Google Classroom API access.';
                         if (error.result && error.result.error) {
                                errorMessage = error.result.error.message || errorMessage;
                         } else if (error.message) {
@@ -986,11 +1067,11 @@
                                 <svg class="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
                                 <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome, ${user?.username || ''}!</h2>
                                 <p class="mt-1 text-gray-500">Select a class from the sidebar or get started below.</p>
-                                <div class="mt-6 flex flex-col items-center space-y-4">
+                                <div class="mt-6 flex flex-col items-center space-y-4 w-64 mx-auto">
                                     ${user.role === 'teacher' ? 
-                                        `<button id="new-class-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`
+                                        `<button id="new-class-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`
                                         : ''}
-                                    <button id="join-class-btn-main" class="w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 btn-bubbly flex items-center space-x-2">
+                                    <button id="join-class-btn-main" class="w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 btn-bubbly flex items-center justify-center space-x-2">
                                         <i class="fa-solid fa-user-plus w-5 h-5"></i>
                                         <span>Join Class</span>
                                     </button>
@@ -1007,11 +1088,11 @@
                                         <h2 class="text-2xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
                                         <p class="text-sm text-gray-500">Class Code: <span class="font-semibold text-gray-800">${escapeHtml(cls.code)}</span></p>
                                     </div>
-                                    <div class="mt-6 border-b border-gray-200">
+                                    <div class="mt-6 border-b border-gray-200" id="class-tabs">
                                         <nav class="-mb-px flex space-x-8" aria-label="Tabs">
                                             <button class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'overview' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}" data-tab="overview" role="tab" aria-selected="${activeTab === 'overview'}">Overview</button>
                                             <button class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'roster' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}" data-tab="roster" role="tab" aria-selected="${activeTab === 'roster'}">Roster</button>
-                                            ${isTeacher ? `
+                                            ${cls.teacherId === user.uid ? `
                                             <button class="whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'settings' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}" data-tab="settings" role="tab" aria-selected="${activeTab === 'settings'}">Settings</button>
                                             ` : ''}
                                         </nav>
@@ -1025,7 +1106,7 @@
                         const isTeacher = user.role === 'teacher';
                         const requestsHeader = isTeacher ? 'Recent Requests' : 'Your Recent Requests';
                         const newRequestForm = `
-                            <div class="bg-gray-50 p-6 rounded-lg border border-gray-200">
+                            <div class="bg-gray-50 p-6 rounded-xl border border-gray-200">
                                 <h3 class="text-lg font-semibold text-gray-800 mb-4">Ask a Question</h3>
                                 <form id="new-request-form" class="space-y-4">
                                     <div>
@@ -1071,8 +1152,8 @@
                     },
                     requestCard: (request, user) => {
                         const isTeacher = user.role === 'teacher';
-                        const isStudent = user.role === 'student';
-                        const isMyRequest = request.studentId === user.uid;
+                        const studentName = loadedUsers[request.studentId]?.username || 'Unknown User';
+                        const formattedTimestamp = request.timestamp ? new Date(request.timestamp.seconds * 1000).toLocaleString() : 'Just now';
 
                         const getStatusIcon = (status) => {
                             switch(status) {
@@ -1102,9 +1183,6 @@
                             }
                             return '';
                         };
-
-                        const studentName = loadedUsers[request.studentId]?.username || 'Unknown User';
-                        const formattedTimestamp = request.timestamp ? new Date(request.timestamp.seconds * 1000).toLocaleString() : 'Just now';
 
                         return `
                             <div class="relative p-6 bg-white rounded-xl shadow-sm border border-gray-200 flex flex-col space-y-4">
@@ -1156,32 +1234,30 @@
                             const userList = uids.map(uid => {
                                 const user = users[uid];
                                 if (!user) return '';
-                                const removeButton = (role === 'student' && (cls.teacherId === myUserData.uid || (cls.teacherIds || []).includes(myUserData.uid)))
-                                ? `<button class="remove-student-btn text-gray-400 hover:text-red-500 transition-colors" data-user-id="${user.id}" data-user-role="student" title="Remove student"><i class="fa-solid fa-user-minus"></i></button>`
-                                : '';
+                                const isRemovable = (role === 'student' && isOwnerOrCoTeacher) || (role === 'teacher' && cls.teacherId === myUserData.uid && uid !== myUserData.uid);
                                 
-                                const removeCoTeacherButton = (role === 'teacher' && cls.teacherId === myUserData.uid && uid !== myUserData.uid)
-                                ? `<button class="remove-coteacher-btn text-gray-400 hover:text-red-500 transition-colors" data-user-id="${user.id}" data-user-role="teacher" title="Remove co-teacher"><i class="fa-solid fa-user-minus"></i></button>`
+                                const removeButton = isRemovable
+                                ? `<button class="${role === 'student' ? 'remove-student-btn' : 'remove-coteacher-btn'} text-gray-400 hover:text-red-500 transition-colors" data-user-id="${user.id}" data-user-role="${role === 'owner' ? 'teacher' : role}" title="Remove user"><i class="fa-solid fa-user-minus"></i></button>`
                                 : '';
 
                                 return `
                                     <li class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
                                         <div class="flex items-center">
                                             <div class="h-8 w-8 rounded-full flex items-center justify-center bg-gray-300 text-gray-700 font-bold text-sm mr-3">
-                                                ${user.photoURL ? `<img src="${user.photoURL}" alt="" class="h-full w-full rounded-full object-cover">` : user.username.charAt(0).toUpperCase()}
+                                                ${user.photoURL ? `<img src="${user.photoURL}" onerror="this.onerror=null;this.parentElement.innerHTML='${user.username.charAt(0).toUpperCase()}'" alt="" class="h-full w-full rounded-full object-cover">` : user.username.charAt(0).toUpperCase()}
                                             </div>
                                             <div>
                                                 <p class="font-medium text-gray-800">${escapeHtml(user.username)}</p>
                                                 <p class="text-xs text-gray-500">${escapeHtml(user.email)}</p>
                                             </div>
                                         </div>
-                                        ${role === 'student' ? removeButton : removeCoTeacherButton}
+                                        ${removeButton}
                                     </li>
                                 `;
                             }).join('');
                             return `
                                 <div>
-                                    <h4 class="text-sm font-semibold text-gray-600 uppercase mb-2">${title}</h4>
+                                    <h4 class="text-sm font-semibold text-gray-600 uppercase mb-2">${title} (${uids.length})</h4>
                                     <ul class="space-y-2" id="roster-list">
                                         ${userList}
                                     </ul>
@@ -1198,10 +1274,10 @@
                                 ${getRosterList(cls.studentIds, 'Students', 'student')}
                                 ${isOwnerOrCoTeacher && cls.pendingStudentEmails && cls.pendingStudentEmails.length > 0 ? `
                                     <div>
-                                        <h4 class="text-sm font-semibold text-gray-600 uppercase mb-2">Pending Students</h4>
+                                        <h4 class="text-sm font-semibold text-gray-600 uppercase mb-2">Pending Students (Emails to Auto-Enroll: ${cls.pendingStudentEmails.length})</h4>
                                         <ul class="space-y-2 text-gray-500 text-sm">
                                             ${cls.pendingStudentEmails.map(email => `
-                                                <li class="p-3 bg-gray-50 rounded-lg truncate">${escapeHtml(email)}</li>
+                                                <li class="p-3 bg-gray-50 rounded-lg truncate">${escapeHtml(email)} (Awaiting login)</li>
                                             `).join('')}
                                         </ul>
                                     </div>
@@ -1270,7 +1346,7 @@
                                     <span class="font-semibold text-gray-700">Create Manually</span>
                                 </button>
                                 <button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly">
-                                    <img src="../images/google-classroom.png" alt="Google Classroom icon" class="w-8 h-8 mb-2">
+                                    <svg class="w-8 h-8 mb-2" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M40 8H8C5.79 8 4 9.79 4 12V36C4 38.21 5.79 40 8 40H40C42.21 40 44 38.21 44 36V12C44 9.79 42.21 8 40 8Z" fill="#1C5CE5"/><path d="M40 8H8C5.79 8 4 9.79 4 12V36C4 38.21 5.79 40 8 40H40C42.21 40 44 38.21 44 36V12C44 9.79 42.21 8 40 8Z" fill="#1C5CE5"/><path d="M24 16L32 24L24 32" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 16L24 24L16 32" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                     <span class="font-semibold text-gray-700">Import from Classroom</span>
                                 </button>
                             </div>
@@ -1330,7 +1406,7 @@
                     googleImportModal: () => `
                         <div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto">
                             <div class="flex items-center justify-center mb-4">
-                                <img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4">
+                                <svg class="w-8 h-8 mb-2 mr-3" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M40 8H8C5.79 8 4 9.79 4 12V36C4 38.21 5.79 40 8 40H40C42.21 40 44 38.21 44 36V12C44 9.79 42.21 8 40 8Z" fill="#1C5CE5"/><path d="M40 8H8C5.79 8 4 9.79 4 12V36C4 38.21 5.79 40 8 40H40C42.21 40 44 38.21 44 36V12C44 9.79 42.21 8 40 8Z" fill="#1C5CE5"/><path d="M24 16L32 24L24 32" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 16L24 24L16 32" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
                                 <h3 class="text-2xl font-bold text-gray-800 font-poppins">Import from Classroom</h3>
                             </div>
                             <p class="text-center text-gray-500 mb-6">Select a class you own to import it into Notify.</p>
