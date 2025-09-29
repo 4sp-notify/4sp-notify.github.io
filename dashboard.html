@@ -183,14 +183,12 @@
     
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            const today = new Date().toDateString();
             let currentUser = null;
             let userData = null;
             let currentClassId = null;
             let allLoadedClasses = {};
-            let unsubscribes = [];
+            let unsubscribes = {};
 
-            const userProfileMenu = document.getElementById('user-profile-menu');
             const mainContentArea = document.getElementById('main-content-area');
             const classListEl = document.getElementById('class-list');
             const modalContainer = document.getElementById('modal-container');
@@ -225,23 +223,25 @@
                     if (userDoc.exists) {
                         userData = { uid, ...userDoc.data() };
                         updateProfileUI(currentUser, userData);
-                        listenForClasses(uid);
-                        renderMainContent();
+                        listenToAllClasses(uid);
                     } else {
+                        console.error("User document not found, signing out.");
                         auth.signOut();
                     }
                 }
 
                 function updateProfileUI(user, data) {
+                    // DOM elements for profile UI
+                    const userProfileMenu = document.getElementById('user-profile-menu');
                     const displayNameEl = document.getElementById('user-display-name-menu');
                     const emailEl = document.getElementById('user-email-menu');
+                    const picEls = [document.getElementById('user-profile-pic'), document.getElementById('user-profile-pic-menu')];
+                    const initialEls = [document.getElementById('user-profile-initial'), document.getElementById('user-profile-initial-menu')];
+
                     if (displayNameEl && emailEl) {
                         displayNameEl.textContent = data.username;
                         emailEl.textContent = user.email;
                     }
-                    
-                    const picEls = [document.getElementById('user-profile-pic'), document.getElementById('user-profile-pic-menu')];
-                    const initialEls = [document.getElementById('user-profile-initial'), document.getElementById('user-profile-initial-menu')];
 
                     if (user.photoURL) {
                         picEls.forEach(el => { el.src = user.photoURL; el.classList.remove('hidden'); });
@@ -251,49 +251,51 @@
                         initialEls.forEach(el => { el.textContent = initial; el.classList.remove('hidden'); });
                         picEls.forEach(el => el.classList.add('hidden'));
                     }
-                    
                     document.getElementById('teacher-sidebar-actions').classList.toggle('hidden', data.role !== 'teacher');
                 }
 
-                function listenForClasses(uid) {
-                    unsubscribes.forEach(unsub => unsub());
-                    unsubscribes = [];
+                function listenToAllClasses(uid) {
+                    Object.values(unsubscribes).forEach(unsub => unsub());
+                    unsubscribes = {};
                     allLoadedClasses = {};
 
-                    // Listen for classes where the user is the owner, a student, or a co-teacher
-                    const classesQuery = db.collection('classes').where('teacherId', '==', uid);
-                    const classesQuery2 = db.collection('classes').where('studentIds', 'array-contains', uid);
-                    const classesQuery3 = db.collection('classes').where('teacherIds', 'array-contains', uid);
-                    
-                    const processSnapshot = (snapshot, role) => {
-                        let hasChanges = false;
-                        snapshot.docChanges().forEach(change => {
-                            hasChanges = true;
-                            if (change.type === 'removed') {
-                                delete allLoadedClasses[change.doc.id];
-                            } else {
-                                allLoadedClasses[change.doc.id] = { 
-                                    ...allLoadedClasses[change.doc.id], 
-                                    id: change.doc.id, 
-                                    ...change.doc.data(), 
-                                    [`is${role}`]: true 
-                                };
-                            }
-                        });
-                        // Only re-render if there was an actual change
-                        if (hasChanges) renderClassList(Object.values(allLoadedClasses));
+                    const queries = {
+                        owned: db.collection('classes').where('teacherId', '==', uid),
+                        coteaching: db.collection('classes').where('teacherIds', 'array-contains', uid),
+                        student: db.collection('classes').where('studentIds', 'array-contains', uid)
                     };
 
-                    unsubscribes.push(classesQuery.onSnapshot(snapshot => processSnapshot(snapshot, 'Owner')));
-                    unsubscribes.push(classesQuery2.onSnapshot(snapshot => processSnapshot(snapshot, 'Student')));
-                    unsubscribes.push(classesQuery3.onSnapshot(snapshot => processSnapshot(snapshot, 'Teacher')));
+                    for (const role in queries) {
+                        unsubscribes[role] = queries[role].onSnapshot(snapshot => {
+                            let changesOccurred = false;
+                            snapshot.docChanges().forEach(change => {
+                                changesOccurred = true;
+                                const docId = change.doc.id;
+                                if (change.type === 'removed') {
+                                    delete allLoadedClasses[docId];
+                                } else {
+                                    allLoadedClasses[docId] = { id: docId, ...change.doc.data() };
+                                }
+                            });
+
+                            if (changesOccurred) {
+                                renderClassList(Object.values(allLoadedClasses));
+                                if (currentClassId && allLoadedClasses[currentClassId]) {
+                                    renderMainContent(); // Re-render main view if current class updates
+                                } else if (currentClassId && !allLoadedClasses[currentClassId]) {
+                                    // If current class was removed (e.g., kicked from)
+                                    currentClassId = null;
+                                    renderMainContent();
+                                }
+                            }
+                        });
+                    }
                 }
                 
                 function renderClassList(classes) {
                     document.getElementById('no-classes-sidebar').classList.toggle('hidden', classes.length > 0);
                     classListEl.innerHTML = '';
-                    // Simple in-memory sorting
-                    const sortedClasses = classes.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+                    const sortedClasses = classes.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
 
                     for (const cls of sortedClasses) {
                         const li = document.createElement('li');
@@ -305,16 +307,16 @@
                     }
                 }
                 
-                function selectClass(classData) {
-                    currentClassId = classData ? classData.id : null;
+                function selectClass(classId) {
+                    currentClassId = classId;
                     renderClassList(Object.values(allLoadedClasses)); 
                     renderMainContent();
                 }
 
                 function renderMainContent() {
-                    if (currentClassId) {
+                    if (currentClassId && allLoadedClasses[currentClassId]) {
                         const classData = allLoadedClasses[currentClassId];
-                        mainContentArea.innerHTML = TPL.classView(classData, userData);
+                        mainContentArea.innerHTML = TPL.classView(classData, userData, currentUser.uid);
                     } else {
                         mainContentArea.innerHTML = TPL.emptyState(userData);
                     }
@@ -324,576 +326,191 @@
                 function showModal(modalHTML) {
                     modalContainer.innerHTML = modalHTML;
                     modalBackdrop.classList.remove('hidden');
-                    modalBackdrop.classList.add('fade-enter-active');
-                    const modalDialog = modalContainer.firstElementChild;
-                    modalDialog.classList.add('fade-enter-from');
-                    setTimeout(() => {
-                        modalBackdrop.classList.remove('fade-enter-active');
-                        modalDialog.classList.remove('fade-enter-from');
-                    }, 200);
+                    modalContainer.firstElementChild?.classList.add('fade-enter-active');
                 }
                 
                 function hideModal() {
                     const modalDialog = modalContainer.firstElementChild;
-                    if(modalDialog) {
-                        modalBackdrop.classList.add('fade-leave-to');
-                        modalDialog.classList.add('fade-leave-to');
+                    if (modalDialog) {
+                        modalDialog.classList.add('fade-leave-active');
                         setTimeout(() => {
                             modalContainer.innerHTML = '';
                             modalBackdrop.classList.add('hidden');
-                            modalBackdrop.classList.remove('fade-leave-to');
                         }, 200);
                     }
                 }
 
                 function escapeHtml(text) {
+                    if (typeof text !== 'string') return '';
                     const div = document.createElement('div');
                     div.textContent = text;
                     return div.innerHTML;
                 }
-                
-                // --- Class Management ---
-                async function createNewClass(className) {
-                    const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-                    await db.collection('classes').add({
-                        name: className,
-                        teacherId: currentUser.uid,
-                        teacherIds: [],
-                        code: classCode,
-                        studentIds: [],
-                        pendingStudentEmails: [],
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
-                    hideModal();
-                }
 
-                async function joinClass(classCode) {
-                    const classQuery = await db.collection('classes').where('code', '==', classCode).limit(1).get();
-                    if (classQuery.empty) {
-                        // Using a custom modal/message box instead of alert()
-                        showModal(TPL.messageModal('Error', 'Invalid class code. Please try again.', 'red'));
-                        return;
-                    }
-                    const classDoc = classQuery.docs[0];
-                    const classId = classDoc.id;
-                    const classData = classDoc.data();
-
-                    const isAlreadyMember = (classData.studentIds || []).includes(currentUser.uid) || (classData.teacherIds || []).includes(currentUser.uid) || classData.teacherId === currentUser.uid;
-                    if (isAlreadyMember) {
-                        // Using a custom modal/message box instead of alert()
-                        showModal(TPL.messageModal('Already Enrolled', `You are already a member of the class: ${classData.name}.`, 'yellow'));
-                        return;
-                    }
-                    
-                    // Logic: If user is a teacher, prompt for co-teacher join. Otherwise, join as student.
-                    if (userData.role === 'teacher') {
-                        showModal(TPL.joinClassAsTeacherConfirm(classId, classData.name));
-                    } else {
-                        const classRef = db.collection('classes').doc(classId);
-                        await classRef.update({ studentIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
-                        hideModal();
-                        showModal(TPL.messageModal('Success', `Successfully joined class: ${classData.name}!`, 'green'));
-                    }
-                }
-
-                async function joinClassAsTeacher(classId, className) {
+                // --- New Feature Functions ---
+                async function sendRequest(classId, message) {
                     const classRef = db.collection('classes').doc(classId);
-                    await classRef.update({ teacherIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
-                    hideModal();
-                    showModal(TPL.messageModal('Success', `Successfully joined class ${className} as co-teacher!`, 'green'));
-                }
-
-                // --- Google Classroom Integration (Full Implementation) ---
-                let gapiLoaded = false;
-                let googleAuth = null;
-                const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest';
-                const SCOPES = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
-
-                async function initializeGAPI(apiKey, clientId) {
-                    if (gapiLoaded) return Promise.resolve();
-                    
-                    return new Promise((resolve, reject) => {
-                        const checkGAPI = () => {
-                            if (typeof gapi !== 'undefined' && gapi.load) {
-                                gapi.load('client', async () => {
-                                    try {
-                                        await gapi.client.init({
-                                            apiKey: apiKey,
-                                            discoveryDocs: [DISCOVERY_DOC]
-                                        });
-                                        googleAuth = google.accounts.oauth2.initTokenClient({
-                                            client_id: clientId,
-                                            scope: SCOPES,
-                                            callback: '',
-                                        });
-                                        gapiLoaded = true;
-                                        resolve();
-                                    } catch (error) {
-                                        reject(error);
-                                    }
-                                });
-                            } else {
-                                setTimeout(checkGAPI, 100);
-                            }
-                        };
-                        checkGAPI();
-                    });
-                }
-
-                function requestAccessToken() {
-                    return new Promise((resolve, reject) => {
-                        try {
-                            googleAuth.callback = async (response) => {
-                                if (response.error) {
-                                    reject(new Error(response.error));
-                                    return;
-                                }
-                                gapi.client.setToken({access_token: response.access_token});
-                                try {
-                                    await listGoogleCourses();
-                                    resolve();
-                                } catch (error) {
-                                    reject(error);
-                                }
-                            };
-                            googleAuth.requestAccessToken();
-                        } catch (error) {
-                            reject(error);
-                        }
+                    const newRequest = {
+                        id: db.collection('classes').doc().id, // Unique ID for the request
+                        message,
+                        studentId: currentUser.uid,
+                        studentName: userData.username,
+                        createdAt: firebase.firestore.Timestamp.now(),
+                        comment: null,
+                    };
+                    await classRef.update({
+                        requests: firebase.firestore.FieldValue.arrayUnion(newRequest)
                     });
                 }
                 
-                async function handleGoogleImportClick() {
-                    showModal(TPL.googleImportModal());
-                    
-                    const loadingEl = document.getElementById('g-import-loading');
-                    const errorEl = document.getElementById('g-import-error');
-                    loadingEl.classList.remove('hidden');
-                    errorEl.classList.add('hidden');
-                    
-                    try {
-                        const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOFhgHXEE').get();
-                        if (!secretsDoc.exists) throw new Error("Secrets document not found.");
-                        
-                        const secrets = secretsDoc.data();
-                        const API_KEY = secrets.GoogleClassroomAPIKey;
-                        const CLIENT_ID = secrets.GoogleClientID;
-                        
-                        if (!API_KEY || !CLIENT_ID) {
-                            throw new Error("Missing API Key or Client ID in secrets document.");
-                        }
+                async function updateRequestComment(classId, requestId, comment) {
+                    const classRef = db.collection('classes').doc(classId);
+                    const classDoc = await classRef.get();
+                    if (!classDoc.exists) return;
 
-                        await initializeGAPI(API_KEY, CLIENT_ID);
-                        await requestAccessToken();
-                    } catch (error) {
-                        console.error('Google Classroom init error:', error);
-                        loadingEl.classList.add('hidden');
-                        errorEl.textContent = `Error: ${error.message}`;
-                        errorEl.classList.remove('hidden');
-                    }
+                    const requests = classDoc.data().requests || [];
+                    const updatedRequests = requests.map(req => 
+                        req.id === requestId ? { ...req, comment } : req
+                    );
+                    
+                    await classRef.update({ requests: updatedRequests });
                 }
 
-                async function listGoogleCourses() {
-                    const listEl = document.getElementById('g-import-list');
-                    const loadingEl = document.getElementById('g-import-loading');
-                    const errorEl = document.getElementById('g-import-error');
-
-                    try {
-                        loadingEl.textContent = 'Loading courses...';
-                        
-                        // Fetch courses the authenticated user teaches
-                        const response = await gapi.client.classroom.courses.list({
-                            teacherId: 'me',
-                            courseStates: 'ACTIVE'
-                        });
-                        
-                        loadingEl.classList.add('hidden');
-                        const courses = response.result.courses || [];
-
-                        // Fetch currently imported classes to check for duplicates
-                        const notifyClassesSnapshot = await db.collection('classes').where('teacherId', '==', currentUser.uid).get();
-                        const existingGoogleIds = new Set();
-                        notifyClassesSnapshot.forEach(doc => {
-                            const data = doc.data();
-                            if(data.googleCourseId) existingGoogleIds.add(data.googleCourseId);
-                        });
-
-                        if (courses.length > 0) {
-                            listEl.innerHTML = courses.map(course => {
-                                const isImported = existingGoogleIds.has(course.id);
-                                const buttonHtml = isImported
-                                    ? '<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>'
-                                    : `<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" 
-                                            class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`; // Updated button styling
-
-                                return `
-                                    <li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
-                                        <div class="flex-1">
-                                            <p class="font-bold text-gray-800">${escapeHtml(course.name)}</p>
-                                            <p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section || 'No section')}</p>
-                                        </div>
-                                        ${buttonHtml}
-                                    </li>`;
-                            }).join('');
-                            
-                            document.querySelectorAll('.import-g-class-btn').forEach(button => {
-                                button.addEventListener('click', () => importGoogleClass(button.dataset.courseId, button.dataset.courseName));
-                            });
-                        } else {
-                            listEl.innerHTML = '<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom that you are the primary teacher of.</p>';
-                        }
-                    } catch (error) {
-                        console.error('Error listing courses:', error);
-                        loadingEl.classList.add('hidden');
-                        let errorMessage = 'Failed to load courses.';
-                        
-                        if (error.result && error.result.error) {
-                            errorMessage = error.result.error.message || errorMessage;
-                        } else if (error.message) {
-                            errorMessage = error.message;
-                        }
-                        
-                        errorEl.textContent = `Error: ${errorMessage}`;
-                        errorEl.classList.remove('hidden');
-                    }
+                async function removeUserFromClass(classId, userIdToRemove) {
+                    const classRef = db.collection('classes').doc(classId);
+                    await classRef.update({
+                        studentIds: firebase.firestore.FieldValue.arrayRemove(userIdToRemove),
+                        teacherIds: firebase.firestore.FieldValue.arrayRemove(userIdToRemove)
+                    });
+                    hideModal();
+                    showModal(TPL.messageModal('Success', 'User has been removed from the class.', 'green'));
                 }
 
-                async function importGoogleClass(googleCourseId, googleCourseName) {
-                    const importBtn = document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);
-                    if (importBtn) {
-                        importBtn.textContent = 'Importing...';
-                        importBtn.disabled = true;
-                    }
-
-                    try {
-                        // Check again in case of rapid clicks
-                        const existingClass = await db.collection('classes').where('googleCourseId', '==', googleCourseId).limit(1).get();
-                        if (!existingClass.empty) {
-                            showModal(TPL.messageModal('Duplicate', 'This class has already been imported.', 'yellow'));
-                            if (importBtn) {
-                                importBtn.textContent = 'Import';
-                                importBtn.disabled = false;
-                            }
-                            return;
-                        }
-                        
-                        // 1. Get students and map to existing Notify users/pending emails
-                        const studentsResponse = await gapi.client.classroom.courses.students.list({ courseId: googleCourseId });
-                        const students = studentsResponse.result.students || [];
-
-                        const studentEmails = students.map(s => s.profile.emailAddress);
-                        const existingStudentUids = [];
-                        const pendingEmails = [];
-
-                        if (studentEmails.length > 0) {
-                            // Firestore supports 'in' query on up to 10 emails
-                            const batchSize = 10;
-                            for (let i = 0; i < studentEmails.length; i += batchSize) {
-                                const batchEmails = studentEmails.slice(i, i + batchSize);
-                                const usersSnapshot = await db.collection('users').where('email', 'in', batchEmails).get();
-                                const existingEmailsBatch = new Set();
-                                usersSnapshot.forEach(doc => {
-                                    existingStudentUids.push(doc.id);
-                                    existingEmailsBatch.add(doc.data().email);
-                                });
-
-                                batchEmails.forEach(email => {
-                                    if (!existingEmailsBatch.has(email)) {
-                                        pendingEmails.push(email);
-                                    }
-                                });
-                            }
-                        }
-                        
-                        // 2. Create the new class document
-                        const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
-                        
-                        await db.collection('classes').add({
-                            name: googleCourseName,
-                            teacherId: currentUser.uid,
-                            teacherIds: [],
-                            code: classCode, 
-                            googleCourseId: googleCourseId,
-                            studentIds: existingStudentUids,
-                            pendingStudentEmails: pendingEmails,
-                            createdAt: firebase.firestore.FieldValue.serverTimestamp()
-                        });
-                        
-                        showModal(TPL.messageModal('Import Successful', `Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`, 'green'));
-                        hideModal();
-                    } catch (error) {
-                        console.error("Error importing Google Classroom:", error);
-                        // Fallback message, trying to extract error details if available
-                        let errorMessage = 'Failed to import class. Please ensure Google Classroom API is enabled for your account.';
-                        if (error.result && error.result.error) {
-                             errorMessage = error.result.error.message || errorMessage;
-                        } else if (error.message) {
-                            errorMessage = error.message;
-                        }
-                        showModal(TPL.messageModal('Import Failed', errorMessage, 'red'));
-                        
-                        if (importBtn) {
-                            importBtn.textContent = 'Import';
-                            importBtn.disabled = false;
-                        }
-                    }
-                }
-                // --- End Google Classroom Implementation ---
-
-
-                // --- Event Listeners ---
-                document.body.addEventListener('click', async e => {
-                    const target = e.target.closest('button, a, input[type="submit"]');
-                    if (!target) return;
-                    
-                    if (target.id === 'user-profile-btn') {
-                        userProfileMenu.classList.toggle('hidden');
+                async function updateClassName(classId, newName) {
+                    if (!newName.trim()) {
+                        showModal(TPL.messageModal('Error', 'Class name cannot be empty.', 'red'));
                         return;
                     }
-                    if (!e.target.closest('#user-profile-menu')) userProfileMenu.classList.add('hidden');
-                    
-                    if(target.id === 'logout-btn') auth.signOut();
-                    
-                    const classBtn = target.closest('#class-list button');
-                    if (classBtn) selectClass(allLoadedClasses[classBtn.dataset.classId]);
-                    
-                    if(target.id === 'new-class-btn') showModal(TPL.newClassChoiceModal(userData));
-                    if(target.id === 'join-class-btn-main') showModal(TPL.joinClassModal());
-                    if(target.id === 'create-manual-btn') showModal(TPL.createClassModal());
-                    
-                    if(target.id === 'import-gclass-btn') handleGoogleImportClick();
-                    
-                    // Added modal-cancel-btn style updates to modals below
-                    if(target.classList.contains('modal-cancel-btn') || e.target.id === 'modal-backdrop' || target.classList.contains('modal-close-btn')) hideModal();
-                    
-                    if(target.id === 'confirm-join-teacher-btn') {
-                        const classId = target.dataset.classId;
-                        const className = target.dataset.className;
-                        joinClassAsTeacher(classId, className);
+                    await db.collection('classes').doc(classId).update({ name: newName });
+                    hideModal();
+                    showModal(TPL.messageModal('Success', 'Class name updated.', 'green'));
+                }
+
+                async function deleteClass(classId) {
+                    await db.collection('classes').doc(classId).delete();
+                    hideModal();
+                    currentClassId = null; // Unselect the class
+                    renderMainContent(); // Go back to empty state
+                    showModal(TPL.messageModal('Success', 'The class has been deleted.', 'green'));
+                }
+
+                // --- Event Listeners (Delegation) ---
+                document.body.addEventListener('click', async e => {
+                    const target = e.target.closest('[data-action]');
+                    if (!target) return;
+
+                    const action = target.dataset.action;
+                    const classId = target.dataset.classId || currentClassId;
+                    const classData = allLoadedClasses[classId];
+
+                    switch (action) {
+                        case 'select-class':
+                            selectClass(target.dataset.classId);
+                            break;
+                        case 'show-invite-modal':
+                            showModal(TPL.inviteModal(classData));
+                            break;
+                        case 'copy-to-clipboard':
+                            const input = document.getElementById(target.dataset.target);
+                            input.select();
+                            document.execCommand('copy');
+                            target.textContent = 'Copied!';
+                            setTimeout(() => { target.textContent = 'Copy'; }, 2000);
+                            break;
+                        case 'show-roster-modal': {
+                            showModal(TPL.rosterModalLoading());
+                            const allUserIds = [...new Set([classData.teacherId, ...classData.teacherIds, ...classData.studentIds])];
+                            const userDocs = await Promise.all(allUserIds.map(uid => db.collection('users').doc(uid).get()));
+                            const usersData = userDocs.map(doc => ({ id: doc.id, ...doc.data() }));
+                            showModal(TPL.rosterModal(classData, usersData, currentUser.uid));
+                            break;
+                        }
+                        case 'confirm-remove-user':
+                            showModal(TPL.confirmModal(
+                                'Remove User?',
+                                `Are you sure you want to remove this user from the class? This action cannot be undone.`,
+                                'Remove', 'remove-user', `data-class-id="${classId}" data-user-id="${target.dataset.userId}"`
+                            ));
+                            break;
+                        case 'remove-user':
+                            await removeUserFromClass(classId, target.dataset.userId);
+                            break;
+                        case 'show-settings-modal':
+                            showModal(TPL.settingsModal(classData));
+                            break;
+                        case 'confirm-delete-class':
+                            showModal(TPL.confirmModal(
+                                'Delete Class?',
+                                `Are you sure you want to permanently delete "${escapeHtml(classData.name)}"? All data will be lost.`,
+                                'Delete Class', 'delete-class', `data-class-id="${classId}"`
+                            ));
+                            break;
+                        case 'delete-class':
+                            await deleteClass(classId);
+                            break;
+                        case 'edit-comment':
+                            showModal(TPL.editCommentModal(classId, target.dataset.requestId, target.dataset.comment));
+                            break;
+                        case 'delete-comment':
+                            await updateRequestComment(classId, target.dataset.requestId, null);
+                            break;
+                        case 'modal-close':
+                            hideModal();
+                            break;
                     }
                 });
                 
                 document.body.addEventListener('submit', async e => {
                     e.preventDefault();
-                    
-                    if(e.target.id === 'create-class-form') {
-                        const className = e.target.querySelector('#new-class-name').value.trim();
-                        if(className) createNewClass(className);
-                    }
-                    
-                    if(e.target.id === 'join-class-form') {
-                        const classCode = e.target.querySelector('#class-code-input').value.trim().toUpperCase();
-                        if(classCode) joinClass(classCode);
+                    const form = e.target;
+                    const classId = form.dataset.classId || currentClassId;
+
+                    switch (form.id) {
+                        case 'send-request-form': {
+                            const message = form.querySelector('textarea').value.trim();
+                            if (message) {
+                                await sendRequest(classId, message);
+                                form.reset();
+                            }
+                            break;
+                        }
+                        case 'add-comment-form': {
+                            const comment = form.querySelector('input').value.trim();
+                            const requestId = form.dataset.requestId;
+                            if (comment) await updateRequestComment(classId, requestId, comment);
+                            break;
+                        }
+                        case 'edit-class-name-form': {
+                            const newName = form.querySelector('input').value;
+                            await updateClassName(classId, newName);
+                            break;
+                        }
+                        case 'edit-comment-form': {
+                            const newComment = form.querySelector('textarea').value.trim();
+                            const requestId = form.dataset.requestId;
+                            await updateRequestComment(classId, requestId, newComment || null);
+                            hideModal();
+                            break;
+                        }
                     }
                 });
 
-                // --- Templating functions (HTML strings) ---
-                const TPL = {
-                    messageModal: (title, message, color = 'blue') => {
-                        const colorMap = {
-                            'blue': { icon: 'fa-circle-info', bg: 'bg-blue-600', text: 'text-blue-700', border: 'border-blue-400' },
-                            'green': { icon: 'fa-circle-check', bg: 'bg-green-600', text: 'text-green-700', border: 'border-green-400' },
-                            'red': { icon: 'fa-triangle-exclamation', bg: 'bg-red-600', text: 'text-red-700', border: 'border-red-400' },
-                            'yellow': { icon: 'fa-exclamation', bg: 'bg-yellow-600', text: 'text-yellow-700', border: 'border-yellow-400' },
-                        };
-                        const { icon, bg } = colorMap[color] || colorMap['blue'];
+                 // Initial Render
+                if (currentUser) renderMainContent();
 
-                        return `
-                            <div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-2xl pointer-events-auto text-center border-t-4 ${colorMap[color].border}">
-                                <div class="flex flex-col items-center justify-center">
-                                    <i class="fa-solid ${icon} fa-3x ${colorMap[color].text}"></i>
-                                    <h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">${escapeHtml(title)}</h3>
-                                    <p class="mt-2 text-gray-600">${escapeHtml(message)}</p>
-                                </div>
-                                <div class="mt-6">
-                                    <button type="button" class="modal-close-btn px-6 py-2 ${bg} text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly">OK</button>
-                                </div>
-                            </div>
-                        `;
-                    },
-                    emptyState: (user) => `
-                        <div class="h-full flex items-center justify-center text-center fade-enter-active">
-                            <div>
-                                <svg class="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
-                                <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome, ${user?.username || ''}!</h2>
-                                <p class="mt-1 text-gray-500">Select a class from the sidebar or get started below.</p>
-                                <div class="mt-6 flex flex-col items-center space-y-4">
-                                    ${user.role === 'teacher' ? 
-                                        `<button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`
-                                        : ''}
-                                    <!-- Join Class button (main content area) with icon -->
-                                    <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 btn-bubbly flex items-center space-x-2">
-                                        <i class="fa-solid fa-user-plus w-5 h-5"></i>
-                                        <span>Join Class</span>
-                                    </button>
-                                </div>
-                            </div>
-                        </div>
-                    `,
-                    classView: (cls, user) => {
-                        const isTeacher = user.role === 'teacher';
-                        const isStudent = !isTeacher;
-                        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
-
-                        // Filter out old requests
-                        const requests = (cls.requests || []).filter(req => {
-                            if (!req.createdAt || !req.createdAt.toDate) return false;
-                            return req.createdAt.toDate() > twentyFourHoursAgo;
-                        });
-
-                        return `
-                        <div class="fade-enter-active">
-                            <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                                <div class="flex justify-between items-start">
-                                    <div>
-                                        <h2 class="text-2xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
-                                        <p class="text-sm text-gray-500 mt-1">Class Code: <span class="font-semibold">${escapeHtml(cls.code)}</span></p>
-                                    </div>
-                                    ${isTeacher ? `
-                                    <div class="flex space-x-2">
-                                        <button class="text-sm text-gray-600 hover:text-gray-900" onclick="showInviteModal('${cls.id}')">Invite</button>
-                                        <button class="text-sm text-gray-600 hover:text-gray-900" onclick="showRosterModal('${cls.id}')">Roster</button>
-                                        <button class="text-sm text-gray-600 hover:text-gray-900" onclick="showSettingsModal('${cls.id}')">Settings</button>
-                                    </div>
-                                    ` : ''}
-                                </div>
-                            </div>
-
-                            <div class="mt-6">
-                                ${isStudent ? `
-                                <div class="bg-white p-4 rounded-lg shadow-sm">
-                                    <form id="send-request-form" data-class-id="${cls.id}">
-                                        <textarea id="request-message" class="w-full app-input" rows="3" placeholder="Need help with..."></textarea>
-                                        <button type="submit" class="mt-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Send Request</button>
-                                    </form>
-                                </div>
-                                ` : ''}
-
-                                <div id="requests-container" class="mt-4 space-y-4">
-                                    ${requests.length > 0 ? requests.map(req => `
-                                        <div class="bg-white p-4 rounded-lg shadow-sm">
-                                            <p>${escapeHtml(req.message)}</p>
-                                            <p class="text-xs text-gray-500 mt-2">Sent by: ${escapeHtml(req.studentName)} at ${req.createdAt.toDate().toLocaleString()}</p>
-                                            
-                                            ${req.comment ? `
-                                            <div class="mt-2 pt-2 border-t">
-                                                <p class="text-sm font-semibold">Teacher's Comment:</p>
-                                                <p class="text-sm">${escapeHtml(req.comment)}</p>
-                                                ${isTeacher ? `
-                                                <div class="mt-1">
-                                                    <button class="text-xs text-blue-500 hover:underline" onclick="editComment('${cls.id}', '${req.id}', '${escapeHtml(req.comment)}')">Edit</button>
-                                                    <button class="text-xs text-red-500 hover:underline ml-2" onclick="deleteComment('${cls.id}', '${req.id}')">Delete</button>
-                                                </div>
-                                                ` : ''}
-                                            </div>
-                                            ` : (isTeacher ? `
-                                            <form class="add-comment-form mt-2" data-class-id="${cls.id}" data-request-id="${req.id}">
-                                                <input type="text" class="w-full app-input text-sm" placeholder="Add a comment...">
-                                                <button type="submit" class="text-xs mt-1 px-2 py-1 bg-gray-200 rounded">Add Comment</button>
-                                            </form>
-                                            ` : '')}
-                                        </div>
-                                    `).join('') : '<p class="text-center text-gray-500">No active requests.</p>'}
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    },
-                    newClassChoiceModal: (user) => `
-                        <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
-                            <h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3>
-                            <p class="text-center text-gray-500 mt-2">How would you like to create your class?</p>
-                            <div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
-                                <button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly">
-                                    <i class="fa-solid fa-pen-to-square fa-2x text-blue-600 mb-2"></i>
-                                    <span class="font-semibold text-gray-700">Create Manually</span>
-                                </button>
-                                <button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly">
-                                    <!-- Updated to use the PNG asset -->
-                                    <img src="../images/google-classroom.png" alt="Google Classroom icon" class="w-8 h-8 mb-2">
-                                    <span class="font-semibold text-gray-700">Import from Classroom</span>
-                                </button>
-                            </div>
-                            <div class="mt-6 text-center">
-                                <button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button>
-                            </div>
-                        </div>
-                    `,
-                    createClassModal: () => `
-                        <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
-                            <h3 class="text-xl font-semibold text-gray-800 font-poppins">Create New Class</h3>
-                            <form id="create-class-form" class="mt-4 space-y-4">
-                                <div>
-                                    <label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label>
-                                    <!-- Applied custom app-input style -->
-                                    <input type="text" id="new-class-name" required class="mt-1 block w-full app-input" placeholder="Enter class name...">
-                                </div>
-                                <div class="flex justify-end space-x-3">
-                                    <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
-                                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Create</button>
-                                </div>
-                            </form>
-                        </div>
-                    `,
-                    joinClassModal: () => `
-                        <!-- Redesigned Join Class Modal -->
-                        <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-2xl pointer-events-auto">
-                            <div class="text-center">
-                                <i class="fa-solid fa-link fa-3x text-green-600 mb-4"></i>
-                                <h3 class="text-2xl font-bold text-gray-800 font-poppins">Join a Class</h3>
-                                <p class="text-gray-500 mt-2">Enter the class code to join your teacher or co-teacher's class.</p>
-                            </div>
-                            <form id="join-class-form" class="mt-6 space-y-6">
-                                <div>
-                                    <label for="class-code-input" class="block text-sm font-medium text-gray-700 text-left mb-1">Class Code (8 Digits)</label>
-                                    <!-- Applied custom app-input style -->
-                                    <input type="text" id="class-code-input" required minlength="8" maxlength="8" class="block w-full app-input text-center font-bold tracking-widest uppercase text-lg" placeholder="e.g., ABC12345">
-                                </div>
-                                <div class="flex justify-end space-x-3">
-                                    <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
-                                    <button type="submit" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 btn-bubbly">Join Class</button>
-                                </div>
-                            </form>
-                        </div>
-                    `,
-                    joinClassAsTeacherConfirm: (classId, className) => `
-                        <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
-                            <div class="text-center">
-                                <i class="fa-solid fa-user-tie fa-3x text-red-600 mb-4"></i>
-                                <h3 class="text-xl font-semibold text-red-800 font-poppins">Confirm Co-Teacher Role</h3>
-                            </div>
-                            <p class="mt-4 text-gray-600">You are joining class <strong>${escapeHtml(className)}</strong> as a **Co-Teacher**. This grants you full management permissions.</p>
-                            <p class="mt-2 font-semibold text-red-600 text-center">Do you wish to proceed?</p>
-                            <div class="mt-6 flex justify-end space-x-3">
-                                <button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
-                                <button id="confirm-join-teacher-btn" data-class-id="${classId}" data-class-name="${escapeHtml(className)}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Confirm Co-Teacher Join</button>
-                            </div>
-                        </div>
-                    `,
-                    googleImportModal: () => `
-                        <div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto">
-                            <div class="flex items-center justify-center mb-4">
-                                <!-- Updated to use the PNG asset -->
-                                <img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4">
-                                <h3 class="text-2xl font-bold text-gray-800 font-poppins">Import from Classroom</h3>
-                            </div>
-                            <p class="text-center text-gray-500 mb-6">Select a class you own to import it into Notify.</p>
-                            <div id="g-import-content">
-                                <div id="g-import-loading" class="text-center py-8">
-                                    <i class="fa-solid fa-spinner fa-spin fa-2x text-blue-600 mb-2"></i>
-                                    <p class="text-gray-600">Connecting to Google Classroom...</p>
-                                </div>
-                                <p id="g-import-error" class="text-center text-red-600 bg-red-50 p-3 rounded-md hidden"></p>
-                                <ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul>
-                            </div>
-                            <div class="flex justify-center mt-6">
-                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button>
-                            </div>
-                        </div>
-                    `
-                };
-            });
-        });
+            }); // End onFirebaseReady
+        }); // End DOMContentLoaded
     </script>
 </body>
 </html>
+
