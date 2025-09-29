@@ -50,8 +50,11 @@
             </div>
             
             <p id="role-selection-message" class="mt-4 text-red-500 hidden">Please select a role to continue.</p>
-            <p id="gsi-container" class="mt-6 flex justify-center hidden">
-                <button id="gsi-button" class="g_id_signin" data-type="standard" data-size="large" data-theme="outline" data-text="sign_in_with" data-shape="rectangular" data-logo_alignment="left"></button>
+            <p class="mt-6 flex justify-center">
+                <button id="google-signin-btn" class="hidden w-full max-w-xs px-6 py-3 bg-white border border-gray-300 rounded-lg shadow-sm text-gray-700 font-semibold hover:bg-gray-50 flex items-center justify-center transition-colors btn-bubbly">
+                    <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg" alt="Google logo" class="w-5 h-5 mr-3">
+                    Sign in with Google
+                </button>
             </p>
         </div>
 
@@ -61,7 +64,6 @@
         </div>
     </div>
     
-    <script src="https://accounts.google.com/gsi/client" async defer></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
@@ -78,8 +80,7 @@
             const classNameEl = document.getElementById('class-name');
             const joinAsStudentBtn = document.getElementById('join-as-student');
             const joinAsTeacherBtn = document.getElementById('join-as-teacher');
-            const gsiContainer = document.getElementById('gsi-container');
-            const gsiButton = document.getElementById('gsi-button');
+            const googleSigninBtn = document.getElementById('google-signin-btn');
             const roleSelectionMessage = document.getElementById('role-selection-message');
 
             function showLoader() {
@@ -102,7 +103,6 @@
                 errorContainer.classList.remove('hidden');
             }
 
-            // Function to handle URL parameters
             const urlParams = new URLSearchParams(window.location.search);
             classId = urlParams.get('classId');
 
@@ -111,7 +111,7 @@
                 return;
             }
 
-            let firebaseApp, auth, db, googleProvider;
+            let auth, db, googleProvider;
             
             function onFirebaseReady(callback) {
                 const interval = setInterval(() => {
@@ -123,7 +123,7 @@
             }
             
             onFirebaseReady(async () => {
-                firebaseApp = firebase.initializeApp(firebaseConfig);
+                firebase.initializeApp(firebaseConfig);
                 auth = firebase.auth();
                 db = firebase.firestore();
                 googleProvider = new firebase.auth.GoogleAuthProvider();
@@ -136,7 +136,6 @@
                         showError('The class you are trying to join does not exist.');
                         return;
                     }
-
                     const classData = classDoc.data();
                     showClassDetails(classData.name);
                 } catch (e) {
@@ -157,89 +156,79 @@
                     const userDoc = await userRef.get();
 
                     if (!userDoc.exists) {
-                        let username = user.displayName;
-                        if (!username || username.length < 4 || username.length > 24) {
-                            username = `user${Math.random().toString(36).substring(2, 8)}`;
-                        }
-
-                        // Ensure username is unique
-                        const usernameRef = db.collection('usernames').doc(username.toLowerCase());
-                        const usernameDoc = await usernameRef.get();
-
-                        if (usernameDoc.exists) {
-                            username = `${username}${Math.random().toString(36).substring(2, 5)}`;
-                        }
-
                         await userRef.set({
                             uid: user.uid,
-                            username: username,
-                            username_lowercase: username.toLowerCase(),
+                            username: user.displayName || `user${Math.random().toString(36).substring(2, 8)}`,
                             email: user.email,
                             photoURL: user.photoURL,
-                            role: selectedRole,
+                            role: selectedRole, // Set initial role
                             createdAt: firebase.firestore.FieldValue.serverTimestamp(),
                             emailVerified: true
                         });
-                        
-                        await usernameRef.set({ uid: user.uid });
-
-                    } else {
-                        // User exists, update role if different and they selected a new role
-                        await userRef.update({
-                            role: selectedRole // This ensures their role is set based on their selection on this page
-                        });
                     }
 
-                    await addCurrentUserToClass(user.uid, selectedRole);
+                    const resultMessage = await addCurrentUserToClass(user.uid, selectedRole);
 
-                    alert(`Successfully joined the class as a ${selectedRole}! Redirecting...`);
+                    alert(resultMessage);
                     window.location.href = 'index.html';
+
                 }).catch((error) => {
                     console.error("Google Sign-In Error:", error);
-                    alert(`Failed to sign in: ${error.message}`);
+                    showError(`Failed to sign in: ${error.message}`);
                 });
             }
 
             async function addCurrentUserToClass(uid, role) {
                 const classRef = db.collection('classes').doc(classId);
                 const classDoc = await classRef.get();
-                if (classDoc.exists) {
-                    const classData = classDoc.data();
-                    if (role === 'student') {
-                        if (!classData.studentIds.includes(uid)) {
-                            await classRef.update({
-                                studentIds: firebase.firestore.FieldValue.arrayUnion(uid)
-                            });
-                        }
-                    } else if (role === 'teacher') {
-                        if (!classData.teacherIds.includes(uid) && classData.teacherId !== uid) {
-                            await classRef.update({
-                                teacherIds: firebase.firestore.FieldValue.arrayUnion(uid)
-                            });
-                        }
+                if (!classDoc.exists) {
+                    throw new Error("Class does not exist.");
+                }
+
+                const classData = classDoc.data();
+                
+                if (role === 'student') {
+                    if (!classData.studentIds || !classData.studentIds.includes(uid)) {
+                        await classRef.update({
+                            studentIds: firebase.firestore.FieldValue.arrayUnion(uid)
+                        });
+                        return `Successfully joined the class as a Student! Redirecting...`;
+                    } else {
+                        return `You are already enrolled as a student in this class. Redirecting...`;
                     }
+                } else if (role === 'teacher') {
+                    // **SECURITY FIX**: Do not add directly as a teacher. Add to a pending list for owner approval.
+                    if (classData.teacherId === uid || (classData.teacherIds && classData.teacherIds.includes(uid))) {
+                         return `You are already a teacher in this class. Redirecting...`;
+                    }
+                    if (classData.pendingTeacherIds && classData.pendingTeacherIds.includes(uid)) {
+                        return `Your request to join as a co-teacher is already pending. Redirecting...`;
+                    }
+
+                    await classRef.update({
+                        pendingTeacherIds: firebase.firestore.FieldValue.arrayUnion(uid)
+                    });
+                    return `Your request to join as a Co-Teacher has been sent to the class owner for approval. Redirecting...`;
                 }
             }
             
             joinAsStudentBtn.addEventListener('click', () => {
                 selectedRole = 'student';
-                joinAsStudentBtn.classList.add('bg-blue-700', 'ring-2', 'ring-blue-500');
-                joinAsTeacherBtn.classList.remove('bg-indigo-700', 'ring-2', 'ring-indigo-500');
-                gsiContainer.classList.remove('hidden');
+                joinAsStudentBtn.classList.add('ring-4', 'ring-blue-400');
+                joinAsTeacherBtn.classList.remove('ring-4', 'ring-indigo-400');
+                googleSigninBtn.classList.remove('hidden');
                 roleSelectionMessage.classList.add('hidden');
-                
-                gsiButton.addEventListener('click', handleGoogleSignIn, { once: true });
             });
 
             joinAsTeacherBtn.addEventListener('click', () => {
                 selectedRole = 'teacher';
-                joinAsTeacherBtn.classList.add('bg-indigo-700', 'ring-2', 'ring-indigo-500');
-                joinAsStudentBtn.classList.remove('bg-blue-700', 'ring-2', 'ring-blue-500');
-                gsiContainer.classList.remove('hidden');
+                joinAsTeacherBtn.classList.add('ring-4', 'ring-indigo-400');
+                joinAsStudentBtn.classList.remove('ring-4', 'ring-blue-400');
+                googleSigninBtn.classList.remove('hidden');
                 roleSelectionMessage.classList.add('hidden');
-
-                gsiButton.addEventListener('click', handleGoogleSignIn, { once: true });
             });
+
+            googleSigninBtn.addEventListener('click', handleGoogleSignIn);
         });
     </script>
 </body>
