@@ -408,7 +408,6 @@
             // --- FIREBASE INITIALIZATION & AUTH ---
             function onFirebaseReady(callback) {
                 const interval = setInterval(() => {
-                    // **FIX**: Ensure firebase AND firebaseConfig are loaded before proceeding.
                     if (typeof firebase !== 'undefined' && firebase.initializeApp && typeof firebaseConfig !== 'undefined') {
                         clearInterval(interval);
                         callback();
@@ -425,13 +424,33 @@
                     auth.onAuthStateChanged(user => {
                         if (user) {
                             currentUser = user;
-                            db.collection('users').doc(user.uid).get().then(doc => {
+                            const userRef = db.collection('users').doc(user.uid);
+
+                            userRef.get().then(doc => {
                                 if (doc.exists) {
+                                    // User document exists, proceed to dashboard
                                     userData = { uid: user.uid, ...doc.data() };
                                     initializeDashboard();
                                 } else {
-                                    console.error("User document not found in Firestore. Signing out.");
-                                    auth.signOut();
+                                    // **FIX**: User is authenticated but has no profile document. Create one.
+                                    console.log("User document not found. Creating a default profile.");
+                                    const newUserDoc = {
+                                        uid: user.uid,
+                                        username: user.displayName || "New User",
+                                        email: user.email,
+                                        photoURL: user.photoURL,
+                                        role: 'student', // Assign a safe default role
+                                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                        emailVerified: user.emailVerified
+                                    };
+                                    
+                                    userRef.set(newUserDoc).then(() => {
+                                        userData = newUserDoc;
+                                        initializeDashboard();
+                                    }).catch(err => {
+                                        console.error("CRITICAL: Failed to create user document. Signing out.", err);
+                                        auth.signOut();
+                                    });
                                 }
                             }).catch(err => {
                                 console.error("Error fetching user document:", err);
@@ -451,7 +470,6 @@
                 updateProfileUI(currentUser, userData);
                 listenForClasses(currentUser.uid);
                 renderMainContent();
-                // **FIX**: Remove opacity-0 to make the app visible after initialization.
                 document.getElementById('app-container').classList.remove('opacity-0');
             }
 
