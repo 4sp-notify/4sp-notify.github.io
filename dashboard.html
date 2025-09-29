@@ -56,6 +56,10 @@
              font-weight: 600;
         }
 
+        /* NEW: Style for sort dropdown to use Inter font */
+        #request-sort-select {
+            font-family: 'Inter', sans-serif;
+        }
 
         .custom-scrollbar::-webkit-scrollbar { width: 8px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px;}
@@ -95,22 +99,6 @@
             margin-right: 0.75rem; /* mr-3 */
             align-items: center;
             justify-content: center;
-        }
-        
-        /* Mobile adjustment for main content area */
-        @media (max-width: 640px) {
-            .main-layout {
-                flex-direction: column;
-            }
-            .main-layout > aside {
-                width: 100%;
-                height: auto;
-                border-right: none;
-                border-bottom: 1px solid #e5e7eb;
-            }
-            .main-layout > main {
-                overflow-y: auto;
-            }
         }
     </style>
 </head>
@@ -172,12 +160,11 @@
                     </div>
                 </div>
                 <div id="teacher-sidebar-actions" class="p-4 border-t border-gray-200 hidden">
-                    <!-- Buttons are full width for consistent sizing -->
-                    <button id="new-class-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly action-btn-poppins">
+                    <button id="new-class-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly">
                         <i class="fa-solid fa-plus w-5 h-5"></i>
                         <span>New Class</span>
                     </button>
-                    <button id="join-class-btn-main" class="mt-2 w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly text-sm action-btn-poppins">
+                    <button id="join-class-btn-main" class="mt-2 w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly text-sm">
                         <i class="fa-solid fa-user-plus w-5 h-5"></i>
                         <span>Join Class</span>
                     </button>
@@ -201,15 +188,16 @@
     
     <script>
         document.addEventListener('DOMContentLoaded', () => {
-            const NAME_CHANGE_LIMIT = 5; // New limit for teacher name changes per day
-
             let currentUser = null;
             let userData = null;
             let currentClassId = null;
             let allLoadedClasses = {};
             let unsubscribes = [];
+            // Listener for the current request list
             let currentRequestsUnsubscribe = null; 
+            // Cache loaded users for the roster tab and requests
             let loadedUsers = {};
+            // Sorting state for requests
             let requestSortOrder = 'timestamp_desc'; // Default sort order
 
             const userProfileMenu = document.getElementById('user-profile-menu');
@@ -335,8 +323,15 @@
                     const userDoc = await db.collection('users').doc(uid).get();
                     if (userDoc.exists) {
                         userData = { uid, ...userDoc.data() };
+                        // NEW: Ensure classChanges field exists
+                        if (typeof userData.classChanges === 'undefined') {
+                            userData.classChanges = { count: 0, lastChangeDate: null };
+                            await db.collection('users').doc(uid).set({ classChanges: userData.classChanges }, { merge: true });
+                        }
+
                         updateProfileUI(currentUser, userData);
                         
+                        // New: Check and auto-enroll students from Google Classroom imports
                         await checkAndAutoEnroll(uid, currentUser.email);
                         
                         listenForClasses(uid);
@@ -413,27 +408,6 @@
                     unsubscribes.push(classesQuery.onSnapshot(snapshot => processSnapshot(snapshot, 'Owner')));
                     unsubscribes.push(classesQuery2.onSnapshot(snapshot => processSnapshot(snapshot, 'Student')));
                     unsubscribes.push(classesQuery3.onSnapshot(snapshot => processSnapshot(snapshot, 'Teacher')));
-                    
-                    // New: Listen for pending co-teacher requests (only needed by the class owner)
-                    if (userData.role === 'teacher' && currentUser) {
-                        const pendingCoTeacherQuery = db.collection('classes').where('teacherId', '==', currentUser.uid);
-                        unsubscribes.push(pendingCoTeacherQuery.onSnapshot(snapshot => {
-                            snapshot.docChanges().forEach(change => {
-                                if (change.type === 'modified' || change.type === 'added') {
-                                    const classData = change.doc.data();
-                                    const pendingIds = classData.pendingTeacherIds || [];
-                                    pendingIds.forEach(async (pendingId) => {
-                                        if (pendingId) {
-                                            const pendingUser = await db.collection('users').doc(pendingId).get();
-                                            if (pendingUser.exists) {
-                                                showModal(TPL.coTeacherRequestConfirm(change.doc.id, classData.name, pendingId, pendingUser.data().username));
-                                            }
-                                        }
-                                    });
-                                }
-                            });
-                        }));
-                    }
                 }
                 
                 function renderClassList(classes) {
@@ -458,9 +432,9 @@
                     currentTab = 'overview'; 
                     renderClassList(Object.values(allLoadedClasses)); 
                     renderMainContent();
-                    
+                    // New: Run cleanup on class selection/load
                     if (currentClassId) {
-                         await cleanupOldRequests(currentClassId);
+                           await cleanupOldRequests(currentClassId);
                     }
                 }
 
@@ -509,7 +483,7 @@
                             break;
                         case 'settings':
                             if (classData.teacherId === userData.uid) {
-                                tabContentContainer.innerHTML = TPL.classSettings(classData, userData);
+                                tabContentContainer.innerHTML = TPL.classSettings(classData);
                             } else {
                                 tabContentContainer.innerHTML = TPL.permissionDenied();
                             }
@@ -539,11 +513,21 @@
                         const rosterList = document.getElementById('roster-list');
                         if (rosterList) {
                             rosterList.addEventListener('click', async (e) => {
+                                // NEW: Added logic to check if user has permission to remove
                                 const removeBtn = e.target.closest('.remove-student-btn, .remove-coteacher-btn');
                                 if (removeBtn) {
                                     const userId = removeBtn.dataset.userId;
                                     const userRole = removeBtn.dataset.userRole;
-                                    showModal(TPL.removeUserConfirm(classData, loadedUsers[userId], userRole));
+                                    const isOwner = allLoadedClasses[classData.id].teacherId === userData.uid;
+                                    const isCoTeacher = allLoadedClasses[classData.id].teacherIds.includes(userData.uid);
+
+                                    // NEW: Co-teachers can remove students, but not other co-teachers or the owner
+                                    // The owner can remove anyone except themselves
+                                    if ((isCoTeacher && userRole === 'student') || (isOwner && userId !== currentUser.uid)) {
+                                       showModal(TPL.removeUserConfirm(classData, loadedUsers[userId], userRole));
+                                    } else {
+                                       showModal(TPL.messageModal('Permission Denied', 'You do not have permission to remove this user.', 'red'));
+                                    }
                                 }
                             });
                         }
@@ -572,7 +556,7 @@
                 }
 
                 async function loadClassRoster(classData) {
-                    const members = [...(classData.studentIds || []), ...(classData.teacherIds || []), ...(classData.pendingTeacherIds || [])];
+                    const members = [...(classData.studentIds || []), ...(classData.teacherIds || [])];
                     const ownerId = classData.teacherId;
                     const allMemberIds = Array.from(new Set([...members, ownerId]));
                     
@@ -705,8 +689,8 @@
                             await requestRef.update({ status: 'pending', comment: '' });
                         }
                     } catch (error) {
-                         console.error(`Error performing action ${action}:`, error);
-                         showModal(TPL.messageModal('Action Failed', `Could not complete the action: ${error.message}`, 'red'));
+                           console.error(`Error performing action ${action}:`, error);
+                           showModal(TPL.messageModal('Action Failed', `Could not complete the action: ${error.message}`, 'red'));
                     }
                 }
                 
@@ -730,37 +714,44 @@
                 async function updateClassTitle(classId, newTitle) {
                     const classRef = db.collection('classes').doc(classId);
                     const userRef = db.collection('users').doc(currentUser.uid);
-                    const classData = allLoadedClasses[classId];
-                    const today = new Date();
-                    
-                    // Fetch up-to-date user data for rate limiting
                     const userDoc = await userRef.get();
-                    const currentRateData = userDoc.data() || {};
+                    const userData = userDoc.data();
                     
-                    const lastChangeDate = currentRateData.lastChangeDate ? new Date(currentRateData.lastChangeDate.seconds * 1000) : null;
+                    // NEW: Retrieve change count and last change date from the user document
+                    const classChanges = userData.classChanges || { count: 0, lastChangeDate: null };
+                    const today = new Date();
+                    const lastChangeDate = classChanges.lastChangeDate ? new Date(classChanges.lastChangeDate.seconds * 1000) : null;
                     const isNewDay = !lastChangeDate || !isSameDay(lastChangeDate, today);
-                    let newCount = isNewDay ? 1 : (currentRateData.nameChangeCount || 0) + 1;
+                    let newCount = isNewDay ? 1 : (classChanges.count || 0) + 1;
                     
-                    if (newCount > NAME_CHANGE_LIMIT) {
-                        showModal(TPL.messageModal('Limit Reached', `You can only change class names ${NAME_CHANGE_LIMIT} times per day.`, 'yellow'));
+                    // NEW: Change limit from 3 to 5
+                    if (newCount > 5) {
+                        showModal(TPL.messageModal('Limit Reached', 'You have reached the daily limit of 5 class name changes.', 'yellow'));
                         return;
                     }
 
                     try {
-                         // 1. Update class name
-                         await classRef.update({ name: newTitle });
-                         
-                         // 2. Update user rate limit fields
-                         await userRef.update({
-                            nameChangeCount: newCount,
-                            lastChangeDate: firebase.firestore.FieldValue.serverTimestamp()
-                         });
-                         
-                         // Update local user data cache immediately for consistency
-                         userData.nameChangeCount = newCount;
-                         userData.lastChangeDate = { seconds: Math.floor(today.getTime() / 1000) };
-                         
-                        showModal(TPL.messageModal('Title Updated', `Class title successfully updated. ${NAME_CHANGE_LIMIT - newCount} changes remaining today.`, 'green'));
+                        // Use a Firestore batch to update both documents atomically
+                        const batch = db.batch();
+                        
+                        // Update the class name
+                        batch.update(classRef, { name: newTitle });
+                        
+                        // Update the user's name change count
+                        batch.update(userRef, { 
+                            classChanges: {
+                                count: newCount,
+                                lastChangeDate: firebase.firestore.FieldValue.serverTimestamp()
+                            }
+                        });
+
+                        await batch.commit();
+
+                        // Update the local user data object
+                        userData.classChanges.count = newCount;
+                        userData.classChanges.lastChangeDate = firebase.firestore.FieldValue.serverTimestamp();
+                        
+                        showModal(TPL.messageModal('Title Updated', `Class title successfully updated. ${5 - newCount} changes remaining today.`, 'green'));
                     } catch(error) {
                         console.error('Error updating class title:', error);
                         showModal(TPL.messageModal('Update Failed', 'Failed to update class title. Please try again.', 'red'));
@@ -778,52 +769,335 @@
                     const classRef = db.collection('classes').doc(classId);
                     let fieldToUpdate = userRole === 'student' ? 'studentIds' : 'teacherIds';
                     
-                    // Only the owner can remove co-teachers or students
-                    // Co-teachers can only remove students
-                    const classData = allLoadedClasses[classId];
-                    const isOwner = classData.teacherId === currentUser.uid;
-                    const isCoTeacher = classData.teacherIds && classData.teacherIds.includes(currentUser.uid);
-
-                    if (userRole === 'teacher' && !isOwner) {
-                        showModal(TPL.messageModal('Permission Denied', 'Only the Class Owner can remove co-teachers.', 'red'));
-                        return;
-                    }
-                    if (userRole === 'student' && !isOwner && !isCoTeacher) {
-                         showModal(TPL.messageModal('Permission Denied', 'Only teachers can remove students.', 'red'));
-                        return;
-                    }
-
                     await classRef.update({
                         [fieldToUpdate]: firebase.firestore.FieldValue.arrayRemove(userId)
                     });
                     
                     hideModal();
+                    
                     // The main listener will handle the re-render automatically
                 }
                 
-                // New function to handle co-teacher approval/denial
-                async function handleCoTeacherRequest(classId, pendingId, action) {
-                    const classRef = db.collection('classes').doc(classId);
-                    const batch = db.batch();
-
-                    // 1. Remove UID from pending list (always)
-                    batch.update(classRef, {
-                        pendingTeacherIds: firebase.firestore.FieldValue.arrayRemove(pendingId)
-                    });
-
-                    if (action === 'accept') {
-                        // 2. Add UID to active teacher list
-                        batch.update(classRef, {
-                            teacherIds: firebase.firestore.FieldValue.arrayUnion(pendingId)
-                        });
-                        showModal(TPL.messageModal('Request Accepted', `User ${loadedUsers[pendingId]?.username || 'Unknown'} is now a Co-Teacher.`, 'green'));
-                    } else if (action === 'deny') {
-                        showModal(TPL.messageModal('Request Denied', `Co-Teacher request denied for user ${loadedUsers[pendingId]?.username || 'Unknown'}.`, 'red'));
+                // --- Modal Control ---
+                function showModal(modalHTML) {
+                    modalContainer.innerHTML = modalHTML;
+                    modalBackdrop.classList.remove('hidden');
+                    modalBackdrop.classList.add('fade-enter-active');
+                    const modalDialog = modalContainer.firstElementChild;
+                    modalDialog.classList.add('fade-enter-from');
+                    setTimeout(() => {
+                        modalBackdrop.classList.remove('fade-enter-active');
+                        modalDialog.classList.remove('fade-enter-from');
+                    }, 200);
+                }
+                
+                function hideModal() {
+                    const modalDialog = modalContainer.firstElementChild;
+                    if(modalDialog) {
+                        modalBackdrop.classList.add('fade-leave-to');
+                        modalDialog.classList.add('fade-leave-to');
+                        setTimeout(() => {
+                            modalContainer.innerHTML = '';
+                            modalBackdrop.classList.add('hidden');
+                            modalBackdrop.classList.remove('fade-leave-to');
+                        }, 200);
                     }
-                    
-                    await batch.commit();
+                }
+
+                function escapeHtml(text) {
+                    const div = document.createElement('div');
+                    div.textContent = text;
+                    return div.innerHTML;
+                }
+                
+                // --- Class Management ---
+                async function createNewClass(className) {
+                    const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+                    await db.collection('classes').add({
+                        name: className,
+                        teacherId: currentUser.uid,
+                        teacherIds: [],
+                        code: classCode,
+                        studentIds: [],
+                        pendingStudentEmails: [],
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
                     hideModal();
                 }
+
+                async function joinClass(classCode) {
+                    const classQuery = await db.collection('classes').where('code', '==', classCode).limit(1).get();
+                    if (classQuery.empty) {
+                        showModal(TPL.messageModal('Error', 'Invalid class code. Please try again.', 'red'));
+                        return;
+                    }
+                    const classDoc = classQuery.docs[0];
+                    const classId = classDoc.id;
+                    const classData = classDoc.data();
+
+                    const isAlreadyMember = (classData.studentIds || []).includes(currentUser.uid) || (classData.teacherIds || []).includes(currentUser.uid) || classData.teacherId === currentUser.uid;
+                    if (isAlreadyMember) {
+                        showModal(TPL.messageModal('Already Enrolled', `You are already a member of the class: ${classData.name}.`, 'yellow'));
+                        return;
+                    }
+                    
+                    // NEW: Check if joining user is a teacher and offer co-teacher role
+                    if (userData.role === 'teacher') {
+                        // Instead of auto-adding, show a confirmation modal
+                        showModal(TPL.joinClassAsTeacherConfirm(classId, classData.name));
+                    } else {
+                        // Student joins directly
+                        const classRef = db.collection('classes').doc(classId);
+                        await classRef.update({ studentIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
+                        hideModal();
+                        showModal(TPL.messageModal('Success', `Successfully joined class: ${classData.name}!`, 'green'));
+                    }
+                }
+
+                // NEW: Function to handle a teacher joining as a co-teacher
+                async function joinClassAsTeacher(classId, className) {
+                    // This function is now called from the confirmation modal
+                    const classRef = db.collection('classes').doc(classId);
+                    await classRef.update({ teacherIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
+                    hideModal();
+                    showModal(TPL.messageModal('Success', `Successfully joined class ${className} as co-teacher!`, 'green'));
+                }
+
+                // --- Google Classroom Integration (Full Implementation) ---
+                let gapiLoaded = false;
+                let googleAuth = null;
+                const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest';
+                const SCOPES = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
+
+                async function initializeGAPI(apiKey, clientId) {
+                    if (gapiLoaded) return Promise.resolve();
+                    
+                    return new Promise((resolve, reject) => {
+                        const checkGAPI = () => {
+                            if (typeof gapi !== 'undefined' && gapi.load) {
+                                gapi.load('client', async () => {
+                                    try {
+                                        await gapi.client.init({
+                                            apiKey: apiKey,
+                                            discoveryDocs: [DISCOVERY_DOC]
+                                        });
+                                        googleAuth = google.accounts.oauth2.initTokenClient({
+                                            client_id: clientId,
+                                            scope: SCOPES,
+                                            callback: '',
+                                        });
+                                        gapiLoaded = true;
+                                        resolve();
+                                    } catch (error) {
+                                        reject(error);
+                                    }
+                                });
+                            } else {
+                                setTimeout(checkGAPI, 100);
+                            }
+                        };
+                        checkGAPI();
+                    });
+                }
+
+                function requestAccessToken() {
+                    return new Promise((resolve, reject) => {
+                        try {
+                            googleAuth.callback = async (response) => {
+                                if (response.error) {
+                                    reject(new Error(response.error));
+                                    return;
+                                }
+                                gapi.client.setToken({access_token: response.access_token});
+                                try {
+                                    await listGoogleCourses();
+                                    resolve();
+                                } catch (error) {
+                                    reject(error);
+                                }
+                            };
+                            googleAuth.requestAccessToken();
+                        } catch (error) {
+                            reject(error);
+                        }
+                    });
+                }
+                
+                async function handleGoogleImportClick() {
+                    showModal(TPL.googleImportModal());
+                    
+                    const loadingEl = document.getElementById('g-import-loading');
+                    const errorEl = document.getElementById('g-import-error');
+                    loadingEl.classList.remove('hidden');
+                    errorEl.classList.add('hidden');
+                    
+                    try {
+                        const secretsDoc = await db.collection('secrets').doc('wUTBTbjuNLueOFhgHXEE').get();
+                        if (!secretsDoc.exists) throw new Error("Secrets document not found.");
+                        
+                        const secrets = secretsDoc.data();
+                        const API_KEY = secrets.GoogleClassroomAPIKey;
+                        const CLIENT_ID = secrets.GoogleClientID;
+                        
+                        if (!API_KEY || !CLIENT_ID) {
+                            throw new Error("Missing API Key or Client ID in secrets document.");
+                        }
+
+                        await initializeGAPI(API_KEY, CLIENT_ID);
+                        await requestAccessToken();
+                    } catch (error) {
+                        console.error('Google Classroom init error:', error);
+                        loadingEl.classList.add('hidden');
+                        errorEl.textContent = `Error: ${error.message}`;
+                        errorEl.classList.remove('hidden');
+                    }
+                }
+
+                async function listGoogleCourses() {
+                    const listEl = document.getElementById('g-import-list');
+                    const loadingEl = document.getElementById('g-import-loading');
+                    const errorEl = document.getElementById('g-import-error');
+
+                    try {
+                        loadingEl.textContent = 'Loading courses...';
+                        
+                        const response = await gapi.client.classroom.courses.list({
+                            teacherId: 'me',
+                            courseStates: 'ACTIVE'
+                        });
+                        
+                        loadingEl.classList.add('hidden');
+                        const courses = response.result.courses || [];
+
+                        const notifyClassesSnapshot = await db.collection('classes').where('teacherId', '==', currentUser.uid).get();
+                        const existingGoogleIds = new Set();
+                        notifyClassesSnapshot.forEach(doc => {
+                            const data = doc.data();
+                            if(data.googleCourseId) existingGoogleIds.add(data.googleCourseId);
+                        });
+
+                        if (courses.length > 0) {
+                            listEl.innerHTML = courses.map(course => {
+                                const isImported = existingGoogleIds.has(course.id);
+                                const buttonHtml = isImported
+                                    ? '<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>'
+                                    : `<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" 
+                                        class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`;
+
+                                return `
+                                    <li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
+                                        <div class="flex-1">
+                                            <p class="font-bold text-gray-800">${escapeHtml(course.name)}</p>
+                                            <p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section || 'No section')}</p>
+                                        </div>
+                                        ${buttonHtml}
+                                    </li>`;
+                            }).join('');
+                            
+                            document.querySelectorAll('.import-g-class-btn').forEach(button => {
+                                button.addEventListener('click', () => importGoogleClass(button.dataset.courseId, button.dataset.courseName));
+                            });
+                        } else {
+                            listEl.innerHTML = '<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom that you are the primary teacher of.</p>';
+                        }
+                    } catch (error) {
+                        console.error('Error listing courses:', error);
+                        loadingEl.classList.add('hidden');
+                        let errorMessage = 'Failed to load courses.';
+                        
+                        if (error.result && error.result.error) {
+                            errorMessage = error.result.error.message || errorMessage;
+                        } else if (error.message) {
+                            errorMessage = error.message;
+                        }
+                        
+                        errorEl.textContent = `Error: ${errorMessage}`;
+                        errorEl.classList.remove('hidden');
+                    }
+                }
+
+                async function importGoogleClass(googleCourseId, googleCourseName) {
+                    const importBtn = document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);
+                    if (importBtn) {
+                        importBtn.textContent = 'Importing...';
+                        importBtn.disabled = true;
+                    }
+
+                    try {
+                        const existingClass = await db.collection('classes').where('googleCourseId', '==', googleCourseId).limit(1).get();
+                        if (!existingClass.empty) {
+                            showModal(TPL.messageModal('Duplicate', 'This class has already been imported.', 'yellow'));
+                            if (importBtn) {
+                                importBtn.textContent = 'Import';
+                                importBtn.disabled = false;
+                            }
+                            return;
+                        }
+                        
+                        // 1. Get students and map to existing Notify users/pending emails
+                        const studentsResponse = await gapi.client.classroom.courses.students.list({ courseId: googleCourseId });
+                        const students = studentsResponse.result.students || [];
+
+                        const studentEmails = students.map(s => s.profile.emailAddress);
+                        let existingStudentUids = [];
+                        let pendingEmails = [];
+                        
+                        if (studentEmails.length > 0) {
+                            const uniqueEmails = Array.from(new Set(studentEmails));
+                            
+                            const batchSize = 10;
+                            for (let i = 0; i < uniqueEmails.length; i += batchSize) {
+                                const batchEmails = uniqueEmails.slice(i, i + batchSize);
+                                const usersSnapshot = await db.collection('users').where('email', 'in', batchEmails).get();
+                                const existingEmailsBatch = new Set();
+                                
+                                usersSnapshot.forEach(doc => {
+                                    existingStudentUids.push(doc.id);
+                                    existingEmailsBatch.add(doc.data().email);
+                                });
+
+                                batchEmails.forEach(email => {
+                                    if (!existingEmailsBatch.has(email)) {
+                                        pendingEmails.push(email);
+                                    }
+                                });
+                            }
+                        }
+                        
+                        // 2. Create the new class document
+                        const classCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+                        
+                        await db.collection('classes').add({
+                            name: googleCourseName,
+                            teacherId: currentUser.uid,
+                            teacherIds: [],
+                            code: classCode, 
+                            googleCourseId: googleCourseId,
+                            studentIds: existingStudentUids, 
+                            pendingStudentEmails: pendingEmails, 
+                            createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                        
+                        showModal(TPL.messageModal('Import Successful', `Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing Notify students and ${pendingEmails.length} students pending automatic enrollment!`, 'green'));
+                        hideModal();
+                    } catch (error) {
+                        console.error("Error importing Google Classroom:", error);
+                        let errorMessage = 'Failed to import class. Please check your Google Classroom API access.';
+                        if (error.result && error.result.error) {
+                               errorMessage = error.result.error.message || errorMessage;
+                        } else if (error.message) {
+                            errorMessage = error.message;
+                        }
+                        showModal(TPL.messageModal('Import Failed', errorMessage, 'red'));
+                        
+                        if (importBtn) {
+                            importBtn.textContent = 'Import';
+                            importBtn.disabled = false;
+                        }
+                    }
+                }
+                // --- End Google Classroom Implementation ---
+
 
                 // --- Event Listeners ---
                 document.body.addEventListener('click', async e => {
@@ -847,29 +1121,17 @@
                     
                     if(target.id === 'import-gclass-btn') handleGoogleImportClick();
                     
+                    // Added modal-cancel-btn style updates to modals below
                     if(target.classList.contains('modal-cancel-btn') || e.target.id === 'modal-backdrop' || target.classList.contains('modal-close-btn')) hideModal();
                     
-                    // Co-teacher actions
-                    if (target.id === 'request-co-teacher-btn') {
-                        await requestCoTeacherJoin(target.dataset.classId);
-                    }
-                    if (target.id === 'accept-co-teacher-btn') {
-                        await handleCoTeacherRequest(target.dataset.classId, target.dataset.pendingId, 'accept');
-                    }
-                    if (target.id === 'deny-co-teacher-btn') {
-                        await handleCoTeacherRequest(target.dataset.classId, target.dataset.pendingId, 'deny');
-                    }
-
-
                     if(target.id === 'confirm-join-teacher-btn') {
-                        // This button is now repurposed for requesting co-teacher status
                         const classId = target.dataset.classId;
                         const className = target.dataset.className;
-                        await requestCoTeacherJoin(classId, className);
+                        joinClassAsTeacher(classId, className);
                     }
                     
                     if(target.id === 'delete-class-btn') {
-                           showModal(TPL.deleteClassConfirm(allLoadedClasses[currentClassId]));
+                            showModal(TPL.deleteClassConfirm(allLoadedClasses[currentClassId]));
                     }
 
                     if(target.id === 'confirm-delete-class-btn') {
@@ -877,27 +1139,12 @@
                         deleteClass(classId);
                     }
                     
+                    // Roster remove user confirmation
                     if(target.id === 'confirm-remove-user-btn') {
                         const { classId, userId, userRole } = target.dataset;
                         await removeUserFromClass(classId, userId, userRole);
                     }
                 });
-                
-                // Function added for teachers to request co-teacher join
-                async function requestCoTeacherJoin(classId, className) {
-                    try {
-                        const classRef = db.collection('classes').doc(classId);
-                        // Add requesting UID to a pending array
-                        await classRef.update({
-                            pendingTeacherIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid)
-                        });
-                        hideModal();
-                        showModal(TPL.messageModal('Request Sent', `A co-teacher request has been sent for class ${className}. Waiting for owner approval.`, 'blue'));
-                    } catch (error) {
-                        console.error('Error sending co-teacher request:', error);
-                        showModal(TPL.messageModal('Error', 'Failed to send co-teacher request.', 'red'));
-                    }
-                }
                 
                 document.body.addEventListener('submit', async e => {
                     e.preventDefault();
@@ -915,7 +1162,7 @@
                     if(e.target.id === 'class-settings-form') {
                         const newTitle = e.target.querySelector('#class-title-input').value.trim();
                         if (newTitle) {
-                             await updateClassTitle(currentClassId, newTitle);
+                            await updateClassTitle(currentClassId, newTitle);
                         }
                     }
 
@@ -1022,9 +1269,9 @@
 
                         const requestList = `
                             <div class="mt-8">
-                                <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-4 space-y-2 sm:space-y-0">
+                                <div class="flex justify-between items-center mb-4">
                                     <h3 class="text-lg font-semibold text-gray-800 font-poppins">${requestsHeader} (Today's Requests)</h3>
-                                    ${isTeacher ? `<div class="text-sm text-gray-600 flex items-center space-x-2"><span>Sort By:</span> ${sortOptions}</div>` : ''}
+                                    ${isTeacher ? `<div class="text-sm text-gray-600 flex items-center space-x-2"><span class="hidden sm:inline">Sort By:</span> ${sortOptions}</div>` : ''}
                                 </div>
                                 <div id="requests-container" class="space-y-4">
                                     ${requests.length > 0 ? requests.map(request => TPL.requestCard(request, user)).join('') : `
@@ -1142,50 +1389,33 @@
                             <p class="mt-2 text-gray-600">Are you sure you want to remove <strong>${escapeHtml(user.username)}</strong> (Role: ${role}) from the class <strong>${escapeHtml(cls.name)}</strong>?</p>
                             <p class="mt-2 font-semibold text-red-600 text-sm">They will lose access immediately.</p>
                             <div class="mt-6 flex justify-center space-x-3">
-                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-80-0 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Cancel</button>
+                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Cancel</button>
                                 <button id="confirm-remove-user-btn" 
                                     data-class-id="${cls.id}" 
                                     data-user-id="${user.id}" 
-                                    data-user-role="${role}" 
+                                    data-user-role="${role === 'owner' ? 'teacher' : role}" 
                                     class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly action-btn-poppins">Remove</button>
-                            </div>
-                        </div>
-                    `,
-                    coTeacherRequestConfirm: (classId, className, pendingId, pendingUsername) => `
-                        <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
-                            <div class="text-center">
-                                <i class="fa-regular fa-bell fa-3x text-yellow-600 mb-4"></i>
-                                <h3 class="text-xl font-semibold text-gray-800 font-poppins">New Co-Teacher Request</h3>
-                            </div>
-                            <p class="mt-4 text-gray-600">User <strong>${escapeHtml(pendingUsername)}</strong> has requested to join your class <strong>${escapeHtml(className)}</strong> as a Co-Teacher.</p>
-                            <p class="mt-2 font-semibold text-red-600 text-center text-sm">Granting approval gives them full management permissions.</p>
-                            <div class="mt-6 flex justify-end space-x-3">
-                                <button id="deny-co-teacher-btn" data-class-id="${classId}" data-pending-id="${pendingId}" class="px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Deny</button>
-                                <button id="accept-co-teacher-btn" data-class-id="${classId}" data-pending-id="${pendingId}" class="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 btn-bubbly action-btn-poppins">Accept</button>
                             </div>
                         </div>
                     `,
                     classRoster: (cls, users, myUserData) => {
                         const isOwner = cls.teacherId === myUserData.uid;
                         const isCoTeacher = cls.teacherIds && cls.teacherIds.includes(myUserData.uid);
-                        const isAnyTeacher = isOwner || isCoTeacher;
+                        const isStudent = cls.studentIds && cls.studentIds.includes(myUserData.uid);
 
                         const getRosterList = (uids, title, role) => {
                             if (!uids || uids.length === 0) return '';
                             const userList = uids.map(uid => {
                                 const user = users[uid];
                                 if (!user) return '';
-                                
-                                // Permission check for removal button
-                                const canRemove = (isOwner && role !== 'owner') || // Owner can remove anyone but self
-                                                  (isCoTeacher && role === 'student'); // Co-teacher can only remove students
+                                // NEW: Conditional email display
+                                const emailHtml = isOwner ? `<p class="text-xs text-gray-500">${escapeHtml(user.email)}</p>` : '';
 
-                                // Permission check for email visibility
-                                const emailText = isOwner ? escapeHtml(user.email) : 'Hidden for privacy';
-                                const emailColor = isOwner ? 'text-gray-500' : 'text-gray-400 italic';
+                                // NEW: Conditional remove button logic
+                                const isRemovable = (isCoTeacher && role === 'student') || (isOwner && uid !== myUserData.uid);
                                 
-                                const removeButton = canRemove
-                                ? `<button class="${role === 'student' ? 'remove-student-btn' : 'remove-coteacher-btn'} text-gray-400 hover:text-red-500 transition-colors" data-user-id="${user.id}" data-user-role="${role === 'owner' ? 'teacher' : role}" title="Remove user"><i class="fa-solid fa-user-minus"></i></button>`
+                                const removeButton = isRemovable
+                                ? `<button class="${role === 'student' ? 'remove-student-btn' : 'remove-coteacher-btn'} text-gray-400 hover:text-red-500 transition-colors" data-user-id="${user.id}" data-user-role="${role}" title="Remove user"><i class="fa-solid fa-user-minus"></i></button>`
                                 : '';
 
                                 return `
@@ -1195,8 +1425,8 @@
                                                 ${user.photoURL ? `<img src="${user.photoURL}" onerror="this.onerror=null;this.parentElement.innerHTML='${user.username.charAt(0).toUpperCase()}'" alt="" class="h-full w-full rounded-full object-cover">` : user.username.charAt(0).toUpperCase()}
                                             </div>
                                             <div>
-                                                <p class="font-medium text-gray-800">${escapeHtml(user.username)} ${role === 'owner' ? '(Owner)' : ''}</p>
-                                                <p class="text-xs ${emailColor}">${emailText}</p>
+                                                <p class="font-medium text-gray-800">${escapeHtml(user.username)}</p>
+                                                ${emailHtml}
                                             </div>
                                         </div>
                                         ${removeButton}
@@ -1220,26 +1450,7 @@
                                 ${getRosterList([cls.teacherId], 'Class Owner', 'owner')}
                                 ${getRosterList(teachers, 'Co-Teachers', 'teacher')}
                                 ${getRosterList(cls.studentIds, 'Students', 'student')}
-                                ${isOwner && cls.pendingTeacherIds && cls.pendingTeacherIds.length > 0 ? `
-                                    <div>
-                                        <h4 class="text-sm font-semibold text-orange-600 uppercase mb-2">Pending Co-Teacher Requests (${cls.pendingTeacherIds.length})</h4>
-                                        <ul class="space-y-2 text-gray-500 text-sm">
-                                            ${cls.pendingTeacherIds.map(uid => {
-                                                const user = loadedUsers[uid] || { username: 'Unknown User' };
-                                                return `
-                                                    <li class="p-3 bg-yellow-50 rounded-lg truncate flex justify-between items-center">
-                                                        <span>${escapeHtml(user.username)} (${escapeHtml(user.email || 'No email')})</span>
-                                                        <div class="flex space-x-2">
-                                                             <button id="accept-co-teacher-btn" data-class-id="${cls.id}" data-pending-id="${uid}" class="px-2 py-1 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600 action-btn-poppins">Accept</button>
-                                                            <button id="deny-co-teacher-btn" data-class-id="${cls.id}" data-pending-id="${uid}" class="px-2 py-1 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600 action-btn-poppins">Deny</button>
-                                                        </div>
-                                                    </li>
-                                                `;
-                                            }).join('')}
-                                        </ul>
-                                    </div>
-                                `: ''}
-                                ${isOwner && cls.pendingStudentEmails && cls.pendingStudentEmails.length > 0 ? `
+                                ${isOwner || isCoTeacher && cls.pendingStudentEmails && cls.pendingStudentEmails.length > 0 ? `
                                     <div>
                                         <h4 class="text-sm font-semibold text-gray-600 uppercase mb-2">Pending Students (Emails to Auto-Enroll: ${cls.pendingStudentEmails.length})</h4>
                                         <ul class="space-y-2 text-gray-500 text-sm">
@@ -1248,17 +1459,13 @@
                                             `).join('')}
                                         </ul>
                                     </div>
-                                `: ''}
+                                ` : ''}
                             </div>
                         `;
                     },
-                    classSettings: (cls, user) => {
-                        const currentRateData = user || {};
-                        const lastChangeDate = currentRateData.lastChangeDate ? new Date(currentRateData.lastChangeDate.seconds * 1000) : null;
-                        const isNewDay = !lastChangeDate || !isSameDay(lastChangeDate, new Date());
-                        const changesMadeToday = isNewDay ? 0 : (currentRateData.nameChangeCount || 0);
-                        const changesRemaining = NAME_CHANGE_LIMIT - changesMadeToday;
-                        
+                    classSettings: (cls) => {
+                        // NEW: Changes remaining is now tied to the user's data
+                        const changesRemaining = 5 - (userData.classChanges?.count || 0);
                         return `
                             <div class="space-y-6">
                                 <div>
@@ -1267,7 +1474,7 @@
                                         <div>
                                             <label for="class-title-input" class="block text-sm font-medium text-gray-700">Class Title</label>
                                             <input type="text" id="class-title-input" class="mt-1 block w-full app-input" value="${escapeHtml(cls.name)}" required>
-                                            <p class="mt-1 text-xs ${changesRemaining > 0 ? 'text-gray-500' : 'text-red-500'}">Name changes remaining today: <strong>${changesRemaining} / ${NAME_CHANGE_LIMIT}</strong></p>
+                                            <p class="mt-1 text-xs ${changesRemaining > 0 ? 'text-gray-500' : 'text-red-500'}">Name changes remaining today: <strong>${changesRemaining} / 5</strong></p>
                                         </div>
                                         <div class="flex justify-end">
                                             <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly action-btn-poppins" ${changesRemaining <= 0 ? 'disabled' : ''}>Save Changes</button>
@@ -1375,7 +1582,7 @@
                             <p class="mt-2 font-semibold text-red-600 text-center">Do you wish to proceed?</p>
                             <div class="mt-6 flex justify-end space-x-3">
                                 <button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Cancel</button>
-                                <button id="request-co-teacher-btn" data-class-id="${classId}" data-class-name="${escapeHtml(className)}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly action-btn-poppins">Request Co-Teacher Join</button>
+                                <button id="confirm-join-teacher-btn" data-class-id="${classId}" data-class-name="${escapeHtml(className)}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly action-btn-poppins">Confirm Co-Teacher Join</button>
                             </div>
                         </div>
                     `,
