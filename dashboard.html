@@ -118,7 +118,7 @@
             <div class="max-w-full mx-auto px-4 sm:px-6 lg:px-8">
                 <div class="flex justify-between items-center h-16">
                     <a href="index.html" class="flex items-center space-x-3">
-                        <svg class="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
+                        <svg class="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 a 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
                         <h1 class="text-xl font-bold text-gray-800">Notify</h1>
                     </a>
                     <div class="relative">
@@ -186,7 +186,8 @@
             let allLoadedClasses = {};
             let classQueues = {};
             let unsubscribes = [];
-            let currentClassView = 'overview'; // NEW: Tracks teacher's view ('overview' or 'settings')
+            let queueUnsubscribers = {}; // NEW: To manage individual queue listeners
+            let currentClassView = 'overview';
 
             // --- UI Element References ---
             const mainContentArea = document.getElementById('main-content-area');
@@ -246,23 +247,63 @@
                     document.getElementById('teacher-sidebar-actions').classList.toggle('hidden', data.role !== 'teacher');
                 }
 
+                // NEW: Centralized function to update UI elements that depend on queue counts
+                function updateGlobalUI() {
+                    updateDocumentTitle();
+                    renderClassList(Object.values(allLoadedClasses));
+                }
+                
+                // NEW: Function to update the browser tab title with the total hand raise count
+                function updateDocumentTitle() {
+                    let totalHandsUp = 0;
+                    // Only count hands for classes where the user is a teacher
+                    for (const classId in classQueues) {
+                        const classData = allLoadedClasses[classId];
+                        if (classData && (classData.teacherId === userData.uid || (classData.teacherIds || []).includes(userData.uid))) {
+                           totalHandsUp += (classQueues[classId] || []).length;
+                        }
+                    }
+                    
+                    if (totalHandsUp > 0) {
+                        document.title = `(${totalHandsUp}) Notify | Dashboard`;
+                    } else {
+                        document.title = 'Notify | Dashboard';
+                    }
+                }
+
                 function listenForClasses(uid) {
-                    unsubscribes.forEach(unsub => unsub());
-                    unsubscribes = [];
+                    unsubscribes.forEach(unsub => unsub()); unsubscribes = [];
+                    Object.values(queueUnsubscribers).forEach(unsub => unsub()); queueUnsubscribers = {};
                     allLoadedClasses = {};
+
                     const processSnapshot = (snapshot) => {
-                        let hasChanges = false;
                         snapshot.docChanges().forEach(change => {
-                            hasChanges = true;
                             const classId = change.doc.id;
+                            const classData = { id: classId, ...change.doc.data() };
+
                             if (change.type === 'removed') {
                                 delete allLoadedClasses[classId];
                                 delete classQueues[classId];
+                                if (queueUnsubscribers[classId]) {
+                                    queueUnsubscribers[classId](); // Unsubscribe
+                                    delete queueUnsubscribers[classId];
+                                }
                             } else {
-                                allLoadedClasses[classId] = { id: classId, ...change.doc.data() };
+                                allLoadedClasses[classId] = classData;
+                                // If user is a teacher for this class, set up a queue listener
+                                const isTeacher = classData.teacherId === uid || (classData.teacherIds || []).includes(uid);
+                                if (isTeacher && !queueUnsubscribers[classId]) {
+                                    const unsub = db.collection('classes').doc(classId).collection('raisedHands')
+                                        .onSnapshot(queueSnapshot => {
+                                            classQueues[classId] = queueSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                                            updateGlobalUI(); // Update title and sidebar
+                                            if(currentClassId === classId) renderMainContent(); // Re-render if it's the active class
+                                        });
+                                    queueUnsubscribers[classId] = unsub;
+                                }
                             }
                         });
-                        if (hasChanges) renderClassList(Object.values(allLoadedClasses));
+                        updateGlobalUI(); // Update UI after processing all class changes
                     };
                     unsubscribes.push(db.collection('classes').where('teacherId', '==', uid).onSnapshot(processSnapshot));
                     unsubscribes.push(db.collection('classes').where('studentIds', 'array-contains', uid).onSnapshot(processSnapshot));
@@ -287,20 +328,6 @@
                 function selectClass(classId) {
                     currentClassId = classId;
                     currentClassView = 'overview'; // Reset to overview when switching classes
-                    const queueUnsub = unsubscribes.find(u => u.id === 'queue-listener');
-                    if (queueUnsub) {
-                        queueUnsub.unsub();
-                        unsubscribes = unsubscribes.filter(u => u.id !== 'queue-listener');
-                    }
-                    if (classId) {
-                        const queueListener = db.collection('classes').doc(classId).collection('raisedHands').orderBy('raisedAt', 'asc').onSnapshot(snapshot => {
-                            classQueues[classId] = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                            renderClassList(Object.values(allLoadedClasses));
-                            if(currentClassId === classId) renderMainContent();
-                        });
-                        unsubscribes.push({ id: 'queue-listener', unsub: queueListener });
-                    }
-                    renderClassList(Object.values(allLoadedClasses)); 
                     renderMainContent();
                 }
 
@@ -446,7 +473,6 @@
                     if (target.matches('.teacher-lower-hand-btn')) lowerHand(currentClassId, target.dataset.studentId);
                     if (target.id === 'toggle-hand-raising-btn') toggleHandRaising(currentClassId, !allLoadedClasses[currentClassId].handRaisingEnabled);
                     
-                    // NEW: Settings-related clicks
                     if(target.matches('.class-view-tab')) {
                         currentClassView = target.dataset.view;
                         renderMainContent();
@@ -465,7 +491,6 @@
                     if(e.target.id === 'join-class-form') { const code = e.target.querySelector('#class-code-input').value.trim().toUpperCase(); if(code) joinClass(code); }
                     if(e.target.id === 'raise-hand-form') { const q = e.target.querySelector('#hand-raise-question').value.trim(); raiseHand(e.target.dataset.classId, q); }
                     
-                    // NEW: Settings form submissions
                     if(e.target.id === 'change-class-name-form') {
                         const newName = e.target.querySelector('#class-name-input').value.trim();
                         if (newName && currentClassId) handleChangeClassName(currentClassId, newName);
@@ -491,7 +516,6 @@
                                             <p class="text-sm text-gray-500 mt-1">Class Code: <span class="font-semibold text-gray-700 bg-gray-100 px-2 py-1 rounded">${escapeHtml(cls.code)}</span></p>
                                         </div>
                                         <div class="flex items-center space-x-4">
-                                            <!-- NEW: Icon buttons with tooltips -->
                                             <div class="tooltip-container">
                                                 <button id="toggle-hand-raising-btn" class="tooltip-button btn-bubbly ${cls.handRaisingEnabled ? 'bg-yellow-100 text-yellow-600 hover:bg-yellow-200' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">
                                                     <i class="fa-solid ${cls.handRaisingEnabled ? 'fa-hand' : 'fa-hand-sparkles'}"></i>
@@ -512,7 +536,6 @@
                                             </div>
                                         </div>
                                     </div>
-                                    <!-- NEW: Tab Navigation -->
                                     <div class="border-b border-gray-200 mt-4">
                                         <nav class="-mb-px flex space-x-6">
                                             <button data-view="overview" class="class-view-tab tab-button py-3 px-1 border-b-2 font-semibold text-sm ${view === 'overview' ? 'active border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}">Overview</button>
@@ -521,15 +544,12 @@
                                     </div>
                                 </div>
                                 
-                                <!-- Teacher Main Content Area -->
-                                <div id="teacher-view-content">
-                                    <!-- Overview (Queue) -->
+                                <div id="teacher-view-content" class="min-h-[60vh]">
                                     <div id="overview-panel" class="${view === 'overview' ? '' : 'hidden'} bg-white p-5 rounded-xl shadow-sm border border-gray-200">
                                         <h3 class="text-lg font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-2 bg-blue-100 text-blue-800 text-xs font-semibold px-2.5 py-0.5 rounded-full">${queue.length}</span></h3>
                                         <div id="hand-raise-queue" class="mt-4">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-gray-50 p-4 rounded-lg flex items-start justify-between"><div class="flex items-start"><div class="text-xl font-bold text-blue-600 w-8 text-center">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div><button data-student-id="${hand.id}" class="teacher-lower-hand-btn px-3 py-1.5 bg-gray-200 text-gray-700 text-sm font-semibold rounded-lg hover:bg-red-100 hover:text-red-700 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower</button></li>`).join('')}</ul>`:`<div class="text-center py-10"><i class="fa-solid fa-person-rays fa-3x text-gray-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div>
                                     </div>
                                     
-                                    <!-- Settings Panel -->
                                     <div id="settings-panel" class="${view === 'settings' ? '' : 'hidden'} space-y-6">
                                         <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200">
                                             <h3 class="text-lg font-bold text-gray-800 font-poppins">Class Details</h3>
@@ -589,3 +609,4 @@
     </script>
 </body>
 </html>
+
