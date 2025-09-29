@@ -222,13 +222,13 @@
                         
                         return `
                         <li class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                            <div class="flex items-center">
-                                <div class="h-8 w-8 rounded-full flex items-center justify-center bg-gray-300 text-gray-700 font-bold text-sm mr-3">
+                            <div class="flex items-center min-w-0">
+                                <div class="h-8 w-8 rounded-full flex items-center justify-center bg-gray-300 text-gray-700 font-bold text-sm mr-3 flex-shrink-0">
                                     ${user.photoURL ? `<img src="${user.photoURL}" alt="" class="h-full w-full rounded-full object-cover">` : escapeHtml(user.username.charAt(0).toUpperCase())}
                                 </div>
-                                <div>
-                                    <p class="font-medium text-gray-800">${escapeHtml(user.username)}</p>
-                                    <p class="text-xs text-gray-500">${isOwner ? escapeHtml(user.email) : 'Email hidden'}</p>
+                                <div class="min-w-0">
+                                    <p class="font-medium text-gray-800 truncate">${escapeHtml(user.username)}</p>
+                                    <p class="text-xs text-gray-500 truncate">${isOwner ? escapeHtml(user.email) : 'Email hidden'}</p>
                                 </div>
                             </div>
                             ${removeButton}
@@ -247,8 +247,8 @@
                         const user = users[uid];
                         if (!user) return '';
                         return `<li class="p-3 bg-yellow-50 rounded-lg flex justify-between items-center">
-                                    <span>${escapeHtml(user.username)}</span>
-                                    <div class="flex space-x-2">
+                                    <span class="truncate">${escapeHtml(user.username)}</span>
+                                    <div class="flex space-x-2 flex-shrink-0 ml-2">
                                         <button class="approve-teacher-btn px-2 py-1 text-xs bg-green-500 text-white rounded-lg hover:bg-green-600" data-uid="${uid}">Approve</button>
                                         <button class="deny-teacher-btn px-2 py-1 text-xs bg-red-500 text-white rounded-lg hover:bg-red-600" data-uid="${uid}">Deny</button>
                                     </div>
@@ -262,12 +262,12 @@
 
                 return `
                 <div class="space-y-6">
-                    <div class="flex justify-end">
+                    ${isOwner ? `<div class="flex justify-end">
                         <button id="invite-members-btn" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 btn-bubbly action-btn-poppins flex items-center space-x-2">
                             <i class="fa-solid fa-paper-plane"></i>
                             <span>Invite Members</span>
                         </button>
-                    </div>
+                    </div>` : ''}
                     ${renderUserList([cls.teacherId], 'Class Owner', 'owner')}
                     ${renderUserList(cls.teacherIds, 'Co-Teachers', 'teacher')}
                     ${renderPendingList()}
@@ -382,7 +382,7 @@
             const classListEl = document.getElementById('class-list');
             
             // --- UTILITY FUNCTIONS ---
-            const escapeHtml = (unsafe) => unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
+            const escapeHtml = (unsafe) => unsafe ? unsafe.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;") : '';
             
             function showModal(content) {
                 modalContainer.innerHTML = content;
@@ -408,7 +408,8 @@
             // --- FIREBASE INITIALIZATION & AUTH ---
             function onFirebaseReady(callback) {
                 const interval = setInterval(() => {
-                    if (typeof firebase !== 'undefined' && firebase.initializeApp) {
+                    // **FIX**: Ensure firebase AND firebaseConfig are loaded before proceeding.
+                    if (typeof firebase !== 'undefined' && firebase.initializeApp && typeof firebaseConfig !== 'undefined') {
                         clearInterval(interval);
                         callback();
                     }
@@ -416,32 +417,42 @@
             }
 
             onFirebaseReady(() => {
-                firebase.initializeApp(firebaseConfig);
-                auth = firebase.auth();
-                db = firebase.firestore();
+                try {
+                    firebase.initializeApp(firebaseConfig);
+                    auth = firebase.auth();
+                    db = firebase.firestore();
 
-                auth.onAuthStateChanged(user => {
-                    if (user) {
-                        currentUser = user;
-                        db.collection('users').doc(user.uid).get().then(doc => {
-                            if (doc.exists) {
-                                userData = { uid: user.uid, ...doc.data() };
-                                initializeDashboard();
-                            } else {
-                                auth.signOut(); // User exists in Auth but not in Firestore DB
-                            }
-                        });
-                    } else {
-                        window.location.href = 'login.html';
-                    }
-                });
+                    auth.onAuthStateChanged(user => {
+                        if (user) {
+                            currentUser = user;
+                            db.collection('users').doc(user.uid).get().then(doc => {
+                                if (doc.exists) {
+                                    userData = { uid: user.uid, ...doc.data() };
+                                    initializeDashboard();
+                                } else {
+                                    console.error("User document not found in Firestore. Signing out.");
+                                    auth.signOut();
+                                }
+                            }).catch(err => {
+                                console.error("Error fetching user document:", err);
+                                auth.signOut();
+                            });
+                        } else {
+                            window.location.href = 'login.html';
+                        }
+                    });
+                } catch (error) {
+                    console.error("Firebase initialization failed:", error);
+                    document.body.innerHTML = '<div style="padding: 2rem; text-align: center; font-family: sans-serif;"><h1>Application Error</h1><p>Could not initialize Firebase. Please check the console for details.</p></div>';
+                }
             });
 
             function initializeDashboard() {
                 updateProfileUI(currentUser, userData);
                 listenForClasses(currentUser.uid);
                 renderMainContent();
-                document.getElementById('app-container').classList.add('opacity-100');
+                // **FIX**: Remove opacity-0 to make the app visible after initialization.
+                document.getElementById('app-container').classList.remove('opacity-0');
             }
 
             // --- UI RENDERING & UPDATES ---
@@ -546,7 +557,6 @@
                 const idsToLoad = [...allIds].filter(id => id && !loadedUsers[id]);
                 if (idsToLoad.length === 0) return;
                 
-                // Firestore 'in' query is limited to 10 items
                 for (let i = 0; i < idsToLoad.length; i += 10) {
                     const batch = idsToLoad.slice(i, i + 10);
                     const userDocs = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', batch).get();
@@ -559,8 +569,8 @@
             // --- ACTIONS & HANDLERS ---
             async function selectClass(classId) {
                 currentClassId = classId;
-                currentTab = 'roster'; // Default to roster view
-                renderClassList(); // To update active highlight
+                currentTab = 'roster';
+                renderClassList();
                 renderMainContent();
             }
 
@@ -599,19 +609,16 @@
                     const classData = classDoc.data();
                     const uid = currentUser.uid;
 
-                    // Prevent re-joining
-                    if (classData.teacherId === uid || classData.teacherIds.includes(uid) || classData.studentIds.includes(uid)) {
+                    if (classData.teacherId === uid || (classData.teacherIds || []).includes(uid) || (classData.studentIds || []).includes(uid)) {
                         showModal(TPL.messageModal('Already Joined', 'You are already a member of this class.', 'yellow'));
                         return;
                     }
 
                     let updateData, message;
                     if (userData.role === 'teacher') {
-                        // Teachers request to join as co-teachers and need approval
                         updateData = { pendingTeacherIds: firebase.firestore.FieldValue.arrayUnion(uid) };
                         message = 'Your request to join as a co-teacher has been sent for approval.';
                     } else {
-                        // Students join directly
                         updateData = { studentIds: firebase.firestore.FieldValue.arrayUnion(uid) };
                         message = 'You have successfully joined the class!';
                     }
@@ -634,7 +641,6 @@
                     batch.update(classRef, { teacherIds: firebase.firestore.FieldValue.arrayUnion(uid) });
                 }
                 await batch.commit();
-                // UI will update via snapshot listener
             }
 
             async function removeUserFromClass(userId, userRole) {
@@ -661,38 +667,32 @@
                 const button = e.target.closest('button');
                 if (!button) return;
 
-                // Profile Menu
                 if (button.id === 'user-profile-btn') {
                     document.getElementById('user-profile-menu').classList.toggle('hidden');
                 } else if (!e.target.closest('#user-profile-menu')) {
                     document.getElementById('user-profile-menu').classList.add('hidden');
                 }
                 
-                // Sidebar Actions
                 if (button.matches('#class-list button')) selectClass(button.dataset.classId);
                 if (button.id === 'new-class-btn') showModal(TPL.createClassModal());
                 if (button.id === 'join-class-btn-main') showModal(TPL.joinClassModal());
                 
-                // Logout
                 if (e.target.closest('#logout-btn')) auth.signOut();
 
-                // Modal Actions
                 if (button.matches('.modal-cancel-btn, .modal-close-btn') || e.target.id === 'modal-backdrop') hideModal();
                 if (button.id === 'confirm-delete-class-btn') deleteClass(button.dataset.classId);
                 if (button.id === 'confirm-remove-user-btn') removeUserFromClass(button.dataset.userId, button.dataset.userRole);
 
-                // Tab Navigation
                 if(button.matches('#class-tabs button')) {
                     currentTab = button.dataset.tab;
                     renderMainContent();
                 }
 
-                // Roster Actions
                 if(button.matches('.remove-user-btn')) showModal(TPL.removeUserConfirm(loadedUsers[button.dataset.userId], button.dataset.userRole));
                 if(button.matches('.approve-teacher-btn')) handleCoTeacherRequest(button.dataset.uid, 'approve');
                 if(button.matches('.deny-teacher-btn')) handleCoTeacherRequest(button.dataset.uid, 'deny');
                 if(button.id === 'invite-members-btn') {
-                    const inviteLink = `${window.location.origin}/invite.html?classId=${currentClassId}`;
+                    const inviteLink = `${window.location.protocol}//${window.location.host}/invite.html?classId=${currentClassId}`;
                     showModal(TPL.inviteModal(inviteLink));
                 }
                 if (button.id === 'copy-invite-link-btn') {
@@ -703,7 +703,6 @@
                     });
                 }
                 
-                // Settings Actions
                 if(button.id === 'delete-class-btn') showModal(TPL.deleteClassConfirm(allLoadedClasses[currentClassId]));
             });
 
