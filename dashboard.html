@@ -45,21 +45,11 @@
             outline: none;
         }
 
-        /* Generic Button Style Reset to ensure Inter/Poppins font */
+        /* Generic Button Style Reset to ensure Inter font */
         button, a.btn-bubbly {
-            font-family: 'Inter', sans-serif;
-        }
-        
-        /* Style for action buttons using Poppins */
-        .action-btn-poppins {
-             font-family: 'Poppins', sans-serif;
-             font-weight: 600;
+             font-family: 'Inter', sans-serif;
         }
 
-        /* NEW: Style for sort dropdown to use Inter font */
-        #request-sort-select {
-            font-family: 'Inter', sans-serif;
-        }
 
         .custom-scrollbar::-webkit-scrollbar { width: 8px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: #f1f5f9; border-radius: 4px;}
@@ -172,7 +162,7 @@
             </aside>
             <main class="flex-1 flex flex-col overflow-hidden">
                 <div id="main-content-area" class="flex-1 overflow-y-auto bg-gray-100 p-6 sm:p-8 custom-scrollbar">
-                </div>
+                    </div>
             </main>
         </div>
     </div>
@@ -188,33 +178,18 @@
     
     <script>
         document.addEventListener('DOMContentLoaded', () => {
+            const today = new Date().toDateString();
             let currentUser = null;
             let userData = null;
             let currentClassId = null;
             let allLoadedClasses = {};
             let unsubscribes = [];
-            // Listener for the current request list
-            let currentRequestsUnsubscribe = null; 
-            // Cache loaded users for the roster tab and requests
-            let loadedUsers = {};
-            // Sorting state for requests
-            let requestSortOrder = 'timestamp_desc'; // Default sort order
 
             const userProfileMenu = document.getElementById('user-profile-menu');
             const mainContentArea = document.getElementById('main-content-area');
             const classListEl = document.getElementById('class-list');
             const modalContainer = document.getElementById('modal-container');
             const modalBackdrop = document.getElementById('modal-backdrop');
-            
-            // Utility function to check if two dates are the same day (ignoring time)
-            function isSameDay(t1, t2) {
-                if (!t1 || !t2) return false;
-                const date1 = t1.toDate ? t1.toDate() : new Date(t1);
-                const date2 = t2.toDate ? t2.toDate() : new Date(t2);
-                return date1.getFullYear() === date2.getFullYear() &&
-                       date1.getMonth() === date2.getMonth() &&
-                       date1.getDate() === date2.getDate();
-            }
 
             // --- Firebase Initialization and Auth ---
             function onFirebaseReady(callback) {
@@ -240,101 +215,11 @@
                     }
                 });
 
-                function cleanupListeners() {
-                    if (currentRequestsUnsubscribe) {
-                        currentRequestsUnsubscribe();
-                        currentRequestsUnsubscribe = null;
-                    }
-                }
-
-                async function cleanupOldRequests(classId) {
-                    const yesterday = new Date();
-                    yesterday.setDate(yesterday.getDate() - 1);
-                    
-                    try {
-                        const oldRequestsSnapshot = await db.collection('classes').doc(classId).collection('requests')
-                            .where('timestamp', '<', yesterday)
-                            .get();
-                        
-                        if (oldRequestsSnapshot.empty) return;
-                        
-                        const batch = db.batch();
-                        let deleteCount = 0;
-                        
-                        oldRequestsSnapshot.forEach(doc => {
-                            batch.delete(doc.ref);
-                            deleteCount++;
-                        });
-                        
-                        await batch.commit();
-                        if (deleteCount > 0) {
-                            console.log(`Cleaned up ${deleteCount} old requests from class ${classId}.`);
-                        }
-                    } catch (error) {
-                        console.error("Error cleaning up old requests:", error);
-                    }
-                }
-
-                async function checkAndAutoEnroll(uid, email) {
-                    // NEW: Defensive check for email
-                    if (!email || userData.role !== 'student') return;
-
-                    try {
-                        // Query classes where the current user's email is in pendingStudentEmails
-                        const querySnapshot = await db.collection('classes')
-                            .where('pendingStudentEmails', 'array-contains', email)
-                            .get();
-
-                        if (querySnapshot.empty) return;
-
-                        const batch = db.batch();
-                        let enrolledCount = 0;
-
-                        querySnapshot.forEach(doc => {
-                            const classData = doc.data();
-                            
-                            // Prevent double enrollment if somehow the student is already in studentIds
-                            if (classData.studentIds && classData.studentIds.includes(uid)) {
-                                batch.update(doc.ref, {
-                                    pendingStudentEmails: firebase.firestore.FieldValue.arrayRemove(email)
-                                });
-                                return;
-                            }
-                            
-                            // 1. Remove the email from pending list
-                            // 2. Add the UID to studentIds list
-                            batch.update(doc.ref, {
-                                pendingStudentEmails: firebase.firestore.FieldValue.arrayRemove(email),
-                                studentIds: firebase.firestore.FieldValue.arrayUnion(uid)
-                            });
-                            enrolledCount++;
-                        });
-
-                        if (enrolledCount > 0) {
-                            await batch.commit();
-                            console.log(`Auto-enrolled into ${enrolledCount} classes.`);
-                            // The main class listener will automatically update the UI.
-                        }
-                    } catch (error) {
-                        console.error("Error during auto-enrollment:", error);
-                    }
-                }
-
                 async function fetchUserData(uid) {
                     const userDoc = await db.collection('users').doc(uid).get();
                     if (userDoc.exists) {
                         userData = { uid, ...userDoc.data() };
-                        // NEW: Ensure classChanges field exists
-                        if (!userData.classChanges) {
-                            userData.classChanges = { count: 0, lastChangeDate: null };
-                            await db.collection('users').doc(uid).set({ classChanges: userData.classChanges }, { merge: true });
-                        }
-
                         updateProfileUI(currentUser, userData);
-                        
-                        // New: Check and auto-enroll students from Google Classroom imports
-                        await checkAndAutoEnroll(uid, currentUser.email);
-                        
                         listenForClasses(uid);
                         renderMainContent();
                     } else {
@@ -369,13 +254,8 @@
                     unsubscribes.forEach(unsub => unsub());
                     unsubscribes = [];
                     allLoadedClasses = {};
-                    
-                    // NEW: Add defensive checks to ensure uid is not undefined
-                    if (!uid) {
-                        console.error("User ID is not available for class queries.");
-                        return;
-                    }
 
+                    // Listen for classes where the user is the owner, a student, or a co-teacher
                     const classesQuery = db.collection('classes').where('teacherId', '==', uid);
                     const classesQuery2 = db.collection('classes').where('studentIds', 'array-contains', uid);
                     const classesQuery3 = db.collection('classes').where('teacherIds', 'array-contains', uid);
@@ -386,10 +266,6 @@
                             hasChanges = true;
                             if (change.type === 'removed') {
                                 delete allLoadedClasses[change.doc.id];
-                                if (currentClassId === change.doc.id) {
-                                    currentClassId = null;
-                                    renderMainContent();
-                                }
                             } else {
                                 allLoadedClasses[change.doc.id] = { 
                                     ...allLoadedClasses[change.doc.id], 
@@ -399,17 +275,8 @@
                                 };
                             }
                         });
-                        
-                        if (hasChanges) {
-                             renderClassList(Object.values(allLoadedClasses));
-                             // If a class is already selected, re-render its content to pick up changes (like roster updates or title changes)
-                            if (currentClassId && allLoadedClasses[currentClassId]) {
-                                renderCurrentTabContent(allLoadedClasses[currentClassId]);
-                            } else if (currentClassId && !allLoadedClasses[currentClassId]) {
-                                currentClassId = null;
-                                renderMainContent();
-                            }
-                        }
+                        // Only re-render if there was an actual change
+                        if (hasChanges) renderClassList(Object.values(allLoadedClasses));
                     };
 
                     unsubscribes.push(classesQuery.onSnapshot(snapshot => processSnapshot(snapshot, 'Owner')));
@@ -420,6 +287,7 @@
                 function renderClassList(classes) {
                     document.getElementById('no-classes-sidebar').classList.toggle('hidden', classes.length > 0);
                     classListEl.innerHTML = '';
+                    // Simple in-memory sorting
                     const sortedClasses = classes.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
 
                     for (const cls of sortedClasses) {
@@ -432,362 +300,21 @@
                     }
                 }
                 
-                async function selectClass(classData) {
-                    cleanupListeners(); 
+                function selectClass(classData) {
                     currentClassId = classData ? classData.id : null;
-                    requestSortOrder = 'timestamp_desc'; // Reset sort order
-                    currentTab = 'overview'; 
                     renderClassList(Object.values(allLoadedClasses)); 
                     renderMainContent();
-                    // New: Run cleanup on class selection/load
-                    if (currentClassId) {
-                           await cleanupOldRequests(currentClassId);
-                    }
                 }
-
-                let currentTab = 'overview'; // default tab
 
                 function renderMainContent() {
                     if (currentClassId) {
                         const classData = allLoadedClasses[currentClassId];
-                        mainContentArea.innerHTML = TPL.classView(classData, userData, currentTab);
-                        setupClassViewListeners(classData);
-                        renderCurrentTabContent(classData);
+                        mainContentArea.innerHTML = TPL.classView(classData, userData);
                     } else {
-                        cleanupListeners();
                         mainContentArea.innerHTML = TPL.emptyState(userData);
                     }
                 }
 
-                function setupClassViewListeners(classData) {
-                    const tabsContainer = document.getElementById('class-tabs');
-                    if (tabsContainer) {
-                        tabsContainer.addEventListener('click', e => {
-                            const tabBtn = e.target.closest('button[role="tab"]');
-                            if (tabBtn) {
-                                currentTab = tabBtn.dataset.tab;
-                                cleanupListeners(); // Clean up request listener
-                                // Rerender main content to ensure tabs highlight correctly based on the new currentTab state
-                                renderMainContent();
-                            }
-                        });
-                    }
-                }
-                
-                async function renderCurrentTabContent(classData) {
-                    const tabContentContainer = document.getElementById('tab-content');
-                    if (!tabContentContainer) return;
-                    
-                    tabContentContainer.innerHTML = TPL.loadingState(`Loading ${currentTab} content...`);
-                    
-                    switch (currentTab) {
-                        case 'overview':
-                            listenForRequests(classData.id, tabContentContainer);
-                            break;
-                        case 'roster':
-                            await loadClassRoster(classData); 
-                            tabContentContainer.innerHTML = TPL.classRoster(classData, loadedUsers, userData);
-                            break;
-                        case 'settings':
-                            if (classData.teacherId === userData.uid) {
-                                tabContentContainer.innerHTML = TPL.classSettings(classData);
-                            } else {
-                                tabContentContainer.innerHTML = TPL.permissionDenied();
-                            }
-                            break;
-                        default:
-                            tabContentContainer.innerHTML = TPL.emptyState(classData);
-                            break;
-                    }
-                    setupTabSpecificListeners(classData);
-                }
-
-                function setupTabSpecificListeners(classData) {
-                    if (currentTab === 'settings' && classData.teacherId === userData.uid) {
-                        const form = document.getElementById('class-settings-form');
-                        if (form) {
-                            form.addEventListener('submit', async (e) => {
-                                e.preventDefault();
-                                const newTitle = document.getElementById('class-title-input').value.trim();
-                                if (newTitle && newTitle !== classData.name) {
-                                    await updateClassTitle(classData.id, newTitle);
-                                }
-                            });
-                        }
-                    }
-
-                    if (currentTab === 'roster') {
-                        const rosterList = document.getElementById('roster-list');
-                        if (rosterList) {
-                            rosterList.addEventListener('click', async (e) => {
-                                // NEW: Added logic to check if user has permission to remove
-                                const removeBtn = e.target.closest('.remove-student-btn, .remove-coteacher-btn');
-                                if (removeBtn) {
-                                    const userId = removeBtn.dataset.userId;
-                                    const userRole = removeBtn.dataset.userRole;
-                                    const isOwner = allLoadedClasses[classData.id].teacherId === userData.uid;
-                                    const isCoTeacher = allLoadedClasses[classData.id].teacherIds.includes(userData.uid);
-
-                                    // NEW: Co-teachers can remove students, but not other co-teachers or the owner
-                                    // The owner can remove anyone except themselves
-                                    if ((isCoTeacher && userRole === 'student') || (isOwner && userId !== currentUser.uid)) {
-                                       showModal(TPL.removeUserConfirm(classData, loadedUsers[userId], userRole));
-                                    } else {
-                                       showModal(TPL.messageModal('Permission Denied', 'You do not have permission to remove this user.', 'red'));
-                                    }
-                                }
-                            });
-                        }
-                    }
-                    
-                    if (currentTab === 'overview') {
-                        const newRequestForm = document.getElementById('new-request-form');
-                        if (newRequestForm) {
-                            newRequestForm.addEventListener('submit', handleNewRequest);
-                        }
-                        
-                        const requestsContainer = document.getElementById('requests-container');
-                        if (requestsContainer) {
-                            requestsContainer.addEventListener('click', handleRequestActions);
-                        }
-                        
-                        const sortSelect = document.getElementById('request-sort-select');
-                        if(sortSelect) {
-                            sortSelect.value = requestSortOrder;
-                            sortSelect.addEventListener('change', (e) => {
-                                requestSortOrder = e.target.value;
-                                listenForRequests(classData.id, document.getElementById('tab-content')); // Rerun listener with new sorting
-                            });
-                        }
-                    }
-                }
-
-                async function loadClassRoster(classData) {
-                    const members = [...(classData.studentIds || []), ...(classData.teacherIds || [])];
-                    const ownerId = classData.teacherId;
-                    const allMemberIds = Array.from(new Set([...members, ownerId]));
-                    
-                    const newUsersToLoad = allMemberIds.filter(uid => uid && !loadedUsers[uid]);
-                    
-                    if (newUsersToLoad.length === 0) return;
-                    
-                    const batchSize = 10;
-                    for (let i = 0; i < newUsersToLoad.length; i += batchSize) {
-                        const batchIds = newUsersToLoad.slice(i, i + batchSize);
-                        const usersQuery = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', batchIds).get();
-                        usersQuery.docs.forEach(doc => {
-                            loadedUsers[doc.id] = { id: doc.id, ...doc.data() };
-                        });
-                    }
-                }
-
-                // --- REQUESTS FUNCTIONALITY (Using onSnapshot for real-time updates) ---
-                function listenForRequests(classId, container) {
-                    cleanupListeners();
-                    
-                    const requestsQuery = db.collection('classes').doc(classId).collection('requests');
-                    
-                    // Sorting logic is handled in the frontend after fetching all requests for the day
-                    currentRequestsUnsubscribe = requestsQuery.onSnapshot(async (snapshot) => {
-                        const rawRequests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        
-                        // Filter requests to show only today's requests
-                        const today = new Date();
-                        const requests = rawRequests.filter(r => r.timestamp && isSameDay(r.timestamp, today));
-
-                        await loadRequestUsers(requests); 
-                        
-                        if (currentTab === 'overview') {
-                            const sortedRequests = sortRequests(requests, requestSortOrder);
-                            container.innerHTML = TPL.classOverview(allLoadedClasses[classId], userData, sortedRequests);
-                            setupTabSpecificListeners(allLoadedClasses[classId]); 
-                        }
-                    }, error => {
-                        console.error("Error listening to requests:", error);
-                        container.innerHTML = TPL.messageModal('Error Loading Requests', 'Failed to load requests in real-time.', 'red');
-                    });
-                }
-                
-                function sortRequests(requests, sortOrder) {
-                    return requests.sort((a, b) => {
-                        switch (sortOrder) {
-                            case 'timestamp_asc':
-                                return (a.timestamp?.seconds || 0) - (b.timestamp?.seconds || 0);
-                            case 'title_asc':
-                                return a.title.localeCompare(b.title);
-                            case 'title_desc':
-                                return b.title.locale(a.title);
-                            case 'timestamp_desc':
-                            default:
-                                return (b.timestamp?.seconds || 0) - (a.timestamp?.seconds || 0);
-                        }
-                    });
-                }
-
-                async function loadRequestUsers(requests) {
-                    const studentIds = requests.map(r => r.studentId).filter(uid => uid);
-                    const allRequestUids = Array.from(new Set(studentIds));
-
-                    // NEW: Defensive check for empty uid array
-                    if (allRequestUids.length === 0) return;
-                    
-                    const newUsersToLoad = allRequestUids.filter(uid => !loadedUsers[uid]);
-                    
-                    if (newUsersToLoad.length === 0) return;
-                    
-                    const batchSize = 10;
-                    for (let i = 0; i < newUsersToLoad.length; i += batchSize) {
-                        const batchIds = newUsersToLoad.slice(i, i + batchSize);
-                        const usersQuery = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', batchIds).get();
-                        usersQuery.docs.forEach(doc => {
-                            loadedUsers[doc.id] = { id: doc.id, ...doc.data() };
-                        });
-                    }
-                }
-
-                async function handleNewRequest(e) {
-                    e.preventDefault();
-                    const title = document.getElementById('request-title').value.trim();
-                    const question = document.getElementById('request-question').value.trim();
-                    const submitBtn = document.getElementById('submit-request-btn');
-                    
-                    if (!question) {
-                        showModal(TPL.messageModal('Error', 'The question field cannot be empty.', 'red'));
-                        return;
-                    }
-
-                    submitBtn.disabled = true;
-                    submitBtn.textContent = 'Submitting...';
-
-                    try {
-                        await db.collection('classes').doc(currentClassId).collection('requests').add({
-                            studentId: currentUser.uid,
-                            title: title || 'No Title',
-                            question: question,
-                            status: 'pending',
-                            comment: '',
-                            timestamp: firebase.firestore.FieldValue.serverTimestamp()
-                        });
-                        showModal(TPL.messageModal('Success', 'Your request has been submitted! We\'ll notify you when your teacher responds.', 'green'));
-                        document.getElementById('new-request-form').reset();
-                    } catch (error) {
-                        console.error('Error submitting request:', error);
-                        showModal(TPL.messageModal('Error', 'Failed to submit request. Please try again.', 'red'));
-                    } finally {
-                        submitBtn.disabled = false;
-                        submitBtn.textContent = 'Ask a Question';
-                    }
-                }
-                
-                async function handleRequestActions(e) {
-                    const target = e.target.closest('button');
-                    if (!target || !target.dataset.requestId) return;
-
-                    const { requestId, action, comment } = target.dataset;
-                    const requestRef = db.collection('classes').doc(currentClassId).collection('requests').doc(requestId);
-
-                    try {
-                        if (action === 'accept') {
-                            await requestRef.update({ status: 'accepted', comment: '' });
-                        } else if (action === 'deny') {
-                            await requestRef.update({ status: 'denied', comment: '' });
-                        } else if (action === 'add-comment') {
-                            showModal(TPL.commentModal(requestId, ''));
-                        } else if (action === 'edit-comment') {
-                            showModal(TPL.commentModal(requestId, comment));
-                        } else if (action === 'delete-comment') {
-                            await requestRef.update({ status: 'pending', comment: '' });
-                        }
-                    } catch (error) {
-                           console.error(`Error performing action ${action}:`, error);
-                           showModal(TPL.messageModal('Action Failed', `Could not complete the action: ${error.message}`, 'red'));
-                    }
-                }
-                
-                async function handleCommentSubmit(e) {
-                    e.preventDefault();
-                    const requestId = document.getElementById('comment-request-id').value;
-                    const comment = document.getElementById('comment-input').value.trim();
-                    
-                    if (!comment) {
-                        showModal(TPL.messageModal('Error', 'Comment cannot be empty.', 'red'));
-                        return;
-                    }
-                    
-                    const requestRef = db.collection('classes').doc(currentClassId).collection('requests').doc(requestId);
-                    await requestRef.update({ status: 'commented', comment: comment });
-                    hideModal();
-                }
-
-                // --- UTILITY FUNCTIONS ---
-
-                async function updateClassTitle(classId, newTitle) {
-                    const classRef = db.collection('classes').doc(classId);
-                    const userRef = db.collection('users').doc(currentUser.uid);
-                    const userDoc = await userRef.get();
-                    const userData = userDoc.data();
-                    
-                    // NEW: Retrieve change count and last change date from the user document
-                    const classChanges = userData.classChanges || { count: 0, lastChangeDate: null };
-                    const today = new Date();
-                    const lastChangeDate = classChanges.lastChangeDate ? new Date(classChanges.lastChangeDate.seconds * 1000) : null;
-                    const isNewDay = !lastChangeDate || !isSameDay(lastChangeDate, today);
-                    let newCount = isNewDay ? 1 : (classChanges.count || 0) + 1;
-                    
-                    // NEW: Change limit from 3 to 5
-                    if (newCount > 5) {
-                        showModal(TPL.messageModal('Limit Reached', 'You have reached the daily limit of 5 class name changes.', 'yellow'));
-                        return;
-                    }
-
-                    try {
-                        // Use a Firestore batch to update both documents atomically
-                        const batch = db.batch();
-                        
-                        // Update the class name
-                        batch.update(classRef, { name: newTitle });
-                        
-                        // Update the user's name change count
-                        batch.update(userRef, { 
-                            classChanges: {
-                                count: newCount,
-                                lastChangeDate: firebase.firestore.FieldValue.serverTimestamp()
-                            }
-                        });
-
-                        await batch.commit();
-
-                        // Update the local user data object
-                        userData.classChanges.count = newCount;
-                        userData.classChanges.lastChangeDate = firebase.firestore.FieldValue.serverTimestamp();
-                        
-                        showModal(TPL.messageModal('Title Updated', `Class title successfully updated. ${5 - newCount} changes remaining today.`, 'green'));
-                    } catch(error) {
-                        console.error('Error updating class title:', error);
-                        showModal(TPL.messageModal('Update Failed', 'Failed to update class title. Please try again.', 'red'));
-                    }
-                }
-
-                async function deleteClass(classId) {
-                    await db.collection('classes').doc(classId).delete();
-                    hideModal();
-                    currentClassId = null;
-                    renderMainContent();
-                }
-
-                async function removeUserFromClass(classId, userId, userRole) {
-                    const classRef = db.collection('classes').doc(classId);
-                    let fieldToUpdate = userRole === 'student' ? 'studentIds' : 'teacherIds';
-                    
-                    await classRef.update({
-                        [fieldToUpdate]: firebase.firestore.FieldValue.arrayRemove(userId)
-                    });
-                    
-                    hideModal();
-                    
-                    // The main listener will handle the re-render automatically
-                }
-                
                 // --- Modal Control ---
                 function showModal(modalHTML) {
                     modalContainer.innerHTML = modalHTML;
@@ -838,6 +365,7 @@
                 async function joinClass(classCode) {
                     const classQuery = await db.collection('classes').where('code', '==', classCode).limit(1).get();
                     if (classQuery.empty) {
+                        // Using a custom modal/message box instead of alert()
                         showModal(TPL.messageModal('Error', 'Invalid class code. Please try again.', 'red'));
                         return;
                     }
@@ -847,16 +375,15 @@
 
                     const isAlreadyMember = (classData.studentIds || []).includes(currentUser.uid) || (classData.teacherIds || []).includes(currentUser.uid) || classData.teacherId === currentUser.uid;
                     if (isAlreadyMember) {
+                        // Using a custom modal/message box instead of alert()
                         showModal(TPL.messageModal('Already Enrolled', `You are already a member of the class: ${classData.name}.`, 'yellow'));
                         return;
                     }
                     
-                    // NEW: Check if joining user is a teacher and offer co-teacher role
+                    // Logic: If user is a teacher, prompt for co-teacher join. Otherwise, join as student.
                     if (userData.role === 'teacher') {
-                        // Instead of auto-adding, show a confirmation modal
                         showModal(TPL.joinClassAsTeacherConfirm(classId, classData.name));
                     } else {
-                        // Student joins directly
                         const classRef = db.collection('classes').doc(classId);
                         await classRef.update({ studentIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
                         hideModal();
@@ -864,9 +391,7 @@
                     }
                 }
 
-                // NEW: Function to handle a teacher joining as a co-teacher
                 async function joinClassAsTeacher(classId, className) {
-                    // This function is now called from the confirmation modal
                     const classRef = db.collection('classes').doc(classId);
                     await classRef.update({ teacherIds: firebase.firestore.FieldValue.arrayUnion(currentUser.uid) });
                     hideModal();
@@ -971,6 +496,7 @@
                     try {
                         loadingEl.textContent = 'Loading courses...';
                         
+                        // Fetch courses the authenticated user teaches
                         const response = await gapi.client.classroom.courses.list({
                             teacherId: 'me',
                             courseStates: 'ACTIVE'
@@ -979,11 +505,7 @@
                         loadingEl.classList.add('hidden');
                         const courses = response.result.courses || [];
 
-                        // NEW: Defensive check before calling where()
-                        if (!currentUser || !currentUser.uid) {
-                            console.error("User is not authenticated. Cannot query Firestore.");
-                            throw new Error("Authentication error. Please log in again.");
-                        }
+                        // Fetch currently imported classes to check for duplicates
                         const notifyClassesSnapshot = await db.collection('classes').where('teacherId', '==', currentUser.uid).get();
                         const existingGoogleIds = new Set();
                         notifyClassesSnapshot.forEach(doc => {
@@ -997,7 +519,7 @@
                                 const buttonHtml = isImported
                                     ? '<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>'
                                     : `<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" 
-                                        class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`;
+                                        class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`; // Updated button styling
 
                                 return `
                                     <li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg">
@@ -1039,6 +561,7 @@
                     }
 
                     try {
+                        // Check again in case of rapid clicks
                         const existingClass = await db.collection('classes').where('googleCourseId', '==', googleCourseId).limit(1).get();
                         if (!existingClass.empty) {
                             showModal(TPL.messageModal('Duplicate', 'This class has already been imported.', 'yellow'));
@@ -1054,20 +577,19 @@
                         const students = studentsResponse.result.students || [];
 
                         const studentEmails = students.map(s => s.profile.emailAddress);
-                        let existingStudentUids = [];
-                        let pendingEmails = [];
-                        
+                        const existingStudentUids = [];
+                        const pendingEmails = [];
+
                         if (studentEmails.length > 0) {
-                            const uniqueEmails = Array.from(new Set(studentEmails));
-                            
+                            // Firestore supports 'in' query on up to 10 emails
                             const batchSize = 10;
-                            for (let i = 0; i < uniqueEmails.length; i += batchSize) {
-                                const batchEmails = uniqueEmails.slice(i, i + batchSize);
-                                // NEW: Defensive check for empty email array to prevent Firestore error
+                            for (let i = 0; i < studentEmails.length; i += batchSize) {
+                                const batchEmails = studentEmails.slice(i, i + batchSize);
+                                
+                                // FIX: Check for empty batchEmails array before calling Firestore
                                 if (batchEmails.length > 0) {
                                     const usersSnapshot = await db.collection('users').where('email', 'in', batchEmails).get();
                                     const existingEmailsBatch = new Set();
-                                    
                                     usersSnapshot.forEach(doc => {
                                         existingStudentUids.push(doc.id);
                                         existingEmailsBatch.add(doc.data().email);
@@ -1091,16 +613,17 @@
                             teacherIds: [],
                             code: classCode, 
                             googleCourseId: googleCourseId,
-                            studentIds: existingStudentUids, 
-                            pendingStudentEmails: pendingEmails, 
+                            studentIds: existingStudentUids,
+                            pendingStudentEmails: pendingEmails,
                             createdAt: firebase.firestore.FieldValue.serverTimestamp()
                         });
                         
-                        showModal(TPL.messageModal('Import Successful', `Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing Notify students and ${pendingEmails.length} students pending automatic enrollment!`, 'green'));
+                        showModal(TPL.messageModal('Import Successful', `Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`, 'green'));
                         hideModal();
                     } catch (error) {
                         console.error("Error importing Google Classroom:", error);
-                        let errorMessage = 'Failed to import class. Please check your Google Classroom API access.';
+                        // Fallback message, trying to extract error details if available
+                        let errorMessage = 'Failed to import class. Please ensure Google Classroom API is enabled for your account.';
                         if (error.result && error.result.error) {
                                errorMessage = error.result.error.message || errorMessage;
                         } else if (error.message) {
@@ -1147,21 +670,6 @@
                         const className = target.dataset.className;
                         joinClassAsTeacher(classId, className);
                     }
-                    
-                    if(target.id === 'delete-class-btn') {
-                            showModal(TPL.deleteClassConfirm(allLoadedClasses[currentClassId]));
-                    }
-
-                    if(target.id === 'confirm-delete-class-btn') {
-                        const classId = target.dataset.classId;
-                        deleteClass(classId);
-                    }
-                    
-                    // Roster remove user confirmation
-                    if(target.id === 'confirm-remove-user-btn') {
-                        const { classId, userId, userRole } = target.dataset;
-                        await removeUserFromClass(classId, userId, userRole);
-                    }
                 });
                 
                 document.body.addEventListener('submit', async e => {
@@ -1175,17 +683,6 @@
                     if(e.target.id === 'join-class-form') {
                         const classCode = e.target.querySelector('#class-code-input').value.trim().toUpperCase();
                         if(classCode) joinClass(classCode);
-                    }
-                    
-                    if(e.target.id === 'class-settings-form') {
-                        const newTitle = e.target.querySelector('#class-title-input').value.trim();
-                        if (newTitle) {
-                            await updateClassTitle(currentClassId, newTitle);
-                        }
-                    }
-
-                    if(e.target.id === 'request-comment-form') {
-                        await handleCommentSubmit(e);
                     }
                 });
 
@@ -1208,7 +705,7 @@
                                     <p class="mt-2 text-gray-600">${escapeHtml(message)}</p>
                                 </div>
                                 <div class="mt-6">
-                                    <button type="button" class="modal-close-btn px-6 py-2 ${bg} text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly action-btn-poppins">OK</button>
+                                    <button type="button" class="modal-close-btn px-6 py-2 ${bg} text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly">OK</button>
                                 </div>
                             </div>
                         `;
@@ -1219,11 +716,11 @@
                                 <svg class="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg>
                                 <h2 class="mt-4 text-xl font-semibold text-gray-700">Welcome, ${user?.username || ''}!</h2>
                                 <p class="mt-1 text-gray-500">Select a class from the sidebar or get started below.</p>
-                                <div class="mt-6 flex flex-col items-center space-y-4 w-64 mx-auto">
+                                <div class="mt-6 flex flex-col items-center space-y-4">
                                     ${user.role === 'teacher' ? 
-                                        `<button id="new-class-btn" class="w-full bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center justify-center space-x-2 btn-bubbly action-btn-poppins"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`
+                                        `<button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 transition-colors duration-150 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`
                                         : ''}
-                                    <button id="join-class-btn-main" class="w-full bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 btn-bubbly flex items-center justify-center space-x-2 action-btn-poppins">
+                                    <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 transition-colors duration-150 btn-bubbly flex items-center space-x-2">
                                         <i class="fa-solid fa-user-plus w-5 h-5"></i>
                                         <span>Join Class</span>
                                     </button>
@@ -1231,309 +728,14 @@
                             </div>
                         </div>
                     `,
-                    classView: (cls, user, activeTab) => {
-                        const isTeacher = user.role === 'teacher';
-                        return `
-                            <div class="fade-enter-active">
-                                <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
-                                    <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-                                        <h2 class="text-2xl font-bold text-gray-800 font-poppins truncate max-w-full sm:max-w-md">${escapeHtml(cls.name)}</h2>
-                                        <p class="text-sm text-gray-500 mt-2 sm:mt-0">Class Code: <span class="font-semibold text-gray-800">${escapeHtml(cls.code)}</span></p>
-                                    </div>
-                                    <div class="mt-6 border-b border-gray-200" id="class-tabs">
-                                        <nav class="-mb-px flex space-x-4 sm:space-x-8 overflow-x-auto" aria-label="Tabs">
-                                            <button class="flex-shrink-0 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'overview' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}" data-tab="overview" role="tab" aria-selected="${activeTab === 'overview'}">Overview</button>
-                                            <button class="flex-shrink-0 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'roster' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}" data-tab="roster" role="tab" aria-selected="${activeTab === 'roster'}">Roster</button>
-                                            ${cls.teacherId === user.uid ? `
-                                            <button class="flex-shrink-0 whitespace-nowrap py-4 px-1 border-b-2 font-medium text-sm transition-colors ${activeTab === 'settings' ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}" data-tab="settings" role="tab" aria-selected="${activeTab === 'settings'}">Settings</button>
-                                            ` : ''}
-                                        </nav>
-                                    </div>
-                                    <div id="tab-content" class="mt-6"></div>
+                    classView: (cls, user) => `
+                        <div class="fade-enter-active">
+                            <div class="bg-white p-6 rounded-lg shadow-sm border border-gray-200">
+                                <h2 class="text-2xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
+                                <p class="text-sm text-gray-500 mt-1">Class Code: <span class="font-semibold">${escapeHtml(cls.code)}</span></p>
+                                <div class="mt-4">
+                                    <p class="text-sm text-gray-600">This is a simplified view. Your class features would be displayed here.</p>
                                 </div>
-                            </div>
-                        `;
-                    },
-                    classOverview: (cls, user, requests) => {
-                        const isTeacher = user.role === 'teacher';
-                        const requestsHeader = isTeacher ? 'Recent Requests' : 'Your Recent Requests';
-                        const sortOptions = `
-                            <select id="request-sort-select" class="app-input text-sm px-3 py-1 bg-white border-gray-300 rounded-lg font-inter">
-                                <option value="timestamp_desc">Newest - Oldest</option>
-                                <option value="timestamp_asc">Oldest - Newest</option>
-                                <option value="title_asc">Title (A-Z)</option>
-                                <option value="title_desc">Title (Z-A)</option>
-                            </select>
-                        `;
-
-                        const newRequestForm = `
-                            <div class="bg-white p-6 rounded-xl shadow-md border border-gray-200">
-                                <h3 class="text-lg font-semibold text-gray-800 font-poppins mb-4">Ask a Question</h3>
-                                <form id="new-request-form" class="space-y-4">
-                                    <div>
-                                        <label for="request-title" class="block text-sm font-medium text-gray-700">Title (Optional)</label>
-                                        <input type="text" id="request-title" class="mt-1 block w-full app-input" placeholder="e.g., Help with homework">
-                                    </div>
-                                    <div>
-                                        <label for="request-question" class="block text-sm font-medium text-gray-700">Question</label>
-                                        <textarea id="request-question" rows="3" class="mt-1 block w-full app-input" placeholder="Type your question here..." required></textarea>
-                                    </div>
-                                    <div class="flex justify-end">
-                                        <button id="submit-request-btn" type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors btn-bubbly action-btn-poppins">Ask a Question</button>
-                                    </div>
-                                </form>
-                            </div>
-                        `;
-
-                        const requestList = `
-                            <div class="mt-8">
-                                <div class="flex justify-between items-center mb-4">
-                                    <h3 class="text-lg font-semibold text-gray-800 font-poppins">${requestsHeader} (Today's Requests)</h3>
-                                    ${isTeacher ? `<div class="text-sm text-gray-600 flex items-center space-x-2"><span class="hidden sm:inline">Sort By:</span> ${sortOptions}</div>` : ''}
-                                </div>
-                                <div id="requests-container" class="space-y-4">
-                                    ${requests.length > 0 ? requests.map(request => TPL.requestCard(request, user)).join('') : `
-                                        <div class="text-center text-gray-500 bg-white p-8 rounded-xl border border-gray-200">
-                                            <p>No recent requests found for today.</p>
-                                        </div>
-                                    `}
-                                </div>
-                            </div>
-                        `;
-
-                        const studentView = `
-                            <div class="space-y-6">
-                                ${newRequestForm}
-                                ${requestList}
-                            </div>
-                        `;
-
-                        const teacherView = `
-                            <div class="space-y-6">
-                                ${requestList}
-                            </div>
-                        `;
-
-                        return isTeacher ? teacherView : studentView;
-                    },
-                    requestCard: (request, user) => {
-                        const isTeacher = user.role === 'teacher';
-                        const studentName = loadedUsers[request.studentId]?.username || 'Unknown User';
-                        const formattedTimestamp = request.timestamp ? new Date(request.timestamp.seconds * 1000).toLocaleString('en-US', {hour: '2-digit', minute: '2-digit'}) : 'Just now';
-
-                        const statusColors = {
-                            'accepted': 'bg-green-50/70 border-green-200',
-                            'denied': 'bg-red-50/70 border-red-200',
-                            'commented': 'bg-blue-50/70 border-blue-200',
-                            'pending': 'bg-yellow-50/70 border-yellow-200'
-                        };
-
-                        const getStatusIcon = (status) => {
-                            switch(status) {
-                                case 'accepted': return '<i class="fa-regular fa-thumbs-up fa-2x text-green-600"></i>';
-                                case 'denied': return '<i class="fa-regular fa-thumbs-down fa-2x text-red-600"></i>';
-                                case 'commented': return '<i class="fa-regular fa-comment fa-2x text-blue-600"></i>';
-                                case 'pending':
-                                default: return '<i class="fa-regular fa-hand fa-2x text-gray-500"></i>';
-                            }
-                        };
-                        
-                        const getRequestActions = (request) => {
-                            if (isTeacher) {
-                                const commentBtn = request.status === 'commented' 
-                                    ? `
-                                        <button data-request-id="${request.id}" data-action="edit-comment" data-comment="${escapeHtml(request.comment)}" class="px-3 py-1 text-sm bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors btn-bubbly action-btn-poppins">Edit Comment</button>
-                                        <button data-request-id="${request.id}" data-action="delete-comment" class="px-3 py-1 text-sm bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors btn-bubbly action-btn-poppins">Delete</button>
-                                    `
-                                    : `<button data-request-id="${request.id}" data-action="add-comment" class="px-3 py-1 text-sm bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors btn-bubbly action-btn-poppins">Comment</button>`;
-
-                                return `
-                                    <div class="flex flex-wrap items-center gap-2">
-                                        <button data-request-id="${request.id}" data-action="accept" class="px-3 py-1 text-sm bg-green-100 text-green-600 rounded-lg hover:bg-green-200 transition-colors btn-bubbly action-btn-poppins">Accept</button>
-                                        <button data-request-id="${request.id}" data-action="deny" class="px-3 py-1 text-sm bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors btn-bubbly action-btn-poppins">Deny</button>
-                                        ${commentBtn}
-                                    </div>
-                                `;
-                            }
-                            return '';
-                        };
-
-                        return `
-                            <div class="relative p-6 rounded-xl shadow-sm border ${statusColors[request.status] || statusColors.pending} flex flex-col space-y-4">
-                                <div class="absolute top-4 left-4">
-                                    ${getStatusIcon(request.status)}
-                                </div>
-                                <div class="flex-grow ml-12">
-                                    <div class="flex items-start justify-between">
-                                        <div>
-                                            <h4 class="font-bold text-gray-800 text-lg font-poppins">${escapeHtml(request.title)}</h4>
-                                            <p class="text-sm text-gray-500 mt-1">From: ${escapeHtml(studentName)} at ${formattedTimestamp}</p>
-                                        </div>
-                                    </div>
-                                    <p class="mt-4 text-gray-700">${escapeHtml(request.question)}</p>
-                                    ${request.comment ? `
-                                        <div class="mt-4 p-3 bg-white rounded-lg border-l-4 border-gray-400">
-                                            <p class="text-xs font-semibold text-gray-600">Teacher's Comment:</p>
-                                            <p class="text-sm text-gray-700 mt-1">${escapeHtml(request.comment)}</p>
-                                        </div>
-                                    ` : ''}
-                                </div>
-                                <div class="flex justify-end pt-2">
-                                    ${getRequestActions(request)}
-                                </div>
-                            </div>
-                        `;
-                    },
-                    commentModal: (requestId, initialComment) => `
-                        <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
-                            <h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a Comment</h3>
-                            <form id="request-comment-form" class="mt-4 space-y-4">
-                                <input type="hidden" id="comment-request-id" value="${requestId}">
-                                <div>
-                                    <label for="comment-input" class="block text-sm font-medium text-gray-700">Comment</label>
-                                    <textarea id="comment-input" rows="4" class="mt-1 block w-full app-input" required>${escapeHtml(initialComment)}</textarea>
-                                </div>
-                                <div class="flex justify-end space-x-3">
-                                    <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Cancel</button>
-                                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly action-btn-poppins">Save Comment</button>
-                                </div>
-                            </form>
-                        </div>
-                    `,
-                    removeUserConfirm: (cls, user, role) => `
-                        <div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-xl pointer-events-auto text-center">
-                            <i class="fa-solid fa-user-minus fa-3x text-red-600 mb-4"></i>
-                            <h3 class="text-xl font-bold text-gray-800 font-poppins">Remove User</h3>
-                            <p class="mt-2 text-gray-600">Are you sure you want to remove <strong>${escapeHtml(user.username)}</strong> (Role: ${role}) from the class <strong>${escapeHtml(cls.name)}</strong>?</p>
-                            <p class="mt-2 font-semibold text-red-600 text-sm">They will lose access immediately.</p>
-                            <div class="mt-6 flex justify-center space-x-3">
-                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Cancel</button>
-                                <button id="confirm-remove-user-btn" 
-                                    data-class-id="${cls.id}" 
-                                    data-user-id="${user.id}" 
-                                    data-user-role="${role === 'owner' ? 'teacher' : role}" 
-                                    class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly action-btn-poppins">Remove</button>
-                            </div>
-                        </div>
-                    `,
-                    classRoster: (cls, users, myUserData) => {
-                        const isOwner = cls.teacherId === myUserData.uid;
-                        const isCoTeacher = cls.teacherIds && cls.teacherIds.includes(myUserData.uid);
-                        const isStudent = cls.studentIds && cls.studentIds.includes(myUserData.uid);
-
-                        const getRosterList = (uids, title, role) => {
-                            if (!uids || uids.length === 0) return '';
-                            const userList = uids.map(uid => {
-                                const user = users[uid];
-                                if (!user) return '';
-                                // NEW: Conditional email display
-                                const emailHtml = isOwner ? `<p class="text-xs text-gray-500">${escapeHtml(user.email)}</p>` : '';
-
-                                // NEW: Conditional remove button logic
-                                const isRemovable = (isCoTeacher && role === 'student') || (isOwner && uid !== myUserData.uid);
-                                
-                                const removeButton = isRemovable
-                                ? `<button class="${role === 'student' ? 'remove-student-btn' : 'remove-coteacher-btn'} text-gray-400 hover:text-red-500 transition-colors" data-user-id="${user.id}" data-user-role="${role}" title="Remove user"><i class="fa-solid fa-user-minus"></i></button>`
-                                : '';
-
-                                return `
-                                    <li class="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
-                                        <div class="flex items-center">
-                                            <div class="h-8 w-8 rounded-full flex items-center justify-center bg-gray-300 text-gray-700 font-bold text-sm mr-3">
-                                                ${user.photoURL ? `<img src="${user.photoURL}" onerror="this.onerror=null;this.parentElement.innerHTML='${user.username.charAt(0).toUpperCase()}'" alt="" class="h-full w-full rounded-full object-cover">` : user.username.charAt(0).toUpperCase()}
-                                            </div>
-                                            <div>
-                                                <p class="font-medium text-gray-800">${escapeHtml(user.username)}</p>
-                                                ${emailHtml}
-                                            </div>
-                                        </div>
-                                        ${removeButton}
-                                    </li>
-                                `;
-                            }).join('');
-                            return `
-                                <div>
-                                    <h4 class="text-sm font-semibold text-gray-600 uppercase mb-2">${title} (${uids.length})</h4>
-                                    <ul class="space-y-2" id="roster-list">
-                                        ${userList}
-                                    </ul>
-                                </div>
-                            `;
-                        };
-                        
-                        const teachers = (cls.teacherIds || []).filter(id => id !== cls.teacherId);
-                        
-                        return `
-                            <div class="space-y-6">
-                                ${getRosterList([cls.teacherId], 'Class Owner', 'owner')}
-                                ${getRosterList(teachers, 'Co-Teachers', 'teacher')}
-                                ${getRosterList(cls.studentIds, 'Students', 'student')}
-                                ${isOwner || isCoTeacher && cls.pendingStudentEmails && cls.pendingStudentEmails.length > 0 ? `
-                                    <div>
-                                        <h4 class="text-sm font-semibold text-gray-600 uppercase mb-2">Pending Students (Emails to Auto-Enroll: ${cls.pendingStudentEmails.length})</h4>
-                                        <ul class="space-y-2 text-gray-500 text-sm">
-                                            ${cls.pendingStudentEmails.map(email => `
-                                                <li class="p-3 bg-gray-50 rounded-lg truncate">${escapeHtml(email)} (Awaiting login)</li>
-                                            `).join('')}
-                                        </ul>
-                                    </div>
-                                ` : ''}
-                            </div>
-                        `;
-                    },
-                    classSettings: (cls) => {
-                        // NEW: Changes remaining is now tied to the user's data
-                        const changesRemaining = 5 - (userData.classChanges?.count || 0);
-                        return `
-                            <div class="space-y-6">
-                                <div>
-                                    <h3 class="text-lg font-semibold text-gray-800 mb-2 font-poppins">General Settings</h3>
-                                    <form id="class-settings-form" class="space-y-4">
-                                        <div>
-                                            <label for="class-title-input" class="block text-sm font-medium text-gray-700">Class Title</label>
-                                            <input type="text" id="class-title-input" class="mt-1 block w-full app-input" value="${escapeHtml(cls.name)}" required>
-                                            <p class="mt-1 text-xs ${changesRemaining > 0 ? 'text-gray-500' : 'text-red-500'}">Name changes remaining today: <strong>${changesRemaining} / 5</strong></p>
-                                        </div>
-                                        <div class="flex justify-end">
-                                            <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly action-btn-poppins" ${changesRemaining <= 0 ? 'disabled' : ''}>Save Changes</button>
-                                        </div>
-                                    </form>
-                                </div>
-                                <hr class="border-gray-200">
-                                <div>
-                                    <h3 class="text-lg font-semibold text-red-700 mb-2 font-poppins">Danger Zone</h3>
-                                    <div class="bg-red-50 p-4 rounded-lg border border-red-200 flex items-center justify-between">
-                                        <div>
-                                            <p class="text-sm font-medium text-red-800">Delete this class</p>
-                                            <p class="text-xs text-red-600">This action is permanent and cannot be undone.</p>
-                                        </div>
-                                        <button id="delete-class-btn" class="btn-bubbly px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors action-btn-poppins">Delete Class</button>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                    },
-                    deleteClassConfirm: (cls) => `
-                        <div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-xl pointer-events-auto text-center">
-                            <i class="fa-solid fa-trash fa-3x text-red-600 mb-4"></i>
-                            <h3 class="text-xl font-bold text-gray-800 font-poppins">Delete Class</h3>
-                            <p class="mt-2 text-gray-600">Are you sure you want to delete <strong>${escapeHtml(cls.name)}</strong>? This action is permanent.</p>
-                            <div class="mt-6 flex justify-center space-x-3">
-                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Cancel</button>
-                                <button id="confirm-delete-class-btn" data-class-id="${cls.id}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly action-btn-poppins">Delete</button>
-                            </div>
-                        </div>
-                    `,
-                    permissionDenied: () => `
-                        <div class="h-full flex items-center justify-center text-center text-gray-500">
-                            <p>You do not have permission to access these settings.</p>
-                        </div>
-                    `,
-                    loadingState: (message) => `
-                        <div class="h-full flex items-center justify-center text-center text-gray-500">
-                            <div>
-                                <i class="fa-solid fa-spinner fa-spin fa-2x text-blue-600 mb-2"></i>
-                                <p>${escapeHtml(message)}</p>
                             </div>
                         </div>
                     `,
@@ -1547,12 +749,12 @@
                                     <span class="font-semibold text-gray-700">Create Manually</span>
                                 </button>
                                 <button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly">
-                                    <img src="../images/google-classroom.png" alt="Google Classroom icon" class="w-8 h-8 mb-2">
+                                    <img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4">
                                     <span class="font-semibold text-gray-700">Import from Classroom</span>
                                 </button>
                             </div>
                             <div class="mt-6 text-center">
-                                <button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800 action-btn-poppins">Cancel</button>
+                                <button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button>
                             </div>
                         </div>
                     `,
@@ -1565,8 +767,8 @@
                                     <input type="text" id="new-class-name" required class="mt-1 block w-full app-input" placeholder="Enter class name...">
                                 </div>
                                 <div class="flex justify-end space-x-3">
-                                    <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Cancel</button>
-                                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly action-btn-poppins">Create</button>
+                                    <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
+                                    <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Create</button>
                                 </div>
                             </form>
                         </div>
@@ -1584,8 +786,8 @@
                                     <input type="text" id="class-code-input" required minlength="8" maxlength="8" class="block w-full app-input text-center font-bold tracking-widest uppercase text-lg" placeholder="e.g., ABC12345">
                                 </div>
                                 <div class="flex justify-end space-x-3">
-                                    <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Cancel</button>
-                                    <button type="submit" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 btn-bubbly action-btn-poppins">Join Class</button>
+                                    <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
+                                    <button type="submit" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 btn-bubbly">Join Class</button>
                                 </div>
                             </form>
                         </div>
@@ -1599,15 +801,15 @@
                             <p class="mt-4 text-gray-600">You are joining class <strong>${escapeHtml(className)}</strong> as a **Co-Teacher**. This grants you full management permissions.</p>
                             <p class="mt-2 font-semibold text-red-600 text-center">Do you wish to proceed?</p>
                             <div class="mt-6 flex justify-end space-x-3">
-                                <button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Cancel</button>
-                                <button id="confirm-join-teacher-btn" data-class-id="${classId}" data-class-name="${escapeHtml(className)}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly action-btn-poppins">Confirm Co-Teacher Join</button>
+                                <button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
+                                <button id="confirm-join-teacher-btn" data-class-id="${classId}" data-class-name="${escapeHtml(className)}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Confirm Co-Teacher Join</button>
                             </div>
                         </div>
                     `,
                     googleImportModal: () => `
                         <div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto">
                             <div class="flex items-center justify-center mb-4">
-                                <img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-8 w-8 mb-2 mr-3">
+                                <img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4">
                                 <h3 class="text-2xl font-bold text-gray-800 font-poppins">Import from Classroom</h3>
                             </div>
                             <p class="text-center text-gray-500 mb-6">Select a class you own to import it into Notify.</p>
@@ -1620,7 +822,7 @@
                                 <ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul>
                             </div>
                             <div class="flex justify-center mt-6">
-                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly action-btn-poppins">Close</button>
+                                <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button>
                             </div>
                         </div>
                     `
