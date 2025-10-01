@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Notify | Loading...</title>
     
-    <!-- Load Font Awesome Icons -->
-    <script src="https://kit.fontawesome.com/c5e93c8378.js" crossorigin="anonymous"></script>
+    <!-- FIX 1: Load Font Awesome using the stable, public CDN URL to avoid 403 errors -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" 
+          xintegrity="sha512-SnH5WK+bZxgPHs44uWIX+LLMD/CDQ18z0DSE4G3cQAJv4Iqj5/L3QOaK3hN+r/IuQp2J/k5bE0W+A==" 
+          crossorigin="anonymous" referrerpolicy="no-referrer" />
 
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
@@ -87,7 +89,15 @@
 
         // Global Firebase Configuration (provided by the environment)
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        // FIX 3: Ensure robust parsing of the firebase config with a guaranteed default structure
+        const firebaseConfigString = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
+        let firebaseConfig;
+        try {
+            firebaseConfig = JSON.parse(firebaseConfigString);
+        } catch (e) {
+            console.error("Failed to parse firebase config:", e);
+            firebaseConfig = {};
+        }
         const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
         // State Variables
@@ -269,7 +279,7 @@
                     console.error('Class document not found. Attempting to create a default one for first run.');
                     
                     // Create a default class document if it doesn't exist
-                    if (userRole === 'teacher' || userId) { // Only attempt if authenticated
+                    if (userId) { // Only attempt if authenticated
                         setDoc(docRef, {
                             teachers: [userId],
                             coTeachers: [],
@@ -1008,6 +1018,17 @@
                 });
             }
         }
+        
+        /**
+         * Main render function to update the UI content.
+         */
+        function render() {
+            const appContainer = $('#app-container');
+            if (appContainer) {
+                appContainer.innerHTML = renderHeader() + renderMainContent();
+                attachEventListeners();
+            }
+        }
 
 
         // --- Initialization ---
@@ -1015,6 +1036,14 @@
         async function init() {
             setLogLevel('Debug');
             try {
+                // FIX 3: Check for required projectId explicitly before initializing
+                if (!firebaseConfig || !firebaseConfig.projectId) {
+                     const errorMsg = 'Firebase configuration is missing the required Project ID. Cannot initialize.';
+                     console.error(errorMsg);
+                     $('#loading-spinner').innerHTML = `<i class="fas fa-exclamation-triangle text-2xl text-red-500"></i><p class="mt-2 text-red-600">${errorMsg}</p>`;
+                     return;
+                }
+                
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 auth = getAuth(app);
@@ -1033,13 +1062,14 @@
                         subscribeToRequests();
                     } else {
                         // User signed out or failed auth
-                        $('#loading-spinner').innerHTML = `<i class="fas fa-exclamation-triangle text-2xl"></i><p class="mt-2">Authentication failed. Please reload.</p>`;
+                        $('#loading-spinner').innerHTML = `<i class="fas fa-exclamation-triangle text-2xl text-red-500"></i><p class="mt-2 text-red-600">Authentication failed. Please reload.</p>`;
                     }
                 });
                 
             } catch (error) {
                 console.error("Firebase Initialization Error:", error);
-                $('#loading-spinner').innerHTML = `<i class="fas fa-exclamation-triangle text-2xl"></i><p class="mt-2">Failed to initialize. Check console for details.</p>`;
+                // Ensure the UI reflects the error
+                $('#loading-spinner').innerHTML = `<i class="fas fa-exclamation-triangle text-2xl text-red-500"></i><p class="mt-2 text-red-600">Failed to initialize: ${error.message}</p>`;
             }
         }
 
