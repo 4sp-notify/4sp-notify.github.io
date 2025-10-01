@@ -3,163 +3,146 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notify | Join Class</title>
+    <title>Notify | Class Invitation</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Poppins:wght@500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.5.2/css/all.min.css">
     <style>
-        body { font-family: 'Inter', sans-serif; background-color: #f3f4f6; }
-        .card { box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1); }
+        body { font-family: 'Inter', sans-serif; }
+        .font-poppins { font-family: 'Poppins', sans-serif; }
+        .btn-bubbly { transition: transform 0.1s ease-out; }
+        .btn-bubbly:active { transform: scale(0.95); }
     </style>
 </head>
-<body class="flex items-center justify-center min-h-screen p-4">
+<body class="bg-slate-100 flex items-center justify-center h-screen p-4">
 
-    <div id="loading-spinner" class="text-center">
-        <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto"></div>
-        <p class="mt-4 text-gray-600">Checking invitation...</p>
-    </div>
-
-    <div id="invite-card" class="card bg-white p-8 rounded-xl w-full max-w-md hidden">
-        <h1 id="invite-title" class="text-2xl font-bold text-gray-800 mb-4">Joining Class...</h1>
-        <p id="invite-message" class="text-gray-600 mb-6"></p>
-        <button id="action-button" class="w-full bg-indigo-600 text-white py-2 px-4 rounded-lg font-semibold hover:bg-indigo-700 transition duration-150 hidden" onclick="window.location.href='dashboard.html'">Go to Dashboard</button>
-        <button id="login-button" class="w-full bg-green-500 text-white py-2 px-4 rounded-lg font-semibold hover:bg-green-600 transition duration-150" onclick="redirectToAuth()">Login / Sign Up</button>
+    <div id="status-container" class="w-full max-w-md text-center p-8 bg-white rounded-xl shadow-lg">
+        <div id="icon-container">
+            <i class="fa-solid fa-spinner fa-spin fa-3x text-blue-500"></i>
+        </div>
+        <h1 id="status-heading" class="text-2xl font-bold font-poppins text-gray-800 mt-5">Processing Invitation...</h1>
+        <p id="status-message" class="text-gray-600 mt-2">Please wait while we verify your invite code.</p>
+        <div class="mt-6">
+            <a href="dashboard.html" id="dashboard-link" class="hidden inline-block px-6 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Go to Dashboard</a>
+            <a href="login.html" id="login-link" class="hidden inline-block px-6 py-2.5 bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 btn-bubbly">Login or Sign Up</a>
+        </div>
     </div>
 
     <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, collection, updateDoc, arrayUnion } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // --- Global Variables ---
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
-        const authToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-app.js";
+        import { getAuth, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-auth.js";
+        import { getFirestore, doc, getDoc, collection, query, where, updateDoc, arrayUnion, addDoc, serverTimestamp, getDocs } from "https://www.gstatic.com/firebasejs/9.15.0/firebase-firestore.js";
+        import { firebaseConfig } from "../firebase-config.js";
 
         const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
         const auth = getAuth(app);
-        
-        const urlParams = new URLSearchParams(window.location.search);
-        const inviteCode = urlParams.get('code');
-        
-        let inviteData = null;
+        const db = getFirestore(app);
 
-        // Function to redirect to auth page, passing the current invite code
-        window.redirectToAuth = () => {
-            const redirectUrl = `login.html?redirect_code=${inviteCode}`;
-            window.location.href = redirectUrl;
-        };
+        const iconContainer = document.getElementById('icon-container');
+        const statusHeading = document.getElementById('status-heading');
+        const statusMessage = document.getElementById('status-message');
+        const dashboardLink = document.getElementById('dashboard-link');
+        const loginLink = document.getElementById('login-link');
 
-        // Function to process the invitation logic
-        async function processInvite(user) {
-            const loadingSpinner = document.getElementById('loading-spinner');
-            const inviteCard = document.getElementById('invite-card');
-            const inviteTitle = document.getElementById('invite-title');
-            const inviteMessage = document.getElementById('invite-message');
-            const actionButton = document.getElementById('action-button');
-            const loginButton = document.getElementById('login-button');
+        function updateStatus(icon, heading, message, showDashboard = false, showLogin = false) {
+            iconContainer.innerHTML = icon;
+            statusHeading.textContent = heading;
+            statusMessage.textContent = message;
+            dashboardLink.classList.toggle('hidden', !showDashboard);
+            loginLink.classList.toggle('hidden', !showLogin);
+        }
 
-            loadingSpinner.classList.add('hidden');
-            inviteCard.classList.remove('hidden');
+        window.addEventListener('DOMContentLoaded', () => {
+            const urlParams = new URLSearchParams(window.location.search);
+            const inviteCode = urlParams.get('code');
 
-            if (!user) {
-                // User is not logged in, show login button
-                inviteTitle.textContent = "Please Log In";
-                inviteMessage.textContent = "You must log in or sign up to accept this invitation. You will be redirected here afterward.";
-                loginButton.classList.remove('hidden');
-                actionButton.classList.add('hidden');
-                return;
-            }
-
-            loginButton.classList.add('hidden'); // Hide login button if user is logged in
-            
             if (!inviteCode) {
-                inviteTitle.textContent = "Error";
-                inviteMessage.textContent = "Invalid invitation link.";
+                updateStatus(
+                    '<i class="fa-solid fa-link-slash fa-3x text-red-500"></i>',
+                    'Invalid Link',
+                    'No invite code was found in the URL. Please use a valid invitation link.',
+                    true
+                );
                 return;
             }
 
-            try {
-                // 1. Fetch the invitation details
-                const inviteRef = doc(db, 'artifacts', appId, 'public', 'data', 'invites', inviteCode);
-                const inviteSnap = await getDoc(inviteRef);
-                
-                if (!inviteSnap.exists()) {
-                    inviteTitle.textContent = "Error";
-                    inviteMessage.textContent = "This invitation link is expired or invalid.";
+            onAuthStateChanged(auth, async (user) => {
+                if (user) {
+                    const userDoc = await getDoc(doc(db, 'users', user.uid));
+                    if (!userDoc.exists()) {
+                         updateStatus(
+                            '<i class="fa-solid fa-user-xmark fa-3x text-red-500"></i>',
+                            'Account Error',
+                            'We could not find your user profile. Please try signing in again.',
+                            false, true
+                        );
+                        return;
+                    }
+                    const userData = { uid: user.uid, ...userDoc.data() };
+                    processInvite(inviteCode, userData);
+                } else {
+                    sessionStorage.setItem('postLoginRedirect', window.location.href);
+                    updateStatus(
+                        '<i class="fa-solid fa-right-to-bracket fa-3x text-gray-500"></i>',
+                        'Authentication Required',
+                        'Please log in or sign up to accept this invitation. Once you are logged in, you will be automatically redirected.',
+                        false, true
+                    );
+                }
+            });
+        });
+        
+        async function processInvite(code, userData) {
+            const qStudent = query(collection(db, "classes"), where("studentInviteCode", "==", code));
+            const qTeacher = query(collection(db, "classes"), where("teacherInviteCode", "==", code));
+            
+            const [studentSnap, teacherSnap] = await Promise.all([getDocs(qStudent), getDocs(qTeacher)]);
+
+            const classDoc = studentSnap.docs[0] || teacherSnap.docs[0];
+
+            if (!classDoc) {
+                updateStatus('<i class="fa-solid fa-circle-xmark fa-3x text-red-500"></i>', 'Invalid Code', 'This invitation code is not valid or has expired.', true);
+                return;
+            }
+
+            const classId = classDoc.id;
+            const classData = classDoc.data();
+            const isMember = (classData.studentIds || []).includes(userData.uid) || (classData.teacherIds || []).includes(userData.uid) || classData.teacherId === userData.uid;
+
+            if (isMember) {
+                updateStatus('<i class="fa-solid fa-check-double fa-3x text-blue-500"></i>', 'Already Enrolled', `You are already a member of "${classData.name}".`, true);
+                return;
+            }
+
+            if (!studentSnap.empty) { // Student invite
+                await updateDoc(doc(db, 'classes', classId), { studentIds: arrayUnion(userData.uid) });
+                updateStatus('<i class="fa-solid fa-circle-check fa-3x text-green-500"></i>', 'Success!', `You have been added to "${classData.name}" as a student.`, true);
+            } else if (!teacherSnap.empty) { // Teacher invite
+                if (userData.role !== 'teacher') {
+                    updateStatus('<i class="fa-solid fa-user-slash fa-3x text-orange-500"></i>', 'Role Mismatch', `This is a co-teacher invite, but your account is a student account. You cannot accept this invitation.`, true);
                     return;
                 }
                 
-                inviteData = inviteSnap.data();
-                const { classId, targetRole } = inviteData;
-                const classRef = doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId);
-
-                // 2. Fetch the current user's role (assuming it's stored on their user document or determined later)
-                // For simplicity here, we assume if they are authenticated, we can process the request
-                const userId = user.uid;
-
-                if (targetRole === 'student') {
-                    // Automatically add the user to the student roster
-                    await updateDoc(classRef, {
-                        studentEmails: arrayUnion(user.email) // Use email to match the pre-added roster logic
-                    });
-                    
-                    // Also update the student's personal document
-                    const studentUserRef = doc(db, 'artifacts', appId, 'users', userId, 'userData', 'profile');
-                    await setDoc(studentUserRef, {
-                        role: 'student',
-                        activeClassId: classId // Set the active class
-                    }, { merge: true });
-
-                    inviteTitle.textContent = "Success! You've Joined.";
-                    inviteMessage.textContent = `You have been successfully added as a Student to the class: ${inviteData.className}.`;
-                    actionButton.classList.remove('hidden');
-                    
-                } else if (targetRole === 'coteacher') {
-                    // Send a request to the main teacher
-                    const coteacherRequestsRef = collection(db, 'artifacts', appId, 'public', 'data', 'coteacher_requests');
-                    await setDoc(doc(coteacherRequestsRef, `${classId}_${userId}`), {
-                        classId: classId,
-                        className: inviteData.className,
-                        requesterId: userId,
-                        requesterEmail: user.email,
-                        status: 'pending',
-                        timestamp: new Date().toISOString()
-                    });
-
-                    inviteTitle.textContent = "Request Sent";
-                    inviteMessage.textContent = `A request to become a Co-Teacher for the class: ${inviteData.className} has been sent to the main teacher.`;
-                    actionButton.classList.remove('hidden');
+                // Check if a request already exists
+                const reqQuery = query(collection(db, 'classes', classId, 'coTeacherRequests'), where('requesterId', '==', userData.uid));
+                const existingReqs = await getDocs(reqQuery);
+                if (!existingReqs.empty) {
+                    updateStatus('<i class="fa-solid fa-paper-plane fa-3x text-blue-500"></i>', 'Request Already Sent', `You have already requested to co-teach "${classData.name}". The owner will review it soon.`, true);
+                    return;
                 }
 
-                // Optional: Delete the invite link after use if it's single-use
-                // await deleteDoc(inviteRef);
-
-            } catch (error) {
-                console.error("Error processing invite:", error);
-                inviteTitle.textContent = "An Error Occurred";
-                inviteMessage.textContent = "Could not process the invitation. Please try again or contact support.";
+                await addDoc(collection(db, 'classes', classId, 'coTeacherRequests'), {
+                    requesterId: userData.uid,
+                    requesterName: userData.username,
+                    requesterEmail: userData.email,
+                    status: 'pending',
+                    createdAt: serverTimestamp()
+                });
+                updateStatus('<i class="fa-solid fa-paper-plane fa-3x text-blue-500"></i>', 'Request Sent', `Your request to join "${classData.name}" as a co-teacher has been sent to the class owner for approval.`, true);
             }
         }
-
-        // 3. Handle Auth Status
-        if (authToken) {
-            // Use custom token for initial sign-in
-            signInWithCustomToken(auth, authToken).catch(e => {
-                console.error("Custom token sign-in failed:", e);
-                signInAnonymously(auth).catch(e2 => console.error("Anonymous sign-in failed:", e2));
-            });
-        } else {
-            // Sign in anonymously if no token is available (e.g., local development)
-            signInAnonymously(auth).catch(e => console.error("Anonymous sign-in failed:", e));
-        }
-
-        // Listener to wait for authentication to be ready
-        onAuthStateChanged(auth, (user) => {
-            // user object might be null if not logged in
-            processInvite(user);
-        });
-
     </script>
 </body>
 </html>
