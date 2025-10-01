@@ -199,6 +199,9 @@
             'email'
         ];
 
+        // Status for Google API loading
+        let gapiReady = false;
+
         // --- UI Elements ---
         const ui = {
             mainContent: document.getElementById('main-content'),
@@ -289,7 +292,8 @@
                         let h_str = padded.slice(0, 2);
                         let m_str = padded.slice(2, 4);
                         
-                        if (parseInt(h_str, 10) > 23) h_str = '23'; // 24h format (00-23)
+                        // FIX: Ensure 24-hour validation (00-23)
+                        if (parseInt(h_str, 10) > 23) h_str = '23'; 
                         if (parseInt(m_str, 10) > 59) m_str = '59';
 
                         const formattedValue = `${h_str}:${m_str}`;
@@ -301,7 +305,8 @@
 
                 input.addEventListener('blur', (e) => {
                     let [h, m] = e.target.value.split(':').map(Number);
-                    if (isNaN(h) || h < 0 || h > 23) h = 0; // 24h validation
+                    // FIX: Ensure 24-hour validation (00-23)
+                    if (isNaN(h) || h < 0 || h > 23) h = 0; 
                     if (isNaN(m) || m < 0 || m > 59) m = 0;
                     const finalValue = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
                     e.target.value = finalValue;
@@ -351,6 +356,8 @@
                 isTeacher = (userRole === 'teacher' || userRole === 'coteacher');
                 
                 if (isTeacher) {
+                    // Initialize Google API Client here, so it's ready when the button is clicked
+                    await loadGoogleApi(); 
                     setupListeners();
                     generateInviteLinks();
                     setupEventHandlers();
@@ -745,6 +752,7 @@
                     batch.set(doc(getRosterCollection(currentClassId), userId), {
                         userId: userId,
                         role: 'coteacher',
+                        displayName: 'Co-Teacher', // Placeholder, ideally should be fetched
                         classId: currentClassId 
                     }, { merge: true });
 
@@ -778,10 +786,15 @@
         
         // --- Google Classroom API Functions ---
         
-        let gapiReady = false;
-
         function loadGoogleApi() {
             return new Promise((resolve) => {
+                // Check if gapi is available
+                if (typeof gapi === 'undefined') {
+                     console.error("Google API script not loaded. Check network and CSP.");
+                     resolve();
+                     return;
+                }
+
                 gapi.load('client:auth2', () => {
                     gapi.client.init({
                         clientId: GOOGLE_CLIENT_ID,
@@ -799,21 +812,39 @@
                 });
             });
         }
-
+        
+        /**
+         * Initiates the OAuth sign-in flow and returns the successful authentication result.
+         */
         function handleAuthClick() {
-            if (gapi.auth2.getAuthInstance().isSignedIn.get()) {
-                // User is already signed in, check permissions
-                return gapi.auth2.getAuthInstance().signIn(); 
-            } else {
-                // User is not signed in, prompt for sign-in
-                return gapi.auth2.getAuthInstance().signIn();
+            const authInstance = gapi.auth2.getAuthInstance();
+            
+            // Check if user is already signed in
+            if (authInstance.isSignedIn.get()) {
+                // Already signed in, check if permissions are granted for the required scope
+                if (authInstance.currentUser.get().hasGrantedScopes(GC_SCOPES.join(' '))) {
+                    console.log("Already signed in and scopes granted.");
+                    return Promise.resolve(true);
+                }
             }
+            
+            // Initiate sign-in flow (prompts user if not signed in or scopes not granted)
+            return authInstance.signIn().then(
+                googleUser => {
+                    console.log("Google sign-in successful.");
+                    return true;
+                },
+                error => {
+                    console.error("Google sign-in failed:", error);
+                    return false;
+                }
+            );
         }
 
         async function fetchGoogleCourses() {
             ui.gcStatus.textContent = 'Fetching courses...';
             try {
-                // Manually load the Classroom discovery document if needed, but gapi.client.init often handles this.
+                // Ensure classroom API is loaded
                 await gapi.client.load('classroom', 'v1');
                 
                 const response = await gapi.client.classroom.courses.list({
@@ -854,9 +885,11 @@
 
                 for (const student of students) {
                     const profile = student.profile;
-                    const studentUserId = profile.id; // Use Google ID as Firestore ID for external students
+                    const studentUserId = `GC-${profile.id}`; // Prefix with 'GC-' to avoid ID collision
                     
-                    if (studentUserId === currentUserId) continue; // Skip teacher if they are in their own roster
+                    // Skip teacher if they are in their own roster (based on email)
+                    const currentUserEmail = gapi.auth2.getAuthInstance().currentUser.get().getBasicProfile().getEmail();
+                    if (profile.emailAddress === currentUserEmail) continue; 
 
                     // Add/update roster entry
                     batch.set(doc(getRosterCollection(currentClassId), studentUserId), {
@@ -896,18 +929,22 @@
                 return;
             }
 
-            ui.gcStatus.textContent = 'Authenticating with Google...';
-
+            // Check if the Google API client is ready
             if (!gapiReady) {
-                await loadGoogleApi();
-                if (!gapiReady) return; // Exit if initialization failed
+                 ui.gcStatus.textContent = 'Google API client is not yet loaded. Please wait.';
+                 console.warn('Google API client not ready. Retrying initialization...');
+                 // Attempt to re-initialize if needed
+                 await loadGoogleApi();
+                 if (!gapiReady) return; 
             }
 
-            try {
-                // Start OAuth flow
-                const authResult = await handleAuthClick();
+            ui.gcStatus.textContent = 'Authenticating with Google...';
 
-                if (authResult) {
+            try {
+                // Start OAuth flow and wait for result
+                const authSuccess = await handleAuthClick();
+
+                if (authSuccess) {
                     // Fetch and display courses
                     const courses = await fetchGoogleCourses();
                     
