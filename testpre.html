@@ -3,1091 +3,120 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Notify | Loading...</title>
-    
-    <!-- FIX 1: Load Font Awesome using the stable, public CDN URL to avoid 403 errors -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.2/css/all.min.css" 
-          xintegrity="sha512-SnH5WK+bZxgPHs44uWIX+LLMD/CDQ18z0DSE4G3cQAJv4Iqj5/L3QOaK3hN+r/IuQp2J/k5bE0W+A==" 
-          crossorigin="anonymous" referrerpolicy="no-referrer" />
-
+    <title>Firebase Setup Template</title>
     <!-- Load Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    
-    <!-- Configure Tailwind to use Inter font and custom theme -->
-    <script>
-        tailwind.config = {
-            theme: {
-                extend: {
-                    fontFamily: {
-                        sans: ['Inter', 'sans-serif'],
-                    },
-                    borderRadius: {
-                        'squircle': '30%', // Custom rounded corner style
-                    }
-                }
-            }
-        }
-    </script>
-    
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-
-    <!-- Custom CSS for the split comment button and time input -->
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
     <style>
-        .split-button-container {
-            display: grid;
-            grid-template-rows: 1fr 1fr;
-            height: 100%;
-            width: 100%;
-            overflow: hidden;
-            border-radius: 0.75rem; /* Equivalent to rounded-xl */
-        }
-        .split-button-top, .split-button-bottom {
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            cursor: pointer;
-            transition: background-color 0.15s;
-        }
-        .split-button-top {
-            border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-        }
-        .time-input-group {
-            position: relative;
-        }
-        .time-input {
-            font-variant-numeric: tabular-nums;
-            letter-spacing: 0.1rem;
-        }
-        /* Style for the container background when a menu is open */
-        .menu-active {
-            background-color: #f7f9fb;
-        }
+        body { font-family: 'Inter', sans-serif; }
     </style>
 </head>
+<body class="bg-gray-100 min-h-screen p-8">
 
-<body class="bg-gray-50 font-sans min-h-screen flex flex-col items-center">
-    <!-- Main Application Container -->
-    <div id="app-container" class="w-full max-w-xl p-4 sm:p-6 lg:p-8">
-        <!-- Main UI will be injected here by render() -->
-        <div class="text-center py-10 text-gray-500" id="loading-spinner">
-            <i class="fas fa-spinner fa-spin text-2xl"></i>
-            <p class="mt-2">Loading dashboard and authenticating...</p>
+    <div id="app" class="max-w-xl mx-auto bg-white p-6 rounded-xl shadow-lg">
+        <h1 class="text-2xl font-bold text-gray-800 mb-4">Firebase Initialization Status</h1>
+        <div id="status-message" class="text-sm p-4 rounded-lg bg-indigo-50 text-indigo-700">Initializing Firebase...</div>
+        <div class="mt-4 p-4 border border-gray-200 rounded-lg space-y-2 text-sm text-gray-700">
+            <p><strong>App ID (Used in Firestore paths):</strong> <code id="display-app-id" class="font-mono bg-gray-100 p-1 rounded">Loading...</code></p>
+            <p><strong>User ID (Authenticated User):</strong> <code id="display-user-id" class="font-mono bg-gray-100 p-1 rounded">Loading...</code></p>
         </div>
+        <button id="test-button" class="mt-6 w-full bg-indigo-600 text-white py-2 rounded-lg font-semibold hover:bg-indigo-700 transition duration-150" disabled>
+            (Wait for Auth)
+        </button>
     </div>
 
-    <!-- Modals for Commenting and Messaging -->
-    <div id="modal-container"></div>
-    
+    <!-- Firebase SDK Imports -->
     <script type="module">
-        // Firebase Imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, serverTimestamp, runTransaction, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // Global Firebase Configuration (provided by the environment)
+        // Set log level to Debug for visibility in the console (optional but helpful)
+        setLogLevel('Debug');
+
+        // --- MANDATORY Firebase Configuration Retrieval ---
+        // We MUST use the global variables provided by the environment.
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        // FIX 3: Ensure robust parsing of the firebase config with a guaranteed default structure
-        const firebaseConfigString = typeof __firebase_config !== 'undefined' ? __firebase_config : '{}';
-        let firebaseConfig;
-        try {
-            firebaseConfig = JSON.parse(firebaseConfigString);
-        } catch (e) {
-            console.error("Failed to parse firebase config:", e);
-            firebaseConfig = {};
-        }
-        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
-        // State Variables
-        let db;
-        let auth;
-        let userId = null;
-        let userRole = 'unknown'; // 'teacher', 'co-teacher', 'student'
-        let classData = null;
-        let requests = [];
-        let view = 'requests'; // 'requests', 'settings', 'co-teachers', 'help', 'student_settings'
-        let currentRequestFilter = 'unanswered'; // 'unanswered', 'accepted', 'denied', 'commented'
-        let isHandRaisingPaused = false;
-        let classId = 'defaultClass'; // Assuming the app focuses on one class
-        let localClassName = localStorage.getItem(`localClassName_${classId}`) || 'My Class';
-
-        // Helper Functions
-        const $ = (selector) => document.querySelector(selector);
-        const $$ = (selector) => document.querySelectorAll(selector);
-
-        // --- Core UI Functions ---
-
-        /**
-         * Shows a temporary, non-blocking message notification.
-         * @param {string} message 
-         * @param {boolean} isError 
-         */
-        function showMessage(message, isError = false) {
-            const modalContainer = $('#modal-container');
-            const color = isError ? 'bg-red-500' : 'bg-green-500';
-            const modal = document.createElement('div');
-            modal.className = `fixed top-5 left-1/2 transform -translate-x-1/2 p-4 rounded-lg shadow-xl text-white z-50 transition-opacity duration-300 ${color}`;
-            modal.textContent = message;
-            modalContainer.appendChild(modal);
-
-            setTimeout(() => {
-                modal.classList.add('opacity-0');
-                modal.addEventListener('transitionend', () => modal.remove());
-            }, 3000);
+        let firebaseConfig = {};
+        try {
+            // The configuration is passed as a JSON string in the global variable.
+            firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        } catch (e) {
+            console.error("Error parsing __firebase_config:", e);
         }
 
-        /**
-         * Sets the current application view and re-renders the UI.
-         * @param {string} newView 
-         */
-        function setView(newView) {
-            view = newView;
-            render();
-            // Toggle body class for background change in menu views
-            if (['settings', 'co-teachers', 'help', 'student_settings'].includes(newView)) {
-                $('body').classList.add('menu-active');
-            } else {
-                $('body').classList.remove('menu-active');
+        // Check if config is available
+        if (Object.keys(firebaseConfig).length === 0) {
+            console.error("Firebase configuration is missing or invalid. Check the environment variables.");
+            document.getElementById('status-message').textContent = "ERROR: Firebase config missing.";
+        }
+        // ----------------------------------------------------
+
+
+        // 1. Initialize Firebase App
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const auth = getAuth(app);
+        
+        // References to DOM elements
+        const statusMessage = document.getElementById('status-message');
+        const displayAppId = document.getElementById('display-app-id');
+        const displayUserId = document.getElementById('display-user-id');
+        const testButton = document.getElementById('test-button');
+
+        let isAuthReady = false;
+
+        // 2. Handle Authentication
+        async function handleAuth() {
+            try {
+                // We MUST use the __initial_auth_token if it exists.
+                if (typeof __initial_auth_token !== 'undefined') {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    // Fallback to anonymous sign-in if the custom token is not available
+                    await signInAnonymously(auth);
+                }
+            } catch (error) {
+                console.error("Firebase Auth error:", error);
+                statusMessage.textContent = `Authentication failed: ${error.message}`;
+                statusMessage.classList.replace('bg-indigo-50', 'bg-red-100');
+                statusMessage.classList.replace('text-indigo-700', 'text-red-700');
             }
         }
-        
-        /**
-         * Updates the browser tab title with the count of unanswered requests.
-         */
-        function updateDocumentTitle() {
-            const unansweredCount = requests.filter(r => r.status === 'unanswered').length;
-            const prefix = unansweredCount > 0 ? `(${unansweredCount}) ` : '';
-            const title = `${prefix}${localClassName} | Notify`;
-            document.title = title;
-        }
 
-        // Real-time listener for tab focus change to ensure title is updated
-        document.addEventListener('visibilitychange', () => {
-            if (!document.hidden) {
-                updateDocumentTitle();
+        // 3. Set up Auth State Listener
+        onAuthStateChanged(auth, (user) => {
+            isAuthReady = true;
+            displayAppId.textContent = appId;
+            
+            if (user) {
+                const userId = user.uid;
+                statusMessage.textContent = `SUCCESS! Firebase and Auth initialized. You are signed in.`;
+                statusMessage.classList.replace('bg-indigo-50', 'bg-green-100');
+                statusMessage.classList.replace('text-indigo-700', 'text-green-700');
+                displayUserId.textContent = userId;
+                testButton.textContent = 'Auth Ready!';
+                testButton.disabled = false;
+                
+                // Now you can use 'db' and 'userId' to perform Firestore operations
+                console.log(`Current User ID: ${userId}`);
+                console.log(`Database instance ready:`, db);
+
+            } else {
+                // User is signed out (this should ideally not happen if signInWithCustomToken succeeds)
+                displayUserId.textContent = 'Not Signed In';
+                statusMessage.textContent = 'Auth state changed: User is signed out.';
+                statusMessage.classList.replace('bg-indigo-50', 'bg-yellow-100');
+                statusMessage.classList.replace('text-indigo-700', 'text-yellow-700');
+                
+                // If signed out, try to sign in again immediately
+                handleAuth();
             }
         });
 
-        /**
-         * Filters and sorts requests based on the current user role and filter setting.
-         * @returns {Array<Object>} Filtered requests.
-         */
-        function getFilteredRequests() {
-            let filtered = requests.filter(r => {
-                if (userRole === 'student') {
-                    // Students only see their requests made today
-                    const today = new Date().toDateString();
-                    const requestDate = new Date(r.timestamp?.toDate() || new Date()).toDateString();
-                    if (requestDate !== today || r.userId !== userId) {
-                        return false;
-                    }
-                }
-                
-                // General category filtering
-                switch (currentRequestFilter) {
-                    case 'unanswered':
-                        return r.status === 'unanswered';
-                    case 'accepted':
-                        return r.status === 'accepted';
-                    case 'denied':
-                        return r.status === 'denied';
-                    case 'commented':
-                        return r.status === 'commented';
-                    default:
-                        return true;
-                }
-            }).sort((a, b) => (b.timestamp?.toMillis() || 0) - (a.timestamp?.toMillis() || 0)); // Sort newest first
-
-            return filtered;
-        }
-
-        // --- FIREBASE LISTENERS & DATA FETCHING ---
-
-        /**
-         * Determines if the current time falls within the scheduled period.
-         * Hand raising is ON during scheduled time, PAUSED otherwise.
-         */
-        function checkSchedule() {
-            if (!classData || !classData.schedule) {
-                // If the class document exists but schedule doesn't, check for manual pause state
-                isHandRaisingPaused = classData?.isHandRaisingPaused ?? false;
-                render();
-                return;
-            }
-
-            const { start_time, end_time } = classData.schedule;
-            if (!start_time || !end_time) {
-                 isHandRaisingPaused = classData?.isHandRaisingPaused ?? false;
-                render();
-                return;
-            }
-            
-            // Use 24-hour format internally for accurate comparison
-            const now = new Date();
-            const nowMinutes = now.getHours() * 60 + now.getMinutes();
-
-            const [startH, startM] = start_time.split(':').map(Number);
-            const [endH, endM] = end_time.split(':').map(Number);
-            
-            // Convert to 24-hour format (assuming HH:MM format from time input)
-            const startMinutes = startH * 60 + startM;
-            const endMinutes = endH * 60 + endM;
-
-            let isScheduledTime = false;
-            
-            if (startMinutes <= endMinutes) {
-                // Normal schedule (e.g., 09:00 to 15:00)
-                isScheduledTime = nowMinutes >= startMinutes && nowMinutes < endMinutes;
-            } else {
-                // Overnight schedule (e.g., 22:00 to 08:00)
-                isScheduledTime = nowMinutes >= startMinutes || nowMinutes < endMinutes;
-            }
-
-            // Hand raising is AUTO-ON during the scheduled time, and AUTO-PAUSED otherwise.
-            isHandRaisingPaused = !isScheduledTime;
-            render();
-        }
-
-        // Firestore subscription for class data
-        function subscribeToClassData() {
-            // Publicly shared data for the whole class
-            const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId);
-
-            onSnapshot(docRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    classData = docSnap.data();
-                    
-                    // Determine User Role
-                    const teachers = classData.teachers || [];
-                    const coTeachers = classData.coTeachers || [];
-
-                    if (teachers.includes(userId)) {
-                        userRole = 'teacher';
-                    } else if (coTeachers.includes(userId)) {
-                        userRole = 'co-teacher';
-                    } else {
-                        userRole = 'student';
-                    }
-                    
-                    // Check initial paused state based on schedule or manual toggle
-                    checkSchedule(); 
-                    
-                } else {
-                    // Class not found or deleted (Handle a simple error state, maybe force a redirect/exit)
-                    console.error('Class document not found. Attempting to create a default one for first run.');
-                    
-                    // Create a default class document if it doesn't exist
-                    if (userId) { // Only attempt if authenticated
-                        setDoc(docRef, {
-                            teachers: [userId],
-                            coTeachers: [],
-                            classId: classId,
-                            isHandRaisingPaused: false,
-                            schedule: { start_time: '09:00', end_time: '15:00' },
-                            studentNames: {}
-                        }, { merge: true }).then(() => {
-                            console.log("Default class created.");
-                        }).catch(e => {
-                            console.error("Error creating default class:", e);
-                        });
-                    }
-                    classData = null;
-                }
-                // Initial render once class data is available
-                render();
-            }, (error) => {
-                console.error("Error listening to class data:", error);
-                showMessage('Failed to load class data.', true);
-            });
-        }
-        
-        // Firestore subscription for requests
-        function subscribeToRequests() {
-            const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'requests'));
-
-            onSnapshot(q, (snapshot) => {
-                requests = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                updateDocumentTitle();
-                render();
-            }, (error) => {
-                console.error("Error listening to requests:", error);
-                showMessage('Failed to load requests.', true);
-            });
-        }
-        
-        // Set up interval to check schedule (e.g., every minute)
-        setInterval(checkSchedule, 60000); // Check every 60 seconds
-
-        // --- REQUEST ACTIONS (TEACHER/CO-TEACHER) ---
-
-        /**
-         * Sets a request status to 'accepted'.
-         * @param {string} requestId 
-         */
-        async function acceptRequest(requestId) {
-            try {
-                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'requests', requestId);
-                await updateDoc(docRef, { 
-                    status: 'accepted',
-                    responseTimestamp: serverTimestamp(),
-                    responderId: userId
-                });
-                showMessage('Request accepted!');
-            } catch (error) {
-                console.error("Error accepting request:", error);
-                showMessage('Failed to accept request.', true);
-            }
-        }
-
-        /**
-         * Sets a request status to 'denied'.
-         * @param {string} requestId 
-         */
-        async function denyRequest(requestId) {
-            try {
-                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'requests', requestId);
-                await updateDoc(docRef, { 
-                    status: 'denied',
-                    responseTimestamp: serverTimestamp(),
-                    responderId: userId
-                });
-                showMessage('Request denied.');
-            } catch (error) {
-                console.error("Error denying request:", error);
-                showMessage('Failed to deny request.', true);
-            }
-        }
-
-        /**
-         * Displays a modal to add or edit a comment on a request.
-         * @param {string} requestId 
-         * @param {string} [existingComment=''] 
-         */
-        function promptComment(requestId, existingComment = '') {
-            const modalContainer = $('#modal-container');
-            const isEdit = existingComment !== '';
-            
-            // Clean up existing modal if present
-            modalContainer.innerHTML = '';
-            
-            const modalHTML = `
-                <div id="comment-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 p-4">
-                    <div class="bg-white p-6 rounded-xl shadow-2xl w-full max-w-sm">
-                        <h3 class="text-xl font-semibold mb-4 text-gray-800">${isEdit ? 'Edit Comment' : 'Add Comment'}</h3>
-                        <textarea id="comment-text" class="w-full h-24 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type your comment here..." maxlength="200">${existingComment}</textarea>
-                        <div class="flex justify-end space-x-3 mt-4">
-                            <button id="cancel-comment" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition duration-150">Cancel</button>
-                            <button id="submit-comment" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition duration-150">${isEdit ? 'Save' : 'Comment'}</button>
-                        </div>
-                    </div>
-                </div>
-            `;
-            modalContainer.innerHTML = modalHTML;
-            const modal = $('#comment-modal');
-            const commentTextarea = $('#comment-text');
-
-            $('#cancel-comment').addEventListener('click', () => modal.remove());
-            $('#submit-comment').addEventListener('click', async () => {
-                const comment = commentTextarea.value.trim();
-                if (comment) {
-                    await updateComment(requestId, comment);
-                    modal.remove();
-                } else {
-                    showMessage('Comment cannot be empty.', true);
-                }
-            });
-        }
-
-        /**
-         * Updates a comment and sets request status to 'commented'.
-         * @param {string} requestId 
-         * @param {string} comment 
-         */
-        async function updateComment(requestId, comment) {
-            try {
-                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'requests', requestId);
-                await updateDoc(docRef, {
-                    status: 'commented',
-                    comment: comment,
-                    responseTimestamp: serverTimestamp(),
-                    responderId: userId
-                });
-                showMessage('Comment added/updated.');
-            } catch (error) {
-                console.error("Error updating comment:", error);
-                showMessage('Failed to update comment.', true);
-            }
-        }
-        
-        /**
-         * Deletes a comment, reverting request status to 'unanswered'.
-         * @param {string} requestId 
-         */
-        async function deleteComment(requestId) {
-            try {
-                const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'requests', requestId);
-                await updateDoc(docRef, {
-                    status: 'unanswered', 
-                    comment: deleteField(),
-                    responseTimestamp: deleteField(),
-                    responderId: deleteField()       
-                });
-                showMessage('Comment deleted. Request status reverted to unanswered.');
-            } catch (error) {
-                console.error("Error deleting comment:", error);
-                showMessage('Failed to delete comment.', true);
-            }
-        }
-        
-        // --- STUDENT ACTIONS ---
-
-        /**
-         * Creates a new request if hand raising is not paused.
-         */
-        async function createRequest() {
-            if (isHandRaisingPaused) {
-                showMessage('Hand raising is currently paused due to class schedule.', true);
-                return;
-            }
-            try {
-                await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'requests'), {
-                    userId: userId,
-                    userName: classData?.studentNames?.[userId] || 'Anonymous Student',
-                    message: 'Need assistance.',
-                    status: 'unanswered',
-                    timestamp: serverTimestamp()
-                });
-                showMessage('Your request has been sent!');
-            } catch (error) {
-                console.error("Error creating request:", error);
-                showMessage('Failed to create request.', true);
-            }
-        }
-        
-        /**
-         * Saves a local nickname for the class.
-         * @param {string} newName 
-         */
-        function saveLocalClassName(newName) {
-            const trimmedName = newName.trim() || 'My Class';
-            localClassName = trimmedName;
-            localStorage.setItem(`localClassName_${classId}`, trimmedName);
-            updateDocumentTitle();
-            showMessage('Class name updated locally.');
-            render();
-        }
-
-        /**
-         * Removes the student's entry from the class document.
-         */
-        async function leaveClass() {
-            // Using a simple window.confirm as a temporary modal replacement
-            if (!window.confirm("Are you sure you want to leave this class?")) return;
-
-            try {
-                await runTransaction(db, async (transaction) => {
-                    const classDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId);
-                    const classDoc = await transaction.get(classDocRef);
-                    if (!classDoc.exists()) {
-                        throw "Class does not exist!";
-                    }
-                    
-                    const newStudentNames = { ...classDoc.data().studentNames };
-                    delete newStudentNames[userId];
-
-                    transaction.update(classDocRef, {
-                        studentNames: newStudentNames
-                    });
-                });
-                
-                localStorage.removeItem(`localClassName_${classId}`);
-                $('body').innerHTML = '<div class="text-center py-20 text-gray-500">You have left the class.</div>';
-
-            } catch (error) {
-                console.error("Error leaving class:", error);
-                showMessage('Failed to leave class. Check console.', true);
-            }
-        }
-
-        // --- SETTINGS ACTIONS (TEACHER/CO-TEACHER) ---
-
-        /**
-         * Deletes the entire class document (Teacher only).
-         */
-        async function deleteClass() {
-            if (userRole !== 'teacher') {
-                showMessage('Only the teacher can delete the class.', true);
-                return;
-            }
-            // Using a simple window.confirm as a temporary modal replacement
-            if (!window.confirm("WARNING: Are you absolutely sure you want to delete this class?")) return;
-
-            try {
-                await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId));
-                showMessage('Class deleted successfully.');
-                $('body').innerHTML = '<div class="text-center py-20 text-gray-500">Class has been deleted.</div>';
-            } catch (error) {
-                console.error("Error deleting class:", error);
-                showMessage('Failed to delete class.', true);
-            }
-        }
-
-        /**
-         * Toggles the manual hand-raising pause state.
-         */
-        async function toggleHandRaisingPause() {
-            // If schedule is active, manual toggle is only for the Firestore value, which might be overridden
-            if (classData?.schedule) {
-                showMessage('The schedule is currently active. The manual toggle will be overridden by the schedule.', true);
-                return;
-            }
-            
-            const newState = !isHandRaisingPaused;
-            try {
-                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId), {
-                    isHandRaisingPaused: newState
-                });
-                // State update happens via listener, but update locally for quick feedback if schedule isn't active
-                isHandRaisingPaused = newState;
-                render();
-                showMessage(`Hand raising ${newState ? 'paused' : 'resumed'}.`);
-            } catch (error) {
-                console.error("Error toggling pause state:", error);
-                showMessage('Failed to toggle hand raising.', true);
-            }
-        }
-
-        /**
-         * Saves the schedule times to Firestore.
-         */
-        async function saveSchedule() {
-            const startTimeInput = $('#schedule-start-time');
-            const endTimeInput = $('#schedule-end-time');
-            
-            const start_time = startTimeInput.value;
-            const end_time = endTimeInput.value;
-
-            if (!start_time || !end_time) {
-                showMessage('Please set both start and end times for the schedule.', true);
-                return;
-            }
-
-            try {
-                await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId), {
-                    schedule: { start_time, end_time }
-                });
-                showMessage('Class schedule saved successfully! Hand-raising will now follow the schedule.');
-            } catch (error) {
-                console.error("Error saving schedule:", error);
-                showMessage('Failed to save schedule.', true);
-            }
-        }
-
-
-        // --- UI Rendering Functions ---
-
-        /**
-         * Renders the header with dynamic navigation buttons.
-         * @returns {string} HTML for the header.
-         */
-        function renderHeader() {
-            const isMenu = ['settings', 'co-teachers', 'help', 'student_settings'].includes(view);
-            const isTeacherView = userRole === 'teacher' || userRole === 'co-teacher';
-            
-            const teacherCoTeacherButtons = [
-                { id: 'settings', icon: 'fas fa-cog', title: 'Settings' },
-                { id: 'co-teachers', icon: 'fas fa-user-friends', title: 'Co-Teachers' },
-                { id: 'help', icon: 'fas fa-question-circle', title: 'Help' },
-            ];
-
-
-            const mainNavHTML = teacherCoTeacherButtons.map(btn => {
-                const isActiveMenu = view === btn.id;
-                
-                // If in a menu view, the button becomes a blue 'Home' button
-                const icon = isActiveMenu ? 'fas fa-home' : btn.icon;
-                const bgClass = isActiveMenu ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-200 text-gray-600';
-                const action = isActiveMenu ? `setView('requests')` : `setView('${btn.id}')`;
-                
-                return `
-                    <button onclick="${action}" class="flex-1 h-12 ${bgClass} rounded-xl transition duration-200 hover:shadow-xl">
-                        <i class="${icon} text-lg"></i>
-                    </button>
-                `;
-            }).join('');
-
-
-            return `
-                <div class="flex items-center justify-between mb-6">
-                    <h1 class="text-2xl font-bold text-gray-800">${localClassName}</h1>
-                    <div class="flex space-x-3 w-3/4">
-                        ${userRole === 'student' ? `
-                            <!-- Student Request and Settings Buttons -->
-                            <button onclick="createRequest()" class="h-12 w-12 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 transition duration-200 disabled:opacity-50" ${isHandRaisingPaused ? 'disabled' : ''}>
-                                <i class="fas fa-plus text-lg"></i>
-                            </button>
-                            <button onclick="setView('student_settings')" class="h-12 w-12 ${view === 'student_settings' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-200 text-gray-600'} rounded-xl hover:bg-gray-300 transition duration-200">
-                                <i class="${view === 'student_settings' ? 'fas fa-home' : 'fas fa-cog'} text-lg"></i>
-                            </button>
-                        ` : mainNavHTML}
-                    </div>
-                </div>
-            `;
-        }
-        
-        // Renders the main content area (requests, settings, etc.)
-        function renderMainContent() {
-            switch (view) {
-                case 'settings':
-                    return renderSettingsMenu();
-                case 'co-teachers':
-                    return renderCoTeachersMenu();
-                case 'help':
-                    return renderHelpMenu();
-                case 'student_settings':
-                    return renderStudentSettingsMenu();
-                case 'requests':
-                default:
-                    return renderRequestsList();
-            }
-        }
-
-        /**
-         * Renders the schedule section of the settings menu.
-         * @returns {string} HTML for the schedule section.
-         */
-        function renderScheduleSection() {
-            const schedule = classData?.schedule || {};
-            const start = schedule.start_time || '09:00';
-            const end = schedule.end_time || '15:00';
-
-            return `
-                <div class="space-y-4 p-6 bg-white rounded-xl shadow-md mt-6">
-                    <h4 class="text-xl font-semibold text-gray-800 border-b pb-3 mb-2">Schedule Management</h4>
-                    <p class="text-sm text-gray-600 mb-4 font-medium">Set a period when hand raising will be automatically ON. It is PAUSED from end time to start time.</p>
-                    
-                    <div class="flex items-center justify-between space-x-4">
-                        <label for="schedule-start-time" class="text-gray-700 font-medium w-1/4">Start Time:</label>
-                        <div class="time-input-group w-1/3">
-                            <input type="text" id="schedule-start-time" value="${start}" data-digits="${start.replace(':', '')}" 
-                                class="time-input w-full p-2 border border-gray-300 rounded-lg text-center font-mono focus:ring-2 focus:ring-blue-500" maxlength="5" placeholder="HH:MM">
-                        </div>
-                        
-                        <label for="schedule-end-time" class="text-gray-700 font-medium w-1/4">End Time:</label>
-                        <div class="time-input-group w-1/3">
-                            <input type="text" id="schedule-end-time" value="${end}" data-digits="${end.replace(':', '')}" 
-                                class="time-input w-full p-2 border border-gray-300 rounded-lg text-center font-mono focus:ring-2 focus:ring-blue-500" maxlength="5" placeholder="HH:MM">
-                        </div>
-                    </div>
-                    
-                    <button onclick="saveSchedule()" class="w-full mt-4 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition duration-150 shadow-md">
-                        <i class="fas fa-save mr-2"></i> Save Schedule
-                    </button>
-                </div>
-            `;
-        }
-
-
-        // Renders the settings menu (Teacher/Co-Teacher)
-        function renderSettingsMenu() {
-            const isTeacher = userRole === 'teacher';
-            return `
-                <h2 class="text-3xl font-extrabold text-gray-900 mb-6">Settings</h2>
-                
-                <div class="space-y-6">
-                    <!-- Class ID Display -->
-                    <div class="p-4 bg-white rounded-xl shadow-md border-l-4 border-blue-500">
-                        <p class="text-sm font-medium text-gray-500">Class ID</p>
-                        <p class="text-lg font-mono text-gray-800 break-all">${classId}</p>
-                    </div>
-
-                    <!-- Hand Raising Toggle (Shown for manual override when no schedule is active) -->
-                    ${renderHandRaisingToggle(true)}
-
-                    <!-- Schedule Management -->
-                    ${renderScheduleSection()}
-
-                    <!-- Dangerous Actions -->
-                    <div class="p-6 bg-red-50 rounded-xl border border-red-200">
-                        <h4 class="text-xl font-semibold text-red-700 mb-4">Dangerous Zone</h4>
-                        ${isTeacher ? `
-                            <button onclick="deleteClass()" class="w-full py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition duration-150 shadow-md">
-                                <i class="fas fa-trash-alt mr-2"></i> Delete Class (Teacher Only)
-                            </button>
-                        ` : `
-                            <p class="text-sm text-red-500">Co-teachers cannot delete the class.</p>
-                        `}
-                    </div>
-                </div>
-            `;
-        }
-
-        // Renders the student specific settings menu
-        function renderStudentSettingsMenu() {
-            const currentLocalName = localClassName;
-
-            return `
-                <h2 class="text-3xl font-extrabold text-gray-900 mb-6">Student Settings</h2>
-                
-                <div class="space-y-6">
-                    <!-- Local Name Setting -->
-                    <div class="p-6 bg-white rounded-xl shadow-md">
-                        <h4 class="text-xl font-semibold text-gray-800 mb-4">Personal Class Nickname</h4>
-                        <p class="text-sm text-gray-600 mb-3">Set a local name for this class (only visible to you).</p>
-                        <input type="text" id="local-name-input" value="${currentLocalName}" placeholder="e.g., Algebra 1"
-                            class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        <button id="save-local-name-btn" class="w-full mt-3 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition duration-150 shadow-md">
-                            <i class="fas fa-save mr-2"></i> Save Nickname
-                        </button>
-                    </div>
-
-                    <!-- Leave Class Action -->
-                    <div class="p-6 bg-red-50 rounded-xl border border-red-200">
-                        <h4 class="text-xl font-semibold text-red-700 mb-4">Leave Class</h4>
-                        <p class="text-sm text-red-500 mb-3">This will remove you from the class's student list.</p>
-                        <button onclick="leaveClass()" class="w-full py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition duration-150 shadow-md">
-                            <i class="fas fa-sign-out-alt mr-2"></i> Leave Class
-                        </button>
-                    </div>
-                </div>
-            `;
-        }
-
-        // Renders the Co-Teachers menu
-        function renderCoTeachersMenu() {
-            const coTeachers = classData?.coTeachers || [];
-            return `
-                <h2 class="text-3xl font-extrabold text-gray-900 mb-6">Co-Teachers (${coTeachers.length})</h2>
-                <div class="space-y-4">
-                    <p class="text-gray-600">This section is for viewing co-teachers. (Add/Remove functionality is not implemented in this version).</p>
-                    <div class="p-4 bg-white rounded-xl shadow-md">
-                        <p class="font-semibold text-gray-800 mb-2 border-b pb-2">Teacher (Owner)</p>
-                        <p class="font-mono text-sm break-all">${classData?.teachers[0] || 'N/A'}</p>
-                    </div>
-                    ${coTeachers.length > 0 ? `
-                        <div class="p-4 bg-white rounded-xl shadow-md">
-                            <p class="font-semibold text-gray-800 mb-2 border-b pb-2">Co-Teachers</p>
-                            <ul class="space-y-2">
-                                ${coTeachers.map(id => `<li class="p-1 font-mono text-sm break-all bg-gray-50 rounded-md">${id}</li>`).join('')}
-                            </ul>
-                        </div>
-                    ` : `<p class="text-gray-500 italic">No co-teachers assigned.</p>`}
-                </div>
-            `;
-        }
-
-        // Renders the help menu
-        function renderHelpMenu() {
-            return `
-                <h2 class="text-3xl font-extrabold text-gray-900 mb-6">Help & Documentation</h2>
-                <div class="space-y-4 p-6 bg-white rounded-xl shadow-md">
-                    <h4 class="text-xl font-semibold text-gray-800 mb-2">My Information</h4>
-                    <div class="p-3 bg-yellow-50 rounded-xl border border-yellow-200">
-                        <p class="font-semibold text-yellow-800">Your User ID:</p>
-                        <p class="font-mono text-sm break-all">${userId}</p>
-                    </div>
-                    <p class="text-gray-600 mt-4">This dashboard allows students to submit requests for assistance and teachers/co-teachers to manage them in real-time.</p>
-                </div>
-            `;
-        }
-        
-        /**
-         * Renders the hand raising toggle button (Teacher/Co-Teacher view).
-         * @param {boolean} isInSettings If true, renders a simpler box for the settings menu.
-         */
-        function renderHandRaisingToggle(isInSettings = false) {
-            const isPaused = isHandRaisingPaused;
-            const buttonClass = isPaused ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600';
-            const icon = isPaused ? 'fas fa-play' : 'fas fa-pause';
-            const text = isPaused ? 'Resume Hand Raising' : 'Pause Hand Raising';
-            
-            let statusText = isPaused ? 'Currently Paused' : 'Currently Active';
-            let statusColor = isPaused ? 'text-red-600' : 'text-green-600';
-            
-            if (classData?.schedule) {
-                statusText += ' (Scheduled)';
-            } else {
-                 statusText += ' (Manual)';
-            }
-
-            const content = `
-                <p class="text-sm font-medium text-gray-500">Hand Raising Status: <span class="font-semibold ${statusColor}">${statusText}</span></p>
-                ${classData?.schedule ? `<p class="text-xs text-blue-500">Status determined by schedule: ${classData.schedule.start_time} - ${classData.schedule.end_time}</p>` : ''}
-                <button onclick="toggleHandRaisingPause()" class="w-full mt-3 py-3 text-white rounded-lg font-semibold transition duration-150 shadow-lg ${buttonClass} disabled:opacity-50" ${classData?.schedule ? 'disabled' : ''}>
-                    <i class="${icon} mr-2"></i> ${text}
-                </button>
-            `;
-
-            return isInSettings ? `<div class="p-6 bg-white rounded-xl shadow-md">${content}</div>` : content;
-        }
-
-        // Renders the main requests view
-        function renderRequestsList() {
-            const filteredRequests = getFilteredRequests();
-            const isTeacherView = userRole === 'teacher' || userRole === 'co-teacher';
-            
-            const filterButtons = ['Unanswered', 'Accepted', 'Denied', 'Commented on'].map(title => {
-                const key = title.toLowerCase().replace(' ', '_').replace('_on', '');
-                const isActive = currentRequestFilter === key;
-                const baseClass = 'px-3 py-1 text-sm font-medium rounded-full transition duration-150 whitespace-nowrap';
-                const activeClass = 'bg-blue-600 text-white shadow-md';
-                const inactiveClass = 'bg-gray-200 text-gray-700 hover:bg-gray-300';
-                
-                return `
-                    <button onclick="setCurrentRequestFilter('${key}')" class="${baseClass} ${isActive ? activeClass : inactiveClass}">
-                        ${title}
-                    </button>
-                `;
-            }).join('');
-            
-            return `
-                <!-- Hand Raising Status Alert (Student View) -->
-                ${userRole === 'student' && isHandRaisingPaused ? `
-                    <div class="bg-red-100 border-l-4 border-red-500 text-red-700 p-4 mb-4 rounded-lg" role="alert">
-                        <p class="font-bold">Hand Raising Paused</p>
-                        <p class="text-sm">Requests cannot be created at this time due to the class schedule.</p>
-                    </div>
-                ` : ''}
-
-                <!-- Teacher/Co-Teacher Hand Raising Toggle (Non-Settings View) -->
-                ${isTeacherView && !classData?.schedule ? `<div class="mb-4 p-4 bg-white rounded-xl shadow-md">${renderHandRaisingToggle()}</div>` : ''}
-
-                <!-- Request Filters -->
-                <div class="flex space-x-2 overflow-x-auto py-2 my-4">
-                    ${filterButtons}
-                </div>
-
-                <!-- Request List -->
-                <h3 class="text-xl font-bold text-gray-800 mb-4">${currentRequestFilter.charAt(0).toUpperCase() + currentRequestFilter.slice(1).replace('_', ' ')} Requests (${filteredRequests.length})</h3>
-                <div class="space-y-4">
-                    ${filteredRequests.length > 0 ? 
-                        filteredRequests.map(request => renderRequestCard(request, isTeacherView)).join('') : 
-                        `<div class="text-center py-10 text-gray-500">No requests in this category.</div>`
-                    }
-                </div>
-            `;
-        }
-        
-        // Renders a single request card
-        function renderRequestCard(request, isTeacherView) {
-            const time = request.timestamp ? new Date(request.timestamp.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Pending';
-            const studentName = request.userName || 'Anonymous Student';
-            
-            const actionButtons = isTeacherView ? renderActionButtons(request) : '';
-
-            // Border color based on status
-            const statusMap = {
-                'accepted': 'border-green-500',
-                'denied': 'border-red-500',
-                'commented': 'border-blue-500',
-                'unanswered': 'border-yellow-500'
-            };
-            const borderColor = statusMap[request.status] || 'border-gray-300';
-
-            return `
-                <div class="bg-white p-4 rounded-xl shadow-lg flex justify-between items-center transition duration-200 border-l-4 ${borderColor}">
-                    
-                    <div class="flex-1 min-w-0">
-                        <p class="text-lg font-semibold text-gray-900 truncate">${studentName}</p>
-                        <p class="text-sm text-gray-500 mt-1">${time}</p>
-                        ${request.comment ? `<p class="text-xs italic text-blue-600 mt-2 p-1 bg-blue-50 rounded-md max-w-full overflow-hidden truncate">Comment: ${request.comment}</p>` : ''}
-                    </div>
-                    
-                    ${actionButtons}
-                </div>
-            `;
-        }
-
-        // Renders the 3 squircle action buttons for a request (Teacher/Co-Teacher)
-        function renderActionButtons(request) {
-            const { id, comment } = request;
-            
-            const sanitizedComment = comment ? comment.replace(/'/g, "\\'").replace(/"/g, '&quot;') : '';
-
-            const commentButton = comment ? 
-                // Split Button (Edit/Delete)
-                `
-                <div class="split-button-container w-full h-full rounded-xl shadow-md border border-blue-500 overflow-hidden">
-                    <div class="split-button-top bg-blue-100 hover:bg-blue-200" onclick="promptComment('${id}', '${sanitizedComment}')">
-                        <i class="fas fa-edit text-blue-600 text-lg"></i>
-                    </div>
-                    <div class="split-button-bottom bg-blue-100 hover:bg-blue-200" onclick="deleteComment('${id}')">
-                        <i class="fas fa-trash-alt text-blue-600 text-lg"></i>
-                    </div>
-                </div>
-                ` :
-                // Single Comment Button (Add)
-                `
-                <button onclick="promptComment('${id}')" class="w-full h-full bg-white text-gray-700 rounded-xl shadow-md border border-gray-300 hover:bg-gray-100 transition duration-150">
-                    <i class="fas fa-comment text-gray-500 text-lg"></i>
-                </button>
-                `;
-
-            return `
-                <div class="flex space-x-2 ml-4 h-12">
-                    <!-- Accept Button -->
-                    <button onclick="acceptRequest('${id}')" class="w-12 h-12 bg-green-500 text-white rounded-xl shadow-md hover:bg-green-600 transition duration-150">
-                        <i class="fas fa-thumbs-up text-lg"></i>
-                    </button>
-                    
-                    <!-- Comment Button (Split/Single) -->
-                    <div class="w-12 h-12">
-                        ${commentButton}
-                    </div>
-                    
-                    <!-- Deny Button -->
-                    <button onclick="denyRequest('${id}')" class="w-12 h-12 bg-red-500 text-white rounded-xl shadow-md hover:bg-red-600 transition duration-150">
-                        <i class="fas fa-thumbs-down text-lg"></i>
-                    </button>
-                </div>
-            `;
-        }
-
-        // --- Attach Listeners to Rendered Elements ---
-
-        function setCurrentRequestFilter(filter) {
-            currentRequestFilter = filter;
-            render();
-        }
-
-        function attachEventListeners() {
-            // Attach listeners for Student Settings
-            if (view === 'student_settings') {
-                const saveBtn = $('#save-local-name-btn');
-                const nameInput = $('#local-name-input');
-                if (saveBtn && nameInput) {
-                    saveBtn.onclick = () => saveLocalClassName(nameInput.value);
-                }
-            }
-
-            // Attach listeners for Time Input in Settings (Schedule)
-            if (view === 'settings') {
-                const timeInputs = $$('.time-input');
-                timeInputs.forEach(input => {
-                    // Set default value if empty
-                    if (!input.value) {
-                         input.value = '09:00';
-                         input.dataset.digits = '0900';
-                    }
-
-                    input.addEventListener('input', (e) => {
-                         let val = e.target.value.replace(/[^0-9:]/g, '');
-                         let digits = val.replace(/:/g, '');
-                         
-                         // Limit to 4 digits
-                         if (digits.length > 4) {
-                             digits = digits.substring(0, 4);
-                         }
-                         
-                         // Format as HH:MM
-                         let formattedValue = '';
-                         if (digits.length > 2) {
-                             formattedValue = `${digits.substring(0, 2)}:${digits.substring(2, 4)}`;
-                         } else if (digits.length > 0) {
-                             formattedValue = digits;
-                         }
-
-                         e.target.value = formattedValue;
-                         e.target.dataset.digits = digits;
-                    });
-
-
-                    input.addEventListener('blur', (e) => {
-                        let val = e.target.value.replace(/[^0-9]/g, '');
-                        if (val.length === 0) {
-                            e.target.value = '09:00'; // Default if empty
-                            e.target.dataset.digits = '0900';
-                            return;
-                        }
-                        
-                        // Pad and format on blur
-                        const padded = val.padStart(4, '0');
-                        let h = parseInt(padded.slice(0, 2), 10);
-                        let m = parseInt(padded.slice(2, 4), 10);
-
-                        // Enforce 24-hour time limits
-                        if (h > 23) h = 23;
-                        if (m > 59) m = 59;
-                        
-                        const finalValue = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                        e.target.value = finalValue;
-                        e.target.dataset.digits = finalValue.replace(':', '');
-                    });
-                });
-            }
-        }
-        
-        /**
-         * Main render function to update the UI content.
-         */
-        function render() {
-            const appContainer = $('#app-container');
-            if (appContainer) {
-                appContainer.innerHTML = renderHeader() + renderMainContent();
-                attachEventListeners();
-            }
-        }
-
-
-        // --- Initialization ---
-
-        async function init() {
-            setLogLevel('Debug');
-            try {
-                // FIX 3: Check for required projectId explicitly before initializing
-                if (!firebaseConfig || !firebaseConfig.projectId) {
-                     const errorMsg = 'Firebase configuration is missing the required Project ID. Cannot initialize.';
-                     console.error(errorMsg);
-                     $('#loading-spinner').innerHTML = `<i class="fas fa-exclamation-triangle text-2xl text-red-500"></i><p class="mt-2 text-red-600">${errorMsg}</p>`;
-                     return;
-                }
-                
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-                
-                // Auth setup
-                if (initialAuthToken) {
-                    await signInWithCustomToken(auth, initialAuthToken);
-                } else {
-                    await signInAnonymously(auth);
-                }
-
-                onAuthStateChanged(auth, (user) => {
-                    if (user) {
-                        userId = user.uid;
-                        subscribeToClassData();
-                        subscribeToRequests();
-                    } else {
-                        // User signed out or failed auth
-                        $('#loading-spinner').innerHTML = `<i class="fas fa-exclamation-triangle text-2xl text-red-500"></i><p class="mt-2 text-red-600">Authentication failed. Please reload.</p>`;
-                    }
-                });
-                
-            } catch (error) {
-                console.error("Firebase Initialization Error:", error);
-                // Ensure the UI reflects the error
-                $('#loading-spinner').innerHTML = `<i class="fas fa-exclamation-triangle text-2xl text-red-500"></i><p class="mt-2 text-red-600">Failed to initialize: ${error.message}</p>`;
-            }
-        }
-
-        // Expose functions globally for HTML event handlers
-        window.setView = setView;
-        window.saveSchedule = saveSchedule;
-        window.deleteClass = deleteClass;
-        window.toggleHandRaisingPause = toggleHandRaisingPause;
-        window.acceptRequest = acceptRequest;
-        window.denyRequest = denyRequest;
-        window.promptComment = promptComment;
-        window.deleteComment = deleteComment;
-        window.createRequest = createRequest;
-        window.leaveClass = leaveClass;
-        window.setCurrentRequestFilter = setCurrentRequestFilter;
-
-        // Start the application
-        window.onload = init;
+        // Initial sign-in attempt
+        handleAuth();
     </script>
 </body>
 </html>
