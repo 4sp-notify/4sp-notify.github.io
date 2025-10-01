@@ -5,23 +5,12 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Notify | Loading...</title>
     
-    <!-- Using a simplified CSP for demonstration; keep the original if stricter policies are required in the final environment -->
-    <meta http-equiv="Content-Security-Policy" content="
-        default-src 'self';
-        script-src 'self' https://cdn.tailwindcss.com https://www.gstatic.com https://apis.google.com https://accounts.google.com 'unsafe-inline' 'unsafe-eval' https://kit.fontawesome.com;
-        style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://kit.fontawesome.com;
-        font-src 'self' https://fonts.gstatic.com https://cdn.jsdelivr.net https://kit.fontawesome.com;
-        img-src 'self' data: https://www.gstatic.com https://lh3.googleusercontent.com;
-        connect-src 'self' https://firestore.googleapis.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://www.googleapis.com https://content.googleapis.com https://classroom.googleapis.com;
-        frame-src 'self' https://accounts.google.com https://content.googleapis.com https://content-classroom.googleapis.com;
-    ">
-    
-    <!-- Load Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    
     <!-- Load Font Awesome Icons -->
     <script src="https://kit.fontawesome.com/c5e93c8378.js" crossorigin="anonymous"></script>
 
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
     <!-- Configure Tailwind to use Inter font and custom theme -->
     <script>
         tailwind.config = {
@@ -93,7 +82,7 @@
         // Firebase Imports
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, serverTimestamp, runTransaction } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, serverTimestamp, runTransaction, deleteField } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
         // Global Firebase Configuration (provided by the environment)
@@ -120,6 +109,11 @@
 
         // --- Core UI Functions ---
 
+        /**
+         * Shows a temporary, non-blocking message notification.
+         * @param {string} message 
+         * @param {boolean} isError 
+         */
         function showMessage(message, isError = false) {
             const modalContainer = $('#modal-container');
             const color = isError ? 'bg-red-500' : 'bg-green-500';
@@ -134,11 +128,14 @@
             }, 3000);
         }
 
-        // Sets the current view and updates the dynamic buttons
+        /**
+         * Sets the current application view and re-renders the UI.
+         * @param {string} newView 
+         */
         function setView(newView) {
             view = newView;
             render();
-            // Ensure body class is updated for background change in menu views
+            // Toggle body class for background change in menu views
             if (['settings', 'co-teachers', 'help', 'student_settings'].includes(newView)) {
                 $('body').classList.add('menu-active');
             } else {
@@ -146,7 +143,9 @@
             }
         }
         
-        // Updates the browser tab title to show unanswered request count
+        /**
+         * Updates the browser tab title with the count of unanswered requests.
+         */
         function updateDocumentTitle() {
             const unansweredCount = requests.filter(r => r.status === 'unanswered').length;
             const prefix = unansweredCount > 0 ? `(${unansweredCount}) ` : '';
@@ -161,7 +160,10 @@
             }
         });
 
-        // Function to safely extract request data based on current filter
+        /**
+         * Filters and sorts requests based on the current user role and filter setting.
+         * @returns {Array<Object>} Filtered requests.
+         */
         function getFilteredRequests() {
             let filtered = requests.filter(r => {
                 if (userRole === 'student') {
@@ -193,33 +195,40 @@
 
         // --- FIREBASE LISTENERS & DATA FETCHING ---
 
-        // Checks if current time is within schedule period (Hand Raising ON)
+        /**
+         * Determines if the current time falls within the scheduled period.
+         * Hand raising is ON during scheduled time, PAUSED otherwise.
+         */
         function checkSchedule() {
             if (!classData || !classData.schedule) {
-                isHandRaisingPaused = false; // Default to ON if no schedule
+                // If the class document exists but schedule doesn't, check for manual pause state
+                isHandRaisingPaused = classData?.isHandRaisingPaused ?? false;
+                render();
                 return;
             }
 
             const { start_time, end_time } = classData.schedule;
             if (!start_time || !end_time) {
-                isHandRaisingPaused = false;
+                 isHandRaisingPaused = classData?.isHandRaisingPaused ?? false;
+                render();
                 return;
             }
-
+            
+            // Use 24-hour format internally for accurate comparison
             const now = new Date();
             const nowMinutes = now.getHours() * 60 + now.getMinutes();
 
             const [startH, startM] = start_time.split(':').map(Number);
             const [endH, endM] = end_time.split(':').map(Number);
-
+            
+            // Convert to 24-hour format (assuming HH:MM format from time input)
             const startMinutes = startH * 60 + startM;
-            const endMinutes = endM === 0 && endH === 0 ? 24 * 60 : endH * 60 + endM; // Handle 00:00 as midnight end
+            const endMinutes = endH * 60 + endM;
 
-            // Paused period is from end_time to start_time (or end_time to 23:59 and 00:00 to start_time)
             let isScheduledTime = false;
             
             if (startMinutes <= endMinutes) {
-                // Normal schedule (e.g., 9:00 to 15:00)
+                // Normal schedule (e.g., 09:00 to 15:00)
                 isScheduledTime = nowMinutes >= startMinutes && nowMinutes < endMinutes;
             } else {
                 // Overnight schedule (e.g., 22:00 to 08:00)
@@ -233,6 +242,7 @@
 
         // Firestore subscription for class data
         function subscribeToClassData() {
+            // Publicly shared data for the whole class
             const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId);
 
             onSnapshot(docRef, (docSnap) => {
@@ -251,12 +261,28 @@
                         userRole = 'student';
                     }
                     
-                    // Check initial paused state based on schedule
+                    // Check initial paused state based on schedule or manual toggle
                     checkSchedule(); 
                     
                 } else {
                     // Class not found or deleted (Handle a simple error state, maybe force a redirect/exit)
-                    console.error('Class document not found.');
+                    console.error('Class document not found. Attempting to create a default one for first run.');
+                    
+                    // Create a default class document if it doesn't exist
+                    if (userRole === 'teacher' || userId) { // Only attempt if authenticated
+                        setDoc(docRef, {
+                            teachers: [userId],
+                            coTeachers: [],
+                            classId: classId,
+                            isHandRaisingPaused: false,
+                            schedule: { start_time: '09:00', end_time: '15:00' },
+                            studentNames: {}
+                        }, { merge: true }).then(() => {
+                            console.log("Default class created.");
+                        }).catch(e => {
+                            console.error("Error creating default class:", e);
+                        });
+                    }
                     classData = null;
                 }
                 // Initial render once class data is available
@@ -286,6 +312,10 @@
 
         // --- REQUEST ACTIONS (TEACHER/CO-TEACHER) ---
 
+        /**
+         * Sets a request status to 'accepted'.
+         * @param {string} requestId 
+         */
         async function acceptRequest(requestId) {
             try {
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'requests', requestId);
@@ -301,6 +331,10 @@
             }
         }
 
+        /**
+         * Sets a request status to 'denied'.
+         * @param {string} requestId 
+         */
         async function denyRequest(requestId) {
             try {
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'requests', requestId);
@@ -316,9 +350,17 @@
             }
         }
 
+        /**
+         * Displays a modal to add or edit a comment on a request.
+         * @param {string} requestId 
+         * @param {string} [existingComment=''] 
+         */
         function promptComment(requestId, existingComment = '') {
             const modalContainer = $('#modal-container');
             const isEdit = existingComment !== '';
+            
+            // Clean up existing modal if present
+            modalContainer.innerHTML = '';
             
             const modalHTML = `
                 <div id="comment-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center z-50 p-4">
@@ -327,7 +369,7 @@
                         <textarea id="comment-text" class="w-full h-24 p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500" placeholder="Type your comment here..." maxlength="200">${existingComment}</textarea>
                         <div class="flex justify-end space-x-3 mt-4">
                             <button id="cancel-comment" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 transition duration-150">Cancel</button>
-                            <button id="submit-comment" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition duration-150">${isEdit ? 'Save' : 'Comment'}</button>
+                            <button id="submit-comment" class="px-4 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition duration-150">${isEdit ? 'Save' : 'Comment'}</button>
                         </div>
                     </div>
                 </div>
@@ -348,6 +390,11 @@
             });
         }
 
+        /**
+         * Updates a comment and sets request status to 'commented'.
+         * @param {string} requestId 
+         * @param {string} comment 
+         */
         async function updateComment(requestId, comment) {
             try {
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'requests', requestId);
@@ -357,23 +404,27 @@
                     responseTimestamp: serverTimestamp(),
                     responderId: userId
                 });
-                showMessage(comment ? 'Comment added/updated.' : 'Comment deleted.', comment ? false : true);
+                showMessage('Comment added/updated.');
             } catch (error) {
                 console.error("Error updating comment:", error);
                 showMessage('Failed to update comment.', true);
             }
         }
         
+        /**
+         * Deletes a comment, reverting request status to 'unanswered'.
+         * @param {string} requestId 
+         */
         async function deleteComment(requestId) {
             try {
                 const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'requests', requestId);
                 await updateDoc(docRef, {
-                    status: 'unanswered', // Revert status
-                    comment: '',          // Clear comment
-                    responseTimestamp: deleteField(), // Clear response time
-                    responderId: deleteField()       // Clear responder
+                    status: 'unanswered', 
+                    comment: deleteField(),
+                    responseTimestamp: deleteField(),
+                    responderId: deleteField()       
                 });
-                showMessage('Comment deleted successfully. Request status reverted to unanswered.');
+                showMessage('Comment deleted. Request status reverted to unanswered.');
             } catch (error) {
                 console.error("Error deleting comment:", error);
                 showMessage('Failed to delete comment.', true);
@@ -382,6 +433,9 @@
         
         // --- STUDENT ACTIONS ---
 
+        /**
+         * Creates a new request if hand raising is not paused.
+         */
         async function createRequest() {
             if (isHandRaisingPaused) {
                 showMessage('Hand raising is currently paused due to class schedule.', true);
@@ -402,19 +456,25 @@
             }
         }
         
-        // Student: Save local class name
+        /**
+         * Saves a local nickname for the class.
+         * @param {string} newName 
+         */
         function saveLocalClassName(newName) {
-            localClassName = newName;
-            localStorage.setItem(`localClassName_${classId}`, newName);
+            const trimmedName = newName.trim() || 'My Class';
+            localClassName = trimmedName;
+            localStorage.setItem(`localClassName_${classId}`, trimmedName);
             updateDocumentTitle();
             showMessage('Class name updated locally.');
             render();
         }
 
-        // Student: Leave class (removes them from student list/name map)
+        /**
+         * Removes the student's entry from the class document.
+         */
         async function leaveClass() {
-            const confirmLeave = window.confirm("Are you sure you want to leave this class? You will lose your customized name and won't see requests.");
-            if (!confirmLeave) return;
+            // Using a simple window.confirm as a temporary modal replacement
+            if (!window.confirm("Are you sure you want to leave this class?")) return;
 
             try {
                 await runTransaction(db, async (transaction) => {
@@ -431,35 +491,32 @@
                         studentNames: newStudentNames
                     });
                 });
-                // Clear local storage and force userRole to unknown/redirect
+                
                 localStorage.removeItem(`localClassName_${classId}`);
-                userId = null;
-                userRole = 'unknown';
-                // Reload or show a 'You have left' message
                 $('body').innerHTML = '<div class="text-center py-20 text-gray-500">You have left the class.</div>';
 
             } catch (error) {
                 console.error("Error leaving class:", error);
-                showMessage('Failed to leave class.', true);
+                showMessage('Failed to leave class. Check console.', true);
             }
         }
 
         // --- SETTINGS ACTIONS (TEACHER/CO-TEACHER) ---
 
-        // Deletes the entire class document (only for Teacher)
+        /**
+         * Deletes the entire class document (Teacher only).
+         */
         async function deleteClass() {
             if (userRole !== 'teacher') {
                 showMessage('Only the teacher can delete the class.', true);
                 return;
             }
-
-            const confirmDelete = window.confirm("WARNING: Are you absolutely sure you want to delete this entire class? This cannot be undone.");
-            if (!confirmDelete) return;
+            // Using a simple window.confirm as a temporary modal replacement
+            if (!window.confirm("WARNING: Are you absolutely sure you want to delete this class?")) return;
 
             try {
                 await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId));
                 showMessage('Class deleted successfully.');
-                // Optionally redirect or show a "Class deleted" screen
                 $('body').innerHTML = '<div class="text-center py-20 text-gray-500">Class has been deleted.</div>';
             } catch (error) {
                 console.error("Error deleting class:", error);
@@ -467,30 +524,34 @@
             }
         }
 
-        // Saves the hand raising pause state (for Teacher/Co-Teacher)
+        /**
+         * Toggles the manual hand-raising pause state.
+         */
         async function toggleHandRaisingPause() {
-            if (isHandRaisingPaused) {
-                // If paused by schedule, user can't manually override
-                if (classData?.schedule) {
-                    showMessage('Hand raising status is currently dictated by the schedule. Manual override is disabled.', true);
-                    return;
-                }
+            // If schedule is active, manual toggle is only for the Firestore value, which might be overridden
+            if (classData?.schedule) {
+                showMessage('The schedule is currently active. The manual toggle will be overridden by the schedule.', true);
+                return;
             }
-
+            
             const newState = !isHandRaisingPaused;
             try {
                 await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId), {
                     isHandRaisingPaused: newState
                 });
-                // isHandRaisingPaused will be updated by the listener, but we can set it locally for immediate feedback
+                // State update happens via listener, but update locally for quick feedback if schedule isn't active
                 isHandRaisingPaused = newState;
                 render();
+                showMessage(`Hand raising ${newState ? 'paused' : 'resumed'}.`);
             } catch (error) {
                 console.error("Error toggling pause state:", error);
                 showMessage('Failed to toggle hand raising.', true);
             }
         }
 
+        /**
+         * Saves the schedule times to Firestore.
+         */
         async function saveSchedule() {
             const startTimeInput = $('#schedule-start-time');
             const endTimeInput = $('#schedule-end-time');
@@ -508,7 +569,6 @@
                     schedule: { start_time, end_time }
                 });
                 showMessage('Class schedule saved successfully! Hand-raising will now follow the schedule.');
-                checkSchedule(); // Re-run check immediately
             } catch (error) {
                 console.error("Error saving schedule:", error);
                 showMessage('Failed to save schedule.', true);
@@ -518,63 +578,34 @@
 
         // --- UI Rendering Functions ---
 
-        // Renders the main view based on user role and current view state
-        function render() {
-            const container = $('#app-container');
-            if (!userId) {
-                container.innerHTML = `<div class="text-center py-10 text-gray-500"><i class="fas fa-exclamation-triangle text-2xl"></i><p class="mt-2">Authentication failed. Please reload.</p></div>`;
-                return;
-            }
-            
-            if (userRole === 'unknown' || !classData) {
-                container.innerHTML = `<div class="text-center py-10 text-gray-500"><i class="fas fa-user-circle text-2xl"></i><p class="mt-2">Welcome! Determining your role...</p></div>`;
-                return;
-            }
-            
-            // Base layout structure
-            let html = `
-                ${renderHeader()}
-                ${renderMainContent()}
-            `;
-            
-            container.innerHTML = html;
-            attachEventListeners();
-        }
-
-        // Renders the top navigation bar with dynamic buttons
+        /**
+         * Renders the header with dynamic navigation buttons.
+         * @returns {string} HTML for the header.
+         */
         function renderHeader() {
             const isMenu = ['settings', 'co-teachers', 'help', 'student_settings'].includes(view);
             const isTeacherView = userRole === 'teacher' || userRole === 'co-teacher';
             
-            const topButtons = [
-                { id: 'settings', icon: 'fas fa-cog', title: 'Settings', role: isTeacherView ? 'teacher,co-teacher' : 'student' },
-                { id: 'co-teachers', icon: 'fas fa-user-friends', title: 'Co-Teachers', role: 'teacher,co-teacher' },
-                { id: 'help', icon: 'fas fa-question-circle', title: 'Help', role: 'teacher,co-teacher' },
-            ].filter(btn => btn.role.includes(userRole));
+            const teacherCoTeacherButtons = [
+                { id: 'settings', icon: 'fas fa-cog', title: 'Settings' },
+                { id: 'co-teachers', icon: 'fas fa-user-friends', title: 'Co-Teachers' },
+                { id: 'help', icon: 'fas fa-question-circle', title: 'Help' },
+            ];
 
 
-            const mainNavHTML = topButtons.map(btn => {
+            const mainNavHTML = teacherCoTeacherButtons.map(btn => {
                 const isActiveMenu = view === btn.id;
                 
                 // If in a menu view, the button becomes a blue 'Home' button
-                if (isMenu) {
-                    const icon = isActiveMenu ? 'fas fa-home' : btn.icon;
-                    const bgClass = isActiveMenu ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-200 text-gray-600';
-                    const action = isActiveMenu ? `setView('requests')` : `setView('${btn.id}')`;
-                    
-                    return `
-                        <button onclick="${action}" class="flex-1 h-12 ${bgClass} rounded-xl transition duration-200">
-                            <i class="${icon} text-lg"></i>
-                        </button>
-                    `;
-                } else {
-                    // Normal view - grey buttons
-                    return `
-                        <button onclick="setView('${btn.id}')" class="flex-1 h-12 bg-gray-200 text-gray-600 rounded-xl hover:bg-gray-300 transition duration-200">
-                            <i class="${btn.icon} text-lg"></i>
-                        </button>
-                    `;
-                }
+                const icon = isActiveMenu ? 'fas fa-home' : btn.icon;
+                const bgClass = isActiveMenu ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-200 text-gray-600';
+                const action = isActiveMenu ? `setView('requests')` : `setView('${btn.id}')`;
+                
+                return `
+                    <button onclick="${action}" class="flex-1 h-12 ${bgClass} rounded-xl transition duration-200 hover:shadow-xl">
+                        <i class="${icon} text-lg"></i>
+                    </button>
+                `;
             }).join('');
 
 
@@ -583,11 +614,12 @@
                     <h1 class="text-2xl font-bold text-gray-800">${localClassName}</h1>
                     <div class="flex space-x-3 w-3/4">
                         ${userRole === 'student' ? `
-                            <button onclick="createRequest()" class="h-12 w-12 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 transition duration-200">
+                            <!-- Student Request and Settings Buttons -->
+                            <button onclick="createRequest()" class="h-12 w-12 bg-blue-600 text-white rounded-xl shadow-lg hover:bg-blue-700 transition duration-200 disabled:opacity-50" ${isHandRaisingPaused ? 'disabled' : ''}>
                                 <i class="fas fa-plus text-lg"></i>
                             </button>
-                            <button onclick="setView('student_settings')" class="h-12 w-12 bg-gray-200 text-gray-600 rounded-xl hover:bg-gray-300 transition duration-200">
-                                <i class="fas fa-cog text-lg"></i>
+                            <button onclick="setView('student_settings')" class="h-12 w-12 ${view === 'student_settings' ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-200 text-gray-600'} rounded-xl hover:bg-gray-300 transition duration-200">
+                                <i class="${view === 'student_settings' ? 'fas fa-home' : 'fas fa-cog'} text-lg"></i>
                             </button>
                         ` : mainNavHTML}
                     </div>
@@ -612,38 +644,41 @@
             }
         }
 
-        // Renders the schedule section of the settings menu
+        /**
+         * Renders the schedule section of the settings menu.
+         * @returns {string} HTML for the schedule section.
+         */
         function renderScheduleSection() {
             const schedule = classData?.schedule || {};
             const start = schedule.start_time || '09:00';
             const end = schedule.end_time || '15:00';
 
-            // Placeholder time input logic (will be attached via JS)
             return `
                 <div class="space-y-4 p-6 bg-white rounded-xl shadow-md mt-6">
-                    <h4 class="text-xl font-semibold text-gray-800 border-b pb-2">Schedule Management</h4>
-                    <p class="text-sm text-gray-600 mb-4">Set a period when hand raising will be automatically turned ON. It will be paused outside this period.</p>
+                    <h4 class="text-xl font-semibold text-gray-800 border-b pb-3 mb-2">Schedule Management</h4>
+                    <p class="text-sm text-gray-600 mb-4 font-medium">Set a period when hand raising will be automatically ON. It is PAUSED from end time to start time.</p>
                     
                     <div class="flex items-center justify-between space-x-4">
-                        <label class="text-gray-700 font-medium">Start Time:</label>
+                        <label for="schedule-start-time" class="text-gray-700 font-medium w-1/4">Start Time:</label>
                         <div class="time-input-group w-1/3">
                             <input type="text" id="schedule-start-time" value="${start}" data-digits="${start.replace(':', '')}" 
-                                class="time-input w-full p-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500" maxlength="4">
+                                class="time-input w-full p-2 border border-gray-300 rounded-lg text-center font-mono focus:ring-2 focus:ring-blue-500" maxlength="5" placeholder="HH:MM">
                         </div>
                         
-                        <label class="text-gray-700 font-medium">End Time:</label>
+                        <label for="schedule-end-time" class="text-gray-700 font-medium w-1/4">End Time:</label>
                         <div class="time-input-group w-1/3">
                             <input type="text" id="schedule-end-time" value="${end}" data-digits="${end.replace(':', '')}" 
-                                class="time-input w-full p-2 border border-gray-300 rounded-lg text-center focus:ring-2 focus:ring-blue-500" maxlength="4">
+                                class="time-input w-full p-2 border border-gray-300 rounded-lg text-center font-mono focus:ring-2 focus:ring-blue-500" maxlength="5" placeholder="HH:MM">
                         </div>
                     </div>
                     
                     <button onclick="saveSchedule()" class="w-full mt-4 py-2 bg-indigo-600 text-white rounded-lg font-semibold hover:bg-indigo-700 transition duration-150 shadow-md">
-                        Save Schedule
+                        <i class="fas fa-save mr-2"></i> Save Schedule
                     </button>
                 </div>
             `;
         }
+
 
         // Renders the settings menu (Teacher/Co-Teacher)
         function renderSettingsMenu() {
@@ -658,8 +693,8 @@
                         <p class="text-lg font-mono text-gray-800 break-all">${classId}</p>
                     </div>
 
-                    <!-- Hand Raising Toggle -->
-                    ${renderHandRaisingToggle()}
+                    <!-- Hand Raising Toggle (Shown for manual override when no schedule is active) -->
+                    ${renderHandRaisingToggle(true)}
 
                     <!-- Schedule Management -->
                     ${renderScheduleSection()}
@@ -669,7 +704,7 @@
                         <h4 class="text-xl font-semibold text-red-700 mb-4">Dangerous Zone</h4>
                         ${isTeacher ? `
                             <button onclick="deleteClass()" class="w-full py-2 bg-red-600 text-white rounded-lg font-semibold hover:bg-red-700 transition duration-150 shadow-md">
-                                <i class="fas fa-trash mr-2"></i> Delete Class (Teacher Only)
+                                <i class="fas fa-trash-alt mr-2"></i> Delete Class (Teacher Only)
                             </button>
                         ` : `
                             <p class="text-sm text-red-500">Co-teachers cannot delete the class.</p>
@@ -681,7 +716,7 @@
 
         // Renders the student specific settings menu
         function renderStudentSettingsMenu() {
-            const currentLocalName = localStorage.getItem(`localClassName_${classId}`) || '';
+            const currentLocalName = localClassName;
 
             return `
                 <h2 class="text-3xl font-extrabold text-gray-900 mb-6">Student Settings</h2>
@@ -694,7 +729,7 @@
                         <input type="text" id="local-name-input" value="${currentLocalName}" placeholder="e.g., Algebra 1"
                             class="w-full p-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
                         <button id="save-local-name-btn" class="w-full mt-3 py-2 bg-blue-600 text-white rounded-lg font-semibold hover:bg-blue-700 transition duration-150 shadow-md">
-                            Save Nickname
+                            <i class="fas fa-save mr-2"></i> Save Nickname
                         </button>
                     </div>
 
@@ -712,15 +747,23 @@
 
         // Renders the Co-Teachers menu
         function renderCoTeachersMenu() {
-            // Placeholder content for Co-Teachers management
             const coTeachers = classData?.coTeachers || [];
             return `
                 <h2 class="text-3xl font-extrabold text-gray-900 mb-6">Co-Teachers (${coTeachers.length})</h2>
                 <div class="space-y-4">
-                    <p class="text-gray-600">This section is for managing co-teachers. Add/Remove functionality would be implemented here.</p>
-                    <ul class="space-y-2">
-                        ${coTeachers.map(id => `<li class="p-3 bg-white rounded-lg shadow-sm font-mono text-sm break-all">${id}</li>`).join('')}
-                    </ul>
+                    <p class="text-gray-600">This section is for viewing co-teachers. (Add/Remove functionality is not implemented in this version).</p>
+                    <div class="p-4 bg-white rounded-xl shadow-md">
+                        <p class="font-semibold text-gray-800 mb-2 border-b pb-2">Teacher (Owner)</p>
+                        <p class="font-mono text-sm break-all">${classData?.teachers[0] || 'N/A'}</p>
+                    </div>
+                    ${coTeachers.length > 0 ? `
+                        <div class="p-4 bg-white rounded-xl shadow-md">
+                            <p class="font-semibold text-gray-800 mb-2 border-b pb-2">Co-Teachers</p>
+                            <ul class="space-y-2">
+                                ${coTeachers.map(id => `<li class="p-1 font-mono text-sm break-all bg-gray-50 rounded-md">${id}</li>`).join('')}
+                            </ul>
+                        </div>
+                    ` : `<p class="text-gray-500 italic">No co-teachers assigned.</p>`}
                 </div>
             `;
         }
@@ -729,36 +772,45 @@
         function renderHelpMenu() {
             return `
                 <h2 class="text-3xl font-extrabold text-gray-900 mb-6">Help & Documentation</h2>
-                <div class="space-y-4">
-                    <p class="text-gray-600">Detailed information about the dashboard features, roles, and troubleshooting.</p>
-                    <div class="p-4 bg-yellow-50 rounded-xl border border-yellow-200">
+                <div class="space-y-4 p-6 bg-white rounded-xl shadow-md">
+                    <h4 class="text-xl font-semibold text-gray-800 mb-2">My Information</h4>
+                    <div class="p-3 bg-yellow-50 rounded-xl border border-yellow-200">
                         <p class="font-semibold text-yellow-800">Your User ID:</p>
                         <p class="font-mono text-sm break-all">${userId}</p>
                     </div>
+                    <p class="text-gray-600 mt-4">This dashboard allows students to submit requests for assistance and teachers/co-teachers to manage them in real-time.</p>
                 </div>
             `;
         }
         
-        // Renders the hand raising toggle button (Teacher/Co-Teacher view)
-        function renderHandRaisingToggle() {
+        /**
+         * Renders the hand raising toggle button (Teacher/Co-Teacher view).
+         * @param {boolean} isInSettings If true, renders a simpler box for the settings menu.
+         */
+        function renderHandRaisingToggle(isInSettings = false) {
             const isPaused = isHandRaisingPaused;
             const buttonClass = isPaused ? 'bg-red-500 hover:bg-red-600' : 'bg-green-500 hover:bg-green-600';
             const icon = isPaused ? 'fas fa-play' : 'fas fa-pause';
             const text = isPaused ? 'Resume Hand Raising' : 'Pause Hand Raising';
             
             let statusText = isPaused ? 'Currently Paused' : 'Currently Active';
+            let statusColor = isPaused ? 'text-red-600' : 'text-green-600';
+            
             if (classData?.schedule) {
                 statusText += ' (Scheduled)';
+            } else {
+                 statusText += ' (Manual)';
             }
 
-            return `
-                <div class="p-6 bg-white rounded-xl shadow-md">
-                    <p class="text-sm font-medium text-gray-500">Hand Raising Status: <span class="font-semibold ${isPaused ? 'text-red-600' : 'text-green-600'}">${statusText}</span></p>
-                    <button onclick="toggleHandRaisingPause()" class="w-full mt-3 py-3 text-white rounded-lg font-semibold transition duration-150 shadow-lg ${buttonClass}">
-                        <i class="${icon} mr-2"></i> ${text}
-                    </button>
-                </div>
+            const content = `
+                <p class="text-sm font-medium text-gray-500">Hand Raising Status: <span class="font-semibold ${statusColor}">${statusText}</span></p>
+                ${classData?.schedule ? `<p class="text-xs text-blue-500">Status determined by schedule: ${classData.schedule.start_time} - ${classData.schedule.end_time}</p>` : ''}
+                <button onclick="toggleHandRaisingPause()" class="w-full mt-3 py-3 text-white rounded-lg font-semibold transition duration-150 shadow-lg ${buttonClass} disabled:opacity-50" ${classData?.schedule ? 'disabled' : ''}>
+                    <i class="${icon} mr-2"></i> ${text}
+                </button>
             `;
+
+            return isInSettings ? `<div class="p-6 bg-white rounded-xl shadow-md">${content}</div>` : content;
         }
 
         // Renders the main requests view
@@ -767,14 +819,14 @@
             const isTeacherView = userRole === 'teacher' || userRole === 'co-teacher';
             
             const filterButtons = ['Unanswered', 'Accepted', 'Denied', 'Commented on'].map(title => {
-                const key = title.toLowerCase().replace(' ', '_');
-                const isActive = currentRequestFilter === key.replace('_on', '');
+                const key = title.toLowerCase().replace(' ', '_').replace('_on', '');
+                const isActive = currentRequestFilter === key;
                 const baseClass = 'px-3 py-1 text-sm font-medium rounded-full transition duration-150 whitespace-nowrap';
                 const activeClass = 'bg-blue-600 text-white shadow-md';
                 const inactiveClass = 'bg-gray-200 text-gray-700 hover:bg-gray-300';
                 
                 return `
-                    <button onclick="setCurrentRequestFilter('${key.replace('_on', '')}')" class="${baseClass} ${isActive ? activeClass : inactiveClass}">
+                    <button onclick="setCurrentRequestFilter('${key}')" class="${baseClass} ${isActive ? activeClass : inactiveClass}">
                         ${title}
                     </button>
                 `;
@@ -789,8 +841,8 @@
                     </div>
                 ` : ''}
 
-                <!-- Teacher/Co-Teacher Hand Raising Toggle -->
-                ${isTeacherView ? renderHandRaisingToggle() : ''}
+                <!-- Teacher/Co-Teacher Hand Raising Toggle (Non-Settings View) -->
+                ${isTeacherView && !classData?.schedule ? `<div class="mb-4 p-4 bg-white rounded-xl shadow-md">${renderHandRaisingToggle()}</div>` : ''}
 
                 <!-- Request Filters -->
                 <div class="flex space-x-2 overflow-x-auto py-2 my-4">
@@ -811,18 +863,26 @@
         // Renders a single request card
         function renderRequestCard(request, isTeacherView) {
             const time = request.timestamp ? new Date(request.timestamp.toDate()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'Pending';
-            const studentName = request.userName || 'Unknown Student';
+            const studentName = request.userName || 'Anonymous Student';
             
             const actionButtons = isTeacherView ? renderActionButtons(request) : '';
 
+            // Border color based on status
+            const statusMap = {
+                'accepted': 'border-green-500',
+                'denied': 'border-red-500',
+                'commented': 'border-blue-500',
+                'unanswered': 'border-yellow-500'
+            };
+            const borderColor = statusMap[request.status] || 'border-gray-300';
+
             return `
-                <div class="bg-white p-4 rounded-xl shadow-lg flex justify-between items-center transition duration-200 border-l-4 
-                    ${request.status === 'accepted' ? 'border-green-500' : request.status === 'denied' ? 'border-red-500' : request.status === 'commented' ? 'border-blue-500' : 'border-yellow-500'}">
+                <div class="bg-white p-4 rounded-xl shadow-lg flex justify-between items-center transition duration-200 border-l-4 ${borderColor}">
                     
                     <div class="flex-1 min-w-0">
                         <p class="text-lg font-semibold text-gray-900 truncate">${studentName}</p>
                         <p class="text-sm text-gray-500 mt-1">${time}</p>
-                        ${request.comment ? `<p class="text-xs italic text-blue-600 mt-2 p-1 bg-blue-50 rounded-md">Comment: ${request.comment}</p>` : ''}
+                        ${request.comment ? `<p class="text-xs italic text-blue-600 mt-2 p-1 bg-blue-50 rounded-md max-w-full overflow-hidden truncate">Comment: ${request.comment}</p>` : ''}
                     </div>
                     
                     ${actionButtons}
@@ -834,21 +894,23 @@
         function renderActionButtons(request) {
             const { id, comment } = request;
             
+            const sanitizedComment = comment ? comment.replace(/'/g, "\\'").replace(/"/g, '&quot;') : '';
+
             const commentButton = comment ? 
                 // Split Button (Edit/Delete)
                 `
-                <div class="split-button-container w-full h-full bg-blue-100 rounded-xl shadow-md">
-                    <div class="split-button-top hover:bg-blue-200" onclick="promptComment('${id}', '${comment.replace(/'/g, "\\'")}')">
+                <div class="split-button-container w-full h-full rounded-xl shadow-md border border-blue-500 overflow-hidden">
+                    <div class="split-button-top bg-blue-100 hover:bg-blue-200" onclick="promptComment('${id}', '${sanitizedComment}')">
                         <i class="fas fa-edit text-blue-600 text-lg"></i>
                     </div>
-                    <div class="split-button-bottom hover:bg-blue-200" onclick="deleteComment('${id}')">
+                    <div class="split-button-bottom bg-blue-100 hover:bg-blue-200" onclick="deleteComment('${id}')">
                         <i class="fas fa-trash-alt text-blue-600 text-lg"></i>
                     </div>
                 </div>
                 ` :
                 // Single Comment Button (Add)
                 `
-                <button onclick="promptComment('${id}')" class="w-full h-full bg-white text-gray-700 rounded-xl shadow-md hover:bg-gray-100 transition duration-150">
+                <button onclick="promptComment('${id}')" class="w-full h-full bg-white text-gray-700 rounded-xl shadow-md border border-gray-300 hover:bg-gray-100 transition duration-150">
                     <i class="fas fa-comment text-gray-500 text-lg"></i>
                 </button>
                 `;
@@ -890,46 +952,37 @@
                 }
             }
 
-            // Attach listeners for Time Input in Settings
+            // Attach listeners for Time Input in Settings (Schedule)
             if (view === 'settings') {
                 const timeInputs = $$('.time-input');
                 timeInputs.forEach(input => {
-                    input.addEventListener('keydown', (e) => {
-                        let currentDigits = input.dataset.digits || '';
+                    // Set default value if empty
+                    if (!input.value) {
+                         input.value = '09:00';
+                         input.dataset.digits = '0900';
+                    }
 
-                        // Only allow digits and backspace/delete
-                        if (e.key.length === 1 && /\d/.test(e.key)) {
-                            if (currentDigits.length < 4) {
-                                currentDigits += e.key;
-                            }
-                        } else if (e.key === 'Backspace' || e.key === 'Delete') {
-                            currentDigits = currentDigits.slice(0, -1);
-                        } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-                            e.preventDefault();
-                            // Basic time increment logic (too complex to fully implement here, leaving as a basic feature)
-                        } else if (e.key.length === 1 && !e.ctrlKey && !e.metaKey) {
-                            e.preventDefault(); // Prevent other keys from typing
-                        }
+                    input.addEventListener('input', (e) => {
+                         let val = e.target.value.replace(/[^0-9:]/g, '');
+                         let digits = val.replace(/:/g, '');
+                         
+                         // Limit to 4 digits
+                         if (digits.length > 4) {
+                             digits = digits.substring(0, 4);
+                         }
+                         
+                         // Format as HH:MM
+                         let formattedValue = '';
+                         if (digits.length > 2) {
+                             formattedValue = `${digits.substring(0, 2)}:${digits.substring(2, 4)}`;
+                         } else if (digits.length > 0) {
+                             formattedValue = digits;
+                         }
 
-                        // Time validation and formatting
-                        if (currentDigits.length > 0) {
-                            let padded = currentDigits.padStart(4, '0');
-                            
-                            let h_str = padded.slice(0, 2);
-                            let m_str = padded.slice(2, 4);
-                            
-                            // Basic 12/24 hour validation (using 24h internal logic for simplicity, though the previous snippet seemed to use 12h)
-                            if (parseInt(h_str, 10) > 23) h_str = '23';
-                            if (parseInt(m_str, 10) > 59) m_str = '59';
-
-                            const formattedValue = `${h_str}:${m_str}`;
-                            input.value = formattedValue;
-                            input.dataset.digits = currentDigits;
-                        } else {
-                            input.value = '';
-                            input.dataset.digits = '';
-                        }
+                         e.target.value = formattedValue;
+                         e.target.dataset.digits = digits;
                     });
+
 
                     input.addEventListener('blur', (e) => {
                         let val = e.target.value.replace(/[^0-9]/g, '');
@@ -938,11 +991,13 @@
                             e.target.dataset.digits = '0900';
                             return;
                         }
+                        
                         // Pad and format on blur
                         const padded = val.padStart(4, '0');
                         let h = parseInt(padded.slice(0, 2), 10);
                         let m = parseInt(padded.slice(2, 4), 10);
 
+                        // Enforce 24-hour time limits
                         if (h > 23) h = 23;
                         if (m > 59) m = 59;
                         
@@ -976,7 +1031,6 @@
                         userId = user.uid;
                         subscribeToClassData();
                         subscribeToRequests();
-                        checkSchedule(); // Initial schedule check
                     } else {
                         // User signed out or failed auth
                         $('#loading-spinner').innerHTML = `<i class="fas fa-exclamation-triangle text-2xl"></i><p class="mt-2">Authentication failed. Please reload.</p>`;
