@@ -17,6 +17,8 @@
             z-index: 1000;
         }
     </style>
+    <!-- 1. Google Platform API Load -->
+    <script src="https://apis.google.com/js/api.js"></script>
 </head>
 <body class="p-6">
 
@@ -57,6 +59,8 @@
                         </div>
                         <p class="text-xs text-gray-500" id="scheduled-status">No end time scheduled.</p>
                         <button id="lower-all-hands-btn" class="w-full mt-3 bg-red-500 text-white py-2 px-4 rounded-lg font-semibold hover:bg-red-600 transition duration-150">End Class: Lower All Hands</button>
+                        <button id="gc-import-btn" class="w-full mt-3 bg-indigo-500 text-white py-2 px-4 rounded-lg font-semibold hover:bg-indigo-600 transition duration-150">Import Google Classroom Roster (Emails & Title)</button>
+                        <p id="gc-status" class="text-xs text-center pt-1 text-gray-500">Ready to import.</p>
                     </div>
 
                     <!-- Invite Links -->
@@ -124,7 +128,7 @@
 
     <!-- Hand Request Modal (Accept/Deny) -->
     <div id="hand-request-modal" class="modal-overlay fixed inset-0 flex items-center justify-center hidden">
-        <div class="bg-white p-6 rounded-xl w-full max-w-sm card">
+        <div class="bg-white p-6 rounded-xl w-full max-w-sm card relative">
             <h3 class="text-lg font-bold mb-4">Hand Request</h3>
             <p class="text-gray-700 mb-4"><span id="hand-requester-name" class="font-semibold"></span> raised their hand.</p>
             <textarea id="hand-requester-comment" class="w-full p-2 border rounded-lg resize-none mb-4" rows="3" readonly placeholder="No comment provided."></textarea>
@@ -140,15 +144,38 @@
             </button>
         </div>
     </div>
+    
+    <!-- Google Classroom Selection Modal -->
+    <div id="gc-select-modal" class="modal-overlay fixed inset-0 flex items-center justify-center hidden">
+        <div class="bg-white p-6 rounded-xl w-full max-w-md card relative">
+            <h3 class="text-lg font-bold mb-4 border-b pb-2">Select Google Classroom</h3>
+            <p class="text-sm text-gray-600 mb-4">Choose a class below to import its name and student roster into Notify.</p>
+            
+            <div id="gc-class-list" class="space-y-3 max-h-80 overflow-y-auto pr-2">
+                <div class="text-center p-4">
+                    <div class="animate-spin rounded-full h-8 w-8 border-b-2 border-indigo-500 mx-auto"></div>
+                    <p class="mt-2 text-gray-500 text-sm">Loading your courses...</p>
+                </div>
+            </div>
+            
+            <div class="flex justify-end mt-4">
+                <button onclick="closeModal('gc-select-modal')" class="bg-gray-300 text-gray-800 py-2 px-4 rounded-lg font-semibold hover:bg-gray-400 transition duration-150">Cancel</button>
+            </div>
+            <button onclick="closeModal('gc-select-modal')" class="absolute top-3 right-3 text-gray-500 hover:text-gray-800">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+    </div>
 
 
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInWithCustomToken, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getAuth, signInWithCustomToken, signInAnonymously } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, where, arrayRemove, arrayUnion, writeBatch, deleteDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-        import { getGoogleClassroomAccessToken, getGoogleClassroomClasses, getGoogleClassroomCourseRoster } from "./google_classroom_api.js"; // Assuming a local file for GC API helpers
-
+        
         setLogLevel('Debug');
 
         // --- Global Variables & Initialization ---
@@ -157,10 +184,20 @@
         const authToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
         let app, db, auth;
-        let currentClassId = 'class_001'; // Placeholder: Assume a fixed class ID for simplicity
+        // In a real multi-class app, the teacher would select this. For now, hardcode one class.
+        const currentClassId = 'class_001'; 
         let currentUserId = null;
-        let isTeacher = false; // Flag to determine teacher/coteacher vs student view
-        let isAuthReady = false;
+        let isTeacher = false;
+        let activeHandRequestId = null; // Store the ID of the hand being processed in the modal
+        
+        // --- Google Classroom Configuration (REPLACE THIS DUMMY CLIENT ID) ---
+        const GOOGLE_CLIENT_ID = 'YOUR_GOOGLE_CLIENT_ID'; // <<< REPLACE ME WITH YOUR REAL CLIENT ID
+        const GC_SCOPES = [
+            'https://www.googleapis.com/auth/classroom.courses.readonly',
+            'https://www.googleapis.com/auth/classroom.roster.readonly',
+            'profile',
+            'email'
+        ];
 
         // --- UI Elements ---
         const ui = {
@@ -173,6 +210,8 @@
             pauseStatus: document.getElementById('pause-status'),
             pauseBtn: document.getElementById('pause-btn'),
             lowerAllHandsBtn: document.getElementById('lower-all-hands-btn'),
+            gcImportBtn: document.getElementById('gc-import-btn'),
+            gcStatus: document.getElementById('gc-status'),
             
             // Scheduling
             classEndTimeInput: document.getElementById('class-end-time'),
@@ -197,18 +236,19 @@
             raisedHandsContainer: document.getElementById('raised-hands-container'),
             noHandsMessage: document.getElementById('no-hands-message'),
 
-            // Modal
+            // Modals
             handRequestModal: document.getElementById('hand-request-modal'),
             handRequesterName: document.getElementById('hand-requester-name'),
             handRequesterComment: document.getElementById('hand-requester-comment'),
             acceptHandBtn: document.getElementById('accept-hand-btn'),
-            denyHandBtn: document.getElementById('deny-hand-btn')
+            denyHandBtn: document.getElementById('deny-hand-btn'),
+            gcSelectModal: document.getElementById('gc-select-modal'),
+            gcClassList: document.getElementById('gc-class-list'),
         };
 
 
         // --- Utility Functions ---
 
-        // Clipboard function
         window.copyToClipboard = (elementId) => {
             const input = document.getElementById(elementId);
             input.select();
@@ -218,11 +258,10 @@
             setTimeout(() => input.value = originalValue, 1000);
         }
 
-        // Modal functions
         window.openModal = (modalId) => document.getElementById(modalId).classList.remove('hidden');
         window.closeModal = (modalId) => document.getElementById(modalId).classList.add('hidden');
         
-        // Time input formatting (re-used from previous snippet)
+        // Time input formatting (24-hour time validation)
         document.addEventListener('DOMContentLoaded', () => {
             document.querySelectorAll('.time-input').forEach(input => {
                 input.dataset.digits = ''; // Initialize internal digits state
@@ -237,6 +276,7 @@
                         e.preventDefault();
                         let currentDigits = input.dataset.digits;
 
+                        // Max 4 digits
                         if (currentDigits.length < 4) {
                             currentDigits += e.key;
                         } else {
@@ -249,8 +289,7 @@
                         let h_str = padded.slice(0, 2);
                         let m_str = padded.slice(2, 4);
                         
-                        if (parseInt(h_str, 10) > 23) h_str = '23'; // 24h format for scheduling
-                        if (parseInt(h_str, 10) < 0) h_str = '00';
+                        if (parseInt(h_str, 10) > 23) h_str = '23'; // 24h format (00-23)
                         if (parseInt(m_str, 10) > 59) m_str = '59';
 
                         const formattedValue = `${h_str}:${m_str}`;
@@ -262,7 +301,7 @@
 
                 input.addEventListener('blur', (e) => {
                     let [h, m] = e.target.value.split(':').map(Number);
-                    if (isNaN(h) || h < 0 || h > 23) h = 0; // 24h
+                    if (isNaN(h) || h < 0 || h > 23) h = 0; // 24h validation
                     if (isNaN(m) || m < 0 || m > 59) m = 0;
                     const finalValue = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
                     e.target.value = finalValue;
@@ -273,13 +312,22 @@
 
 
         // --- Firestore References ---
-        const getTeacherRef = (userId) => doc(db, 'artifacts', appId, 'users', userId, 'userData', 'profile');
-        const getClassRef = (classId) => doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId);
+        // Note: For simplicity, user/student profile data is stored in 'userData/profile'
         const getStudentDataRef = (studentId) => doc(db, 'artifacts', appId, 'users', studentId, 'userData', 'profile');
-        const getInviteRef = (inviteId) => doc(db, 'artifacts', appId, 'public', 'data', 'invites', inviteId);
+        
+        // Public Data: Class configuration and roster
+        const getClassRef = (classId) => doc(db, 'artifacts', appId, 'public', 'data', 'classes', classId);
+        const getRosterCollection = (classId) => collection(db, 'artifacts', appId, 'public', 'data', 'classes', classId, 'roster');
+
+        // Public Data: Hand raising and co-teacher requests
+        const getHandRequestsCollection = () => collection(db, 'artifacts', appId, 'public', 'data', 'hand_requests');
         const getCoteacherRequestsCollection = () => collection(db, 'artifacts', appId, 'public', 'data', 'coteacher_requests');
         
-        // --- Core Functions ---
+        // Public Data: Invitation links (for easy lookup)
+        const getInviteRef = (inviteId) => doc(db, 'artifacts', appId, 'public', 'data', 'invites', inviteId);
+        
+        
+        // --- Core Initialization ---
 
         async function initFirebase() {
             try {
@@ -287,6 +335,7 @@
                 db = getFirestore(app);
                 auth = getAuth(app);
 
+                // Authenticate
                 if (authToken) {
                     await signInWithCustomToken(auth, authToken);
                 } else {
@@ -295,19 +344,18 @@
                 currentUserId = auth.currentUser.uid;
                 ui.userIdDisplay.textContent = currentUserId;
 
-                // Check if user is teacher/coteacher
+                // Determine user role
                 const userProfileSnap = await getDoc(getStudentDataRef(currentUserId));
-                const userRole = userProfileSnap.exists() ? userProfileSnap.data().role : 'student'; // Default to student
+                const userRole = userProfileSnap.exists() ? userProfileSnap.data().role : 'student'; 
                 
                 isTeacher = (userRole === 'teacher' || userRole === 'coteacher');
                 
-                // For a dashboard, we assume the user is a teacher/coteacher and has a class ID
                 if (isTeacher) {
-                    // Start all listeners only if auth is ready and user is a teacher
                     setupListeners();
                     generateInviteLinks();
+                    setupEventHandlers();
                 } else {
-                    ui.mainContent.innerHTML = '<p class="text-center text-xl text-red-600">You do not have permission to view this dashboard. Only teachers and co-teachers are allowed.</p>';
+                    ui.mainContent.innerHTML = '<div class="text-center p-12 card bg-red-100 rounded-xl"><p class="text-xl font-bold text-red-700">Access Denied</p><p class="text-red-600 mt-2">You do not have the required role (Teacher or Co-Teacher) to view this dashboard.</p></div>';
                 }
 
                 ui.authCheck.classList.add('hidden');
@@ -322,365 +370,578 @@
         // --- Invite Link Generation ---
 
         async function generateInviteLinks() {
+            // These IDs must match what the student/coteacher app uses to look up the invite
+            const studentInviteId = `class-${currentClassId}-student`;
+            const coteacherInviteId = `class-${currentClassId}-coteacher`;
+
+            // 1. Ensure the invite links exist in Firestore
             const batch = writeBatch(db);
-            const classDocRef = getClassRef(currentClassId);
-            const docSnap = await getDoc(classDocRef);
-            const className = docSnap.exists() ? docSnap.data().title || 'Untitled Class' : 'Untitled Class';
-
-            // Generate/Reuse IDs for predictable links
-            const studentInviteId = `${currentClassId}_student`;
-            const coteacherInviteId = `${currentClassId}_coteacher`;
-
-            // 1. Student Link
-            const studentRef = getInviteRef(studentInviteId);
-            batch.set(studentRef, {
-                classId: currentClassId,
-                className: className,
-                targetRole: 'student',
-                createdAt: new Date().toISOString()
-            }, { merge: true });
             
-            // 2. Co-Teacher Link
-            const coteacherRef = getInviteRef(coteacherInviteId);
-            batch.set(coteacherRef, {
+            // Student Invite: Role 'student', Class ID linked
+            batch.set(getInviteRef(studentInviteId), {
                 classId: currentClassId,
-                className: className,
-                targetRole: 'coteacher',
-                createdAt: new Date().toISOString()
+                role: 'student',
+                updatedAt: new Date().toISOString()
+            }, { merge: true });
+
+            // Co-Teacher Invite: Role 'request-coteacher', Class ID linked
+            batch.set(getInviteRef(coteacherInviteId), {
+                classId: currentClassId,
+                role: 'request-coteacher',
+                updatedAt: new Date().toISOString()
             }, { merge: true });
 
             await batch.commit();
 
-            const baseUrl = window.location.origin + '/invite.html?code=';
-            ui.studentInviteLink.value = baseUrl + studentInviteId;
-            ui.coteacherInviteLink.value = baseUrl + coteacherInviteId;
+            // 2. Display the links (assuming a single-page app structure where "join" is handled by parameters)
+            const baseUrl = window.location.origin + window.location.pathname;
+            ui.studentInviteLink.value = `${baseUrl}?join=${studentInviteId}`;
+            ui.coteacherInviteLink.value = `${baseUrl}?join=${coteacherInviteId}`;
         }
-
-        // --- Class Management Actions ---
         
-        // Toggle Pause/Resume Hand Raising
-        ui.pauseBtn.addEventListener('click', async () => {
-            const classRef = getClassRef(currentClassId);
-            const classSnap = await getDoc(classRef);
-            if (!classSnap.exists()) return console.error("Class not found.");
-            
-            const isCurrentlyPaused = classSnap.data().isPaused || false;
-            const newPauseState = !isCurrentlyPaused;
-
-            await updateDoc(classRef, { isPaused: newPauseState });
-            // UI update happens automatically via onSnapshot listener
-        });
-        
-        // Lower All Hands
-        ui.lowerAllHandsBtn.addEventListener('click', async () => {
-            await lowerAllHands();
-        });
-
-        async function lowerAllHands() {
-            const raisedHandsQuery = query(
-                collection(db, 'artifacts', appId, 'public', 'data', 'students_status'),
-                where('classId', '==', currentClassId),
-                where('isRaised', '==', true)
-            );
-
-            const snapshot = await getDocs(raisedHandsQuery);
-            const batch = writeBatch(db);
-
-            snapshot.docs.forEach(docSnap => {
-                // Delete the student_status document from the database
-                batch.delete(docSnap.ref);
-                // Note: The student's document (profile) should also be updated if it stores the hand status, 
-                // but for real-time tracking, a separate 'students_status' collection is better for performance.
-            });
-
-            // Also clear the class end schedule
-            await updateDoc(getClassRef(currentClassId), { classEndTime: null });
-
-            await batch.commit();
-            console.log("All hands lowered and status documents deleted.");
-        }
-
-        // --- Scheduling Hand Lowering ---
-
-        ui.setScheduleBtn.addEventListener('click', async () => {
-            const timeStr = ui.classEndTimeInput.value;
-            if (!timeStr || timeStr.length !== 5 || !timeStr.includes(':')) {
-                return alert('Please enter a valid time in HH:MM format (e.g., 23:59).');
-            }
-
-            const [h, m] = timeStr.split(':').map(Number);
-            const now = new Date();
-            let scheduledDate = new Date(now);
-            scheduledDate.setHours(h, m, 0, 0);
-
-            // If scheduled time is in the past, schedule for tomorrow
-            if (scheduledDate.getTime() <= now.getTime()) {
-                scheduledDate.setDate(scheduledDate.getDate() + 1);
-            }
-
-            await updateDoc(getClassRef(currentClassId), { 
-                classEndTime: scheduledDate.toISOString() 
-            });
-            alert(`Class end scheduled for ${scheduledDate.toLocaleTimeString()}.`);
-            // The UI will update via the class listener
-        });
-
-        ui.clearScheduleBtn.addEventListener('click', async () => {
-            await updateDoc(getClassRef(currentClassId), { classEndTime: null });
-            // The UI will update via the class listener
-        });
-
-        // --- Roster & Request Handlers ---
-
-        async function handleCoTeacherRequest(requestId, action) {
-            const requestRef = doc(getCoteacherRequestsCollection(), requestId);
-            const requestSnap = await getDoc(requestRef);
-            if (!requestSnap.exists()) return;
-            
-            const data = requestSnap.data();
-            const classRef = getClassRef(currentClassId);
-
-            if (action === 'accept') {
-                const batch = writeBatch(db);
-                
-                // 1. Add to the co-teacher list on the class document
-                batch.update(classRef, {
-                    coteacherEmails: arrayUnion(data.requesterEmail)
-                });
-
-                // 2. Update the user's role/profile document
-                const userProfileRef = getStudentDataRef(data.requesterId);
-                batch.set(userProfileRef, { role: 'coteacher', activeClassId: currentClassId }, { merge: true });
-
-                // 3. Delete the request
-                batch.delete(requestRef);
-                
-                await batch.commit();
-            } else if (action === 'deny') {
-                // 1. Just delete the request
-                await deleteDoc(requestRef);
-            }
-            // UI update happens automatically via onSnapshot listeners
-        }
-
-        // --- Hand Request Handlers (Modal Logic) ---
-
-        let currentHandRequest = null;
-
-        window.openHandRequestModal = (studentId, studentName, comment) => {
-            currentHandRequest = studentId;
-            ui.handRequesterName.textContent = studentName;
-            ui.handRequesterComment.value = comment || 'No comment provided.';
-            openModal('hand-request-modal');
-        }
-
-        ui.acceptHandBtn.addEventListener('click', async () => {
-            if (!currentHandRequest) return;
-            // Lower the hand (delete the status doc)
-            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students_status', currentHandRequest));
-            closeModal('hand-request-modal');
-            currentHandRequest = null;
-        });
-
-        ui.denyHandBtn.addEventListener('click', async () => {
-            if (!currentHandRequest) return;
-            // Lower the hand (delete the status doc) - denying is still lowering the hand from the queue
-            await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'students_status', currentHandRequest));
-            closeModal('hand-request-modal');
-            currentHandRequest = null;
-        });
-
-        // --- Firestore Listeners ---
+        // --- Real-time Listeners (The core "API Gathering") ---
 
         function setupListeners() {
-            // 1. Class Data Listener (for Title, Pause Status, and Schedule)
+            // 1. Class Data Listener (Title, Pause Status, Scheduled End Time)
             onSnapshot(getClassRef(currentClassId), (docSnap) => {
-                if (!docSnap.exists()) {
-                    ui.classTitle.textContent = "Class Not Found";
-                    return;
-                }
-
-                const data = docSnap.data();
-                ui.classTitle.textContent = data.title || 'Untitled Class';
-
-                // Update Pause Status UI
-                const isPaused = data.isPaused || false;
-                ui.pauseStatus.textContent = isPaused ? 'Paused' : 'Active';
-                ui.pauseStatus.classList.toggle('text-green-600', !isPaused);
-                ui.pauseStatus.classList.toggle('text-red-600', isPaused);
-                ui.pauseBtn.textContent = isPaused ? 'Resume Hand Raising' : 'Pause Hand Raising';
-
-                // Update Schedule UI and check for cleanup
-                const classEndTime = data.classEndTime;
-                if (classEndTime) {
-                    const scheduledTime = new Date(classEndTime);
-                    ui.scheduledStatus.textContent = `Scheduled hand-lowering at ${scheduledTime.toLocaleTimeString()}.`;
-                    ui.classEndTimeInput.value = `${String(scheduledTime.getHours()).padStart(2, '0')}:${String(scheduledTime.getMinutes()).padStart(2, '0')}`;
+                if (docSnap.exists()) {
+                    const data = docSnap.data();
+                    ui.classTitle.textContent = data.name || 'Untitled Class';
                     
-                    // Automatic cleanup check
-                    if (scheduledTime.getTime() <= new Date().getTime()) {
-                        console.log("Scheduled class end time passed. Initiating lowerAllHands.");
-                        lowerAllHands(); // Trigger cleanup
+                    // Pause Status
+                    const isPaused = data.isPaused || false;
+                    ui.pauseStatus.textContent = isPaused ? 'Paused' : 'Active';
+                    ui.pauseStatus.classList.toggle('text-green-600', !isPaused);
+                    ui.pauseStatus.classList.toggle('text-red-600', isPaused);
+                    ui.pauseBtn.textContent = isPaused ? 'Resume Hand Raising' : 'Pause Hand Raising';
+                    ui.pauseBtn.classList.toggle('bg-yellow-500', !isPaused);
+                    ui.pauseBtn.classList.toggle('hover:bg-yellow-600', !isPaused);
+                    ui.pauseBtn.classList.toggle('bg-green-500', isPaused);
+                    ui.pauseBtn.classList.toggle('hover:bg-green-600', isPaused);
+
+                    // Scheduled End Time
+                    const scheduledTime = data.scheduledEndTime || null;
+                    if (scheduledTime) {
+                        ui.scheduledStatus.textContent = `Class auto-ends at ${scheduledTime} today.`;
+                        ui.scheduledStatus.classList.remove('text-gray-500');
+                        ui.scheduledStatus.classList.add('text-indigo-600');
+                        ui.classEndTimeInput.value = scheduledTime;
+                    } else {
+                        ui.scheduledStatus.textContent = 'No end time scheduled.';
+                        ui.scheduledStatus.classList.add('text-gray-500');
+                        ui.scheduledStatus.classList.remove('text-indigo-600');
+                        ui.classEndTimeInput.value = '';
                     }
                 } else {
-                    ui.scheduledStatus.textContent = "No end time scheduled.";
-                    ui.classEndTimeInput.value = '';
+                    console.error("Class document does not exist!");
+                    // Create a basic class document if it's missing (needed for Google Import)
+                    setDoc(getClassRef(currentClassId), {
+                        name: 'New Class',
+                        isPaused: false,
+                        ownerId: currentUserId
+                    }, { merge: true });
+                    ui.classTitle.textContent = 'New Class (Initializing)';
                 }
+            });
 
-                // Update Roster (Co-Teachers and Students)
-                renderRoster(data.studentEmails || [], data.coteacherEmails || []);
-
-            }, (error) => console.error("Error listening to class data:", error));
-
-
-            // 2. Raised Hands Listener (students_status collection)
-            const handsQuery = query(
-                collection(db, 'artifacts', appId, 'public', 'data', 'students_status'),
-                where('classId', '==', currentClassId),
-                where('isRaised', '==', true)
-            );
-
-            onSnapshot(handsQuery, (snapshot) => {
-                let handCards = '';
-                const count = snapshot.size;
-                ui.raisedHandsCount.textContent = count;
-                ui.noHandsMessage.classList.toggle('hidden', count > 0);
-
-                snapshot.docs.sort((a, b) => {
-                    return new Date(a.data().timestamp) - new Date(b.data().timestamp);
-                }).forEach(docSnap => {
-                    const data = docSnap.data();
-                    // studentId is the doc.id
-                    handCards += `
-                        <div class="p-4 bg-yellow-50 rounded-lg flex justify-between items-center border border-yellow-200">
-                            <div>
-                                <p class="font-semibold text-gray-800">${data.studentName || 'A Student'}</p>
-                                <p class="text-sm text-gray-600">Raised at: ${new Date(data.timestamp).toLocaleTimeString()}</p>
-                            </div>
-                            <button onclick="openHandRequestModal('${docSnap.id}', '${data.studentName || 'A Student'}', '${data.comment || ''}')" 
-                                    class="bg-indigo-600 text-white py-1 px-3 rounded-lg font-semibold hover:bg-indigo-700 transition duration-150">
-                                View Request
-                            </button>
-                        </div>
-                    `;
+            // 2. Roster Listener (Students and Co-Teachers)
+            onSnapshot(query(getRosterCollection(currentClassId), where('classId', '==', currentClassId)), async (querySnapshot) => {
+                let students = [];
+                let coteachers = [];
+                
+                querySnapshot.forEach(doc => {
+                    const data = { id: doc.id, ...doc.data() };
+                    if (data.role === 'student') {
+                        students.push(data);
+                    } else if (data.role === 'coteacher' || data.role === 'teacher') {
+                        coteachers.push(data);
+                    }
                 });
 
-                ui.raisedHandsContainer.innerHTML = handCards;
-            }, (error) => console.error("Error listening to raised hands:", error));
-            
-            
-            // 3. Co-Teacher Requests Listener
-            const requestsQuery = query(
-                getCoteacherRequestsCollection(),
-                where('classId', '==', currentClassId),
-                where('status', '==', 'pending')
-            );
-            
-            onSnapshot(requestsQuery, (snapshot) => {
-                let requestCards = '';
-                const count = snapshot.size;
-                ui.coteacherRequestCount.textContent = count;
+                // Sort lists
+                students.sort((a, b) => (a.displayName || a.id).localeCompare(b.displayName || b.id));
+                coteachers.sort((a, b) => (a.displayName || a.id).localeCompare(b.displayName || b.id));
+                
+                // Render Co-Teachers
+                ui.coteacherCount.textContent = coteachers.length;
+                ui.coteachersList.innerHTML = '';
+                if (coteachers.length === 0) {
+                    ui.coteachersList.innerHTML = '<p class="text-gray-500 text-sm">No co-teachers assigned.</p>';
+                } else {
+                    coteachers.forEach(item => ui.coteachersList.appendChild(renderRosterItem(item, 'coteacher')));
+                }
 
-                if (count === 0) {
+                // Render Students
+                ui.studentCount.textContent = students.length;
+                ui.studentsList.innerHTML = '';
+                if (students.length === 0) {
+                    ui.studentsList.innerHTML = '<p class="text-gray-500 text-sm">No students in roster.</p>';
+                } else {
+                    students.forEach(item => ui.studentsList.appendChild(renderRosterItem(item, 'student')));
+                }
+            });
+
+            // 3. Raised Hands Listener
+            onSnapshot(query(getHandRequestsCollection(), where('classId', '==', currentClassId)), (querySnapshot) => {
+                const hands = [];
+                querySnapshot.forEach(doc => {
+                    hands.push({ id: doc.id, ...doc.data() });
+                });
+
+                // Sort by timestamp (oldest first)
+                hands.sort((a, b) => a.timestamp - b.timestamp);
+                
+                ui.raisedHandsCount.textContent = hands.length;
+                ui.raisedHandsContainer.innerHTML = '';
+                ui.noHandsMessage.classList.toggle('hidden', hands.length > 0);
+
+                hands.forEach(hand => {
+                    ui.raisedHandsContainer.appendChild(renderHandRequest(hand));
+                });
+            });
+
+            // 4. Co-Teacher Requests Listener
+            onSnapshot(query(getCoteacherRequestsCollection(), where('classId', '==', currentClassId)), (querySnapshot) => {
+                const requests = [];
+                querySnapshot.forEach(doc => {
+                    requests.push({ id: doc.id, ...doc.data() });
+                });
+
+                ui.coteacherRequestCount.textContent = requests.length;
+                ui.coteacherRequestsList.innerHTML = '';
+                if (requests.length === 0) {
                     ui.coteacherRequestsList.innerHTML = '<p class="text-gray-500 text-sm">No pending requests.</p>';
-                    return;
+                } else {
+                    requests.forEach(req => {
+                        ui.coteacherRequestsList.appendChild(renderCoTeacherRequest(req));
+                    });
                 }
-
-                snapshot.docs.forEach(docSnap => {
-                    const data = docSnap.data();
-                    const requestId = docSnap.id;
-                    requestCards += `
-                        <div class="p-3 bg-blue-50 rounded-lg border border-blue-200">
-                            <p class="font-semibold text-gray-800">${data.requesterEmail}</p>
-                            <p class="text-xs text-gray-500 mb-2">Requested on: ${new Date(data.timestamp).toLocaleDateString()}</p>
-                            <div class="flex space-x-2">
-                                <button onclick="handleCoTeacherRequest('${requestId}', 'accept')" 
-                                        class="bg-green-500 text-white text-xs py-1 px-2 rounded-lg hover:bg-green-600">Accept</button>
-                                <button onclick="handleCoTeacherRequest('${requestId}', 'deny')" 
-                                        class="bg-red-500 text-white text-xs py-1 px-2 rounded-lg hover:bg-red-600">Deny</button>
-                            </div>
-                        </div>
-                    `;
-                });
-                ui.coteacherRequestsList.innerHTML = requestCards;
-
-            }, (error) => console.error("Error listening to co-teacher requests:", error));
+            });
         }
 
-        // --- Roster Rendering ---
+        // --- Rendering Functions ---
 
-        function renderRoster(studentEmails, coteacherEmails) {
+        function renderRosterItem(user, type) {
+            const div = document.createElement('div');
+            div.className = 'flex items-center justify-between text-sm text-gray-700 p-1 rounded-md';
             
-            // Co-Teachers
-            ui.coteacherCount.textContent = coteacherEmails.length;
-            if (coteacherEmails.length === 0) {
-                ui.coteachersList.innerHTML = '<p class="text-gray-500 text-sm">No co-teachers assigned.</p>';
-            } else {
-                ui.coteachersList.innerHTML = coteacherEmails.map(email => 
-                    `<p class="text-sm p-1 bg-gray-50 rounded-md flex justify-between items-center">${email} <span class="text-indigo-600 font-medium text-xs">CO-TEACHER</span></p>`
-                ).join('');
-            }
+            const name = user.displayName || 'Unknown User';
+            
+            div.innerHTML = `
+                <span class="truncate">${name}</span>
+                <button data-user-id="${user.id}" data-user-role="${user.role}" class="text-xs text-red-500 hover:text-red-700 remove-user-btn">
+                    Remove
+                </button>
+            `;
+            return div;
+        }
 
-            // Students
-            ui.studentCount.textContent = studentEmails.length;
-            if (studentEmails.length === 0) {
-                ui.studentsList.innerHTML = '<p class="text-gray-500 text-sm">No students in roster.</p>';
-            } else {
-                ui.studentsList.innerHTML = studentEmails.map(email => 
-                    `<p class="text-sm p-1 bg-gray-50 rounded-md">${email}</p>`
-                ).join('');
-            }
+        function renderHandRequest(hand) {
+            const timeRaised = new Date(hand.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+            
+            const card = document.createElement('div');
+            card.className = 'flex justify-between items-center p-4 bg-yellow-50 rounded-xl border border-yellow-200';
+            card.innerHTML = `
+                <div>
+                    <p class="font-semibold text-gray-800">${hand.displayName || 'Anonymous Student'}</p>
+                    <p class="text-sm text-gray-500">${hand.comment ? hand.comment.substring(0, 50) + (hand.comment.length > 50 ? '...' : '') : 'No comment provided.'}</p>
+                    <p class="text-xs text-yellow-700 mt-1">Raised at ${timeRaised}</p>
+                </div>
+                <button data-hand-id="${hand.id}" data-name="${hand.displayName || 'Anonymous Student'}" data-comment="${hand.comment || ''}" class="bg-indigo-500 text-white py-1 px-3 rounded-lg text-sm font-semibold hover:bg-indigo-600 transition duration-150 view-hand-btn">
+                    View
+                </button>
+            `;
+            return card;
+        }
+
+        function renderCoTeacherRequest(req) {
+            const card = document.createElement('div');
+            card.className = 'flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-200';
+            card.innerHTML = `
+                <p class="text-sm font-medium text-gray-700">${req.displayName || 'Unknown User'}</p>
+                <div class="space-x-2">
+                    <button data-request-id="${req.id}" data-user-id="${req.userId}" class="bg-green-500 text-white py-1 px-2 rounded-lg text-xs font-semibold hover:bg-green-600 transition duration-150 accept-coteacher-btn">
+                        Accept
+                    </button>
+                    <button data-request-id="${req.id}" class="bg-red-500 text-white py-1 px-2 rounded-lg text-xs font-semibold hover:bg-red-600 transition duration-150 deny-coteacher-btn">
+                        Deny
+                    </button>
+                </div>
+            `;
+            return card;
+        }
+
+        // --- Action Handlers ---
+
+        function setupEventHandlers() {
+            ui.pauseBtn.addEventListener('click', togglePause);
+            ui.lowerAllHandsBtn.addEventListener('click', lowerAllHands);
+            ui.setScheduleBtn.addEventListener('click', setSchedule);
+            ui.clearScheduleBtn.addEventListener('click', clearSchedule);
+            ui.gcImportBtn.addEventListener('click', importFromGoogleClassroom);
+            ui.acceptHandBtn.addEventListener('click', acceptAndLowerHand);
+            ui.denyHandBtn.addEventListener('click', denyHand);
+
+            // Delegated click handler for viewing raised hands
+            ui.raisedHandsContainer.addEventListener('click', (e) => {
+                if (e.target.classList.contains('view-hand-btn')) {
+                    const btn = e.target;
+                    activeHandRequestId = btn.dataset.handId;
+                    ui.handRequesterName.textContent = btn.dataset.name;
+                    ui.handRequesterComment.value = btn.dataset.comment || 'No comment provided.';
+                    openModal('hand-request-modal');
+                }
+            });
+
+            // Delegated click handler for roster removal
+            ui.studentsList.parentNode.addEventListener('click', async (e) => {
+                if (e.target.classList.contains('remove-user-btn')) {
+                    const userId = e.target.dataset.userId;
+                    const role = e.target.dataset.userRole;
+                    if (confirmModal(`Are you sure you want to remove this ${role} from the roster?`)) {
+                        await removeUserFromRoster(userId);
+                    }
+                }
+            });
+
+            // Delegated click handler for co-teacher requests
+            ui.coteacherRequestsList.addEventListener('click', async (e) => {
+                if (e.target.classList.contains('accept-coteacher-btn')) {
+                    const userId = e.target.dataset.userId;
+                    const requestId = e.target.dataset.requestId;
+                    await handleCoteacherRequest(userId, requestId, 'accept');
+                } else if (e.target.classList.contains('deny-coteacher-btn')) {
+                    const requestId = e.target.dataset.requestId;
+                    await handleCoteacherRequest(null, requestId, 'deny');
+                }
+            });
         }
         
-        // --- Google Classroom Import Logic (Updated per Request) ---
+        // Custom confirm modal replacement (simple version for now)
+        function confirmModal(message) {
+            // NOTE: In a production app, you would use a custom modal here. 
+            // Using window.confirm temporarily for quick testing of the logic flow.
+            return window.confirm(message);
+        }
 
-        // This function is still hypothetical as it relies on a non-existent local file
-        // google_classroom_api.js, but the logic is now focused on email/title.
-        async function importFromGoogleClassroom() {
+        async function togglePause() {
             try {
-                // Step 1: Get Access Token (assuming this is handled securely and available)
-                const accessToken = await getGoogleClassroomAccessToken(auth);
-                if (!accessToken) {
-                    console.error("Could not get Google Classroom Access Token.");
-                    return;
+                const classRef = getClassRef(currentClassId);
+                const docSnap = await getDoc(classRef);
+                const currentStatus = docSnap.exists() ? docSnap.data().isPaused : false;
+                
+                await updateDoc(classRef, {
+                    isPaused: !currentStatus,
+                    updatedAt: new Date().toISOString()
+                });
+                console.log(`Hand raising toggled to: ${!currentStatus}`);
+            } catch (error) {
+                console.error("Error toggling pause status:", error);
+            }
+        }
+
+        async function lowerAllHands() {
+            if (!confirmModal('Are you sure you want to clear ALL raised hands? This action cannot be undone.')) return;
+            
+            try {
+                const handsQuery = query(getHandRequestsCollection(), where('classId', '==', currentClassId));
+                const snapshot = await getDocs(handsQuery);
+                
+                const batch = writeBatch(db);
+                snapshot.docs.forEach(doc => {
+                    batch.delete(doc.ref);
+                });
+                
+                await batch.commit();
+                console.log('All hands successfully lowered.');
+
+                // Also reset the scheduling
+                await clearSchedule(false);
+
+            } catch (error) {
+                console.error("Error lowering all hands:", error);
+            }
+        }
+
+        async function setSchedule() {
+            const time = ui.classEndTimeInput.value;
+            if (!time || !time.match(/^\d{2}:\d{2}$/)) {
+                console.error("Invalid time format. Use HH:MM (24h).");
+                return;
+            }
+            try {
+                await updateDoc(getClassRef(currentClassId), {
+                    scheduledEndTime: time,
+                    updatedAt: new Date().toISOString()
+                });
+                console.log(`Class end time scheduled for ${time}.`);
+            } catch (error) {
+                console.error("Error setting schedule:", error);
+            }
+        }
+
+        async function clearSchedule(showConfirm = true) {
+            if (showConfirm && !confirmModal('Are you sure you want to clear the scheduled end time?')) return;
+            
+            try {
+                await updateDoc(getClassRef(currentClassId), {
+                    scheduledEndTime: null,
+                    updatedAt: new Date().toISOString()
+                });
+                console.log('Class end time schedule cleared.');
+            } catch (error) {
+                console.error("Error clearing schedule:", error);
+            }
+        }
+
+
+        async function acceptAndLowerHand() {
+            if (!activeHandRequestId) return;
+            try {
+                // 1. Delete the hand request document (lowers the hand)
+                await deleteDoc(doc(getHandRequestsCollection(), activeHandRequestId));
+                
+                // 2. You might add logic here to notify the student their hand was accepted
+                
+                closeModal('hand-request-modal');
+                activeHandRequestId = null;
+                console.log(`Hand request ${activeHandRequestId} accepted and lowered.`);
+            } catch (error) {
+                console.error("Error accepting and lowering hand:", error);
+            }
+        }
+
+        async function denyHand() {
+            if (!activeHandRequestId) return;
+            try {
+                // 1. Delete the hand request document (denies and lowers the hand)
+                await deleteDoc(doc(getHandRequestsCollection(), activeHandRequestId));
+                
+                // 2. You might add logic here to notify the student their hand was denied
+                
+                closeModal('hand-request-modal');
+                activeHandRequestId = null;
+                console.log(`Hand request ${activeHandRequestId} denied and lowered.`);
+            } catch (error) {
+                console.error("Error denying hand:", error);
+            }
+        }
+
+        async function handleCoteacherRequest(userId, requestId, action) {
+            try {
+                const batch = writeBatch(db);
+                
+                // 1. Delete the request document regardless of action
+                batch.delete(doc(getCoteacherRequestsCollection(), requestId));
+
+                if (action === 'accept' && userId) {
+                    // 2. Update the user's role to 'coteacher' in their profile
+                    batch.update(getStudentDataRef(userId), {
+                        role: 'coteacher',
+                        classId: arrayUnion(currentClassId) // Assuming classId is an array of classes the user is part of
+                    });
+
+                    // 3. Add the user to the class roster (if not already there)
+                    batch.set(doc(getRosterCollection(currentClassId), userId), {
+                        userId: userId,
+                        role: 'coteacher',
+                        classId: currentClassId 
+                    }, { merge: true });
+
+                    console.log(`Co-teacher request for user ${userId} accepted.`);
+                } else {
+                    console.log(`Co-teacher request ${requestId} denied.`);
                 }
 
-                // Step 2: Get Classes
-                const courses = await getGoogleClassroomClasses(accessToken);
-                // Prompt user to select a class (omitted UI for brevity, assuming first class)
-                const selectedCourse = courses[0]; 
+                await batch.commit();
 
-                if (!selectedCourse) return alert("No classes found in Google Classroom.");
-                
-                // Step 3: Get Roster (only need emails)
-                const roster = await getGoogleClassroomCourseRoster(accessToken, selectedCourse.id);
-                
-                const studentEmails = roster.students.map(s => s.profile.emailAddress).filter(email => email);
-                const classTitle = selectedCourse.name || 'Imported Class';
+            } catch (error) {
+                console.error(`Error handling co-teacher request (${action}):`, error);
+            }
+        }
 
-                // Step 4: Update Firestore with just the title and emails
-                const classRef = getClassRef(currentClassId);
-                await setDoc(classRef, {
-                    title: classTitle,
-                    studentEmails: studentEmails, // Pre-add users by email
-                    teacherEmail: auth.currentUser.email,
-                    isPaused: false,
-                    classEndTime: null
-                }, { merge: true });
+        async function removeUserFromRoster(userId) {
+            try {
+                const rosterDocRef = doc(getRosterCollection(currentClassId), userId);
+                await deleteDoc(rosterDocRef);
+                console.log(`User ${userId} removed from roster.`);
 
-                alert(`Successfully imported class: ${classTitle} with ${studentEmails.length} students (by email).`);
+                // Optionally, you might also update their profile to remove classId from their list
+                await updateDoc(getStudentDataRef(userId), {
+                    classId: arrayRemove(currentClassId)
+                }).catch(err => console.warn("Could not remove classId from user profile. User may not have a profile yet.", err));
 
-            } catch (e) {
-                console.error("Google Classroom Import Failed:", e);
-                alert("Google Classroom Import failed. See console for details.");
+            } catch (error) {
+                console.error("Error removing user from roster:", error);
             }
         }
         
-        // Expose handlers to global scope for inline HTML buttons
-        window.handleCoTeacherRequest = handleCoTeacherRequest;
+        // --- Google Classroom API Functions ---
+        
+        let gapiReady = false;
 
-        // --- Start App ---
+        function loadGoogleApi() {
+            return new Promise((resolve) => {
+                gapi.load('client:auth2', () => {
+                    gapi.client.init({
+                        clientId: GOOGLE_CLIENT_ID,
+                        scope: GC_SCOPES.join(' '),
+                        // discoveryDocs: ["https://classroom.googleapis.com/$discovery/rest?version=v1"] // Optional, but can improve performance
+                    }).then(() => {
+                        gapiReady = true;
+                        console.log('Google API client loaded and initialized.');
+                        resolve();
+                    }).catch(error => {
+                        console.error('Error initializing Google API client:', error);
+                        ui.gcStatus.textContent = 'GC Import failed to initialize. Check console.';
+                        resolve();
+                    });
+                });
+            });
+        }
+
+        function handleAuthClick() {
+            if (gapi.auth2.getAuthInstance().isSignedIn.get()) {
+                // User is already signed in, check permissions
+                return gapi.auth2.getAuthInstance().signIn(); 
+            } else {
+                // User is not signed in, prompt for sign-in
+                return gapi.auth2.getAuthInstance().signIn();
+            }
+        }
+
+        async function fetchGoogleCourses() {
+            ui.gcStatus.textContent = 'Fetching courses...';
+            try {
+                // Manually load the Classroom discovery document if needed, but gapi.client.init often handles this.
+                await gapi.client.load('classroom', 'v1');
+                
+                const response = await gapi.client.classroom.courses.list({
+                    'teacherId': 'me' // List courses taught by the current user
+                });
+
+                const courses = response.result.courses || [];
+                return courses.filter(c => c.courseState === 'ACTIVE');
+
+            } catch (error) {
+                console.error('Error fetching Google Classroom courses:', error);
+                ui.gcStatus.textContent = 'Error fetching courses. Check console.';
+                return [];
+            }
+        }
+
+        async function fetchAndImportRoster(courseId, courseName) {
+            closeModal('gc-select-modal');
+            ui.gcStatus.textContent = `Importing ${courseName}...`;
+
+            try {
+                // 1. Fetch Students
+                const studentsResponse = await gapi.client.classroom.courses.students.list({
+                    courseId: courseId
+                });
+                const students = studentsResponse.result.students || [];
+
+                // 2. Update Firestore Class Name
+                await updateDoc(getClassRef(currentClassId), {
+                    name: courseName,
+                    googleCourseId: courseId,
+                    updatedAt: new Date().toISOString()
+                });
+
+                // 3. Update Firestore Roster
+                const batch = writeBatch(db);
+                let importedCount = 0;
+
+                for (const student of students) {
+                    const profile = student.profile;
+                    const studentUserId = profile.id; // Use Google ID as Firestore ID for external students
+                    
+                    if (studentUserId === currentUserId) continue; // Skip teacher if they are in their own roster
+
+                    // Add/update roster entry
+                    batch.set(doc(getRosterCollection(currentClassId), studentUserId), {
+                        userId: studentUserId,
+                        role: 'student',
+                        displayName: profile.name.fullName,
+                        email: profile.emailAddress,
+                        source: 'Google Classroom',
+                        classId: currentClassId,
+                    }, { merge: true });
+                    
+                    // Add/update profile entry (useful if the student later joins our app)
+                    batch.set(getStudentDataRef(studentUserId), {
+                        displayName: profile.name.fullName,
+                        email: profile.emailAddress,
+                        role: 'student',
+                        classId: arrayUnion(currentClassId)
+                    }, { merge: true });
+                    
+                    importedCount++;
+                }
+
+                await batch.commit();
+                ui.gcStatus.textContent = `Successfully imported ${importedCount} students from ${courseName}.`;
+                ui.classTitle.textContent = courseName;
+
+            } catch (error) {
+                console.error('Error importing roster:', error);
+                ui.gcStatus.textContent = 'Import failed. See console for details.';
+            }
+        }
+
+        async function importFromGoogleClassroom() {
+            // First, ensure the Google Client ID is configured
+            if (GOOGLE_CLIENT_ID === 'YOUR_GOOGLE_CLIENT_ID') {
+                ui.gcStatus.textContent = 'ERROR: Please replace "YOUR_GOOGLE_CLIENT_ID" in the code with your actual Client ID.';
+                return;
+            }
+
+            ui.gcStatus.textContent = 'Authenticating with Google...';
+
+            if (!gapiReady) {
+                await loadGoogleApi();
+                if (!gapiReady) return; // Exit if initialization failed
+            }
+
+            try {
+                // Start OAuth flow
+                const authResult = await handleAuthClick();
+
+                if (authResult) {
+                    // Fetch and display courses
+                    const courses = await fetchGoogleCourses();
+                    
+                    if (courses.length === 0) {
+                        ui.gcStatus.textContent = 'No active Google Classrooms found where you are the primary teacher.';
+                        return;
+                    }
+
+                    // Render courses in the modal
+                    ui.gcClassList.innerHTML = '';
+                    courses.forEach(course => {
+                        const btn = document.createElement('button');
+                        btn.className = 'w-full text-left p-3 border border-gray-200 rounded-lg hover:bg-indigo-50 transition duration-150';
+                        btn.innerHTML = `<p class="font-semibold text-gray-800">${course.name}</p><p class="text-xs text-gray-500">${course.section || 'No section'}</p>`;
+                        btn.onclick = () => fetchAndImportRoster(course.id, course.name);
+                        ui.gcClassList.appendChild(btn);
+                    });
+
+                    // Show the selection modal
+                    openModal('gc-select-modal');
+                    ui.gcStatus.textContent = 'Select a class to import.';
+
+                } else {
+                    ui.gcStatus.textContent = 'Google Authentication failed or was cancelled.';
+                }
+            } catch (error) {
+                console.error('Google Classroom Import failed:', error);
+                ui.gcStatus.textContent = 'Google Import failed. Check console.';
+            }
+        }
+
+        // Start the application
         initFirebase();
+
     </script>
 </body>
 </html>
