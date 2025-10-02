@@ -368,8 +368,13 @@
                 }
                 
                 async function selectClass(id) {
-                    currentClassId = id; currentClassView = 'overview'; currentRoster = null;
-                    if (id) await fetchRosterData(allLoadedClasses[id]);
+                    currentClassView = 'overview'; currentRoster = null;
+                    if (id) {
+                        currentClassId = id;
+                        await fetchRosterData(allLoadedClasses[id]);
+                    } else {
+                        currentClassId = null;
+                    }
                     renderMainContent();
                 }
 
@@ -599,7 +604,7 @@
                                         gapiLoaded=true;
                                         resolve();
                                     }catch(e){
-                                        reject(e);
+                                        reject(e); // <-- CATCH ADDED HERE (was missing)
                                     }
                                 });
                             }else{
@@ -632,7 +637,8 @@
 
                 async function handleStudentNameSave(classId, newName) {
                     await db.collection('users').doc(currentUser.uid).update({ [`localNameForClass.${classId}`]: newName || firebase.firestore.FieldValue.delete() });
-                    userData.localName = newName || null; // Simplified update for this example
+                    userData.localNameForClass = userData.localNameForClass || {};
+                    userData.localNameForClass[classId] = newName || null;
                     showModal(TPL.messageModal('Success','Local name updated!','green'));
                 }
 
@@ -693,14 +699,6 @@
                         target.classList.add('bg-blue-500', 'text-white');
                         target.classList.remove('bg-gray-100', 'text-gray-700', 'hover:bg-gray-200');
                         
-                        // If student, we need a separate listener/logic to fetch student-specific requests based on category
-                        if(target.closest('#overview-panel')?.querySelector('#student-request-btn')) {
-                             console.log(`Student filtering by category: ${category}`);
-                             // For students, the queue only contains their own hand, so categories map differently.
-                             // Pending/Unanswered -> No response or status pending
-                             // Accepted/Denied/Commented -> Status set
-                             // Actual filtering UI update will happen on re-render based on currentClassView logic
-                        }
                         if(currentClassView === 'overview') renderMainContent();
                     }
 
@@ -783,6 +781,7 @@
                         const newName = form.querySelector('#student-local-name-input').value.trim();
                         await handleStudentNameSave(currentClassId, newName);
                         hideModal();
+                        renderMainContent();
                     }
                 });
 
@@ -797,7 +796,11 @@
                             const period = h24 >= 12 ? 'PM' : 'AM';
                             let h12 = h24 % 12; if (h12 === 0) h12 = 12;
                             const timeString = `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input" data-initial-value="${value}" data-digits="${value.replace(':','')||'0800'}"><div id="${id.replace('-input', '-period-selector')}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
+                            
+                            // Ensure data-digits is correctly initialized, handling null/undefined gracefully
+                            const initialDigits = value ? value.replace(':','') : '0800';
+
+                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input" data-initial-value="${value}" data-digits="${initialDigits}"><div id="${id.replace('-input', '-period-selector')}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
                         };
                         
                         // Teacher/Co-Teacher Default View (Queue)
@@ -897,7 +900,7 @@
                                                             <button data-student-id="${hand.id}" data-action="deny" class="teacher-action-btn deny"><i class="fa-solid fa-thumbs-down"></i> Deny</button>
                                                         ` : `
                                                             <div class="action-btn comment-split-btn" data-student-id="${hand.id}" data-current-comment="${hand.response ? hand.response.replace(/"/g, '&quot;') : ''}" data-response-status="${hand.status}">
-                                                                <div class="edit-half bg-white hover:bg-gray-50 flex items-center justify-center text-gray-700 font-semibold text-sm"><i class="fa-solid fa-pen-to-square mr-1"></i> Edit</div>
+                                                                <div class="edit-half ${hand.status === 'commented' && hand.response ? 'hover:bg-gray-50' : 'opacity-50 cursor-not-allowed'} flex items-center justify-center text-gray-700 font-semibold text-sm"><i class="fa-solid fa-pen-to-square mr-1"></i> Edit</div>
                                                                 <div class="delete-half bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-600 font-semibold text-sm"><i class="fa-solid fa-trash-can mr-1"></i> Delete Response</div>
                                                             </div>
                                                         `}
@@ -917,15 +920,15 @@
                                         <h2 class="text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.name)}</h2>
                                         <p class="text-sm text-gray-500 mt-1">Your current status in class.</p>
                                     </div>
-                                    <!-- NEW: Blue Plus Button for Requests -->
-                                    <button id="student-request-btn" class="tooltip-container w-12 h-12 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-transform shadow-lg flex items-center justify-center btn-bubbly">
-                                        <i class="fa-solid fa-plus text-xl"></i>
-                                        <span class="tooltip-text">Create Request</span>
-                                    </button>
                                     <!-- NEW: Student Settings Button -->
                                     <button id="student-settings-btn" class="tooltip-container ml-2 w-10 h-10 bg-gray-200 text-gray-700 rounded-full hover:bg-gray-300 flex items-center justify-center btn-bubbly">
                                         <i class="fa-solid fa-sliders"></i>
                                         <span class="tooltip-text">Settings</span>
+                                    </button>
+                                    <!-- NEW: Blue Plus Button for Requests -->
+                                    <button id="student-request-btn" class="tooltip-container ml-2 w-12 h-12 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-transform shadow-lg flex items-center justify-center btn-bubbly">
+                                        <i class="fa-solid fa-plus text-xl"></i>
+                                        <span class="tooltip-text">Create Request</span>
                                     </button>
                                 </div>
                                 
@@ -1107,19 +1110,17 @@
                     // --- Feature: Schedule Time Picker Initialization & Listener ---
                     const timeInputs = document.querySelectorAll('.schedule-time-input');
                     timeInputs.forEach(input => {
-                        // Initialize the period selector based on the initial 24h value stored in data-digits
-                        const initial24h = input.dataset.digits;
-                        const [h24] = initial24h.split(':').map(Number);
-                        const period = h24 >= 12 ? 'PM' : 'AM';
-                        const periodSelector = document.getElementById(input.id.replace('-input', '-period-selector'));
-                        
-                        if(periodSelector) {
-                            periodSelector.querySelectorAll('.period-btn').forEach(btn => btn.classList.remove('active'));
-                            periodSelector.querySelector(`[data-value="${period}"]`).classList.add('active');
+                        // Remove old listeners before adding new ones to prevent duplication on re-render
+                        if (input.oninputHandler) input.removeEventListener('input', input.oninputHandler);
+                        if (input.onblurHandler) input.removeEventListener('blur', input.onblurHandler);
+
+                        // Initialize data-digits based on the existing value if not present
+                        if (!input.dataset.digits) {
+                            const [h24, m] = (input.dataset.initialValue || '08:00').split(':').map(Number);
+                            input.dataset.digits = `${String(h24).padStart(2,'0')}:${String(m).padStart(2,'0')}`.replace(':','');
                         }
 
                         // Input event listener for live updating digits
-                        input.removeEventListener('input', input.oninputHandler); // Prevent re-attaching multiple listeners
                         input.oninputHandler = (e) => {
                             let currentDigits = input.dataset.digits || '';
                             const isBackspace = e.inputType === 'deleteContentBackward';
@@ -1151,7 +1152,6 @@
                         input.addEventListener('input', input.oninputHandler);
 
                         // Blur listener for final 24hr conversion storage
-                        input.removeEventListener('blur', input.onblurHandler);
                         input.onblurHandler = (e) => {
                             let [h, m] = e.target.value.split(':').map(Number);
                             if (isNaN(h) || h === 0) h = 1; 
@@ -1165,11 +1165,10 @@
 
                             const finalValue = `${String(h24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
                             e.target.value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                            input.dataset.digits = finalValue.replace(':', '');
+                            input.dataset.digits = finalValue.replace(':','');
                         };
                         input.addEventListener('blur', input.onblurHandler);
                     });
-
 
                     // --- Feature: Dynamic Action Buttons (Accept/Comment/Deny) ---
                     document.querySelectorAll('.teacher-action-btn').forEach(btn => {
@@ -1202,6 +1201,7 @@
                         const isCommented = status === 'commented';
                         const currentCommentText = container.dataset.currentComment;
                         
+                        // Re-attach listeners safely
                         container.innerHTML = `
                             <div class="edit-half ${isCommented && currentCommentText ? 'hover:bg-gray-50' : 'opacity-50 cursor-not-allowed'} flex items-center justify-center text-gray-700 font-semibold text-sm">
                                 <i class="fa-solid fa-pen-to-square mr-1"></i> Edit
@@ -1226,7 +1226,7 @@
                             userData.localNameForClass[currentClassId] = newName || null;
                             showModal(TPL.messageModal('Success','Local name updated!','green'));
                             hideModal();
-                            renderMainContent(); // Re-render student view to show update
+                            renderMainContent();
                         };
                     }
 
