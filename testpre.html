@@ -98,12 +98,6 @@
         .period-selector { display: flex; margin-left: 0.5rem; border: 1px solid #d1d5db; border-radius: 0.5rem; overflow: hidden; }
         .period-btn { padding: 0.75rem 1rem; border: none; background-color: #f9fafb; color: #6b7280; cursor: pointer; transition: background-color 0.2s, color 0.2s; font-family: 'Inter', sans-serif;}
         .period-btn.active { background-color: #3b82f6; color: white; }
-
-        /* Squircle button for teacher requests */
-        .squircle-btn {
-            width: 2.5rem; height: 2.5rem; border-radius: 0.75rem; display: flex; align-items: center; justify-content: center; font-size: 1.1rem; transition: background-color 0.2s, transform 0.1s;
-        }
-        .squircle-btn:active { transform: scale(0.95); }
     </style>
 </head>
 <body class="bg-slate-100 h-screen overflow-hidden">
@@ -181,8 +175,6 @@
             let currentUser = null, userData = null, currentClassId = null, currentRoster = null;
             let allLoadedClasses = {}, classQueues = {}, classRequests = {}, unsubscribes = [], queueUnsubscribers = {};
             let currentClassView = 'overview';
-            let localTimeCheckInterval = null;
-            let scheduleInterval = null;
 
             const mainContentArea = document.getElementById('main-content-area');
             const classListEl = document.getElementById('class-list');
@@ -197,12 +189,7 @@
                 const db = firebase.firestore();
 
                 auth.onAuthStateChanged(user => {
-                    if (user) { 
-                        currentUser = user; 
-                        fetchUserData(user.uid).then(() => {
-                            initializeLocalTimeChecker();
-                        });
-                    } 
+                    if (user) { currentUser = user; fetchUserData(user.uid); } 
                     else { window.location.href = 'login.html'; }
                 });
 
@@ -270,8 +257,6 @@
                                 allLoadedClasses[id] = data;
                                 const isOwner = data.teacherId === uid;
                                 const isCoTeacher = (data.teacherIds || []).includes(uid);
-                                
-                                // --- Raised Hands Listener (Teacher/Co-Teacher only) ---
                                 if ((isOwner || isCoTeacher) && !queueUnsubscribers[`hands_${id}`]) {
                                     queueUnsubscribers[`hands_${id}`] = db.collection('classes').doc(id).collection('raisedHands')
                                         .onSnapshot(qSnap => {
@@ -280,8 +265,6 @@
                                             if(currentClassId === id) renderMainContent();
                                         });
                                 }
-                                
-                                // --- Co-Teacher Requests Listener (Owner only) ---
                                 if(isOwner && !queueUnsubscribers[`requests_${id}`]){
                                     queueUnsubscribers[`requests_${id}`] = db.collection('classes').doc(id).collection('coTeacherRequests').where('status','==','pending')
                                         .onSnapshot(rSnap => {
@@ -320,8 +303,16 @@
                 }
                 
                 async function selectClass(id) {
-                    currentClassId = id; currentClassView = 'overview'; currentRoster = null;
-                    if (id) await fetchRosterData(allLoadedClasses[id]);
+                    currentClassId = id; 
+                    // *** MODIFICATION 1: Handle navigation tabs ***
+                    if (id) {
+                        if (currentClassView === 'roster' || currentClassView === 'settings' || currentClassView === 'requests') {
+                            currentClassView = 'overview'; // Reset to overview if navigating from a sub-page
+                        }
+                        await fetchRosterData(allLoadedClasses[id]);
+                    } else {
+                        currentClassView = 'overview';
+                    }
                     renderMainContent();
                 }
 
@@ -364,7 +355,7 @@
                 function hideModal() { const d=modalContainer.firstElementChild; if(d){d.classList.add('fade-leave-to');modalBackdrop.classList.add('fade-leave-to');setTimeout(() => {modalContainer.innerHTML='';modalBackdrop.classList.add('hidden');modalBackdrop.classList.remove('fade-leave-to');}, 200);}}
                 function escapeHtml(text) { if(typeof text!=='string')return'';const d=document.createElement('div');d.textContent=text;return d.innerHTML; }
                 
-                async function createNewClass(name) { const code=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name,teacherId:currentUser.uid,teacherIds:[],studentIds:[],pendingStudentEmails:[],code,coTeacherCode,handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''},scheduleLastActionDate:'',createdAt:firebase.firestore.FieldValue.serverTimestamp()});hideModal();}
+                async function createNewClass(name) { const code=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name,teacherId:currentUser.uid,teacherIds:[],code,coTeacherCode,studentIds:[],pendingStudentEmails:[],handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''},scheduleLastActionDate:'',createdAt:firebase.firestore.FieldValue.serverTimestamp()});hideModal();}
                 async function joinClass(code) {
                     const studentQuery = db.collection('classes').where('code', '==', code).limit(1).get();
                     const teacherQuery = db.collection('classes').where('coTeacherCode', '==', code).limit(1).get();
@@ -404,19 +395,14 @@
                     showModal(TPL.messageModal('Request Sent', 'Your request to join as a co-teacher has been sent to the class owner.', 'green'));
                 }
 
-                async function handleCoTeacherRequest(classId, requesterId, action, comment=null) {
+                async function handleCoTeacherRequest(classId, requesterId, action) {
                     const requestRef = db.collection('classes').doc(classId).collection('coTeacherRequests').doc(requesterId);
                     if(action === 'accept'){
                         await db.collection('classes').doc(classId).update({ teacherIds: firebase.firestore.FieldValue.arrayUnion(requesterId) });
                         await requestRef.update({ status: 'accepted' });
-                    } else if (action === 'deny') {
+                    } else {
                         await requestRef.update({ status: 'denied' });
-                    } else if (action === 'update_comment' && comment !== null) {
-                        await requestRef.update({ comment: comment, status: 'pending' }); // Re-open if comment is edited
-                    } else if (action === 'delete') {
-                        await requestRef.delete();
                     }
-                    if(currentClassId === classId) renderMainContent();
                 }
                 
                 async function raiseHand(id,q){await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).set({studentName:userData.username,studentPhotoURL:currentUser.photoURL||'',question:q||'',raisedAt:firebase.firestore.FieldValue.serverTimestamp()});hideModal();}
@@ -430,65 +416,69 @@
                 async function removeUserFromClass(id, userId) { const data = allLoadedClasses[id]; if ((data.teacherIds || []).includes(userId)) { await db.collection('classes').doc(id).update({ teacherIds: firebase.firestore.FieldValue.arrayRemove(userId) }); } else if ((data.studentIds || []).includes(userId)) { await db.collection('classes').doc(id).update({ studentIds: firebase.firestore.FieldValue.arrayRemove(userId) }); } await fetchRosterData(allLoadedClasses[id]); renderMainContent(); }
                 async function handleDeleteClass(id){const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));b.delete(db.collection('classes').doc(id));await b.commit();hideModal();selectClass(null);}
 
-                // --- NEW: Local Time Check Logic ---
-                function isTimeWithinSchedule(classData) {
-                    if (!userData || userData.role !== 'student') return true; // Only applies to students
-                    
-                    const schedule = classData.schedule;
-                    const disableAt = schedule?.disableAt;
-                    const enableAt = schedule?.enableAt;
-
-                    if (!disableAt) return true; // No schedule set, always active
-
+                // *** New Logic: Handle Comment Recycling ***
+                async function handleCommentAction(classId, handId, action, commentText = null) {
+                    const handRef = db.collection('classes').doc(classId).collection('raisedHands').doc(handId);
                     const now = new Date();
-                    const currentHour = now.getHours();
-                    const currentMinute = now.getMinutes();
-                    const currentTime24h = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
 
-                    const parseTime = (timeStr) => {
-                        if (!timeStr) return null;
-                        const [h, m] = timeStr.split(':').map(Number);
-                        return h * 60 + m; // Total minutes from midnight
-                    };
-
-                    const currentTimeMinutes = parseTime(currentTime24h);
-                    const enableMinutes = parseTime(enableAt);
-                    const disableMinutes = parseTime(disableAt);
-
-                    if (enableMinutes !== null && disableMinutes !== null) {
-                        if (enableMinutes <= disableMinutes) {
-                            // Same day schedule (e.g., 09:00 to 15:00)
-                            return currentTimeMinutes >= enableMinutes && currentTimeMinutes <= disableMinutes;
+                    if (action === 'accept') {
+                        // Standard action: Remove hand
+                        await lowerHand(classId, handId);
+                    } else if (action === 'deny') {
+                        // Standard action: Remove hand
+                        await lowerHand(classId, handId);
+                    } else if (action === 'comment') {
+                        // Add or update comment
+                        await handRef.update({
+                            comment: commentText,
+                            commentStatus: 'active',
+                            commentUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                    } else if (action === 'editComment') {
+                        // Edit existing comment
+                        await handRef.update({
+                            comment: commentText,
+                            commentStatus: 'active',
+                            commentUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                        });
+                    } else if (action === 'deleteComment') {
+                        // *** MODIFICATION 3: Soft Delete Comment ***
+                        const handDoc = await handRef.get();
+                        const existingComment = handDoc.data().commentData || {};
+                        const isRecyclable = existingComment.commentStatus === 'active' && (now.getTime() - (existingComment.commentUpdatedAt?.toDate().getTime() || 0)) > (24 * 60 * 60 * 1000);
+                        
+                        if (isRecyclable) {
+                            await handRef.update({
+                                commentData: {
+                                    commentStatus: "recyclable", // Status change
+                                    commentText: null, // Data to null
+                                    commentUpdatedAt: firebase.firestore.FieldValue.serverTimestamp(),
+                                    originalComment: existingComment.commentText, // Keep for reference if needed
+                                    dataClearedAt: firebase.firestore.FieldValue.serverIncrement(1) // Dummy field to trigger an update
+                                },
+                                // Null out other relevant fields for cleanup/bulk reduction (as requested)
+                                question: null, 
+                                studentName: null,
+                                studentPhotoURL: null,
+                                raisedAt: null,
+                                // Ensure the hand is lowered as the primary data is wiped
+                                __internal_lowered_by_recycle: true 
+                            });
+                            await lowerHand(classId, handId); // Also lower the hand itself
                         } else {
-                            // Overnight schedule (e.g., 22:00 to 06:00)
-                            // Active if after start OR before end
-                            return currentTimeMinutes >= enableMinutes || currentTimeMinutes <= disableMinutes;
+                            // If not old enough, or if we want a hard delete for active comments
+                            await handRef.update({
+                                comment: null,
+                                commentStatus: 'none',
+                                commentUpdatedAt: firebase.firestore.FieldValue.serverTimestamp()
+                            });
+                            await lowerHand(classId, handId); // Lower the hand
                         }
                     }
-                    
-                    // If only disableAt is set, assume it disables at that time until midnight (or the next day's start)
-                    return currentTimeMinutes <= disableMinutes;
+                    renderMainContent(); // Re-render to show updated queue state
                 }
 
-
-                function initializeLocalTimeChecker() {
-                    if (localTimeCheckInterval) clearInterval(localTimeCheckInterval);
-                    localTimeCheckInterval = setInterval(() => {
-                        if (currentClassId && allLoadedClasses[currentClassId] && userData && userData.role === 'student') {
-                            const classData = allLoadedClasses[currentClassId];
-                            // Re-render only if the hand-raising status *might* have changed due to time
-                            const wasEnabled = classData.handRaisingEnabled && isTimeWithinSchedule(classData);
-                            const isEnabled = classData.handRaisingEnabled && isTimeWithinSchedule(classData);
-                            
-                            // Trigger re-render if active status changes (from enabled to disabled, or vice-versa)
-                            if (wasEnabled !== isEnabled || classData.handRaisingEnabled !== isEnabled) {
-                                renderMainContent(); 
-                            }
-                        }
-                    }, 30000); // Check local time every 30 seconds
-                }
-
-
+                let scheduleInterval = null;
                 function initializeScheduleChecker() {
                     if (scheduleInterval) clearInterval(scheduleInterval);
                     scheduleInterval = setInterval(() => {
@@ -515,200 +505,15 @@
                     }, 60000); // Check every minute
                 }
                 
-                async function handleEditComment(classId, requesterId) {
-                    const requestDoc = await db.collection('classes').doc(classId).collection('coTeacherRequests').doc(requesterId).get();
-                    const requestData = requestDoc.data();
-                    showModal(TPL.editCommentModal(classId, requesterId, requestData.comment));
-                }
+                let gapiLoaded=false,googleAuth=null;
+                const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest';
+                const SCOPES = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
+                async function initializeGAPI(apiKey,clientId){if(gapiLoaded)return Promise.resolve();return new Promise((resolve,reject)=>{const checkGAPI=()=>{if(typeof gapi!=='undefined'&&gapi.load){gapi.load('client',async()=>{try{await gapi.client.init({apiKey,discoveryDocs:[DISCOVERY_DOC]});googleAuth=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:SCOPES,callback:''});gapiLoaded=true;resolve();}catch(e){reject(e);}});}else{setTimeout(checkGAPI,100);}};checkGAPI();});}
+                function requestAccessToken(){return new Promise((resolve,reject)=>{try{googleAuth.callback=async(res)=>{if(res.error)return reject(new Error(res.error));gapi.client.setToken({access_token:res.access_token});try{await listGoogleCourses();resolve();}catch(e){reject(e);}};googleAuth.requestAccessToken();}catch(e){reject(e);}});}
+                async function handleGoogleImportClick(){showModal(TPL.googleImportModal());const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');loadingEl.classList.remove('hidden');errorEl.classList.add('hidden');try{const secretsDoc=await db.collection('secrets').doc('wUTBTbjuNLueOFhgHXEE').get();if(!secretsDoc.exists)throw new Error("Secrets document not found.");const{GoogleClassroomAPIKey:apiKey,GoogleClientID:clientId}=secretsDoc.data();if(!apiKey||!clientId)throw new Error("Missing API Key or Client ID in secrets document.");await initializeGAPI(apiKey,clientId);await requestAccessToken();}catch(e){console.error('Google Classroom init error:',e);loadingEl.classList.add('hidden');errorEl.textContent=`Error: ${e.message}`;errorEl.classList.remove('hidden');}}
+                async function listGoogleCourses(){const listEl=document.getElementById('g-import-list');const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');try{loadingEl.textContent='Loading courses...';const response=await gapi.client.classroom.courses.list({teacherId:'me',courseStates:'ACTIVE'});loadingEl.classList.add('hidden');const courses=response.result.courses||[];const notifyClassesSnapshot=await db.collection('classes').where('teacherId','==',currentUser.uid).get();const existingGoogleIds=new Set();notifyClassesSnapshot.forEach(doc=>{const data=doc.data();if(data.googleCourseId)existingGoogleIds.add(data.googleCourseId);});if(courses.length>0){listEl.innerHTML=courses.map(course=>{const isImported=existingGoogleIds.has(course.id);const buttonHtml=isImported?'<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>':`<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`;return`<li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><div class="flex-1"><p class="font-bold text-gray-800">${escapeHtml(course.name)}</p><p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section||'No section')}</p></div>${buttonHtml}</li>`;}).join('');document.querySelectorAll('.import-g-class-btn').forEach(button=>{button.addEventListener('click',()=>importGoogleClass(button.dataset.courseId,button.dataset.courseName));});}else{listEl.innerHTML='<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom that you are the primary teacher of.</p>';}}catch(e){console.error('Error listing courses:',e);loadingEl.classList.add('hidden');let errorMessage='Failed to load courses.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}errorEl.textContent=`Error: ${errorMessage}`;errorEl.classList.remove('hidden');}}
+                async function importGoogleClass(googleCourseId,googleCourseName){const importBtn=document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);if(importBtn){importBtn.textContent='Importing...';importBtn.disabled=true;}try{const existingClass=await db.collection('classes').where('googleCourseId','==',googleCourseId).limit(1).get();if(!existingClass.empty){showModal(TPL.messageModal('Duplicate','This class has already been imported.','yellow'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}return;}const studentsResponse=await gapi.client.classroom.courses.students.list({courseId:googleCourseId});const students=studentsResponse.result.students||[];const studentEmails=students.map(s=>s.profile?.emailAddress).filter(Boolean);const existingStudentUids=[];const pendingEmails=[];if(studentEmails.length>0){const batchSize=10;for(let i=0;i<studentEmails.length;i+=batchSize){const batchEmails=studentEmails.slice(i,i+batchSize);const usersSnapshot=await db.collection('users').where('email','in',batchEmails).get();const existingEmailsBatch=new Set();usersSnapshot.forEach(doc=>{existingStudentUids.push(doc.id);existingEmailsBatch.add(doc.data().email);});batchEmails.forEach(email=>{if(!existingEmailsBatch.has(email)){pendingEmails.push(email);}});}}const classCode=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name:googleCourseName,teacherId:currentUser.uid,teacherIds:[],code:classCode,coTeacherCode,googleCourseId:googleCourseId,studentIds:existingStudentUids,pendingStudentEmails:pendingEmails,createdAt:firebase.firestore.FieldValue.serverTimestamp(),handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''}, scheduleLastActionDate:''});hideModal();showModal(TPL.messageModal('Import Successful',`Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`,'green'));}catch(e){console.error("Error importing Google Classroom:",e);let errorMessage='Failed to import class. Please ensure Google Classroom API is enabled for your account.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}showModal(TPL.messageModal('Import Failed',errorMessage,'red'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}}}
 
-                async function handleSaveCommentEdit(classId, requesterId, newComment) {
-                    if (currentClassId === classId) {
-                        // If the comment is empty after editing, we treat it as "Add/Edit comment" which keeps it pending
-                        await handleCoTeacherRequest(classId, requesterId, 'update_comment', newComment);
-                        hideModal();
-                        renderMainContent(); // Refresh the view to show updated comment status
-                    }
-                }
-
-                const TPL = {
-                    messageModal: (title, message, color = 'blue') => { const c = {'blue':{i:'fa-circle-info',b:'bg-blue-600',t:'text-blue-700',d:'border-blue-400'},'green':{i:'fa-circle-check',b:'bg-green-600',t:'text-green-700',d:'border-green-400'},'red':{i:'fa-triangle-exclamation',b:'bg-red-600',t:'text-red-700',d:'border-red-400'},'yellow':{i:'fa-exclamation',b:'bg-yellow-600',t:'text-yellow-700',d:'border-yellow-400'}}[color]||c['blue']; return `<div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-xl pointer-events-auto text-center border-t-4 ${c.d}"><div class="flex flex-col items-center justify-center"><i class="fa-solid ${c.i} fa-3x ${c.t}"></i><h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">${escapeHtml(title)}</h3><p class="mt-2 text-gray-600">${escapeHtml(message)}</p></div><div class="mt-6"><button type="button" class="modal-close-btn px-6 py-2 ${c.b} text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly">OK</button></div></div>`; },
-                    emptyState: (user) => `<div class="h-full flex items-center justify-center text-center fade-enter-active"><div><svg class="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg><h2 class="mt-4 text-xl font-semibold font-poppins text-gray-700">Welcome, ${escapeHtml(user?.username||'')}!</h2><p class="mt-1 text-gray-500">Select a class or get started below.</p><div class="mt-6 flex flex-col items-center space-y-4">${user.role==='teacher'?`<button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`:''} <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 btn-bubbly flex items-center space-x-2"><i class="fa-solid fa-user-plus w-5 h-5"></i><span>Join Class</span></button></div></div></div>`,
-                    classView: (cls, user, isOwner, isCoTeacher, queue, requests, view, roster) => {
-                        const isAnyTeacher = isOwner || isCoTeacher;
-                        const nameChangesLeft = () => { const today=new Date().toISOString().split('T')[0]; const key=`classNameChanges_${cls.id}`; let changes; try { changes=JSON.parse(localStorage.getItem(key))||{}; } catch(e){changes={};} return (changes.date===today)?3-changes.count:3; };
-                        const timePicker = (id, label, value) => {
-                            const [h24, m] = (value || '08:00').split(':').map(Number);
-                            const period = h24 >= 12 ? 'PM' : 'AM';
-                            let h12 = h24 % 12; if (h12 === 0) h12 = 12;
-                            const timeString = `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input"><div id="${id.replace('-input', '-period-selector')}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
-                        };
-                        
-                        // Re-calculate time status for display immediately
-                        const isTimeWithinSchedule = (c) => {
-                            if (!user || user.role !== 'student' || !c.handRaisingEnabled || !c.schedule?.disableAt) return true;
-                            const schedule = c.schedule;
-                            const disableAt = schedule.disableAt;
-                            const enableAt = schedule.enableAt || '00:00'; // Default to start of day if only disable is set
-
-                            const now = new Date();
-                            const currentHour = now.getHours();
-                            const currentMinute = now.getMinutes();
-                            const currentTime24h = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
-
-                            const parseTime = (timeStr) => {
-                                if (!timeStr) return null;
-                                const [h, m] = timeStr.split(':').map(Number);
-                                return h * 60 + m; // Total minutes from midnight
-                            };
-
-                            const currentTimeMinutes = parseTime(currentTime24h);
-                            const enableMinutes = parseTime(enableAt);
-                            const disableMinutes = parseTime(disableAt);
-
-                            if (enableMinutes <= disableMinutes) {
-                                // Same day schedule (e.g., 09:00 to 15:00)
-                                return currentTimeMinutes >= enableMinutes && currentTimeMinutes <= disableMinutes;
-                            } else {
-                                // Overnight schedule (e.g., 22:00 to 06:00)
-                                return currentTimeMinutes >= enableMinutes || currentTimeMinutes <= disableMinutes;
-                            }
-                        };
-
-                        const isStudentAbleToRaiseHand = user.role === 'student' && cls.handRaisingEnabled && isTimeWithinSchedule(cls);
-                        const myHand = queue.find(h=>h.id===user.uid);
-                        const myQueuePosition=queue.findIndex(h=>h.id===user.uid)+1;
-
-                        const teacherView = `
-                            <div class="fade-enter-active space-y-6">
-                                <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                                    <div class="flex flex-wrap justify-between items-center gap-4">
-                                        <h2 class="text-3xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
-                                        <div class="flex items-center space-x-2">
-                                            <div class="tooltip-container"><button id="toggle-hand-raising-btn" class="tooltip-button btn-bubbly ${cls.handRaisingEnabled ?'bg-yellow-100 text-yellow-600 hover:bg-yellow-200':'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid ${cls.handRaisingEnabled ?'fa-hand':'fa-hand-sparkles'}"></i></button><span class="tooltip-text">${cls.handRaisingEnabled ?'Pause Raising':'Resume Raising'}</span></div>
-                                            <div class="tooltip-container"><button id="lower-all-hands-btn" class="tooltip-button btn-bubbly bg-red-100 text-red-600 hover:bg-red-200"><i class="fa-solid fa-hands-clapping"></i></button><span class="tooltip-text">Lower All Hands</span></div>
-                                            ${isOwner ? `<div class="tooltip-container relative">
-                                                    <button data-view="requests" class="class-view-tab tooltip-button btn-bubbly ${view === 'requests' ? 'bg-violet-100 text-violet-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">
-                                                        <i class="fa-solid fa-user-shield"></i>
-                                                        ${requests.length > 0 ? `<span class="absolute -top-1 -right-1 flex h-4 w-4"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-violet-500 text-white text-xs items-center justify-center">${requests.length}</span></span>` : ''}
-                                                    </button>
-                                                    <span class="tooltip-text">Requests</span>
-                                                </div>` : ''}
-                                            <div class="tooltip-container"><button data-view="roster" class="class-view-tab tooltip-button btn-bubbly ${view === 'roster' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid fa-users"></i></button><span class="tooltip-text">Roster</span></div>
-                                            ${isOwner ? `<div class="tooltip-container"><button data-view="settings" class="class-view-tab tooltip-button btn-bubbly ${view === 'settings' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid fa-gear"></i></button><span class="tooltip-text">Settings</span></div>` : ''}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div id="teacher-view-content" class="min-h-[60vh]">${
-                                    (() => {
-                                        if (view === 'settings' && isOwner) return `
-                                            <div id="settings-panel" class="space-y-6 fade-enter-active">
-                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
-                                                        <div class="space-y-3">
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container"><button role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code" class="copy-code-btn px-3 py-1.5 text-sm font-poppins text-gray-500 bg-slate-100 rounded-lg cursor-pointer hover:bg-slate-200 transition"><i class="fa-solid fa-copy mr-1"></i> ${escapeHtml(cls.code)}</button><span class="tooltip-text">Copy Student Code</span></div></div>
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container"><button role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code" class="copy-code-btn px-3 py-1.5 text-sm font-poppins text-gray-500 bg-slate-100 rounded-lg cursor-pointer hover:bg-slate-200 transition"><i class="fa-solid fa-copy mr-1"></i> ${escapeHtml(cls.coTeacherCode)}</button><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
-                                                        </div>
-                                                    </div>
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
-                                                        <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
-                                                    </div>
-                                                </div>
-                                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                    <div class="flex justify-between items-center"><h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3></div>
-                                                    <p class="text-sm text-gray-500 -mt-2">Automatically pause hand raising and lower all hands at a set time. This uses the teacher's local time zone for the schedule check.</p>
-                                                    <div id="schedule-form" class="space-y-4">
-                                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                            ${timePicker('enable-time-input', 'Enable Hand Raising At (Optional)', cls.schedule?.enableAt)}
-                                                            ${timePicker('disable-time-input', 'Disable Hand Raising At', cls.schedule?.disableAt)}
-                                                        </div>
-                                                        <div class="flex justify-end space-x-2">
-                                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear Schedule</button>
-                                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div class="bg-white p-6 rounded-2xl shadow-sm border-2 border-dashed border-red-300">
-                                                    <h4 class="text-lg font-bold text-red-700 font-poppins">Danger Zone</h4>
-                                                    <div class="mt-4 flex justify-between items-center"><p class="text-sm text-gray-600 max-w-md">Permanently delete this class and all its data. This action is irreversible.</p><button id="delete-class-btn" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 btn-bubbly whitespace-nowrap">Delete Class</button></div>
-                                                </div>
-                                            </div>`;
-                                        if (view === 'roster') return `
-                                            <div id="roster-panel" class="space-y-6 fade-enter-active">
-                                                <div class="bg-white p-6 rounded-2xl shadow-sm border"><h3 class="text-xl font-bold text-gray-800 font-poppins">Class Roster</h3></div>
-                                                <div class="bg-white p-6 rounded-2xl shadow-sm border">
-                                                    <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Teachers</h4>
-                                                    <ul class="space-y-3">
-                                                        <li class="flex items-center justify-between p-2"><div class="flex items-center"><span class="font-semibold text-gray-800">${escapeHtml(roster?.owner?.username || '...')}</span><span class="ml-3 text-xs font-bold uppercase bg-purple-100 text-purple-700 px-2 py-1 rounded-full">Owner</span></div></li>
-                                                        ${roster?.coTeachers?.map(t => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="font-semibold text-gray-700">${escapeHtml(t.username)}</span> ${isOwner ? `<button data-user-id="${t.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('')}
-                                                    </ul>
-                                                </div>
-                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border">
-                                                    <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Students (${roster?.students?.length || 0})</h4>
-                                                    <ul class="space-y-3 max-h-96 overflow-y-auto custom-scrollbar pr-2">
-                                                        ${roster?.students?.length > 0 ? roster.students.map(s => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="text-gray-700">${escapeHtml(s.username)}</span> ${isOwner ? `<button data-user-id="${s.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('') : '<p class="text-sm text-gray-500 p-2">No students have joined yet.</p>'}
-                                                    </ul>
-                                                </div>
-                                            </div>`;
-                                        if (view === 'requests' && isOwner) return `
-                                            <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
-                                                <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${requests.length}</span></h3>
-                                                <div id="requests-list" class="mt-5">${requests.length>0?`<ul class="space-y-3">${requests.map(req => {
-                                                    const hasComment = req.comment && req.comment.trim().length > 0;
-                                                    return `<li class="bg-slate-50 p-3 rounded-xl flex items-start justify-between transition hover:shadow-md">
-                                                        <div class="flex-1 min-w-0 pr-4">
-                                                            <p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>
-                                                            ${hasComment ? `<p class="text-sm text-gray-600 mt-1.5 truncate">Comment: "${escapeHtml(req.comment)}"</p>`:''}
-                                                            <p class="text-xs text-gray-400 mt-1">Requested: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p>
-                                                        </div>
-                                                        <div class="flex flex-col space-y-2">
-                                                            <button data-requester-id="${req.id}" class="accept-request-btn squircle-btn bg-green-500 text-white hover:bg-green-600" title="Accept Request"><i class="fa-solid fa-check"></i></button>
-                                                            <button data-requester-id="${req.id}" class="comment-request-btn squircle-btn bg-blue-500 text-white hover:bg-blue-600" title="${hasComment ? 'Edit Comment' : 'Add Comment'}"><i class="fa-solid ${hasComment ? 'fa-pen' : 'fa-comment'}"></i></button>
-                                                            <button data-requester-id="${req.id}" class="deny-request-btn squircle-btn bg-red-500 text-white hover:bg-red-600" title="Deny Request"><i class="fa-solid fa-xmark"></i></button>
-                                                        </div>
-                                                    </li>`;
-                                                }).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
-                                            </div>`;
-                                        // Default to overview
-                                        return `<div id="overview-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
-                                            <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3>
-                                            <div class="mt-4 text-center">
-                                                <p class="text-sm text-gray-500">Schedule Status: ${cls.schedule?.disableAt ? (isTimeWithinSchedule(cls) ? '<span class="text-green-600 font-semibold">Active (Time Window Open)</span>' : `<span class="text-red-600 font-semibold">Paused (Outside ${cls.schedule.enableAt || 'Start'} - ${cls.schedule.disableAt})</span>`) : '<span class="text-gray-500">No Schedule Set</span>'}</p>
-                                            </div>
-                                            <div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex items-start"><div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div><button data-student-id="${hand.id}" class="teacher-lower-hand-btn px-3 py-1.5 bg-slate-200 text-gray-700 text-sm font-semibold rounded-lg hover:bg-red-100 hover:text-red-700 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower</button></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
-                                    })()
-                                }</div>
-                            </div>
-                        `;
-                        const studentView = `<div class="fade-enter-active space-y-6"><div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200"><h2 class="text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.name)}</h2><p class="text-sm text-gray-500 mt-1">Welcome! Raise your hand below if you have a question.</p></div><div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">${(()=>{
-                            if (!cls.handRaisingEnabled) {
-                                return `<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently paused by the teacher.</h3><p class="mt-1 text-gray-600">This may be due to the class schedule or manual action.</p>`;
-                            }
-                            
-                            if (!isTimeWithinSchedule(cls)) {
-                                return `<i class="fa-solid fa-hand-slash fa-3x text-red-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand Raising is Inactive</h3><p class="mt-1 text-gray-600">Current Time (${new Date().toLocaleTimeString()}) is outside the allowed window (${cls.schedule?.enableAt || 'Start'} - ${cls.schedule?.disableAt || 'End'}).</p>`;
-                            }
-
-                            if(myHand){
-                                return `<i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3><p class="mt-1 text-lg text-gray-600">You are <span class="font-bold text-blue-600">#${myQueuePosition}</span> in the queue.</p>${myHand.question?`<p class="mt-2 text-gray-500 italic">Your question: "${escapeHtml(myHand.question)}"</p>`:''}<div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>`;
-                            }
-                            
-                            return `<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Have a Question?</h3><p class="mt-1 text-gray-600">Click below to raise your hand.</p><div class="mt-6"><button id="raise-hand-action-btn" class="raise-hand-btn px-8 py-4 bg-blue-600 text-white font-bold text-lg rounded-xl hover:bg-blue-700 btn-bubbly"><i class="fa-solid fa-hand mr-3"></i> Raise My Hand</button></div>`;
-                        })()}</div></div>`;
-                        return isAnyTeacher ? teacherView : studentView;
-                    },
-                    newClassChoiceModal:(user)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><i class="fa-solid fa-pen-to-square fa-2x text-blue-600 mb-2"></i><span class="font-semibold text-gray-700 font-poppins">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><img src="../images/google-classroom.png" alt="Google Classroom icon" class="w-8 h-8 mb-2"><span class="font-semibold text-gray-700 font-poppins">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
-                    createClassModal:()=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Create New Class</h3><form id="create-class-form" class="mt-4 space-y-4"><div><label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="new-class-name" required class="mt-1 block w-full app-input" placeholder="e.g., Period 3 Biology"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Create</button></div></form></div>`,
-                    joinClassModal:()=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-2xl pointer-events-auto"><div class="text-center"><i class="fa-solid fa-link fa-3x text-green-600 mb-4"></i><h3 class="text-2xl font-bold text-gray-800 font-poppins">Join a Class</h3><p class="text-gray-500 mt-2">Enter the 8-digit Student Code or Co-Teacher Code.</p></div><form id="join-class-form" class="mt-6 space-y-6"><div><label for="class-code-input" class="block text-sm font-medium text-gray-700 text-left mb-1">Class Code</label><input type="text" id="class-code-input" required minlength="8" maxlength="8" class="block w-full app-input text-center font-bold tracking-widest uppercase text-lg" placeholder="e.g., ABC12345"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 btn-bubbly">Join Class</button></div></form></div>`,
-                    requestCoTeacherModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Request to be a Co-Teacher</h3><p class="text-gray-600 mt-1">For class: <strong>${escapeHtml(name)}</strong></p><form id="request-co-teacher-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="co-teacher-request-comment" class="block text-sm font-medium text-gray-700">Add a comment (optional)</label><textarea id="co-teacher-request-comment" rows="3" class="mt-1 block w-full app-input" placeholder="e.g., I'm the other section's teacher."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Send Request</button></div></form></div>`,
-                    editCommentModal:(classId, requesterId, currentComment)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Manage Request for Co-Teacher</h3><form id="edit-comment-form" data-class-id="${classId}" data-requester-id="${requesterId}" class="mt-4 space-y-4"><div><label for="edited-comment-input" class="block text-sm font-medium text-gray-700">Comment (This is visible to the class owner)</label><textarea id="edited-comment-input" rows="3" class="mt-1 block w-full app-input">${escapeHtml(currentComment)}</textarea></div><div class="flex justify-between space-x-3"><button type="button" data-action="delete" data-class-id="${classId}" data-requester-id="${requesterId}" class="delete-request-comment-btn px-4 py-2 bg-red-100 text-red-700 text-sm font-semibold rounded-lg hover:bg-red-200 btn-bubbly"><i class="fa-solid fa-trash"></i> Delete Request</button><div class="flex space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Update Comment</button></div></div></form></div>`,
-                    googleImportModal:()=>`<div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto"><div class="flex items-center justify-center mb-4"><img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4"><h3 class="text-2xl font-bold font-poppins text-gray-800">Import from Classroom</h3></div><p class="text-center text-gray-500 mb-6">Select a class you own to import it into Notify.</p><div id="g-import-content"><div id="g-import-loading" class="text-center py-8"><i class="fa-solid fa-spinner fa-spin fa-2x text-blue-600 mb-2"></i><p class="text-gray-600">Connecting to Google Classroom...</p></div><p id="g-import-error" class="text-center text-red-600 bg-red-50 p-3 rounded-md hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul></div><div class="flex justify-center mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
-                    raiseHandModal:(id)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Raise Your Hand</h3><form id="raise-hand-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="hand-raise-question" class="block text-sm font-medium text-gray-700">Ask a question (optional)</label><textarea id="hand-raise-question" rows="3" class="mt-1 block w-full app-input" placeholder="Type your question here..."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Confirm Raise Hand</button></div></form></div>`,
-                    deleteClassConfirmModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><div class="text-center"><i class="fa-solid fa-triangle-exclamation fa-3x text-red-500 mb-4"></i><h3 class="text-xl font-semibold font-poppins text-gray-800">Delete Class</h3></div><p class="mt-4 text-gray-600 text-center">Are you sure you want to permanently delete <strong>${escapeHtml(name)}</strong>? This action cannot be undone.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" data-class-id="${id}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Confirm Delete</button></div></div>`,
-                };
-                
                 document.body.addEventListener('click', async e => {
                     const target = e.target.closest('button, a, [role="button"]');
                     if (!target) return;
@@ -718,6 +523,8 @@
                     else if (!target.closest('#user-profile-menu')) userProfileMenu.classList.add('hidden');
                     
                     if(target.id === 'logout-btn') auth.signOut();
+                    
+                    // *** MODIFICATION 1: Navigate back to overview on sub-page buttons ***
                     if (target.closest('#class-list button')) selectClass(target.closest('#class-list button').dataset.classId);
                     if(target.id === 'new-class-btn') showModal(TPL.newClassChoiceModal(userData));
                     if(target.id === 'join-class-btn-main') showModal(TPL.joinClassModal());
@@ -728,37 +535,54 @@
                     if (target.id === 'raise-hand-action-btn') showModal(TPL.raiseHandModal(currentClassId));
                     if (target.id === 'lower-hand-action-btn') lowerHand(currentClassId);
                     if (target.id === 'lower-all-hands-btn') lowerAllHands(currentClassId);
-                    if (target.matches('.teacher-lower-hand-btn')) lowerHand(currentClassId, target.dataset.studentId);
+                    
+                    // *** MODIFICATION 2: Teacher Action Buttons ***
+                    if (target.matches('.teacher-action-btn')) {
+                        const action = target.dataset.action;
+                        const studentId = target.dataset.studentId;
+                        if (action === 'lower') {
+                            await lowerHand(currentClassId, studentId);
+                        } else if (action === 'accept') {
+                            await handleCommentAction(currentClassId, studentId, 'accept');
+                        } else if (action === 'deny') {
+                            await handleCommentAction(currentClassId, studentId, 'deny');
+                        } else if (action === 'comment_add' || action === 'comment_edit') {
+                            const commentText = prompt(`Enter comment for ${target.dataset.studentName}:`);
+                            if (commentText !== null) {
+                                if (action === 'comment_add') {
+                                    await handleCommentAction(currentClassId, studentId, 'comment', commentText);
+                                } else { // comment_edit
+                                    await handleCommentAction(currentClassId, studentId, 'editComment', commentText);
+                                }
+                            }
+                        } else if (action === 'comment_delete') {
+                            if (confirm(`Are you sure you want to delete the comment for ${target.dataset.studentName}?`)) {
+                                // This triggers the soft-delete logic in handleCommentAction
+                                await handleCommentAction(currentClassId, studentId, 'deleteComment');
+                            }
+                        }
+                    }
+                    
                     if (target.id === 'toggle-hand-raising-btn') toggleHandRaising(currentClassId, !allLoadedClasses[currentClassId].handRaisingEnabled);
-                    if(target.matches('.class-view-tab')) { currentClassView = target.dataset.view; renderMainContent(); }
+                    
+                    // *** MODIFICATION 1: Navigation Tabs now switch view, which automatically lands on 'overview' if coming from sub-page ***
+                    if(target.matches('.class-view-tab')) { 
+                        currentClassView = target.dataset.view; 
+                        // For roster/settings/requests, we ensure fetchRosterData runs if needed before rendering
+                        if (target.dataset.view === 'roster' && currentRoster === null) await fetchRosterData(allLoadedClasses[currentClassId]);
+                        renderMainContent(); 
+                    }
                     if(target.id === 'delete-class-btn') { showModal(TPL.deleteClassConfirmModal(currentClassId, allLoadedClasses[currentClassId].name)); }
                     if(target.id === 'confirm-delete-class-btn') { handleDeleteClass(target.dataset.classId); }
                     if(target.matches('.remove-user-btn')) { removeUserFromClass(currentClassId, target.dataset.userId); }
                     if(target.matches('.accept-request-btn')) { handleCoTeacherRequest(currentClassId, target.dataset.requesterId, 'accept'); }
                     if(target.matches('.deny-request-btn')) { handleCoTeacherRequest(currentClassId, target.dataset.requesterId, 'deny'); }
-                    if(target.matches('.comment-request-btn')) { 
-                        const reqId = target.dataset.requesterId;
-                        const reqData = (classRequests[currentClassId] || []).find(r => r.id === reqId);
-                        showModal(TPL.editCommentModal(currentClassId, reqId, reqData.comment));
-                    }
-                    if(target.matches('.delete-request-comment-btn')) {
-                        const reqId = target.dataset.requesterId;
-                        const classId = target.dataset.classId;
-                        handleCoTeacherRequest(classId, reqId, 'delete');
-                        hideModal();
-                        renderMainContent();
-                    }
                     
                     if(target.matches('.schedule-action-btn')) {
                         const action = target.dataset.action;
                         if (action === 'save') {
-                            const formatTime = (time, period) => { 
-                                let [h, m] = time.split(':').map(Number); 
-                                if (period === 'PM' && h !== 12) h += 12; 
-                                if (period === 'AM' && h === 12) h = 0; 
-                                return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; 
-                            };
-                            const enableTime = document.getElementById('enable-time-input').value; const enablePeriod = document.querySelector('#enable-time-period-selector .active').dataset.value;
+                            const formatTime = (time, period) => { let [h, m] = time.split(':').map(Number); if (period === 'PM' && h !== 12) h += 12; if (period === 'AM' && h === 12) h = 0; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; };
+                            const enableTime = document.getElementById('enable-time-input').value; const enablePeriod = document.querySelector('#enable-period-selector .active').dataset.value;
                             const disableTime = document.getElementById('disable-time-input').value; const disablePeriod = document.querySelector('#disable-period-selector .active').dataset.value;
                             handleSaveSchedule(currentClassId, formatTime(enableTime, enablePeriod), formatTime(disableTime, disablePeriod));
                         } else if (action === 'clear') { deleteSchedule(currentClassId); }
@@ -784,11 +608,6 @@
                     if(e.target.id === 'raise-hand-form') { const q = e.target.querySelector('#hand-raise-question').value.trim(); raiseHand(e.target.dataset.classId, q); }
                     if(e.target.id === 'change-class-name-form') { const newName = e.target.querySelector('#class-name-input').value.trim(); if (newName && currentClassId) handleChangeClassName(currentClassId, newName); }
                     if(e.target.id === 'request-co-teacher-form') { const comment = e.target.querySelector('#co-teacher-request-comment').value.trim(); requestCoTeacher(e.target.dataset.classId, comment); }
-                    if(e.target.id === 'edit-comment-form') { 
-                        const form = e.target;
-                        const newComment = form.querySelector('#edited-comment-input').value.trim();
-                        handleSaveCommentEdit(form.dataset.classId, form.dataset.requesterId, newComment);
-                    }
                 });
 
                 const TPL = {
@@ -804,42 +623,6 @@
                             const timeString = `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
                             return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input"><div id="${id.replace('-input', '-period-selector')}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
                         };
-                        
-                        // Re-calculate time status for display immediately
-                        const isTimeWithinSchedule = (c) => {
-                            if (!user || user.role !== 'student' || !c.handRaisingEnabled || !c.schedule?.disableAt) return true;
-                            const schedule = c.schedule;
-                            const disableAt = schedule.disableAt;
-                            const enableAt = schedule.enableAt || '00:00'; // Default to start of day if only disable is set
-
-                            const now = new Date();
-                            const currentHour = now.getHours();
-                            const currentMinute = now.getMinutes();
-                            const currentTime24h = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
-
-                            const parseTime = (timeStr) => {
-                                if (!timeStr) return null;
-                                const [h, m] = timeStr.split(':').map(Number);
-                                return h * 60 + m; // Total minutes from midnight
-                            };
-
-                            const currentTimeMinutes = parseTime(currentTime24h);
-                            const enableMinutes = parseTime(enableAt);
-                            const disableMinutes = parseTime(disableAt);
-
-                            if (enableMinutes <= disableMinutes) {
-                                // Same day schedule (e.g., 09:00 to 15:00)
-                                return currentTimeMinutes >= enableMinutes && currentTimeMinutes <= disableMinutes;
-                            } else {
-                                // Overnight schedule (e.g., 22:00 to 06:00)
-                                return currentTimeMinutes >= enableMinutes || currentTimeMinutes <= disableMinutes;
-                            }
-                        };
-
-                        const isStudentAbleToRaiseHand = user.role === 'student' && cls.handRaisingEnabled && isTimeWithinSchedule(cls);
-                        const myHand = queue.find(h=>h.id===user.uid);
-                        const myQueuePosition=queue.findIndex(h=>h.id===user.uid)+1;
-
                         const teacherView = `
                             <div class="fade-enter-active space-y-6">
                                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
@@ -862,14 +645,15 @@
                                 </div>
                                 <div id="teacher-view-content" class="min-h-[60vh]">${
                                     (() => {
-                                        if (view === 'settings' && isOwner) return `
+                                        if (view === 'settings' && isOwner) {
+                                            return `
                                             <div id="settings-panel" class="space-y-6 fade-enter-active">
                                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
                                                     <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
                                                         <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
                                                         <div class="space-y-3">
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container"><button role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code" class="copy-code-btn px-3 py-1.5 text-sm font-poppins text-gray-500 bg-slate-100 rounded-lg cursor-pointer hover:bg-slate-200 transition"><i class="fa-solid fa-copy mr-1"></i> ${escapeHtml(cls.code)}</button><span class="tooltip-text">Copy Student Code</span></div></div>
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container"><button role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code" class="copy-code-btn px-3 py-1.5 text-sm font-poppins text-gray-500 bg-slate-100 rounded-lg cursor-pointer hover:bg-slate-200 transition"><i class="fa-solid fa-copy mr-1"></i> ${escapeHtml(cls.coTeacherCode)}</button><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
+                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.code)}</span><span class="tooltip-text">Copy Student Code</span></div></div>
+                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.coTeacherCode)}</span><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
                                                         </div>
                                                     </div>
                                                     <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
@@ -879,15 +663,15 @@
                                                 </div>
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
                                                     <div class="flex justify-between items-center"><h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3></div>
-                                                    <p class="text-sm text-gray-500 -mt-2">Automatically pause hand raising and lower all hands at a set time. This uses the teacher's local time zone for the schedule check.</p>
+                                                    <p class="text-sm text-gray-500 -mt-2">Automatically pause hand raising and lower all hands at a set time.</p>
                                                     <div id="schedule-form" class="space-y-4">
-                                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                            ${timePicker('enable-time-input', 'Enable Hand Raising At (Optional)', cls.schedule?.enableAt)}
-                                                            ${timePicker('disable-time-input', 'Disable Hand Raising At', cls.schedule?.disableAt)}
+                                                        <div class="grid grid-cols-2 gap-4">
+                                                            ${timePicker('enable-time-input', 'Enable at (Optional)', cls.schedule?.enableAt)}
+                                                            ${timePicker('disable-time-input', 'Disable at', cls.schedule?.disableAt)}
                                                         </div>
                                                         <div class="flex justify-end space-x-2">
-                                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear Schedule</button>
-                                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button>
+                                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear</button>
+                                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -896,6 +680,7 @@
                                                     <div class="mt-4 flex justify-between items-center"><p class="text-sm text-gray-600 max-w-md">Permanently delete this class and all its data. This action is irreversible.</p><button id="delete-class-btn" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 btn-bubbly whitespace-nowrap">Delete Class</button></div>
                                                 </div>
                                             </div>`;
+                                        }
                                         if (view === 'roster') return `
                                             <div id="roster-panel" class="space-y-6 fade-enter-active">
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border"><h3 class="text-xl font-bold text-gray-800 font-poppins">Class Roster</h3></div>
@@ -913,335 +698,144 @@
                                                     </ul>
                                                 </div>
                                             </div>`;
+                                        }
                                         if (view === 'requests' && isOwner) return `
                                             <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
                                                 <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${requests.length}</span></h3>
-                                                <div id="requests-list" class="mt-5">${requests.length>0?`<ul class="space-y-3">${requests.map(req => {
-                                                    const hasComment = req.comment && req.comment.trim().length > 0;
-                                                    return `<li class="bg-slate-50 p-3 rounded-xl flex items-start justify-between transition hover:shadow-md">
-                                                        <div class="flex-1 min-w-0 pr-4">
-                                                            <p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>
-                                                            ${hasComment ? `<p class="text-sm text-gray-600 mt-1.5 truncate">Comment: "${escapeHtml(req.comment)}"</p>`:''}
-                                                            <p class="text-xs text-gray-400 mt-1">Requested: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p>
-                                                        </div>
-                                                        <div class="flex flex-col space-y-2">
-                                                            <button data-requester-id="${req.id}" class="accept-request-btn squircle-btn bg-green-500 text-white hover:bg-green-600" title="Accept Request"><i class="fa-solid fa-check"></i></button>
-                                                            <button data-requester-id="${req.id}" class="comment-request-btn squircle-btn bg-blue-500 text-white hover:bg-blue-600" title="${hasComment ? 'Edit Comment' : 'Add Comment'}"><i class="fa-solid ${hasComment ? 'fa-pen' : 'fa-comment'}"></i></button>
-                                                            <button data-requester-id="${req.id}" class="deny-request-btn squircle-btn bg-red-500 text-white hover:bg-red-600" title="Deny Request"><i class="fa-solid fa-xmark"></i></button>
-                                                        </div>
-                                                    </li>`;
-                                                }).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
+                                                <div id="requests-list" class="mt-5">${requests.length>0?`<ul class="space-y-3">${requests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div><div class="flex items-center space-x-2"><button data-requester-id="${req.id}" class="deny-request-btn px-3 py-1.5 bg-red-100 text-red-700 text-sm font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Deny</button><button data-requester-id="${req.id}" class="accept-request-btn px-3 py-1.5 bg-green-100 text-green-700 text-sm font-semibold rounded-lg hover:bg-green-200 btn-bubbly">Accept</button></div></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
                                             </div>`;
+                                        }
                                         // Default to overview
-                                        return `<div id="overview-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
-                                            <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3>
-                                            <div class="mt-4 text-center">
-                                                <p class="text-sm text-gray-500">Schedule Status: ${cls.schedule?.disableAt ? (isTimeWithinSchedule(cls) ? '<span class="text-green-600 font-semibold">Active (Time Window Open)</span>' : `<span class="text-red-600 font-semibold">Paused (Outside ${cls.schedule.enableAt || 'Start'} - ${cls.schedule.disableAt})</span>`) : '<span class="text-gray-500">No Schedule Set</span>'}</p>
-                                            </div>
-                                            <div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex items-start"><div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div><button data-student-id="${hand.id}" class="teacher-lower-hand-btn px-3 py-1.5 bg-slate-200 text-gray-700 text-sm font-semibold rounded-lg hover:bg-red-100 hover:text-red-700 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower</button></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
+                                        return `<div id="overview-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active"><h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3><div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => {
+                                            // Check for recyclable/null comment data for display logic
+                                            const commentData = hand.commentData || {};
+                                            const isRecyclable = commentData.commentStatus === 'recyclable';
+                                            const hasActiveComment = (hand.comment && hand.commentStatus === 'active') || commentData.commentStatus === 'active';
+                                            const commentText = hand.question || hand.comment || commentData.originalComment || '';
+                                            const isCommentDeletable = hasActiveComment && (new Date().getTime() - (hand.commentUpdatedAt?.toDate().getTime() || 0)) > (24 * 60 * 60 * 1000);
+                                            
+                                            const commentDisplay = hasActiveComment ? 
+                                                `<p class="text-sm text-gray-600 mt-1.5 italic">${isRecyclable ? '[Archived Comment]' : ''} "${escapeHtml(commentText)}"</p>` : 
+                                                (hand.question ? `<p class="text-sm text-gray-600 mt-1.5 italic">Initial Q: "${escapeHtml(hand.question)}"</p>` : '');
+
+
+                                            return `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md">
+                                                <div class="flex items-start">
+                                                    <div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div>
+                                                    <div class="ml-4">
+                                                        <p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>
+                                                        ${commentDisplay}
+                                                        <p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p>
+                                                    </div>
+                                                </div>
+                                                <div class="flex flex-col space-y-2 ml-4">
+                                                    <!-- New Vertical Button Bar for Teacher Actions -->
+                                                    <div class="flex space-x-1">
+                                                        <button data-student-id="${hand.id}" data-student-name="${escapeHtml(hand.studentName)}" data-action="accept" class="teacher-action-btn flex-1 px-2 py-1 bg-green-100 text-green-700 text-xs font-semibold rounded-lg hover:bg-green-200 btn-bubbly"><i class="fa-solid fa-check"></i></button>
+                                                        <button data-student-id="${hand.id}" data-student-name="${escapeHtml(hand.studentName)}" data-action="deny" class="teacher-action-btn flex-1 px-2 py-1 bg-red-100 text-red-700 text-xs font-semibold rounded-lg hover:bg-red-200 btn-bubbly"><i class="fa-solid fa-xmark"></i></button>
+                                                    </div>
+                                                    <div class="flex flex-col border border-gray-300 rounded-lg overflow-hidden shadow-sm">
+                                                        <button data-student-id="${hand.id}" data-student-name="${escapeHtml(hand.studentName)}" data-action="${hasActiveComment ? 'comment_edit' : 'comment_add'}" class="teacher-action-btn px-2 py-1 bg-blue-100 text-blue-700 text-xs font-semibold hover:bg-blue-200 transition-colors border-b border-gray-300">${hasActiveComment ? 'Edit Comment' : 'Add Comment'}</button>
+                                                        <div class="flex">
+                                                            <button data-student-id="${hand.id}" data-student-name="${escapeHtml(hand.studentName)}" data-action="comment_delete" ${isCommentDeletable ? '' : 'disabled'} class="teacher-action-btn flex-1 px-2 py-1 text-xs font-semibold transition-colors ${isCommentDeletable ? 'bg-yellow-100 text-yellow-700 hover:bg-yellow-200' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}">Delete Comment</button>
+                                                            <button data-student-id="${hand.id}" data-action="lower" class="teacher-action-btn flex-1 px-2 py-1 bg-slate-200 text-gray-700 text-xs font-semibold hover:bg-red-100 hover:text-red-700 transition-colors">Lower Hand</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </li>`;
+                                            }).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
                                     })()
                                 }</div>
                             </div>
                         `;
-                        const studentView = `<div class="fade-enter-active space-y-6"><div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200"><h2 class="text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.name)}</h2><p class="text-sm text-gray-500 mt-1">Welcome! Raise your hand below if you have a question.</p></div><div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">${(()=>{
-                            if (!cls.handRaisingEnabled) {
-                                return `<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently paused by the teacher.</h3><p class="mt-1 text-gray-600">This may be due to the class schedule or manual action.</p>`;
-                            }
-                            
-                            if (!isTimeWithinSchedule(cls)) {
-                                return `<i class="fa-solid fa-hand-slash fa-3x text-red-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand Raising is Inactive</h3><p class="mt-1 text-gray-600">Current Time (${new Date().toLocaleTimeString()}) is outside the allowed window (${cls.schedule?.enableAt || 'Start'} - ${cls.schedule?.disableAt || 'End'}).</p>`;
-                            }
-
-                            if(myHand){
-                                return `<i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3><p class="mt-1 text-lg text-gray-600">You are <span class="font-bold text-blue-600">#${myQueuePosition}</span> in the queue.</p>${myHand.question?`<p class="mt-2 text-gray-500 italic">Your question: "${escapeHtml(myHand.question)}"</p>`:''}<div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>`;
-                            }
-                            
-                            return `<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Have a Question?</h3><p class="mt-1 text-gray-600">Click below to raise your hand.</p><div class="mt-6"><button id="raise-hand-action-btn" class="raise-hand-btn px-8 py-4 bg-blue-600 text-white font-bold text-lg rounded-xl hover:bg-blue-700 btn-bubbly"><i class="fa-solid fa-hand mr-3"></i> Raise My Hand</button></div>`;
-                        })()}</div></div>`;
+                        const studentView = `<div class="fade-enter-active space-y-6"><div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200"><h2 class="text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.name)}</h2><p class="text-sm text-gray-500 mt-1">Welcome! Raise your hand below if you have a question.</p></div><div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">${(()=>{const myHand=queue.find(h=>h.id===user.uid);const myQueuePosition=queue.findIndex(h=>h.id===user.uid)+1;if(!cls.handRaisingEnabled){return`<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently paused.</h3><p class="mt-1 text-gray-600">Your teacher will resume it shortly.</p>`}else if(myHand){return`<i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3><p class="mt-1 text-lg text-gray-600">You are <span class="font-bold text-blue-600">#${myQueuePosition}</span> in the queue.</p>${myHand.question?`<p class="mt-2 text-gray-500 italic">Your question: "${escapeHtml(myHand.question)}"</p>`:''}<div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>`}else{return`<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Have a Question?</h3><p class="mt-1 text-gray-600">Click below to raise your hand.</p><div class="mt-6"><button id="raise-hand-action-btn" class="raise-hand-btn px-8 py-4 bg-blue-600 text-white font-bold text-lg rounded-xl hover:bg-blue-700 btn-bubbly"><i class="fa-solid fa-hand mr-3"></i> Raise My Hand</button></div>`}})()}</div></div>`;
                         return isAnyTeacher ? teacherView : studentView;
                     },
-                    newClassChoiceModal:(user)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><i class="fa-solid fa-pen-to-square fa-2x text-blue-600 mb-2"></i><span class="font-semibold text-gray-700 font-poppins">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><img src="../images/google-classroom.png" alt="Google Classroom icon" class="w-8 h-8 mb-2"><span class="font-semibold text-gray-700 font-poppins">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
+                    newClassChoiceModal:(user)=>`
+                        <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
+                            <h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3>
+                            <p class="text-center text-gray-500 mt-2">How would you like to create your class?</p>
+                            <div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+                                <button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly">
+                                    <i class="fa-solid fa-pen-to-square fa-2x text-blue-600 mb-2"></i>
+                                    <span class="font-semibold text-gray-700 font-poppins">Create Manually</span>
+                                </button>
+                                <button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly">
+                                    <img src="../images/google-classroom.png" alt="Google Classroom icon" class="w-8 h-8 mb-2">
+                                    <span class="font-semibold text-gray-700 font-poppins">Import from Classroom</span>
+                                </button>
+                            </div>
+                            <div class="mt-6 text-center">
+                                <button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button>
+                            </div>
+                        </div>`,
                     createClassModal:()=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Create New Class</h3><form id="create-class-form" class="mt-4 space-y-4"><div><label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="new-class-name" required class="mt-1 block w-full app-input" placeholder="e.g., Period 3 Biology"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Create</button></div></form></div>`,
-                    joinClassModal:()=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-2xl pointer-events-auto"><div class="text-center"><i class="fa-solid fa-link fa-3x text-green-600 mb-4"></i><h3 class="text-2xl font-bold text-gray-800 font-poppins">Join a Class</h3><p class="text-gray-500 mt-2">Enter the 8-digit Student Code or Co-Teacher Code.</p></div><form id="join-class-form" class="mt-6 space-y-6"><div><label for="class-code-input" class="block text-sm font-medium text-gray-700 text-left mb-1">Class Code</label><input type="text" id="class-code-input" required minlength="8" maxlength="8" class="block w-full app-input text-center font-bold tracking-widest uppercase text-lg" placeholder="e.g., ABC12345"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 btn-bubbly">Join Class</button></div></form></div>`,
+                    joinClassModal:()=>`
+                        <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-2xl pointer-events-auto">
+                            <div class="text-center">
+                                <i class="fa-solid fa-link fa-3x text-green-600 mb-4"></i>
+                                <h3 class="text-2xl font-bold text-gray-800 font-poppins">Join a Class</h3>
+                                <p class="text-gray-500 mt-2">Enter the 8-digit Student Code or Co-Teacher Code.</p>
+                            </div>
+                            <form id="join-class-form" class="mt-6 space-y-6">
+                                <div>
+                                    <label for="class-code-input" class="block text-sm font-medium text-gray-700 text-left mb-1">Class Code</label>
+                                    <input type="text" id="class-code-input" required minlength="8" maxlength="8" class="block w-full app-input text-center font-bold tracking-widest uppercase text-lg" placeholder="e.g., ABC12345">
+                                </div>
+                                <div class="flex justify-end space-x-3">
+                                    <button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button>
+                                    <button type="submit" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 btn-bubbly">Join Class</button>
+                                </div>
+                            </form>
+                        </div>`,
                     requestCoTeacherModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Request to be a Co-Teacher</h3><p class="text-gray-600 mt-1">For class: <strong>${escapeHtml(name)}</strong></p><form id="request-co-teacher-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="co-teacher-request-comment" class="block text-sm font-medium text-gray-700">Add a comment (optional)</label><textarea id="co-teacher-request-comment" rows="3" class="mt-1 block w-full app-input" placeholder="e.g., I'm the other section's teacher."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Send Request</button></div></form></div>`,
-                    editCommentModal:(classId, requesterId, currentComment)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Manage Request for Co-Teacher</h3><form id="edit-comment-form" data-class-id="${classId}" data-requester-id="${requesterId}" class="mt-4 space-y-4"><div><label for="edited-comment-input" class="block text-sm font-medium text-gray-700">Comment (This is visible to the class owner)</label><textarea id="edited-comment-input" rows="3" class="mt-1 block w-full app-input">${escapeHtml(currentComment)}</textarea></div><div class="flex justify-between space-x-3"><button type="button" data-action="delete" data-class-id="${classId}" data-requester-id="${requesterId}" class="delete-request-comment-btn px-4 py-2 bg-red-100 text-red-700 text-sm font-semibold rounded-lg hover:bg-red-200 btn-bubbly"><i class="fa-solid fa-trash"></i> Delete Request</button><div class="flex space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Update Comment</button></div></div></form></div>`,
                     googleImportModal:()=>`<div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto"><div class="flex items-center justify-center mb-4"><img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4"><h3 class="text-2xl font-bold font-poppins text-gray-800">Import from Classroom</h3></div><p class="text-center text-gray-500 mb-6">Select a class you own to import it into Notify.</p><div id="g-import-content"><div id="g-import-loading" class="text-center py-8"><i class="fa-solid fa-spinner fa-spin fa-2x text-blue-600 mb-2"></i><p class="text-gray-600">Connecting to Google Classroom...</p></div><p id="g-import-error" class="text-center text-red-600 bg-red-50 p-3 rounded-md hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul></div><div class="flex justify-center mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
                     raiseHandModal:(id)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Raise Your Hand</h3><form id="raise-hand-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="hand-raise-question" class="block text-sm font-medium text-gray-700">Ask a question (optional)</label><textarea id="hand-raise-question" rows="3" class="mt-1 block w-full app-input" placeholder="Type your question here..."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Confirm Raise Hand</button></div></form></div>`,
-                    deleteClassConfirmModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><div class="text-center"><i class="fa-solid fa-triangle-exclamation fa-3x text-red-500 mb-4"></i><h3 class="text-xl font-semibold font-poppins text-gray-800">Delete Class</h3></div><p class="mt-4 text-gray-600 text-center">Are you sure you want to permanently delete <strong>${escapeHtml(name)}</strong>? This action cannot be undone.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" data-class-id="${id}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Confirm Delete</button></div></div>`,
+                    deleteClassConfirmModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><div class="text-center"><i class="fa-solid fa-triangle-exclamation fa-3x text-red-500 mb-4"></i><h3 class="text-xl font-semibold font-poppins text-gray-800">Delete Class</h3></div><p class="mt-4 text-gray-600 text-center">Are you sure you want to permanently delete <strong>${escapeHtml(name)}</strong>? This action is irreversible.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" data-class-id="${id}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Confirm Delete</button></div></div>`,
                 };
                 
-                document.body.addEventListener('click', async e => {
-                    const target = e.target.closest('button, a, [role="button"]');
-                    if (!target) return;
-                    
-                    const userProfileBtn = document.getElementById('user-profile-btn'), userProfileMenu = document.getElementById('user-profile-menu');
-                    if (target === userProfileBtn) userProfileMenu.classList.toggle('hidden');
-                    else if (!target.closest('#user-profile-menu')) userProfileMenu.classList.add('hidden');
-                    
-                    if(target.id === 'logout-btn') auth.signOut();
-                    if (target.closest('#class-list button')) selectClass(target.closest('#class-list button').dataset.classId);
-                    if(target.id === 'new-class-btn') showModal(TPL.newClassChoiceModal(userData));
-                    if(target.id === 'join-class-btn-main') showModal(TPL.joinClassModal());
-                    if(target.id === 'create-manual-btn') showModal(TPL.createClassModal());
-                    if(target.id === 'import-gclass-btn') handleGoogleImportClick();
-                    if(target.classList.contains('modal-cancel-btn') || e.target.id === 'modal-backdrop' || target.classList.contains('modal-close-btn')) hideModal();
+                document.body.addEventListener('mainContentRendered', () => {
+                    const timeInputs = document.querySelectorAll('.schedule-time-input');
+                    timeInputs.forEach(input => {
+                        input.dataset.digits = (input.value.replace(':', '') || '0800');
+                        input.addEventListener('input', (e) => {
+                            const isBackspace = e.inputType === 'deleteContentBackward';
+                            let currentDigits = input.dataset.digits || '';
 
-                    if (target.id === 'raise-hand-action-btn') showModal(TPL.raiseHandModal(currentClassId));
-                    if (target.id === 'lower-hand-action-btn') lowerHand(currentClassId);
-                    if (target.id === 'lower-all-hands-btn') lowerAllHands(currentClassId);
-                    if (target.matches('.teacher-lower-hand-btn')) lowerHand(currentClassId, target.dataset.studentId);
-                    if (target.id === 'toggle-hand-raising-btn') toggleHandRaising(currentClassId, !allLoadedClasses[currentClassId].handRaisingEnabled);
-                    if(target.matches('.class-view-tab')) { currentClassView = target.dataset.view; renderMainContent(); }
-                    if(target.id === 'delete-class-btn') { showModal(TPL.deleteClassConfirmModal(currentClassId, allLoadedClasses[currentClassId].name)); }
-                    if(target.id === 'confirm-delete-class-btn') { handleDeleteClass(target.dataset.classId); }
-                    if(target.matches('.remove-user-btn')) { removeUserFromClass(currentClassId, target.dataset.userId); }
-                    if(target.matches('.accept-request-btn')) { handleCoTeacherRequest(currentClassId, target.dataset.requesterId, 'accept'); }
-                    if(target.matches('.deny-request-btn')) { handleCoTeacherRequest(currentClassId, target.dataset.requesterId, 'deny'); }
-                    if(target.matches('.comment-request-btn')) { 
-                        const reqId = target.dataset.requesterId;
-                        const reqData = (classRequests[currentClassId] || []).find(r => r.id === reqId);
-                        showModal(TPL.editCommentModal(currentClassId, reqId, reqData.comment));
-                    }
-                    if(target.matches('.delete-request-comment-btn')) {
-                        const reqId = target.dataset.requesterId;
-                        const classId = target.dataset.classId;
-                        handleCoTeacherRequest(classId, reqId, 'delete');
-                        hideModal();
-                        renderMainContent();
-                    }
-                    
-                    if(target.matches('.schedule-action-btn')) {
-                        const action = target.dataset.action;
-                        if (action === 'save') {
-                            const formatTime = (time, period) => { 
-                                let [h, m] = time.split(':').map(Number); 
-                                if (period === 'PM' && h !== 12) h += 12; 
-                                if (period === 'AM' && h === 12) h = 0; 
-                                return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; 
-                            };
-                            const enableTime = document.getElementById('enable-time-input').value; const enablePeriod = document.querySelector('#enable-time-period-selector .active').dataset.value;
-                            const disableTime = document.getElementById('disable-time-input').value; const disablePeriod = document.querySelector('#disable-period-selector .active').dataset.value;
-                            handleSaveSchedule(currentClassId, formatTime(enableTime, enablePeriod), formatTime(disableTime, disablePeriod));
-                        } else if (action === 'clear') { deleteSchedule(currentClassId); }
-                    }
-                    if(target.matches('.copy-code-btn')) {
-                        const code = target.dataset.classCode;
-                        navigator.clipboard.writeText(code).then(() => {
-                            const tooltip = target.querySelector('.tooltip-text');
-                            if (tooltip) { tooltip.textContent = 'Copied!'; setTimeout(() => { tooltip.textContent = target.dataset.tooltipText; }, 2000); }
+                            if (isBackspace) {
+                                currentDigits = currentDigits.slice(0, -1);
+                            } else {
+                                const newChar = e.data;
+                                if (newChar && newChar.match(/[0-9]/)) {
+                                    currentDigits = (currentDigits + newChar).slice(-4);
+                                }
+                            }
+                            
+                            input.dataset.digits = currentDigits;
+                            const padded = currentDigits.padStart(4, '0');
+
+                            let h_str = padded.slice(0, 2);
+                            let m_str = padded.slice(2, 4);
+                            
+                            if (parseInt(h_str, 10) > 12) h_str = '12';
+                            if (parseInt(h_str, 10) === 0) h_str = '00';
+                            if (parseInt(m_str, 10) > 59) m_str = '59';
+
+                            const formattedValue = `${h_str}:${m_str}`;
+                            if (input.value !== formattedValue) {
+                                input.value = formattedValue;
+                            }
                         });
-                    }
-                    if (target.matches('.period-btn')) {
-                        const container = target.closest('.period-selector');
-                        container.querySelectorAll('.period-btn').forEach(btn => btn.classList.remove('active'));
-                        target.classList.add('active');
-                    }
-                });
-                
-                document.body.addEventListener('submit', async e => {
-                    e.preventDefault();
-                    if(e.target.id === 'create-class-form') { const name = e.target.querySelector('#new-class-name').value.trim(); if(name) createNewClass(name); }
-                    if(e.target.id === 'join-class-form') { const code = e.target.querySelector('#class-code-input').value.trim().toUpperCase(); if(code) joinClass(code); }
-                    if(e.target.id === 'raise-hand-form') { const q = e.target.querySelector('#hand-raise-question').value.trim(); raiseHand(e.target.dataset.classId, q); }
-                    if(e.target.id === 'change-class-name-form') { const newName = e.target.querySelector('#class-name-input').value.trim(); if (newName && currentClassId) handleChangeClassName(currentClassId, newName); }
-                    if(e.target.id === 'request-co-teacher-form') { const comment = e.target.querySelector('#co-teacher-request-comment').value.trim(); requestCoTeacher(e.target.dataset.classId, comment); }
-                    if(e.target.id === 'edit-comment-form') { 
-                        const form = e.target;
-                        const newComment = form.querySelector('#edited-comment-input').value.trim();
-                        handleSaveCommentEdit(form.dataset.classId, form.dataset.requesterId, newComment);
-                    }
-                });
 
-                // --- Templates (TPL) ---
-                // (Template definitions follow...)
-                // I am omitting the full TPL block here to keep the final output concise, but it contains all the templates from the previous correct version, including the redesigned request buttons.
-                // ... (TPL definitions are assumed to be here) ...
-
-                const TPL = {
-                    messageModal: (title, message, color = 'blue') => { const c = {'blue':{i:'fa-circle-info',b:'bg-blue-600',t:'text-blue-700',d:'border-blue-400'},'green':{i:'fa-circle-check',b:'bg-green-600',t:'text-green-700',d:'border-green-400'},'red':{i:'fa-triangle-exclamation',b:'bg-red-600',t:'text-red-700',d:'border-red-400'},'yellow':{i:'fa-exclamation',b:'bg-yellow-600',t:'text-yellow-700',d:'border-yellow-400'}}[color]||c['blue']; return `<div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-xl pointer-events-auto text-center border-t-4 ${c.d}"><div class="flex flex-col items-center justify-center"><i class="fa-solid ${c.i} fa-3x ${c.t}"></i><h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">${escapeHtml(title)}</h3><p class="mt-2 text-gray-600">${escapeHtml(message)}</p></div><div class="mt-6"><button type="button" class="modal-close-btn px-6 py-2 ${c.b} text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly">OK</button></div></div>`; },
-                    emptyState: (user) => `<div class="h-full flex items-center justify-center text-center fade-enter-active"><div><svg class="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg><h2 class="mt-4 text-xl font-semibold font-poppins text-gray-700">Welcome, ${escapeHtml(user?.username||'')}!</h2><p class="mt-1 text-gray-500">Select a class or get started below.</p><div class="mt-6 flex flex-col items-center space-y-4">${user.role==='teacher'?`<button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`:''} <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 btn-bubbly flex items-center space-x-2"><i class="fa-solid fa-user-plus w-5 h-5"></i><span>Join Class</span></button></div></div></div>`,
-                    classView: (cls, user, isOwner, isCoTeacher, queue, requests, view, roster) => {
-                        const isAnyTeacher = isOwner || isCoTeacher;
-                        const nameChangesLeft = () => { const today=new Date().toISOString().split('T')[0]; const key=`classNameChanges_${cls.id}`; let changes; try { changes=JSON.parse(localStorage.getItem(key))||{}; } catch(e){changes={};} return (changes.date===today)?3-changes.count:3; };
-                        const timePicker = (id, label, value) => {
-                            const [h24, m] = (value || '08:00').split(':').map(Number);
-                            const period = h24 >= 12 ? 'PM' : 'AM';
-                            let h12 = h24 % 12; if (h12 === 0) h12 = 12;
-                            const timeString = `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input"><div id="${id.replace('-input', '-period-selector')}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
-                        };
-                        
-                        // Re-calculate time status for display immediately
-                        const isTimeWithinSchedule = (c) => {
-                            if (!user || user.role !== 'student' || !c.handRaisingEnabled || !c.schedule?.disableAt) return true;
-                            const schedule = c.schedule;
-                            const disableAt = schedule.disableAt;
-                            const enableAt = schedule.enableAt || '00:00'; // Default to start of day if only disable is set
-
-                            const now = new Date();
-                            const currentHour = now.getHours();
-                            const currentMinute = now.getMinutes();
-                            const currentTime24h = `${String(currentHour).padStart(2, '0')}:${String(currentMinute).padStart(2, '0')}`;
-
-                            const parseTime = (timeStr) => {
-                                if (!timeStr) return null;
-                                const [h, m] = timeStr.split(':').map(Number);
-                                return h * 60 + m; // Total minutes from midnight
-                            };
-
-                            const currentTimeMinutes = parseTime(currentTime24h);
-                            const enableMinutes = parseTime(enableAt);
-                            const disableMinutes = parseTime(disableAt);
-
-                            if (enableMinutes <= disableMinutes) {
-                                // Same day schedule (e.g., 09:00 to 15:00)
-                                return currentTimeMinutes >= enableMinutes && currentTimeMinutes <= disableMinutes;
-                            } else {
-                                // Overnight schedule (e.g., 22:00 to 06:00)
-                                return currentTimeMinutes >= enableMinutes || currentTimeMinutes <= disableMinutes;
-                            }
-                        };
-
-                        const isStudentAbleToRaiseHand = user.role === 'student' && cls.handRaisingEnabled && isTimeWithinSchedule(cls);
-                        const myHand = queue.find(h=>h.id===user.uid);
-                        const myQueuePosition=queue.findIndex(h=>h.id===user.uid)+1;
-
-                        const teacherView = `
-                            <div class="fade-enter-active space-y-6">
-                                <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                                    <div class="flex flex-wrap justify-between items-center gap-4">
-                                        <h2 class="text-3xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
-                                        <div class="flex items-center space-x-2">
-                                            <div class="tooltip-container"><button id="toggle-hand-raising-btn" class="tooltip-button btn-bubbly ${cls.handRaisingEnabled ?'bg-yellow-100 text-yellow-600 hover:bg-yellow-200':'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid ${cls.handRaisingEnabled ?'fa-hand':'fa-hand-sparkles'}"></i></button><span class="tooltip-text">${cls.handRaisingEnabled ?'Pause Raising':'Resume Raising'}</span></div>
-                                            <div class="tooltip-container"><button id="lower-all-hands-btn" class="tooltip-button btn-bubbly bg-red-100 text-red-600 hover:bg-red-200"><i class="fa-solid fa-hands-clapping"></i></button><span class="tooltip-text">Lower All Hands</span></div>
-                                            ${isOwner ? `<div class="tooltip-container relative">
-                                                    <button data-view="requests" class="class-view-tab tooltip-button btn-bubbly ${view === 'requests' ? 'bg-violet-100 text-violet-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">
-                                                        <i class="fa-solid fa-user-shield"></i>
-                                                        ${requests.length > 0 ? `<span class="absolute -top-1 -right-1 flex h-4 w-4"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-violet-500 text-white text-xs items-center justify-center">${requests.length}</span></span>` : ''}
-                                                    </button>
-                                                    <span class="tooltip-text">Requests</span>
-                                                </div>` : ''}
-                                            <div class="tooltip-container"><button data-view="roster" class="class-view-tab tooltip-button btn-bubbly ${view === 'roster' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid fa-users"></i></button><span class="tooltip-text">Roster</span></div>
-                                            ${isOwner ? `<div class="tooltip-container"><button data-view="settings" class="class-view-tab tooltip-button btn-bubbly ${view === 'settings' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid fa-gear"></i></button><span class="tooltip-text">Settings</span></div>` : ''}
-                                        </div>
-                                    </div>
-                                </div>
-                                <div id="teacher-view-content" class="min-h-[60vh]">${
-                                    (() => {
-                                        if (view === 'settings' && isOwner) return `
-                                            <div id="settings-panel" class="space-y-6 fade-enter-active">
-                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
-                                                        <div class="space-y-3">
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container"><button role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code" class="copy-code-btn px-3 py-1.5 text-sm font-poppins text-gray-500 bg-slate-100 rounded-lg cursor-pointer hover:bg-slate-200 transition"><i class="fa-solid fa-copy mr-1"></i> ${escapeHtml(cls.code)}</button><span class="tooltip-text">Copy Student Code</span></div></div>
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container"><button role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code" class="copy-code-btn px-3 py-1.5 text-sm font-poppins text-gray-500 bg-slate-100 rounded-lg cursor-pointer hover:bg-slate-200 transition"><i class="fa-solid fa-copy mr-1"></i> ${escapeHtml(cls.coTeacherCode)}</button><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
-                                                        </div>
-                                                    </div>
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
-                                                        <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
-                                                    </div>
-                                                </div>
-                                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                    <div class="flex justify-between items-center"><h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3></div>
-                                                    <p class="text-sm text-gray-500 -mt-2">Automatically pause hand raising and lower all hands at a set time. This uses the teacher's local time zone for the schedule check.</p>
-                                                    <div id="schedule-form" class="space-y-4">
-                                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                                            ${timePicker('enable-time-input', 'Enable Hand Raising At (Optional)', cls.schedule?.enableAt)}
-                                                            ${timePicker('disable-time-input', 'Disable Hand Raising At', cls.schedule?.disableAt)}
-                                                        </div>
-                                                        <div class="flex justify-end space-x-2">
-                                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear Schedule</button>
-                                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button>
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                                <div class="bg-white p-6 rounded-2xl shadow-sm border-2 border-dashed border-red-300">
-                                                    <h4 class="text-lg font-bold text-red-700 font-poppins">Danger Zone</h4>
-                                                    <div class="mt-4 flex justify-between items-center"><p class="text-sm text-gray-600 max-w-md">Permanently delete this class and all its data. This action is irreversible.</p><button id="delete-class-btn" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 btn-bubbly whitespace-nowrap">Delete Class</button></div>
-                                                </div>
-                                            </div>`;
-                                        if (view === 'roster') return `
-                                            <div id="roster-panel" class="space-y-6 fade-enter-active">
-                                                <div class="bg-white p-6 rounded-2xl shadow-sm border"><h3 class="text-xl font-bold text-gray-800 font-poppins">Class Roster</h3></div>
-                                                <div class="bg-white p-6 rounded-2xl shadow-sm border">
-                                                    <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Teachers</h4>
-                                                    <ul class="space-y-3">
-                                                        <li class="flex items-center justify-between p-2"><div class="flex items-center"><span class="font-semibold text-gray-800">${escapeHtml(roster?.owner?.username || '...')}</span><span class="ml-3 text-xs font-bold uppercase bg-purple-100 text-purple-700 px-2 py-1 rounded-full">Owner</span></div></li>
-                                                        ${roster?.coTeachers?.map(t => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="font-semibold text-gray-700">${escapeHtml(t.username)}</span> ${isOwner ? `<button data-user-id="${t.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('')}
-                                                    </ul>
-                                                </div>
-                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border">
-                                                    <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Students (${roster?.students?.length || 0})</h4>
-                                                    <ul class="space-y-3 max-h-96 overflow-y-auto custom-scrollbar pr-2">
-                                                        ${roster?.students?.length > 0 ? roster.students.map(s => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="text-gray-700">${escapeHtml(s.username)}</span> ${isOwner ? `<button data-user-id="${s.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('') : '<p class="text-sm text-gray-500 p-2">No students have joined yet.</p>'}
-                                                    </ul>
-                                                </div>
-                                            </div>`;
-                                        if (view === 'requests' && isOwner) return `
-                                            <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
-                                                <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${requests.length}</span></h3>
-                                                <div id="requests-list" class="mt-5">${requests.length>0?`<ul class="space-y-3">${requests.map(req => {
-                                                    const hasComment = req.comment && req.comment.trim().length > 0;
-                                                    return `<li class="bg-slate-50 p-3 rounded-xl flex items-start justify-between transition hover:shadow-md">
-                                                        <div class="flex-1 min-w-0 pr-4">
-                                                            <p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>
-                                                            ${hasComment ? `<p class="text-sm text-gray-600 mt-1.5 truncate">Comment: "${escapeHtml(req.comment)}"</p>`:''}
-                                                            <p class="text-xs text-gray-400 mt-1">Requested: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p>
-                                                        </div>
-                                                        <div class="flex flex-col space-y-2">
-                                                            <button data-requester-id="${req.id}" class="accept-request-btn squircle-btn bg-green-500 text-white hover:bg-green-600" title="Accept Request"><i class="fa-solid fa-check"></i></button>
-                                                            <button data-requester-id="${req.id}" class="comment-request-btn squircle-btn bg-blue-500 text-white hover:bg-blue-600" title="${hasComment ? 'Edit Comment' : 'Add Comment'}"><i class="fa-solid ${hasComment ? 'fa-pen' : 'fa-comment'}"></i></button>
-                                                            <button data-requester-id="${req.id}" class="deny-request-btn squircle-btn bg-red-500 text-white hover:bg-red-600" title="Deny Request"><i class="fa-solid fa-xmark"></i></button>
-                                                        </div>
-                                                    </li>`;
-                                                }).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
-                                            </div>`;
-                                        // Default to overview
-                                        return `<div id="overview-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
-                                            <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3>
-                                            <div class="mt-4 text-center">
-                                                <p class="text-sm text-gray-500">Schedule Status: ${cls.schedule?.disableAt ? (isTimeWithinSchedule(cls) ? '<span class="text-green-600 font-semibold">Active (Time Window Open)</span>' : `<span class="text-red-600 font-semibold">Paused (Outside ${cls.schedule.enableAt || 'Start'} - ${cls.schedule.disableAt})</span>`) : '<span class="text-gray-500">No Schedule Set</span>'}</p>
-                                            </div>
-                                            <div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex items-start"><div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div><button data-student-id="${hand.id}" class="teacher-lower-hand-btn px-3 py-1.5 bg-slate-200 text-gray-700 text-sm font-semibold rounded-lg hover:bg-red-100 hover:text-red-700 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower</button></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
-                                    })()
-                                }</div>
-                            </div>
-                        `;
-                        const studentView = `<div class="fade-enter-active space-y-6"><div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200"><h2 class="text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.name)}</h2><p class="text-sm text-gray-500 mt-1">Welcome! Raise your hand below if you have a question.</p></div><div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">${(()=>{
-                            if (!cls.handRaisingEnabled) {
-                                return `<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently paused by the teacher.</h3><p class="mt-1 text-gray-600">This may be due to the class schedule or manual action.</p>`;
-                            }
-                            
-                            if (!isTimeWithinSchedule(cls)) {
-                                return `<i class="fa-solid fa-hand-slash fa-3x text-red-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand Raising is Inactive</h3><p class="mt-1 text-gray-600">Current Time (${new Date().toLocaleTimeString()}) is outside the allowed window (${cls.schedule?.enableAt || 'Start'} - ${cls.schedule?.disableAt || 'End'}).</p>`;
-                            }
-
-                            if(myHand){
-                                return `<i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3><p class="mt-1 text-lg text-gray-600">You are <span class="font-bold text-blue-600">#${myQueuePosition}</span> in the queue.</p>${myHand.question?`<p class="mt-2 text-gray-500 italic">Your question: "${escapeHtml(myHand.question)}"</p>`:''}<div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>`;
-                            }
-                            
-                            return `<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Have a Question?</h3><p class="mt-1 text-gray-600">Click below to raise your hand.</p><div class="mt-6"><button id="raise-hand-action-btn" class="raise-hand-btn px-8 py-4 bg-blue-600 text-white font-bold text-lg rounded-xl hover:bg-blue-700 btn-bubbly"><i class="fa-solid fa-hand mr-3"></i> Raise My Hand</button></div>`;
-                        })()}</div></div>`;
-                        return isAnyTeacher ? teacherView : studentView;
-                    },
-                    newClassChoiceModal:(user)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold text-gray-800 font-poppins text-center">Add a New Class</h3><p class="text-center text-gray-500 mt-2">How would you like to create your class?</p><div class="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4"><button id="create-manual-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-blue-50 hover:border-blue-300 border-2 border-dashed transition-colors btn-bubbly"><i class="fa-solid fa-pen-to-square fa-2x text-blue-600 mb-2"></i><span class="font-semibold text-gray-700 font-poppins">Create Manually</span></button><button id="import-gclass-btn" class="w-full flex flex-col items-center justify-center p-6 bg-gray-50 rounded-lg hover:bg-green-50 hover:border-green-300 border-2 border-dashed transition-colors btn-bubbly"><img src="../images/google-classroom.png" alt="Google Classroom icon" class="w-8 h-8 mb-2"><span class="font-semibold text-gray-700 font-poppins">Import from Classroom</span></button></div><div class="mt-6 text-center"><button class="modal-cancel-btn text-sm text-gray-600 hover:text-gray-800">Cancel</button></div></div>`,
-                    createClassModal:()=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Create New Class</h3><form id="create-class-form" class="mt-4 space-y-4"><div><label for="new-class-name" class="block text-sm font-medium text-gray-700">Class Name</label><input type="text" id="new-class-name" required class="mt-1 block w-full app-input" placeholder="e.g., Period 3 Biology"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Create</button></div></form></div>`,
-                    joinClassModal:()=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-2xl pointer-events-auto"><div class="text-center"><i class="fa-solid fa-link fa-3x text-green-600 mb-4"></i><h3 class="text-2xl font-bold text-gray-800 font-poppins">Join a Class</h3><p class="text-gray-500 mt-2">Enter the 8-digit Student Code or Co-Teacher Code.</p></div><form id="join-class-form" class="mt-6 space-y-6"><div><label for="class-code-input" class="block text-sm font-medium text-gray-700 text-left mb-1">Class Code</label><input type="text" id="class-code-input" required minlength="8" maxlength="8" class="block w-full app-input text-center font-bold tracking-widest uppercase text-lg" placeholder="e.g., ABC12345"></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-green-500 text-white rounded-lg hover:bg-green-600 btn-bubbly">Join Class</button></div></form></div>`,
-                    requestCoTeacherModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Request to be a Co-Teacher</h3><p class="text-gray-600 mt-1">For class: <strong>${escapeHtml(name)}</strong></p><form id="request-co-teacher-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="co-teacher-request-comment" class="block text-sm font-medium text-gray-700">Add a comment (optional)</label><textarea id="co-teacher-request-comment" rows="3" class="mt-1 block w-full app-input" placeholder="e.g., I'm the other section's teacher."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Send Request</button></div></form></div>`,
-                    editCommentModal:(classId, requesterId, currentComment)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Manage Request for Co-Teacher</h3><form id="edit-comment-form" data-class-id="${classId}" data-requester-id="${requesterId}" class="mt-4 space-y-4"><div><label for="edited-comment-input" class="block text-sm font-medium text-gray-700">Comment (This is visible to the class owner)</label><textarea id="edited-comment-input" rows="3" class="mt-1 block w-full app-input">${escapeHtml(currentComment)}</textarea></div><div class="flex justify-between space-x-3"><button type="button" data-action="delete" data-class-id="${classId}" data-requester-id="${requesterId}" class="delete-request-comment-btn px-4 py-2 bg-red-100 text-red-700 text-sm font-semibold rounded-lg hover:bg-red-200 btn-bubbly"><i class="fa-solid fa-trash"></i> Delete Request</button><div class="flex space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Update Comment</button></div></div></form></div>`,
-                    googleImportModal:()=>`<div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto"><div class="flex items-center justify-center mb-4"><img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4"><h3 class="text-2xl font-bold font-poppins text-gray-800">Import from Classroom</h3></div><p class="text-center text-gray-500 mb-6">Select a class you own to import it into Notify.</p><div id="g-import-content"><div id="g-import-loading" class="text-center py-8"><i class="fa-solid fa-spinner fa-spin fa-2x text-blue-600 mb-2"></i><p class="text-gray-600">Connecting to Google Classroom...</p></div><p id="g-import-error" class="text-center text-red-600 bg-red-50 p-3 rounded-md hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul></div><div class="flex justify-center mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
-                    raiseHandModal:(id)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Raise Your Hand</h3><form id="raise-hand-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="hand-raise-question" class="block text-sm font-medium text-gray-700">Ask a question (optional)</label><textarea id="hand-raise-question" rows="3" class="mt-1 block w-full app-input" placeholder="Type your question here..."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Confirm Raise Hand</button></div></form></div>`,
-                    deleteClassConfirmModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><div class="text-center"><i class="fa-solid fa-triangle-exclamation fa-3x text-red-500 mb-4"></i><h3 class="text-xl font-semibold font-poppins text-gray-800">Delete Class</h3></div><p class="mt-4 text-gray-600 text-center">Are you sure you want to permanently delete <strong>${escapeHtml(name)}</strong>? This action cannot be undone.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" data-class-id="${id}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Confirm Delete</button></div></div>`,
-                };
-                
-                // Cleanup function for intervals
-                window.addEventListener('beforeunload', () => {
-                    if (scheduleInterval) clearInterval(scheduleInterval);
-                    if (localTimeCheckInterval) clearInterval(localTimeCheckInterval);
-                    unsubscribes.forEach(unsub => unsub());
-                    Object.values(queueUnsubscribers).forEach(unsub => unsub());
+                        input.addEventListener('blur', (e) => {
+                            let [h, m] = e.target.value.split(':').map(Number);
+                            if (isNaN(h) || h < 1 || h > 12) h = 12;
+                            if (isNaN(m) || m < 0 || m > 59) m = 0;
+                            const finalValue = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+                            e.target.value = finalValue;
+                            input.dataset.digits = finalValue.replace(':', '');
+                        });
+                    });
                 });
             });
         });
