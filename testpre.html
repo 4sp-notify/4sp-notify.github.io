@@ -129,12 +129,10 @@
             border-bottom-left-radius: 0.5rem;
             border-bottom-right-radius: 0.5rem;
         }
-        /* Style for the fixed settings view content */
-        .settings-content-wrapper {
-            max-width: 700px; /* Max width for stability */
-            margin-left: auto;
-            margin-right: auto;
-            padding: 0 1rem; /* Consistent padding to prevent scrollbar shifting content */
+        /* Style for the fixed settings view content - REMOVED SETTINGS-CONTENT-WRAPPER */
+        /* To prevent content shift, we apply padding to the main scrollable area */
+        #main-content-area {
+            padding-right: 18px; /* Fixed padding to account for potential scrollbar width */
         }
     </style>
 </head>
@@ -195,7 +193,7 @@
                 </div>
             </aside>
             <main class="flex-1 flex flex-col overflow-hidden">
-                <div id="main-content-area" class="flex-1 overflow-y-auto bg-slate-100 p-6 sm:p-8 custom-scrollbar"></div>
+                <div id="main-content-area" class="flex-1 overflow-y-scroll bg-slate-100 p-6 sm:p-8 custom-scrollbar"></div>
             </main>
         </div>
     </div>
@@ -512,7 +510,15 @@
                 }
                 
                 async function handleChangeClassName(id,name){const today=new Date().toISOString().split('T')[0];const key=`classNameChanges_${id}`;let changes;try{changes=JSON.parse(localStorage.getItem(key))||{};}catch(e){changes={};}if(changes.date!==today){changes={date:today,count:0};}if(changes.count>=3){showModal(TPL.messageModal('Limit Reached','You can only change the class name 3 times per day.','red'));return;}await db.collection('classes').doc(id).update({name});changes.count++;localStorage.setItem(key,JSON.stringify(changes));showModal(TPL.messageModal('Success','Class name updated!','green'));}
-                async function handleSaveSchedule(id,enable,disable){await db.collection('classes').doc(id).update({schedule:{enableAt:enable,disableAt:disable}, scheduleLastActionDate: ''});showModal(TPL.messageModal('Success','Schedule saved!','green'));}
+                
+                // FIXED: handleSaveSchedule now takes 24-hour time strings directly from the template logic
+                async function handleSaveSchedule(id,enable,disable){
+                    await db.collection('classes').doc(id).update({
+                        schedule:{enableAt:enable,disableAt:disable},
+                        scheduleLastActionDate: ''
+                    });
+                    showModal(TPL.messageModal('Success','Schedule saved!','green'));
+                }
                 async function deleteSchedule(id) { await db.collection('classes').doc(id).update({ 'schedule.enableAt': '', 'schedule.disableAt': '' }); showModal(TPL.messageModal('Success', 'Schedule has been removed.', 'green')); }
                 async function removeUserFromClass(id, userId) { const data = allLoadedClasses[id]; if ((data.teacherIds || []).includes(userId)) { await db.collection('classes').doc(id).update({ teacherIds: FieldValue.arrayRemove(userId) }); } else if ((data.studentIds || []).includes(userId)) { await db.collection('classes').doc(id).update({ studentIds: FieldValue.arrayRemove(userId) }); } await fetchRosterData(allLoadedClasses[id]); renderMainContent(); }
                 async function handleDeleteClass(id){const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));b.delete(db.collection('classes').doc(id));await b.commit();hideModal();selectClass(null);}
@@ -597,7 +603,7 @@
                 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest';
                 const SCOPES = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
                 async function initializeGAPI(apiKey,clientId){if(gapiLoaded)return Promise.resolve();return new Promise((resolve,reject)=>{const checkGAPI=()=>{if(typeof gapi!=='undefined'&&gapi.load){gapi.load('client',async()=>{try{await gapi.client.init({apiKey,discoveryDocs:[DISCOVERY_DOC]});googleAuth=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:SCOPES,callback:''});gapiLoaded=true;resolve();}catch(e){reject(e);}});}else{setTimeout(checkGAPI,100);}};checkGAPI();});}
-                function requestAccessToken(){return new Promise((resolve,reject)=>{try{googleAuth.callback=async(res)=>{if(res.error)return reject(new Error(res.error));gapi.client.setToken({access_token:res.access_token});try{await listGoogleCourses();resolve();}catch(e){reject(e);}};googleAuth.requestAccessToken();}catch(e){reject(e);}});}
+                function requestAccessToken(){return new Promise((resolve,reject)=>{try{googleAuth.callback=async(res)=>{if(res.error)return reject(new Error(res.error));gapi.client.setToken({access_token:res.access_token});try{await listGoogleCourses();resolve();}catch(e){reject(e);}};}catch(e){reject(e);}});}
                 async function handleGoogleImportClick(){showModal(TPL.googleImportModal());const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');loadingEl.classList.remove('hidden');errorEl.classList.add('hidden');try{const secretsDoc=await db.collection('secrets').doc('wUTBTbjuNLueOFhgHXEE').get();if(!secretsDoc.exists)throw new Error("Secrets document not found.");const{GoogleClassroomAPIKey:apiKey,GoogleClientID:clientId}=secretsDoc.data();if(!apiKey||!clientId)throw new Error("Missing API Key or Client ID in secrets document.");await initializeGAPI(apiKey,clientId);await requestAccessToken();}catch(e){console.error('Google Classroom init error:',e);loadingEl.classList.add('hidden');errorEl.textContent=`Error: ${e.message}`;errorEl.classList.remove('hidden');}}
                 async function listGoogleCourses(){const listEl=document.getElementById('g-import-list');const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');try{loadingEl.textContent='Loading courses...';const response=await gapi.client.classroom.courses.list({teacherId:'me',courseStates:'ACTIVE'});loadingEl.classList.add('hidden');const courses=response.result.courses||[];const notifyClassesSnapshot=await db.collection('classes').where('teacherId','==',currentUser.uid).get();const existingGoogleIds=new Set();notifyClassesSnapshot.forEach(doc=>{const data=doc.data();if(data.googleCourseId)existingGoogleIds.add(data.googleCourseId);});if(courses.length>0){listEl.innerHTML=courses.map(course=>{const isImported=existingGoogleIds.has(course.id);const buttonHtml=isImported?'<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>':`<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`;return`<li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><div class="flex-1"><p class="font-bold text-gray-800">${escapeHtml(course.name)}</p><p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section||'No section')}</p></div>${buttonHtml}</li>`;}).join('');document.querySelectorAll('.import-g-class-btn').forEach(button=>{button.addEventListener('click',()=>importGoogleClass(button.dataset.courseId,button.dataset.courseName));});}else{listEl.innerHTML='<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom that you are the primary teacher of.</p>';}}catch(e){console.error('Error listing courses:',e);loadingEl.classList.add('hidden');let errorMessage='Failed to load courses.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}errorEl.textContent=`Error: ${errorMessage}`;errorEl.classList.remove('hidden');}}
                 async function importGoogleClass(googleCourseId,googleCourseName){const importBtn=document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);if(importBtn){importBtn.textContent='Importing...';importBtn.disabled=true;}try{const existingClass=await db.collection('classes').where('googleCourseId','==',googleCourseId).limit(1).get();if(!existingClass.empty){showModal(TPL.messageModal('Duplicate','This class has already been imported.','yellow'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}return;}const studentsResponse=await gapi.client.classroom.courses.students.list({courseId:googleCourseId});const students=studentsResponse.result.students||[];const studentEmails=students.map(s=>s.profile?.emailAddress).filter(Boolean);const existingStudentUids=[];const pendingEmails=[];if(studentEmails.length>0){const batchSize=10;for(let i=0;i<studentEmails.length;i+=batchSize){const batchEmails=studentEmails.slice(i,i+batchSize);const usersSnapshot=await db.collection('users').where('email','in',batchEmails).get();const existingEmailsBatch=new Set();usersSnapshot.forEach(doc=>{existingStudentUids.push(doc.id);existingEmailsBatch.add(doc.data().email);});batchEmails.forEach(email=>{if(!existingEmailsBatch.has(email)){pendingEmails.push(email);}});}}const classCode=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name:googleCourseName,teacherId:currentUser.uid,teacherIds:[],code:classCode,coTeacherCode,googleCourseId:googleCourseId,studentIds:existingStudentUids,pendingStudentEmails:pendingEmails,createdAt:FieldValue.serverTimestamp(),handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''}, scheduleLastActionDate:''});hideModal();showModal(TPL.messageModal('Import Successful',`Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`,'green'));}catch(e){console.error("Error importing Google Classroom:",e);let errorMessage='Failed to import class. Please ensure Google Classroom API is enabled for your account.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}showModal(TPL.messageModal('Import Failed',errorMessage,'red'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}}}
@@ -661,10 +667,16 @@
                     if(target.matches('.schedule-action-btn')) {
                         const action = target.dataset.action;
                         if (action === 'save') {
-                            const formatTime = (time, period) => { let [h, m] = time.split(':').map(Number); if (period === 'PM' && h !== 12) h += 12; if (period === 'AM' && h === 12) h = 0; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; };
-                            const enableTime = document.getElementById('enable-time-input').value; const enablePeriod = document.querySelector('#enable-period-selector .active').dataset.value;
-                            const disableTime = document.getElementById('disable-time-input').value; const disablePeriod = document.querySelector('#disable-time-period-selector .active').dataset.value;
-                            handleSaveSchedule(currentClassId, formatTime(enableTime, enablePeriod), formatTime(disableTime, disablePeriod));
+                            // Collect the data-time-24hr attributes which are set during the period-btn click/initial render
+                            const enableTime24 = document.getElementById('enable-time-input').dataset.time24hr;
+                            const disableTime24 = document.getElementById('disable-time-input').dataset.time24hr;
+                            
+                            // Validate that we have 24hr times (should always be true if inputs were rendered/clicked correctly)
+                            if (enableTime24 && disableTime24) {
+                                handleSaveSchedule(currentClassId, enableTime24, disableTime24);
+                            } else {
+                                showModal(TPL.messageModal('Error', 'Please ensure both scheduling times are set correctly.', 'red'));
+                            }
                         } else if (action === 'clear') { deleteSchedule(currentClassId); }
                     }
                     if(target.matches('.copy-code-btn')) {
@@ -678,6 +690,22 @@
                         const container = target.closest('.period-selector');
                         container.querySelectorAll('.period-btn').forEach(btn => btn.classList.remove('active'));
                         target.classList.add('active');
+                        
+                        // Update the associated input's 24-hour data attribute immediately
+                        const inputId = container.id.replace('-period-selector', '-input');
+                        const input = document.getElementById(inputId);
+                        const time12hr = input.value;
+                        const period = target.dataset.value;
+
+                        // Function to convert 12hr time string to 24hr time string
+                        const to24Hour = (time, period) => {
+                            let [h, m] = time.split(':').map(Number);
+                            if (period === 'PM' && h !== 12) h += 12;
+                            if (period === 'AM' && h === 12) h = 0;
+                            return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+                        };
+
+                        input.dataset.time24hr = to24Hour(time12hr, period);
                     }
                 });
                 
@@ -697,13 +725,16 @@
                     classView: (cls, user, isOwner, isCoTeacher, queue, pendingRequests, view, roster) => {
                         const isAnyTeacher = isOwner || isCoTeacher;
                         const nameChangesLeft = () => { const today=new Date().toISOString().split('T')[0]; const key=`classNameChanges_${cls.id}`; let changes; try { changes=JSON.parse(localStorage.getItem(key))||{}; } catch(e){changes={};} return (changes.date===today)?3-changes.count:3; };
+                        
+                        // FIXED: timePicker now correctly handles 24hr time from DB to display 12hr time and stores 24hr time in data-time-24hr
                         const timePicker = (id, label, value) => {
                             const [h24, m] = (value || '08:00').split(':').map(Number);
                             const period = h24 >= 12 ? 'PM' : 'AM';
                             let h12 = h24 % 12; if (h12 === 0) h12 = 12;
                             const timeString = `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
                             const periodId = id.replace('-input', '-period-selector');
-                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input"><div id="${periodId}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
+                            // Store the 24hr value in a data attribute for easy retrieval on save
+                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input" data-time-24hr="${String(h24).padStart(2, '0')}:${String(m).padStart(2, '0')}"><div id="${periodId}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
                         };
                         
                         // Helper to generate a view button. If a view is active, it becomes the overview button.
@@ -744,7 +775,7 @@
                                 <div id="teacher-view-content" class="min-h-[60vh]">${
                                     (() => {
                                         if (view === 'settings' && isOwner) return `
-                                            <div id="settings-panel" class="settings-content-wrapper space-y-6 fade-enter-active">
+                                            <div id="settings-panel" class="max-w-4xl mx-auto space-y-6 fade-enter-active">
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
                                                     <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
                                                     <div class="space-y-3">
@@ -782,7 +813,7 @@
                                                 </div>
                                             </div>`;
                                         if (view === 'roster') return `
-                                            <div id="roster-panel" class="settings-content-wrapper space-y-6 fade-enter-active">
+                                            <div id="roster-panel" class="max-w-4xl mx-auto space-y-6 fade-enter-active">
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border"><h3 class="text-xl font-bold text-gray-800 font-poppins">Class Roster</h3></div>
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border">
                                                     <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Teachers</h4>
@@ -799,7 +830,7 @@
                                                 </div>
                                             </div>`;
                                         if (view === 'requests' && isOwner) return `
-                                            <div id="requests-panel" class="settings-content-wrapper bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
+                                            <div id="requests-panel" class="max-w-4xl mx-auto bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
                                                 <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${pendingRequests.length}</span></h3>
                                                 <div id="requests-list" class="mt-5">${pendingRequests.length>0?`<ul class="space-y-3">${pendingRequests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div>
                                                     <div class="request-action-group">
@@ -813,7 +844,7 @@
                                                 </li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
                                             </div>`;
                                         // Default to overview
-                                        return `<div id="overview-panel" class="settings-content-wrapper bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active"><h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3><div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex items-start"><div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div>
+                                        return `<div id="overview-panel" class="max-w-4xl mx-auto bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active"><h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3><div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex items-start"><div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div>
                                                     <div class="request-action-group">
                                                         <button data-student-id="${hand.id}" data-action="accept-hand" class="queue-action-btn bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 btn-bubbly"><i class="fa-solid fa-check mr-1"></i> Accept</button>
                                                         <div class="comment-split-btn">
@@ -876,7 +907,9 @@
                 document.body.addEventListener('mainContentRendered', () => {
                     const timeInputs = document.querySelectorAll('.schedule-time-input');
                     timeInputs.forEach(input => {
+                        // Initialize digits from the 12hr value
                         input.dataset.digits = (input.value.replace(':', '') || '0800');
+
                         input.addEventListener('input', (e) => {
                             const isBackspace = e.inputType === 'deleteContentBackward';
                             let currentDigits = input.dataset.digits || '';
@@ -896,11 +929,16 @@
                             let h_str = padded.slice(0, 2);
                             let m_str = padded.slice(2, 4);
                             
-                            if (parseInt(h_str, 10) > 12) h_str = '12';
-                            if (parseInt(h_str, 10) === 0) h_str = '00';
+                            // Adjusting for 12-hour clock display logic
+                            let h_num = parseInt(h_str, 10);
+                            if (h_num === 0) h_num = 12; // 00:xx maps to 12:xx AM
+                            if (h_num > 12) h_num = 12;
+
                             if (parseInt(m_str, 10) > 59) m_str = '59';
 
-                            const formattedValue = `${h_str}:${m_str}`;
+                            const formattedValue = `${String(h_num).padStart(2,'0')}:${m_str}`;
+                            
+                            // Only update if value is different to avoid cursor jump
                             if (input.value !== formattedValue) {
                                 input.value = formattedValue;
                             }
@@ -913,6 +951,14 @@
                             const finalValue = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
                             e.target.value = finalValue;
                             input.dataset.digits = finalValue.replace(':', '');
+                            
+                            // Crucial: Update the 24hr time on blur as well
+                            const periodEl = e.target.closest('.schedule-time-input-container').querySelector('.period-btn.active');
+                            const period = periodEl ? periodEl.dataset.value : 'AM';
+                            let h24 = h;
+                            if (period === 'PM' && h !== 12) h24 += 12;
+                            if (period === 'AM' && h === 12) h24 = 0;
+                            input.dataset.time24hr = `${String(h24).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
                         });
                     });
                 });
