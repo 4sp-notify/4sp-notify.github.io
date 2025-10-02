@@ -285,7 +285,7 @@
                             if (cls) {
                                 const isOwner = cls.teacherId === userData.uid;
                                 const isCoTeacher = (cls.teacherIds || []).includes(userData.uid);
-                                if(isOwner || isCoTeacher) handsCount += (classQueues[id] || []).filter(h => !h.status || h.status === 'pending').length; // Count only pending hands for teacher notification
+                                if(isOwner || isCoTeacher) handsCount += (classQueues[id] || []).filter(h => !h.status || h.status === 'pending').length;
                                 if(isOwner) requestsCount += (classRequests[id] || []).length;
                             }
                         }
@@ -311,7 +311,6 @@
                                 const isOwner = data.teacherId === uid;
                                 const isCoTeacher = (data.teacherIds || []).includes(uid);
                                 
-                                // Listen for Raised Hands for Teachers/Co-teachers
                                 if ((isOwner || isCoTeacher) && !queueUnsubscribers[`hands_${id}`]) {
                                     queueUnsubscribers[`hands_${id}`] = db.collection('classes').doc(id).collection('raisedHands')
                                         .orderBy('raisedAt', 'asc')
@@ -321,7 +320,6 @@
                                             if(currentClassId === id) renderMainContent();
                                         });
                                 }
-                                // Listen for Co-Teacher Requests only for Owners
                                 if(isOwner && !queueUnsubscribers[`requests_${id}`]){
                                     queueUnsubscribers[`requests_${id}`] = db.collection('classes').doc(id).collection('coTeacherRequests')
                                         .where('status','==','pending')
@@ -331,7 +329,6 @@
                                             if(currentClassId === id) renderMainContent();
                                         });
                                 }
-                                // Student view logic for hands - Listen for changes to *their own* hand
                                 if((!isOwner && !isCoTeacher) && !queueUnsubscribers[`${id}_student_listen`]){
                                      queueUnsubscribers[`${id}_student_listen`] = db.collection('classes').doc(id).collection('raisedHands').doc(uid)
                                         .onSnapshot(dSnap => {
@@ -355,7 +352,7 @@
                         const isActive = currentClassId === cls.id;
                         const activeClasses = isActive ? 'bg-blue-100 text-blue-800 font-semibold' : 'text-gray-700 hover:bg-slate-100 hover:text-gray-900';
                         
-                        const handsCount = (classQueues[cls.id] || []).filter(h => !h.status || h.status === 'pending').length; // Count only pending hands for sidebar badge
+                        const handsCount = (classQueues[cls.id] || []).filter(h => !h.status || h.status === 'pending').length;
                         const reqCount = classRequests[cls.id]?.length || 0;
                         let badge = '';
                         if(handsCount > 0 && reqCount > 0) badge = `<span class="class-notification-badge badge-multiple">${handsCount + reqCount}</span>`;
@@ -440,7 +437,6 @@
                         const isMember = classData.teacherId === currentUser.uid || (classData.teacherIds || []).includes(currentUser.uid) || (classData.studentIds || []).includes(currentUser.uid);
                         if(isMember){ showModal(TPL.messageModal('Already Enrolled',`You are already a member of ${classData.name}.`,'yellow')); return; }
                         
-                        // Any user type can join as a student with the student code
                         await db.collection('classes').doc(classDoc.id).update({studentIds:firebase.firestore.FieldValue.arrayUnion(currentUser.uid)});
                         hideModal();
                         showModal(TPL.messageModal('Success',`Successfully joined class: ${classData.name} as a student!`,'green'));
@@ -475,7 +471,6 @@
                     const cls = allLoadedClasses[id];
                     let isScheduledOff = false;
 
-                    // NEW: Check for Schedule disabling
                     if(cls.schedule?.disableAt && cls.scheduleLastActionDate !== todayStr){
                         const [hours, minutes] = cls.schedule.disableAt.split(':');
                         const disableTime = new Date();
@@ -493,10 +488,9 @@
                         return;
                     }
 
-                    // NEW: Check for student's own existing hand (to Update instead of re-create)
                     const existingHand = await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).get();
                     if(existingHand.exists){
-                        await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).update({ question: q || '', raisedAt: firebase.firestore.FieldValue.serverTimestamp(), status: 'pending' }); // Reset status if updating existing
+                        await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).update({ question: q || '', raisedAt: firebase.firestore.FieldValue.serverTimestamp(), status: 'pending' });
                         showModal(TPL.messageModal('Hand Updated', 'Your existing raised hand question has been updated.', 'green'));
                         hideModal();
                         return;
@@ -507,22 +501,35 @@
                 async function lowerHand(id,studentId=currentUser.uid){await db.collection('classes').doc(id).collection('raisedHands').doc(studentId).delete();}
                 async function lowerAllHands(id){const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();}
                 
-                // NEW: Toggle Hand Raising logic (Teacher/Co-Teacher)
                 async function toggleHandRaising(id,status){
                     const todayStr = new Date().toISOString().split('T')[0];
                     await db.collection('classes').doc(id).update({handRaisingEnabled:status, scheduleLastActionDate: todayStr});
                     if(!status) {
-                        // If turning OFF, automatically lower all hands
                         await lowerAllHands(id);
                     }
                 }
                 
-                async function handleChangeClassName(id,name){const today=new Date().toISOString().split('T')[0];const key=`classNameChanges_${id}`;let changes;try{changes=JSON.parse(localStorage.getItem(key))||{};}catch(e){changes={};}if(changes.date!==today){changes={date:today,count:0};}if(changes.count>=3){showModal(TPL.messageModal('Limit Reached','You can only change the class name 3 times per day.','red'));return;}await db.collection('classes').doc(id).update({name});changes.count++;localStorage.setItem(key,JSON.stringify(changes));showModal(TPL.messageModal('Success','Class name updated!','green'));}
+                async function handleChangeClassName(id,name){
+                    const today=new Date().toISOString().split('T')[0];
+                    const key=`classNameChanges_${id}`;
+                    let changes = {};
+                    try {
+                        changes=JSON.parse(localStorage.getItem(key))||{};
+                    } catch(e) {
+                        changes={}; // CATCH ADDED HERE
+                    }
+
+                    if(changes.date!==today){changes={date:today,count:0};}
+                    if(changes.count>=3){showModal(TPL.messageModal('Limit Reached','You can only change the class name 3 times per day.','red'));return;}
+                    await db.collection('classes').doc(id).update({name});
+                    changes.count++;
+                    localStorage.setItem(key,JSON.stringify(changes));
+                    showModal(TPL.messageModal('Success','Class name updated!','green'));
+                }
                 
-                // NEW: Schedule Save Logic
                 async function handleSaveSchedule(id,enable,disable){
                     const todayStr = new Date().toISOString().split('T')[0];
-                    await db.collection('classes').doc(id).update({schedule:{enableAt:enable,disableAt:disable}, scheduleLastActionDate: todayStr}); // Reset last action date on save
+                    await db.collection('classes').doc(id).update({schedule:{enableAt:enable,disableAt:disable}, scheduleLastActionDate: todayStr});
                     showModal(TPL.messageModal('Success','Schedule saved!','green'));
                 }
                 async function deleteSchedule(id) { 
@@ -546,7 +553,6 @@
                     const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));b.delete(db.collection('classes').doc(id));await b.commit();hideModal();selectClass(null);}
 
                 let scheduleInterval = null;
-                // NEW: Schedule Checker Function
                 function initializeScheduleChecker() {
                     if (scheduleInterval) clearInterval(scheduleInterval);
                     scheduleInterval = setInterval(() => {
@@ -558,7 +564,6 @@
                             const cls = allLoadedClasses[classId];
                             if (cls.teacherId === userData.uid) {
                                 
-                                // 1. Check for Auto-Disable (End Period)
                                 if (cls.schedule?.disableAt && cls.handRaisingEnabled) {
                                     if (cls.scheduleLastActionDate === todayStr) continue;
 
@@ -573,7 +578,6 @@
                                     }
                                 }
 
-                                // 2. Check for Auto-Enable (Start Period)
                                 if (cls.schedule?.enableAt && cls.schedule?.disableAt && cls.scheduleLastActionDate !== todayStr) {
                                     const [enableHours, enableMinutes] = cls.schedule.enableAt.split(':');
                                     const enableTime = new Date();
@@ -586,7 +590,7 @@
                                 }
                             }
                         }
-                    }, 60000); // Check every minute
+                    }, 60000);
                 }
                 
                 let gapiLoaded=false,googleAuth=null;
@@ -604,7 +608,7 @@
                                         gapiLoaded=true;
                                         resolve();
                                     }catch(e){
-                                        reject(e); // <-- CATCH ADDED HERE (was missing)
+                                        reject(e);
                                     }
                                 });
                             }else{
@@ -658,7 +662,6 @@
                     if(target.id === 'import-gclass-btn') handleGoogleImportClick();
                     if(target.classList.contains('modal-cancel-btn') || e.target.id === 'modal-backdrop' || target.classList.contains('modal-close-btn')) hideModal();
 
-                    // Dynamic Hand Raise Button Toggle (NEW Feature)
                     if (target.id === 'raise-hand-action-btn') showModal(TPL.raiseHandModal(currentClassId));
                     if (target.id === 'lower-hand-action-btn') { 
                         const isHandRaised = classQueues[currentClassId]?.find(h => h.id === userData.uid);
@@ -672,7 +675,6 @@
                         toggleHandRaising(currentClassId, !cls.handRaisingEnabled);
                     }
 
-                    // NEW: Student Request Button (+)
                     if (target.id === 'student-request-btn') showModal(TPL.raiseHandModal(currentClassId)); 
                     if(target.id === 'student-settings-btn') { showModal(TPL.studentSettingsModal(allLoadedClasses[currentClassId], userData)); }
 
@@ -688,10 +690,8 @@
                     if(target.matches('.accept-request-btn')) { handleCoTeacherRequest(currentClassId, target.dataset.requesterId, 'accept'); }
                     if(target.matches('.deny-request-btn')) { handleCoTeacherRequest(currentClassId, target.dataset.requesterId, 'deny'); }
                     
-                    // NEW: Category Filter Buttons (Student/Teacher)
                     if(target.matches('.request-category-btn')) {
                         const category = target.dataset.category;
-                        // Teacher/Co-teacher filtering (updates view state implicitly by rerendering)
                         target.closest('.category-filters').querySelectorAll('.request-category-btn').forEach(btn => {
                             btn.classList.remove('bg-blue-500', 'text-white');
                             btn.classList.add('bg-gray-100', 'text-gray-700', 'hover:bg-gray-200');
@@ -702,7 +702,6 @@
                         if(currentClassView === 'overview') renderMainContent();
                     }
 
-                    // NEW: Action Buttons (Accept/Comment/Deny) for Teacher/Co-Teacher
                     if(target.matches('.teacher-action-btn')) {
                         const action = target.dataset.action;
                         const studentId = target.dataset.studentId;
@@ -711,7 +710,6 @@
                         else if (action === 'comment' || action === 'edit') { showModal(TPL.commentModal(currentClassId, studentId, action, target.dataset.currentComment)); }
                     }
 
-                    // NEW: Split Comment Button Actions
                     if (target.matches('.edit-half')) {
                         const container = target.closest('.comment-split-btn');
                         const studentId = container.dataset.studentId;
@@ -790,27 +788,34 @@
                     emptyState: (user) => `<div class="h-full flex items-center justify-center text-center fade-enter-active"><div><svg class="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg><h2 class="mt-4 text-xl font-semibold font-poppins text-gray-700">Welcome, ${escapeHtml(user?.username||'')}!</h2><p class="mt-1 text-gray-500">Select a class or get started below.</p><div class="mt-6 flex flex-col items-center space-y-4">${user.role==='teacher'?`<button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`:''} <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 btn-bubbly flex items-center space-x-2"><i class="fa-solid fa-user-plus w-5 h-5"></i><span>Join Class</span></button></div></div></div>`,
                     classView: (cls, user, isOwner, isCoTeacher, isStudent, queue, requests, view, roster) => {
                         const isAnyTeacher = isOwner || isCoTeacher;
-                        const nameChangesLeft = () => { const today=new Date().toISOString().split('T')[0]; const key=`classNameChanges_${cls.id}`; let changes; try { changes=JSON.parse(localStorage.getItem(key))||{}; } catch(e){changes={};} return (changes.date===today)?3-changes.count:3; };
+                        const nameChangesLeft = () => { 
+                            const today=new Date().toISOString().split('T')[0]; 
+                            const key=`classNameChanges_${cls.id}`; 
+                            let changes = {};
+                            try {
+                                changes=JSON.parse(localStorage.getItem(key))||{};
+                            } catch(e) {
+                                changes={}; // CATCH ADDED
+                            }
+                            return (changes.date===today)?3-changes.count:3; 
+                        };
                         const timePicker = (id, label, value) => {
                             const [h24, m] = (value || '08:00').split(':').map(Number);
                             const period = h24 >= 12 ? 'PM' : 'AM';
                             let h12 = h24 % 12; if (h12 === 0) h12 = 12;
                             const timeString = `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
                             
-                            // Ensure data-digits is correctly initialized, handling null/undefined gracefully
                             const initialDigits = value ? value.replace(':','') : '0800';
 
                             return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input" data-initial-value="${value}" data-digits="${initialDigits}"><div id="${id.replace('-input', '-period-selector')}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
                         };
                         
-                        // Teacher/Co-Teacher Default View (Queue)
                         const teacherOverview = `
                             <div id="overview-panel" class="space-y-6">
                                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
                                     <div class="flex flex-wrap justify-between items-center gap-4">
                                         <h2 class="text-3xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
                                         <div class="flex items-center space-x-2">
-                                            <!-- Dynamic Hand Raising Status Toggle (NEW) -->
                                             <div class="tooltip-container">
                                                 <button id="toggle-hand-raising-btn" class="raise-hand-btn ${cls.handRaisingEnabled ? 'bg-yellow-600 text-white hover:bg-yellow-700' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'} px-4 py-2 font-semibold rounded-lg transition-all duration-300">
                                                     <i class="fa-solid ${cls.handRaisingEnabled ? 'fa-hand' : 'fa-hand-sparkles'} mr-2"></i> 
@@ -884,113 +889,14 @@
                                                     </ul>
                                                 </div>
                                             </div>`;
-                                        // Default to overview
-                                        return `<div id="overview-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active"><h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3><div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md border-l-4 ${hand.status === 'accepted' ? 'border-green-500' : hand.status === 'denied' ? 'border-red-500' : hand.status === 'commented' ? 'border-purple-500' : 'border-yellow-500'}"><div class="flex items-start w-full">
-                                                    <div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div>
-                                                    <div class="ml-4 flex-grow">
-                                                        <p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>
-                                                        ${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}
-                                                        ${hand.response ? `<p class="text-xs mt-2 font-medium text-gray-700">Response: <span class="font-normal text-gray-600">${escapeHtml(hand.response.substring(0, 50) + (hand.response.length > 50 ? '...' : ''))}</span></p>` : ''}
-                                                        <p class="text-xs text-gray-400 mt-1">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p>
-                                                    </div>
-                                                    <div class="flex-shrink-0 flex flex-col space-y-2 ml-4 w-40">
-                                                        ${hand.status === 'pending' ? `
-                                                            <button data-student-id="${hand.id}" data-action="accept" class="teacher-action-btn accept"><i class="fa-solid fa-thumbs-up"></i> Accept</button>
-                                                            <button data-student-id="${hand.id}" data-action="comment" data-current-comment="" class="teacher-action-btn comment"><i class="fa-solid fa-comment icon-color"></i> Comment</button>
-                                                            <button data-student-id="${hand.id}" data-action="deny" class="teacher-action-btn deny"><i class="fa-solid fa-thumbs-down"></i> Deny</button>
-                                                        ` : `
-                                                            <div class="action-btn comment-split-btn" data-student-id="${hand.id}" data-current-comment="${hand.response ? hand.response.replace(/"/g, '&quot;') : ''}" data-response-status="${hand.status}">
-                                                                <div class="edit-half ${hand.status === 'commented' && hand.response ? 'hover:bg-gray-50' : 'opacity-50 cursor-not-allowed'} flex items-center justify-center text-gray-700 font-semibold text-sm"><i class="fa-solid fa-pen-to-square mr-1"></i> Edit</div>
-                                                                <div class="delete-half bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-600 font-semibold text-sm"><i class="fa-solid fa-trash-can mr-1"></i> Delete Response</div>
-                                                            </div>
-                                                        `}
-                                                        ${isOwner ? `<button data-student-id="${hand.id}" class="teacher-lower-hand-btn text-xs mt-2 ml-auto text-red-500 hover:text-red-700">Remove Hand</button>` : ''}
-                                                    </div>
-                                                </div></li>`
-                                    ).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
-                                    })()
-                                }</div>
-                            </div>
-                        `;
-                        // NEW: Student Overview Tab Content
-                        const studentOverview = `
-                            <div id="overview-panel" class="space-y-6">
-                                <div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200 flex justify-between items-center">
-                                    <div>
-                                        <h2 class="text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.name)}</h2>
-                                        <p class="text-sm text-gray-500 mt-1">Your current status in class.</p>
-                                    </div>
-                                    <!-- NEW: Student Settings Button -->
-                                    <button id="student-settings-btn" class="tooltip-container ml-2 w-10 h-10 bg-gray-200 text-gray-700 rounded-full hover:bg-gray-300 flex items-center justify-center btn-bubbly">
-                                        <i class="fa-solid fa-sliders"></i>
-                                        <span class="tooltip-text">Settings</span>
-                                    </button>
-                                    <!-- NEW: Blue Plus Button for Requests -->
-                                    <button id="student-request-btn" class="tooltip-container ml-2 w-12 h-12 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-transform shadow-lg flex items-center justify-center btn-bubbly">
-                                        <i class="fa-solid fa-plus text-xl"></i>
-                                        <span class="tooltip-text">Create Request</span>
-                                    </button>
-                                </div>
-                                
-                                <div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">${(()=>{
-                                    const myHand = queue.find(h => h.id === user.uid);
-                                    const myQueuePosition = queue.findIndex(h => h.id === user.uid) + 1;
-                                    const myResponse = myHand?.response;
-                                    const status = myHand?.status || 'none';
-
-                                    if(!cls.handRaisingEnabled) {
-                                        return `<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently paused.</h3><p class="mt-1 text-gray-600">Your teacher will resume it shortly, or check the schedule below for active times.</p>`
-                                    }
-                                    
-                                    if(myHand) {
-                                        let statusColor = 'text-blue-600', statusText = 'In Queue';
-                                        if (status === 'accepted') { statusColor = 'text-green-600'; statusText = 'Accepted'; }
-                                        else if (status === 'denied') { statusColor = 'text-red-600'; statusText = 'Denied'; }
-                                        else if (status === 'commented') { statusColor = 'text-purple-600'; statusText = 'Awaiting Feedback'; }
-                                        
-                                        return `
-                                            <i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i>
-                                            <h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3>
-                                            <p class="mt-1 text-lg text-gray-600">Status: <span class="font-bold ${statusColor}">${statusText}</span></p>
-                                            <p class="text-sm text-gray-500">You are #${myQueuePosition} in line.</p>
-                                            ${myHand.question ? `<p class="mt-3 p-3 bg-blue-50 rounded-lg italic text-gray-700 border-l-4 border-blue-400 max-w-md mx-auto">Question: "${escapeHtml(myHand.question)}"</p>` : ''}
-                                            ${myResponse ? `<p class="mt-3 p-3 bg-green-50 rounded-lg text-gray-700 border-l-4 border-green-400 max-w-md mx-auto">Teacher Response: ${escapeHtml(myResponse)}</p>` : ''}
-                                            <div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>
-                                        `;
-                                    }
-                                    
-                                    // Student has no hand raised
-                                    return `<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">All Clear</h3><p class="mt-1 text-gray-600">Click the '+' button to raise your hand for help.</p>`;
-                                })()}</div></div>
-                                
-                                <!-- NEW: Student Request History/View -->
-                                <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                                    <h3 class="text-xl font-bold text-gray-800 font-poppins mb-2">My Activity Today</h3>
-                                    <p class="text-sm text-gray-500 mb-4">Filter requests you have made today.</p>
-                                    <div class="category-filters flex space-x-2 mb-4 border-b pb-3">
-                                        <button data-category="Unanswered" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-full bg-blue-500 text-white">Unanswered</button>
-                                        <button data-category="Commented" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Commented On</button>
-                                        <button data-category="Accepted" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Accepted</button>
-                                        <button data-category="Denied" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Denied</button>
-                                    </div>
-                                    <div id="student-activity-log">
-                                        <p class="text-sm text-gray-500 italic">List of requests made today will appear here...</p>
-                                    </div>
-                                </div>
-                            </div>
-                        `;
-                        
-                        // Teacher/Co-Teacher Default View (Queue)
-                        const defaultView = isAnyTeacher ? teacherOverview : studentOverview;
-
-                        if (view === 'requests' && isOwner) return `
-                            <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
-                                <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${requests.length}</span></h3>
-                                <div id="requests-list" class="mt-5">${requests.length>0?`<ul class="space-y-3">${requests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div><div class="flex items-center space-x-2"><button data-requester-id="${req.id}" class="deny-request-btn px-3 py-1.5 bg-red-100 text-red-700 text-sm font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Deny</button><button data-requester-id="${req.id}" class="accept-request-btn px-3 py-1.5 bg-green-100 text-green-700 text-sm font-semibold rounded-lg hover:bg-green-200 btn-bubbly">Accept</button></div></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
+                                        if (view === 'requests' && isOwner) return `
+                                            <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
+                                                <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${requests.length}</span></h3>
+                                                <div id="requests-list" class="mt-5">${requests.length>0?`<ul class="space-y-3">${requests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div><div class="flex items-center space-x-2"><button data-requester-id="${req.id}" class="deny-request-btn px-3 py-1.5 bg-red-100 text-red-700 text-sm font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Deny</button><button data-requester-id="${req.id}" class="accept-request-btn px-3 py-1.5 bg-green-100 text-green-700 text-sm font-semibold rounded-lg hover:bg-green-200 btn-bubbly">Accept</button></div></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
                             </div>`;
                         
                         // Default to overview (Teacher or Student)
-                        return isAnyTeacher ? defaultView : studentOverview;
+                        return isAnyTeacher ? teacherOverview : studentOverview;
                     },
                     newClassChoiceModal:(user)=>`
                         <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
@@ -1059,7 +965,6 @@
                     
                     deleteClassConfirmModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><div class="text-center"><i class="fa-solid fa-triangle-exclamation fa-3x text-red-500 mb-4"></i><h3 class="text-xl font-semibold font-poppins text-gray-800">Delete Class</h3></div><p class="mt-4 text-gray-600 text-center">Are you sure you want to permanently delete <strong>${escapeHtml(name)}</strong>? This action is irreversible.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" data-class-id="${id}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Confirm Delete</button></div></div>`,
 
-                    // NEW: Comment/Edit/Delete Modal Template
                     commentModal: (classId, studentId, action, currentComment) => {
                         const isEdit = action === 'edit';
                         const title = isEdit ? 'Edit Response' : 'Add Comment/Response';
@@ -1094,7 +999,6 @@
                 };
                 
                 document.body.addEventListener('mainContentRendered', () => {
-                    // --- Feature: Dynamic Hand Raising Button Toggle (Teacher/Co-teacher View) ---
                     const toggleBtn = document.getElementById('toggle-hand-raising-btn');
                     if (toggleBtn && currentClassId && allLoadedClasses[currentClassId]) {
                         const cls = allLoadedClasses[currentClassId];
@@ -1107,20 +1011,16 @@
                         toggleBtn.classList.toggle('text-white', cls.handRaisingEnabled);
                     }
                     
-                    // --- Feature: Schedule Time Picker Initialization & Listener ---
                     const timeInputs = document.querySelectorAll('.schedule-time-input');
                     timeInputs.forEach(input => {
-                        // Remove old listeners before adding new ones to prevent duplication on re-render
                         if (input.oninputHandler) input.removeEventListener('input', input.oninputHandler);
                         if (input.onblurHandler) input.removeEventListener('blur', input.onblurHandler);
 
-                        // Initialize data-digits based on the existing value if not present
                         if (!input.dataset.digits) {
                             const [h24, m] = (input.dataset.initialValue || '08:00').split(':').map(Number);
                             input.dataset.digits = `${String(h24).padStart(2,'0')}:${String(m).padStart(2,'0')}`.replace(':','');
                         }
 
-                        // Input event listener for live updating digits
                         input.oninputHandler = (e) => {
                             let currentDigits = input.dataset.digits || '';
                             const isBackspace = e.inputType === 'deleteContentBackward';
@@ -1151,7 +1051,6 @@
                         };
                         input.addEventListener('input', input.oninputHandler);
 
-                        // Blur listener for final 24hr conversion storage
                         input.onblurHandler = (e) => {
                             let [h, m] = e.target.value.split(':').map(Number);
                             if (isNaN(h) || h === 0) h = 1; 
@@ -1170,7 +1069,6 @@
                         input.addEventListener('blur', input.onblurHandler);
                     });
 
-                    // --- Feature: Dynamic Action Buttons (Accept/Comment/Deny) ---
                     document.querySelectorAll('.teacher-action-btn').forEach(btn => {
                         const li = btn.closest('li');
                         if (!li) return;
@@ -1194,14 +1092,12 @@
                         }
                     });
 
-                    // --- Feature: Split Comment/Edit/Delete Button (NEW) ---
                     document.querySelectorAll('.comment-split-btn').forEach(container => {
                         const statusElement = container.closest('li').querySelector('.border-l-4');
                         const status = statusElement ? statusElement.className.match(/border-(.+)-500/)?.[1] : null;
                         const isCommented = status === 'commented';
                         const currentCommentText = container.dataset.currentComment;
                         
-                        // Re-attach listeners safely
                         container.innerHTML = `
                             <div class="edit-half ${isCommented && currentCommentText ? 'hover:bg-gray-50' : 'opacity-50 cursor-not-allowed'} flex items-center justify-center text-gray-700 font-semibold text-sm">
                                 <i class="fa-solid fa-pen-to-square mr-1"></i> Edit
@@ -1215,13 +1111,12 @@
                         }
                     });
                     
-                    // --- Feature: Student Settings Initialization ---
                     const studentNameForm = document.getElementById('student-display-name-form');
                     if (studentNameForm) {
                         studentNameForm.onsubmit = async (e) => {
                             e.preventDefault();
                             const newName = document.getElementById('student-local-name-input').value.trim();
-                            await db.collection('users').doc(userData.uid).update({ [`localNameForClass.${currentClassId}`]: newName || firebase.firestore.FieldValue.delete() });
+                            await db.collection('users').doc(currentUser.uid).update({ [`localNameForClass.${currentClassId}`]: newName || firebase.firestore.FieldValue.delete() });
                             userData.localNameForClass = userData.localNameForClass || {};
                             userData.localNameForClass[currentClassId] = newName || null;
                             showModal(TPL.messageModal('Success','Local name updated!','green'));
@@ -1230,7 +1125,6 @@
                         };
                     }
 
-                    // --- Feature: Student Leave Class ---
                     document.getElementById('confirm-leave-class-btn')?.onclick = async (e) => {
                         const id = e.target.dataset.classId;
                         await db.collection('classes').doc(id).update({ studentIds: firebase.firestore.FieldValue.arrayRemove(userData.uid) });
@@ -1239,7 +1133,6 @@
                         showModal(TPL.messageModal('Success', 'You have successfully left the class.', 'green'));
                     };
 
-                    // --- Feature: Delete Comment Logic ---
                     document.getElementById('confirm-delete-comment-btn')?.onclick = (e) => {
                         const id = e.target.dataset.classId;
                         const studentId = e.target.dataset.studentId;
