@@ -98,6 +98,42 @@
         .period-selector { display: flex; margin-left: 0.5rem; border: 1px solid #d1d5db; border-radius: 0.5rem; overflow: hidden; }
         .period-btn { padding: 0.75rem 1rem; border: none; background-color: #f9fafb; color: #6b7280; cursor: pointer; transition: background-color 0.2s, color 0.2s; font-family: 'Inter', sans-serif;}
         .period-btn.active { background-color: #3b82f6; color: white; }
+
+        /* Custom styles for the new co-teacher request and hand queue action buttons */
+        .request-action-group {
+            display: flex;
+            flex-direction: column;
+            gap: 0.25rem;
+        }
+        .request-action-group button {
+            width: 80px; /* fixed width for better alignment */
+            padding: 0.5rem 0.5rem;
+            font-size: 0.75rem; /* text-xs */
+        }
+        .comment-split-btn {
+            display: flex;
+            flex-direction: column;
+            padding: 0; /* reset padding for split buttons */
+        }
+        .comment-split-btn button {
+            width: 100%;
+            padding: 0.25rem 0.5rem;
+            border-radius: 0;
+            line-height: 1;
+        }
+        .comment-split-btn button:first-child {
+            border-top-left-radius: 0.5rem;
+            border-top-right-radius: 0.5rem;
+        }
+        .comment-split-btn button:last-child {
+            border-bottom-left-radius: 0.5rem;
+            border-bottom-right-radius: 0.5rem;
+        }
+        /* Style for the fixed settings view content - REMOVED SETTINGS-CONTENT-WRAPPER */
+        /* To prevent content shift, we apply padding to the main scrollable area */
+        #main-content-area {
+            padding-right: 18px; /* Fixed padding to account for potential scrollbar width */
+        }
     </style>
 </head>
 <body class="bg-slate-100 h-screen overflow-hidden">
@@ -157,7 +193,7 @@
                 </div>
             </aside>
             <main class="flex-1 flex flex-col overflow-hidden">
-                <div id="main-content-area" class="flex-1 overflow-y-auto bg-slate-100 p-6 sm:p-8 custom-scrollbar"></div>
+                <div id="main-content-area" class="flex-1 overflow-y-scroll bg-slate-100 p-6 sm:p-8 custom-scrollbar"></div>
             </main>
         </div>
     </div>
@@ -187,6 +223,7 @@
                 const app = firebase.initializeApp(firebaseConfig);
                 const auth = firebase.auth();
                 const db = firebase.firestore();
+                const FieldValue = firebase.firestore.FieldValue; // Alias for brevity
 
                 auth.onAuthStateChanged(user => {
                     if (user) { currentUser = user; fetchUserData(user.uid); } 
@@ -201,6 +238,7 @@
                         listenForClasses(uid);
                         renderMainContent();
                         initializeScheduleChecker();
+                        initializeRequestRecycler(); // NEW: Start request recycler
                     } else { auth.signOut(); }
                 }
                 
@@ -234,7 +272,8 @@
                                 const isOwner = cls.teacherId === userData.uid;
                                 const isCoTeacher = (cls.teacherIds || []).includes(userData.uid);
                                 if(isOwner || isCoTeacher) handsCount += (classQueues[id] || []).length;
-                                if(isOwner) requestsCount += (classRequests[id] || []).length;
+                                // Only count 'pending' requests for the badge
+                                if(isOwner) requestsCount += (classRequests[id] || []).filter(req => req.status === 'pending').length;
                             }
                         }
                     }
@@ -266,7 +305,8 @@
                                         });
                                 }
                                 if(isOwner && !queueUnsubscribers[`requests_${id}`]){
-                                    queueUnsubscribers[`requests_${id}`] = db.collection('classes').doc(id).collection('coTeacherRequests').where('status','==','pending')
+                                    // NEW: Listen to all, then filter 'pending' for count and 'recyclable' for reuse
+                                    queueUnsubscribers[`requests_${id}`] = db.collection('classes').doc(id).collection('coTeacherRequests')
                                         .onSnapshot(rSnap => {
                                             classRequests[id] = rSnap.docs.map(d => ({ id: d.id, ...d.data() }));
                                             updateGlobalUI();
@@ -291,7 +331,8 @@
                         const activeClasses = isActive ? 'bg-blue-100 text-blue-800 font-semibold' : 'text-gray-700 hover:bg-slate-100 hover:text-gray-900';
                         
                         const handsCount = classQueues[cls.id]?.length || 0;
-                        const reqCount = classRequests[cls.id]?.length || 0;
+                        // Filter requests to only count pending ones for the badge
+                        const reqCount = (classRequests[cls.id] || []).filter(req => req.status === 'pending').length;
                         let badge = '';
                         if(handsCount > 0 && reqCount > 0) badge = `<span class="class-notification-badge badge-multiple">${handsCount + reqCount}</span>`;
                         else if(handsCount > 0) badge = `<span class="class-notification-badge badge-hands">${handsCount}</span>`;
@@ -331,14 +372,86 @@
                     };
                 }
 
+                // NEW: Schedule Helper Functions
+                function isTimeInSchedule(enableAt, disableAt) {
+                    if (!enableAt || !disableAt) return true; // No meaningful schedule set means always active
+
+                    const now = new Date();
+                    const currentMinutes = now.getHours() * 60 + now.getMinutes();
+
+                    const [hE, mE] = enableAt.split(':').map(Number);
+                    const [hD, mD] = disableAt.split(':').map(Number);
+
+                    const enableMinutes = hE * 60 + mE;
+                    const disableMinutes = hD * 60 + mD;
+
+                    if (enableMinutes === disableMinutes) {
+                        return true; // Enable and disable are the same time, treat as always enabled
+                    }
+
+                    if (enableMinutes < disableMinutes) {
+                        // Simple case: 08:00 to 17:00 (no midnight wrap)
+                        return currentMinutes >= enableMinutes && currentMinutes < disableMinutes;
+                    } else {
+                        // Wrap-around case: 22:00 to 02:00
+                        // Time is in schedule if it's after enable OR before disable
+                        return currentMinutes >= enableMinutes || currentMinutes < disableMinutes;
+                    }
+                }
+
+                function getEffectiveHandRaisingStatus(cls, isOwner) {
+                    const hasSchedule = cls.schedule?.enableAt && cls.schedule?.disableAt;
+                    const dbEnabled = cls.handRaisingEnabled;
+
+                    if (!hasSchedule) {
+                        return { 
+                            enabled: dbEnabled, 
+                            override: false, 
+                            message: dbEnabled ? '' : 'Manually Paused'
+                        };
+                    }
+                    
+                    const isScheduledTime = isTimeInSchedule(cls.schedule.enableAt, cls.schedule.disableAt);
+                    let effectiveEnabled = isScheduledTime;
+                    let override = false;
+                    let message = '';
+
+                    if (isScheduledTime) {
+                        if (!dbEnabled) { // Scheduled ON, but DB is OFF -> Manual override to PAUSE
+                            effectiveEnabled = false;
+                            override = true;
+                            message = isOwner ? 'Manually Paused (Override Schedule)' : 'Paused by Teacher (Override)';
+                        } else {
+                            // Effective ON, no override
+                        }
+                    } else { // Not scheduled time
+                        effectiveEnabled = false;
+                        message = 'Paused (Outside Schedule)';
+
+                        if (dbEnabled) { // Scheduled OFF, but DB is ON -> Manual override to RESUME
+                            effectiveEnabled = true;
+                            override = true;
+                            message = isOwner ? 'Manually Resumed (Override Schedule)' : 'Resumed by Teacher (Override)';
+                        }
+                    }
+
+                    return { 
+                        enabled: effectiveEnabled, 
+                        override: override, 
+                        message: message 
+                    };
+                }
+
                 function renderMainContent() {
                     if (currentClassId && allLoadedClasses[currentClassId]) {
                         const data = allLoadedClasses[currentClassId];
                         const queue = classQueues[currentClassId] || [];
-                        const requests = classRequests[currentClassId] || [];
+                        // Filter requests to only show pending ones on the requests tab
+                        const pendingRequests = (classRequests[currentClassId] || []).filter(req => req.status === 'pending'); 
                         const isOwner = data.teacherId === userData.uid;
                         const isCoTeacher = (data.teacherIds || []).includes(userData.uid);
-                        mainContentArea.innerHTML = TPL.classView(data, userData, isOwner, isCoTeacher, queue, requests, currentClassView, currentRoster);
+                        // Pass pending requests to the template
+                        mainContentArea.innerHTML = TPL.classView(data, userData, isOwner, isCoTeacher, queue, pendingRequests, currentClassView, currentRoster);
                         document.body.dispatchEvent(new CustomEvent('mainContentRendered'));
                     } else { mainContentArea.innerHTML = TPL.emptyState(userData); }
                 }
@@ -347,7 +460,7 @@
                 function hideModal() { const d=modalContainer.firstElementChild; if(d){d.classList.add('fade-leave-to');modalBackdrop.classList.add('fade-leave-to');setTimeout(() => {modalContainer.innerHTML='';modalBackdrop.classList.add('hidden');modalBackdrop.classList.remove('fade-leave-to');}, 200);}}
                 function escapeHtml(text) { if(typeof text!=='string')return'';const d=document.createElement('div');d.textContent=text;return d.innerHTML; }
                 
-                async function createNewClass(name) { const code=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name,teacherId:currentUser.uid,teacherIds:[],code,coTeacherCode,studentIds:[],pendingStudentEmails:[],handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''},scheduleLastActionDate:'',createdAt:firebase.firestore.FieldValue.serverTimestamp()});hideModal();}
+                async function createNewClass(name) { const code=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name,teacherId:currentUser.uid,teacherIds:[],code,coTeacherCode,studentIds:[],pendingStudentEmails:[],handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''},scheduleLastActionDate:'',createdAt:FieldValue.serverTimestamp()});hideModal();}
                 async function joinClass(code) {
                     const studentQuery = db.collection('classes').where('code', '==', code).limit(1).get();
                     const teacherQuery = db.collection('classes').where('coTeacherCode', '==', code).limit(1).get();
@@ -370,42 +483,136 @@
                         if(isMember){ showModal(TPL.messageModal('Already Enrolled',`You are already a member of ${classData.name}.`,'yellow')); return; }
                         
                         // Any user type can join as a student with the student code
-                        await db.collection('classes').doc(classDoc.id).update({studentIds:firebase.firestore.FieldValue.arrayUnion(currentUser.uid)});
+                        await db.collection('classes').doc(classDoc.id).update({studentIds:FieldValue.arrayUnion(currentUser.uid)});
                         hideModal();
                         showModal(TPL.messageModal('Success',`Successfully joined class: ${classData.name} as a student!`,'green'));
                     }
                 }
 
+                // NEW: Logic to find a recyclable request slot
+                async function findRecyclableRequestSlot(classId) {
+                    const recyclableSnap = await db.collection('classes').doc(classId).collection('coTeacherRequests')
+                        .where('status', '==', 'recyclable')
+                        .limit(1)
+                        .get();
+                    
+                    if (!recyclableSnap.empty) {
+                        return recyclableSnap.docs[0].id;
+                    }
+                    return currentUser.uid; // Default to using the user's ID as the doc ID
+                }
+
+                // UPDATED: requestCoTeacher to use recyclable slot
                 async function requestCoTeacher(classId, comment) {
-                    await db.collection('classes').doc(classId).collection('coTeacherRequests').doc(currentUser.uid).set({
+                    const docId = await findRecyclableRequestSlot(classId); // Find or use current user's ID
+                    
+                    const requestData = {
                         requesterName: userData.username,
                         comment: comment,
                         status: 'pending',
-                        requestedAt: firebase.firestore.FieldValue.serverTimestamp()
-                    });
+                        requestedAt: FieldValue.serverTimestamp(),
+                        // NEW: Ensure all fields are set for a fresh request, even if recycling
+                        requesterEmail: currentUser.email, // Good to have for the teacher
+                        requesterId: currentUser.uid // Store actual requester ID
+                    };
+
+                    await db.collection('classes').doc(classId).collection('coTeacherRequests').doc(docId).set(requestData);
                     hideModal();
                     showModal(TPL.messageModal('Request Sent', 'Your request to join as a co-teacher has been sent to the class owner.', 'green'));
                 }
 
-                async function handleCoTeacherRequest(classId, requesterId, action) {
-                    const requestRef = db.collection('classes').doc(classId).collection('coTeacherRequests').doc(requesterId);
+                // UPDATED: handleCoTeacherRequest to use full fields
+                async function handleCoTeacherRequest(classId, requestDocId, action) {
+                    const requestRef = db.collection('classes').doc(classId).collection('coTeacherRequests').doc(requestDocId);
+                    
+                    const requestDoc = await requestRef.get();
+                    if (!requestDoc.exists) return; // Should not happen
+
+                    const requesterId = requestDoc.data().requesterId; // Get the actual requester ID
+
                     if(action === 'accept'){
-                        await db.collection('classes').doc(classId).update({ teacherIds: firebase.firestore.FieldValue.arrayUnion(requesterId) });
+                        await db.collection('classes').doc(classId).update({ teacherIds: FieldValue.arrayUnion(requesterId) });
                         await requestRef.update({ status: 'accepted' });
-                    } else {
+                    } else if (action === 'deny') {
                         await requestRef.update({ status: 'denied' });
+                    } else if (action === 'comment-edit' || action === 'comment-delete') {
+                         showModal(TPL.messageModal('Feature Update', 'Commenting on requests is a planned feature! This button is currently for demonstration.', 'yellow'));
+                         return; // Placeholder for future comment logic
                     }
+                    // For accept/deny, hide the modal and re-render the main content
+                    hideModal();
+                    renderMainContent(); 
                 }
                 
-                async function raiseHand(id,q){await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).set({studentName:userData.username,studentPhotoURL:currentUser.photoURL||'',question:q||'',raisedAt:firebase.firestore.FieldValue.serverTimestamp()});hideModal();}
+                async function raiseHand(id,q){await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).set({studentName:userData.username,studentPhotoURL:currentUser.photoURL||'',question:q||'',raisedAt:FieldValue.serverTimestamp()});hideModal();}
                 async function lowerHand(id,studentId=currentUser.uid){await db.collection('classes').doc(id).collection('raisedHands').doc(studentId).delete();}
                 async function lowerAllHands(id){const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();}
-                async function toggleHandRaising(id,status){await db.collection('classes').doc(id).update({handRaisingEnabled:status});}
+                
+                // FIXED: toggleHandRaising to include immediate UI update
+                async function toggleHandRaising(id, status, buttonEl) {
+                    // Immediate UI update (NEW)
+                    if (buttonEl) {
+                        buttonEl.classList.toggle('bg-yellow-100', !status);
+                        buttonEl.classList.toggle('text-yellow-600', !status);
+                        buttonEl.classList.toggle('hover:bg-yellow-200', !status);
+                        buttonEl.classList.toggle('bg-gray-200', status);
+                        buttonEl.classList.toggle('text-gray-600', status);
+                        buttonEl.classList.toggle('hover:bg-gray-300', status);
+                        
+                        const icon = buttonEl.querySelector('i');
+                        if (icon) {
+                            icon.classList.toggle('fa-hand', !status);
+                            icon.classList.toggle('fa-hand-sparkles', status);
+                        }
+                        
+                        const tooltip = buttonEl.closest('.tooltip-container').querySelector('.tooltip-text');
+                        if (tooltip) {
+                            tooltip.textContent = !status ? 'Pause Raising' : 'Resume Raising';
+                        }
+                    }
+                    // DB update
+                    await db.collection('classes').doc(id).update({ handRaisingEnabled: !status });
+                    // onSnapshot listener will handle the full re-render and UI changes eventually.
+                }
                 
                 async function handleChangeClassName(id,name){const today=new Date().toISOString().split('T')[0];const key=`classNameChanges_${id}`;let changes;try{changes=JSON.parse(localStorage.getItem(key))||{};}catch(e){changes={};}if(changes.date!==today){changes={date:today,count:0};}if(changes.count>=3){showModal(TPL.messageModal('Limit Reached','You can only change the class name 3 times per day.','red'));return;}await db.collection('classes').doc(id).update({name});changes.count++;localStorage.setItem(key,JSON.stringify(changes));showModal(TPL.messageModal('Success','Class name updated!','green'));}
-                async function handleSaveSchedule(id,enable,disable){await db.collection('classes').doc(id).update({schedule:{enableAt:enable,disableAt:disable}, scheduleLastActionDate: ''});showModal(TPL.messageModal('Success','Schedule saved!','green'));}
-                async function deleteSchedule(id) { await db.collection('classes').doc(id).update({ 'schedule.enableAt': '', 'schedule.disableAt': '' }); showModal(TPL.messageModal('Success', 'Schedule has been removed.', 'green')); }
-                async function removeUserFromClass(id, userId) { const data = allLoadedClasses[id]; if ((data.teacherIds || []).includes(userId)) { await db.collection('classes').doc(id).update({ teacherIds: firebase.firestore.FieldValue.arrayRemove(userId) }); } else if ((data.studentIds || []).includes(userId)) { await db.collection('classes').doc(id).update({ studentIds: firebase.firestore.FieldValue.arrayRemove(userId) }); } await fetchRosterData(allLoadedClasses[id]); renderMainContent(); }
+                
+                // FIXED: handleSaveSchedule now takes 24-hour time strings directly from the template logic
+                async function handleSaveSchedule(id,enable,disable){
+                    await db.collection('classes').doc(id).update({
+                        schedule:{enableAt:enable,disableAt:disable},
+                        scheduleLastActionDate: ''
+                    });
+                    showModal(TPL.messageModal('Success','Schedule saved!','green'));
+                }
+
+                // FIXED: deleteSchedule now clears input boxes
+                async function deleteSchedule(id) { 
+                    await db.collection('classes').doc(id).update({ 'schedule.enableAt': '', 'schedule.disableAt': '' }); 
+                    
+                    // NEW: Clear the text boxes
+                    const enableInput = document.getElementById('enable-time-input');
+                    const disableInput = document.getElementById('disable-time-input');
+
+                    if (enableInput) {
+                        enableInput.value = '';
+                        enableInput.dataset.time24hr = '';
+                        enableInput.dataset.digits = '';
+                        const periodBtns = enableInput.closest('.schedule-time-input-container').querySelectorAll('.period-btn');
+                        periodBtns.forEach(btn => btn.classList.remove('active'));
+                    }
+
+                    if (disableInput) {
+                        disableInput.value = '';
+                        disableInput.dataset.time24hr = '';
+                        disableInput.dataset.digits = '';
+                        const periodBtns = disableInput.closest('.schedule-time-input-container').querySelectorAll('.period-btn');
+                        periodBtns.forEach(btn => btn.classList.remove('active'));
+                    }
+
+                    showModal(TPL.messageModal('Success', 'Schedule has been removed.', 'green')); 
+                }
+                async function removeUserFromClass(id, userId) { const data = allLoadedClasses[id]; if ((data.teacherIds || []).includes(userId)) { await db.collection('classes').doc(id).update({ teacherIds: FieldValue.arrayRemove(userId) }); } else if ((data.studentIds || []).includes(userId)) { await db.collection('classes').doc(id).update({ studentIds: FieldValue.arrayRemove(userId) }); } await fetchRosterData(allLoadedClasses[id]); renderMainContent(); }
                 async function handleDeleteClass(id){const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));b.delete(db.collection('classes').doc(id));await b.commit();hideModal();selectClass(null);}
 
                 let scheduleInterval = null;
@@ -418,31 +625,86 @@
 
                         for (const classId in allLoadedClasses) {
                             const cls = allLoadedClasses[classId];
-                            if (cls.teacherId === userData.uid && cls.schedule?.disableAt && cls.handRaisingEnabled) {
-                                if (cls.scheduleLastActionDate === todayStr) continue;
+                            if (cls.teacherId === userData.uid) { // Only the owner handles auto-disabling
 
-                                const [hours, minutes] = cls.schedule.disableAt.split(':');
-                                const disableTime = new Date();
-                                disableTime.setHours(hours, minutes, 0, 0);
-
-                                if (now > disableTime) {
-                                    console.log(`Auto-disabling for ${cls.name}`);
-                                    db.collection('classes').doc(classId).update({ scheduleLastActionDate: todayStr, handRaisingEnabled: false });
-                                    lowerAllHands(classId);
+                                if (cls.schedule?.disableAt) {
+                                    // Check for auto-disable logic (using DB handRaisingEnabled as the override state)
+                                    const effectiveStatus = getEffectiveHandRaisingStatus(cls, true);
+                                    
+                                    // If scheduled time is over (effective status is disabled), and the teacher has not overridden it
+                                    // and the DB still says it's enabled (meaning it hasn't been auto-disabled today yet).
+                                    if (!effectiveStatus.enabled && !effectiveStatus.override && cls.handRaisingEnabled && cls.scheduleLastActionDate !== todayStr) {
+                                        console.log(`Auto-disabling for ${cls.name} due to schedule end.`);
+                                        // Set the DB to disabled and record the date to prevent further action today
+                                        db.collection('classes').doc(classId).update({ scheduleLastActionDate: todayStr, handRaisingEnabled: false });
+                                        lowerAllHands(classId); // Lower hands when auto-disabling
+                                    }
                                 }
                             }
                         }
                     }, 60000); // Check every minute
+                }
+
+                // NEW: Request Recycler Logic
+                let recyclerInterval = null;
+                function initializeRequestRecycler() {
+                    if (recyclerInterval) clearInterval(recyclerInterval);
+                    recyclerInterval = setInterval(() => {
+                        if (!userData || userData.role !== 'teacher') return;
+                        
+                        const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+                        for (const classId in allLoadedClasses) {
+                            const cls = allLoadedClasses[classId];
+                            if (cls.teacherId === userData.uid) { // Only the owner recycles requests
+                                recycleOldRequests(classId, twentyFourHoursAgo);
+                            }
+                        }
+                    }, 5 * 60 * 1000); // Check every 5 minutes
+                }
+
+                async function recycleOldRequests(classId, cutoffDate) {
+                    const oldRequestsSnap = await db.collection('classes').doc(classId).collection('coTeacherRequests')
+                        .where('status', 'in', ['accepted', 'denied']) // Only recycle closed requests
+                        .get();
+
+                    const batch = db.batch();
+                    let recycledCount = 0;
+                    
+                    oldRequestsSnap.docs.forEach(doc => {
+                        const data = doc.data();
+                        // Check if the request is older than 1 day
+                        if (data.requestedAt && data.requestedAt.toDate() < cutoffDate) {
+                            const ref = doc.ref;
+                            batch.update(ref, {
+                                status: 'recyclable',
+                                requesterName: null,
+                                comment: null,
+                                requestedAt: null,
+                                requesterEmail: null,
+                                requesterId: null
+                            });
+                            recycledCount++;
+                        }
+                    });
+
+                    if (recycledCount > 0) {
+                        await batch.commit();
+                        console.log(`Recycled ${recycledCount} old co-teacher requests for class ${classId}.`);
+                    }
                 }
                 
                 let gapiLoaded=false,googleAuth=null;
                 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest';
                 const SCOPES = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
                 async function initializeGAPI(apiKey,clientId){if(gapiLoaded)return Promise.resolve();return new Promise((resolve,reject)=>{const checkGAPI=()=>{if(typeof gapi!=='undefined'&&gapi.load){gapi.load('client',async()=>{try{await gapi.client.init({apiKey,discoveryDocs:[DISCOVERY_DOC]});googleAuth=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:SCOPES,callback:''});gapiLoaded=true;resolve();}catch(e){reject(e);}});}else{setTimeout(checkGAPI,100);}};checkGAPI();});}
-                function requestAccessToken(){return new Promise((resolve,reject)=>{try{googleAuth.callback=async(res)=>{if(res.error)return reject(new Error(res.error));gapi.client.setToken({access_token:res.access_token});try{await listGoogleCourses();resolve();}catch(e){reject(e);}};googleAuth.requestAccessToken();}catch(e){reject(e);}});}
+                function requestAccessToken(){return new Promise((resolve,reject)=>{try{googleAuth.callback=async(res)=>{if(res.error)return reject(new Error(res.error));gapi.client.setToken({access_token:res.access_token});try{await listGoogleCourses();resolve();}catch(e){reject(e);}};}catch(e){reject(e);}});}
                 async function handleGoogleImportClick(){showModal(TPL.googleImportModal());const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');loadingEl.classList.remove('hidden');errorEl.classList.add('hidden');try{const secretsDoc=await db.collection('secrets').doc('wUTBTbjuNLueOFhgHXEE').get();if(!secretsDoc.exists)throw new Error("Secrets document not found.");const{GoogleClassroomAPIKey:apiKey,GoogleClientID:clientId}=secretsDoc.data();if(!apiKey||!clientId)throw new Error("Missing API Key or Client ID in secrets document.");await initializeGAPI(apiKey,clientId);await requestAccessToken();}catch(e){console.error('Google Classroom init error:',e);loadingEl.classList.add('hidden');errorEl.textContent=`Error: ${e.message}`;errorEl.classList.remove('hidden');}}
-                async function listGoogleCourses(){const listEl=document.getElementById('g-import-list');const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');try{loadingEl.textContent='Loading courses...';const response=await gapi.client.classroom.courses.list({teacherId:'me',courseStates:'ACTIVE'});loadingEl.classList.add('hidden');const courses=response.result.courses||[];const notifyClassesSnapshot=await db.collection('classes').where('teacherId','==',currentUser.uid).get();const existingGoogleIds=new Set();notifyClassesSnapshot.forEach(doc=>{const data=doc.data();if(data.googleCourseId)existingGoogleIds.add(data.googleCourseId);});if(courses.length>0){listEl.innerHTML=courses.map(course=>{const isImported=existingGoogleIds.has(course.id);const buttonHtml=isImported?'<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>':`<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`;return`<li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><div class="flex-1"><p class="font-bold text-gray-800">${escapeHtml(course.name)}</p><p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section||'No section')}</p></div>${buttonHtml}</li>`;}).join('');document.querySelectorAll('.import-g-class-btn').forEach(button=>{button.addEventListener('click',()=>importGoogleClass(button.dataset.courseId,button.dataset.courseName));});}else{listEl.innerHTML='<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom that you are the primary teacher of.</p>';}}catch(e){console.error('Error listing courses:',e);loadingEl.classList.add('hidden');let errorMessage='Failed to load courses.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}errorEl.textContent=`Error: ${errorMessage}`;errorEl.classList.remove('hidden');}}
-                async function importGoogleClass(googleCourseId,googleCourseName){const importBtn=document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);if(importBtn){importBtn.textContent='Importing...';importBtn.disabled=true;}try{const existingClass=await db.collection('classes').where('googleCourseId','==',googleCourseId).limit(1).get();if(!existingClass.empty){showModal(TPL.messageModal('Duplicate','This class has already been imported.','yellow'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}return;}const studentsResponse=await gapi.client.classroom.courses.students.list({courseId:googleCourseId});const students=studentsResponse.result.students||[];const studentEmails=students.map(s=>s.profile?.emailAddress).filter(Boolean);const existingStudentUids=[];const pendingEmails=[];if(studentEmails.length>0){const batchSize=10;for(let i=0;i<studentEmails.length;i+=batchSize){const batchEmails=studentEmails.slice(i,i+batchSize);const usersSnapshot=await db.collection('users').where('email','in',batchEmails).get();const existingEmailsBatch=new Set();usersSnapshot.forEach(doc=>{existingStudentUids.push(doc.id);existingEmailsBatch.add(doc.data().email);});batchEmails.forEach(email=>{if(!existingEmailsBatch.has(email)){pendingEmails.push(email);}});}}const classCode=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name:googleCourseName,teacherId:currentUser.uid,teacherIds:[],code:classCode,coTeacherCode,googleCourseId:googleCourseId,studentIds:existingStudentUids,pendingStudentEmails:pendingEmails,createdAt:firebase.firestore.FieldValue.serverTimestamp(),handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''}, scheduleLastActionDate:''});hideModal();showModal(TPL.messageModal('Import Successful',`Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`,'green'));}catch(e){console.error("Error importing Google Classroom:",e);let errorMessage='Failed to import class. Please ensure Google Classroom API is enabled for your account.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}showModal(TPL.messageModal('Import Failed',errorMessage,'red'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}}}
+                async function listGoogleCourses(){const listEl=document.getElementById('g-import-list');const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');try{loadingEl.textContent='Loading courses...';const response=await gapi.client.classroom.courses.list({teacherId:'me',courseStates:'ACTIVE'});loadingEl.classList.add('hidden');const courses=response.result.courses||[];const notifyClassesSnapshot=await db.collection('classes').where('teacherId','==',currentUser.uid).get();const existingGoogleIds=new Set();notifyClassesSnapshot.forEach(doc=>{const data=doc.data();if(data.googleCourseId)existingGoogleIds.add(data.googleCourseId);});if(courses.length>0){listEl.innerHTML=courses.map(course=>{const isImported=existingGoogleIds.has(course.id);
+                        // UPDATED: Import button style (rounded-md and font-poppins)
+                        const buttonHtml=isImported?'<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-md text-sm font-poppins">Imported</button>':`<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-700 btn-bubbly font-poppins">Import</button>`;
+                        return`<li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><div class="flex-1"><p class="font-bold text-gray-800">${escapeHtml(course.name)}</p><p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section||'No section')}</p></div>${buttonHtml}</li>`;}).join('');document.querySelectorAll('.import-g-class-btn').forEach(button=>{button.addEventListener('click',()=>importGoogleClass(button.dataset.courseId,button.dataset.courseName));});}else{listEl.innerHTML='<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom that you are the primary teacher of.</p>';}}catch(e){console.error('Error listing courses:',e);loadingEl.classList.add('hidden');let errorMessage='Failed to load courses.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}errorEl.textContent=`Error: ${errorMessage}`;errorEl.classList.remove('hidden');}}
+                async function importGoogleClass(googleCourseId,googleCourseName){const importBtn=document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);if(importBtn){importBtn.textContent='Importing...';importBtn.disabled=true;}try{const existingClass=await db.collection('classes').where('googleCourseId','==',googleCourseId).limit(1).get();if(!existingClass.empty){showModal(TPL.messageModal('Duplicate','This class has already been imported.','yellow'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}return;}const studentsResponse=await gapi.client.classroom.courses.students.list({courseId:googleCourseId});const students=studentsResponse.result.students||[];const studentEmails=students.map(s=>s.profile?.emailAddress).filter(Boolean);const existingStudentUids=[];const pendingEmails=[];if(studentEmails.length>0){const batchSize=10;for(let i=0;i<studentEmails.length;i+=batchSize){const batchEmails=studentEmails.slice(i,i+batchSize);const usersSnapshot=await db.collection('users').where('email','in',batchEmails).get();const existingEmailsBatch=new Set();usersSnapshot.forEach(doc=>{existingStudentUids.push(doc.id);existingEmailsBatch.add(doc.data().email);});batchEmails.forEach(email=>{if(!existingEmailsBatch.has(email)){pendingEmails.push(email);}});}}const classCode=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name:googleCourseName,teacherId:currentUser.uid,teacherIds:[],code:classCode,coTeacherCode,googleCourseId:googleCourseId,studentIds:existingStudentUids,pendingStudentEmails:pendingEmails,createdAt:FieldValue.serverTimestamp(),handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''}, scheduleLastActionDate:''});hideModal();showModal(TPL.messageModal('Import Successful',`Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`,'green'));}catch(e){console.error("Error importing Google Classroom:",e);let errorMessage='Failed to import class. Please ensure Google Classroom API is enabled for your account.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}showModal(TPL.messageModal('Import Failed',errorMessage,'red'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}}}
 
                 document.body.addEventListener('click', async e => {
                     const target = e.target.closest('button, a, [role="button"]');
@@ -462,23 +724,55 @@
 
                     if (target.id === 'raise-hand-action-btn') showModal(TPL.raiseHandModal(currentClassId));
                     if (target.id === 'lower-hand-action-btn') lowerHand(currentClassId);
-                    if (target.id === 'lower-all-hands-btn') lowerAllHands(currentClassId);
-                    if (target.matches('.teacher-lower-hand-btn')) lowerHand(currentClassId, target.dataset.studentId);
-                    if (target.id === 'toggle-hand-raising-btn') toggleHandRaising(currentClassId, !allLoadedClasses[currentClassId].handRaisingEnabled);
-                    if(target.matches('.class-view-tab')) { currentClassView = target.dataset.view; renderMainContent(); }
+                    
+                    // FIXED: Pass the button element to the function for immediate UI update
+                    if (target.id === 'toggle-hand-raising-btn') toggleHandRaising(currentClassId, allLoadedClasses[currentClassId].handRaisingEnabled, target);
+                    
+                    // NEW: Updated view tab logic
+                    if(target.matches('.class-view-tab')) { 
+                        currentClassView = target.dataset.view; 
+                        renderMainContent(); 
+                    }
                     if(target.id === 'delete-class-btn') { showModal(TPL.deleteClassConfirmModal(currentClassId, allLoadedClasses[currentClassId].name)); }
                     if(target.id === 'confirm-delete-class-btn') { handleDeleteClass(target.dataset.classId); }
                     if(target.matches('.remove-user-btn')) { removeUserFromClass(currentClassId, target.dataset.userId); }
-                    if(target.matches('.accept-request-btn')) { handleCoTeacherRequest(currentClassId, target.dataset.requesterId, 'accept'); }
-                    if(target.matches('.deny-request-btn')) { handleCoTeacherRequest(currentClassId, target.dataset.requesterId, 'deny'); }
                     
+                    // NEW: Updated co-teacher request button logic
+                    if(target.matches('.request-action-btn')) { 
+                        const action = target.dataset.action;
+                        const requesterId = target.dataset.requesterDocId; // The ID of the document in the subcollection
+                        handleCoTeacherRequest(currentClassId, requesterId, action); 
+                    }
+                    
+                    // NEW: Updated hand queue action button logic
+                    if(target.matches('.queue-action-btn')) { 
+                        const action = target.dataset.action;
+                        const studentId = target.dataset.studentId; 
+                        
+                        if (action === 'accept-hand' || action === 'deny-hand') {
+                            lowerHand(currentClassId, studentId); // Both actions lower the hand
+                            // Use setTimeout to allow lowerHand async call to start before showing modal
+                            setTimeout(() => {
+                                showModal(TPL.messageModal('Hand Lowered', `The student's hand was ${action === 'accept-hand' ? 'accepted and lowered' : 'denied and lowered'}.`, action === 'accept-hand' ? 'green' : 'red'));
+                            }, 50);
+                        } else if (action.startsWith('comment-')) {
+                            showModal(TPL.messageModal('Feature Update', 'Commenting on raised hands is a planned feature! This button is currently for demonstration.', 'yellow'));
+                        }
+                    }
+
                     if(target.matches('.schedule-action-btn')) {
                         const action = target.dataset.action;
                         if (action === 'save') {
-                            const formatTime = (time, period) => { let [h, m] = time.split(':').map(Number); if (period === 'PM' && h !== 12) h += 12; if (period === 'AM' && h === 12) h = 0; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; };
-                            const enableTime = document.getElementById('enable-time-input').value; const enablePeriod = document.querySelector('#enable-period-selector .active').dataset.value;
-                            const disableTime = document.getElementById('disable-time-input').value; const disablePeriod = document.querySelector('#disable-period-selector .active').dataset.value;
-                            handleSaveSchedule(currentClassId, formatTime(enableTime, enablePeriod), formatTime(disableTime, disablePeriod));
+                            // Collect the data-time-24hr attributes which are set during the period-btn click/initial render
+                            const enableTime24 = document.getElementById('enable-time-input').dataset.time24hr;
+                            const disableTime24 = document.getElementById('disable-time-input').dataset.time24hr;
+                            
+                            // Validate that we have 24hr times
+                            if (disableTime24) { // Only require a disable time to activate the schedule
+                                handleSaveSchedule(currentClassId, enableTime24, disableTime24);
+                            } else {
+                                showModal(TPL.messageModal('Error', 'The "Disable at" time is required to save a schedule.', 'red'));
+                            }
                         } else if (action === 'clear') { deleteSchedule(currentClassId); }
                     }
                     if(target.matches('.copy-code-btn')) {
@@ -492,6 +786,27 @@
                         const container = target.closest('.period-selector');
                         container.querySelectorAll('.period-btn').forEach(btn => btn.classList.remove('active'));
                         target.classList.add('active');
+                        
+                        // Update the associated input's 24-hour data attribute immediately
+                        const inputId = container.id.replace('-period-selector', '-input');
+                        const input = document.getElementById(inputId);
+                        const time12hr = input.value;
+                        const period = target.dataset.value;
+
+                        // Function to convert 12hr time string to 24hr time string
+                        const to24Hour = (time, period) => {
+                            let [h, m] = time.split(':').map(Number);
+                            if (period === 'PM' && h !== 12) h += 12;
+                            if (period === 'AM' && h === 12) h = 0;
+                            return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+                        };
+                        
+                        // Only calculate/set 24hr time if the input field actually has a value
+                        if(time12hr){
+                           input.dataset.time24hr = to24Hour(time12hr, period);
+                        } else {
+                            input.dataset.time24hr = '';
+                        }
                     }
                 });
                 
@@ -507,33 +822,78 @@
                 const TPL = {
                     messageModal: (title, message, color = 'blue') => { const c = {'blue':{i:'fa-circle-info',b:'bg-blue-600',t:'text-blue-700',d:'border-blue-400'},'green':{i:'fa-circle-check',b:'bg-green-600',t:'text-green-700',d:'border-green-400'},'red':{i:'fa-triangle-exclamation',b:'bg-red-600',t:'text-red-700',d:'border-red-400'},'yellow':{i:'fa-exclamation',b:'bg-yellow-600',t:'text-yellow-700',d:'border-yellow-400'}}[color]||c['blue']; return `<div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-2xl pointer-events-auto text-center border-t-4 ${c.d}"><div class="flex flex-col items-center justify-center"><i class="fa-solid ${c.i} fa-3x ${c.t}"></i><h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">${escapeHtml(title)}</h3><p class="mt-2 text-gray-600">${escapeHtml(message)}</p></div><div class="mt-6"><button type="button" class="modal-close-btn px-6 py-2 ${c.b} text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly">OK</button></div></div>`; },
                     emptyState: (user) => `<div class="h-full flex items-center justify-center text-center fade-enter-active"><div><svg class="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg><h2 class="mt-4 text-xl font-semibold font-poppins text-gray-700">Welcome, ${escapeHtml(user?.username||'')}!</h2><p class="mt-1 text-gray-500">Select a class or get started below.</p><div class="mt-6 flex flex-col items-center space-y-4">${user.role==='teacher'?`<button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`:''} <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 btn-bubbly flex items-center space-x-2"><i class="fa-solid fa-user-plus w-5 h-5"></i><span>Join Class</span></button></div></div></div>`,
-                    classView: (cls, user, isOwner, isCoTeacher, queue, requests, view, roster) => {
+                    // UPDATED: classView for navigation and schedule logic
+                    classView: (cls, user, isOwner, isCoTeacher, queue, pendingRequests, view, roster) => {
                         const isAnyTeacher = isOwner || isCoTeacher;
                         const nameChangesLeft = () => { const today=new Date().toISOString().split('T')[0]; const key=`classNameChanges_${cls.id}`; let changes; try { changes=JSON.parse(localStorage.getItem(key))||{}; } catch(e){changes={};} return (changes.date===today)?3-changes.count:3; };
+                        
+                        // NEW: Calculate the effective status for teacher/student views
+                        const effectiveStatus = getEffectiveHandRaisingStatus(cls, isOwner);
+                        const dbStatus = cls.handRaisingEnabled;
+                        
+                        // UPDATED: timePicker to handle empty values and use placeholder
                         const timePicker = (id, label, value) => {
-                            const [h24, m] = (value || '08:00').split(':').map(Number);
+                            const internalValue = value || '00:00'; 
+                            const isValueEmpty = !value;
+                            
+                            const [h24, m] = internalValue.split(':').map(Number);
                             const period = h24 >= 12 ? 'PM' : 'AM';
                             let h12 = h24 % 12; if (h12 === 0) h12 = 12;
-                            const timeString = `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input"><div id="${id.replace('-input', '-period-selector')}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
+                            const timeString = isValueEmpty ? '' : `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+                            const periodId = id.replace('-input', '-period-selector');
+                            
+                            // If empty, the 24hr data attribute should also be empty
+                            const time24hrData = isValueEmpty ? '' : `${String(h24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+                            const periodActiveAM = isValueEmpty ? '' : (period === 'AM' ? 'active' : '');
+                            const periodActivePM = isValueEmpty ? '' : (period === 'PM' ? 'active' : '');
+
+                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input" data-time-24hr="${time24hrData}" data-digits="${timeString.replace(':','')}" placeholder=" " inputmode="numeric"><div id="${periodId}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${periodActiveAM}">AM</button><button type="button" data-value="PM" class="period-btn ${periodActivePM}">PM</button></div></div></div>`;
                         };
+                        
+                        // Helper to generate a view button. If a view is active, it becomes the overview button.
+                        const viewButton = (targetView, icon, tooltipText, isOwnerOnly = false, badgeCount = 0) => {
+                            if (isOwnerOnly && !isOwner) return '';
+                            const isActive = view === targetView;
+                            const isOverview = view === 'overview';
+                            const buttonIcon = isActive ? 'fa-house-user' : icon;
+                            const buttonText = isActive ? 'Overview' : tooltipText;
+                            const buttonClass = isActive ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300';
+                            const target = isActive && !isOverview ? 'overview' : targetView;
+                            const badge = badgeCount > 0 && !isActive ? `<span class="absolute -top-1 -right-1 flex h-4 w-4"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-violet-500 text-white text-xs items-center justify-center">${badgeCount}</span></span>` : '';
+
+                            return `<div class="tooltip-container">
+                                <button data-view="${target}" class="class-view-tab tooltip-button btn-bubbly ${buttonClass} relative">
+                                    <i class="fa-solid ${buttonIcon}"></i>
+                                    ${targetView === 'requests' ? badge : ''}
+                                </button>
+                                <span class="tooltip-text">${buttonText}</span>
+                            </div>`;
+                        };
+
+
                         const teacherView = `
                             <div class="fade-enter-active space-y-6">
                                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
                                     <div class="flex flex-wrap justify-between items-center gap-4">
                                         <h2 class="text-3xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
                                         <div class="flex items-center space-x-2">
-                                            <div class="tooltip-container"><button id="toggle-hand-raising-btn" class="tooltip-button btn-bubbly ${cls.handRaisingEnabled ?'bg-yellow-100 text-yellow-600 hover:bg-yellow-200':'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid ${cls.handRaisingEnabled ?'fa-hand':'fa-hand-sparkles'}"></i></button><span class="tooltip-text">${cls.handRaisingEnabled ?'Pause Raising':'Resume Raising'}</span></div>
-                                            <div class="tooltip-container"><button id="lower-all-hands-btn" class="tooltip-button btn-bubbly bg-red-100 text-red-600 hover:bg-red-200"><i class="fa-solid fa-hands-clapping"></i></button><span class="tooltip-text">Lower All Hands</span></div>
-                                            ${isOwner ? `<div class="tooltip-container relative">
-                                                    <button data-view="requests" class="class-view-tab tooltip-button btn-bubbly ${view === 'requests' ? 'bg-violet-100 text-violet-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">
-                                                        <i class="fa-solid fa-user-shield"></i>
-                                                        ${requests.length > 0 ? `<span class="absolute -top-1 -right-1 flex h-4 w-4"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-violet-500 text-white text-xs items-center justify-center">${requests.length}</span></span>` : ''}
-                                                    </button>
-                                                    <span class="tooltip-text">Requests</span>
-                                                </div>` : ''}
-                                            <div class="tooltip-container"><button data-view="roster" class="class-view-tab tooltip-button btn-bubbly ${view === 'roster' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid fa-users"></i></button><span class="tooltip-text">Roster</span></div>
-                                            ${isOwner ? `<div class="tooltip-container"><button data-view="settings" class="class-view-tab tooltip-button btn-bubbly ${view === 'settings' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid fa-gear"></i></button><span class="tooltip-text">Settings</span></div>` : ''}
+                                            <div class="tooltip-container">
+                                                <button id="toggle-hand-raising-btn" class="tooltip-button btn-bubbly ${dbStatus ?'bg-yellow-100 text-yellow-600 hover:bg-yellow-200':'bg-gray-200 text-gray-600 hover:bg-gray-300'}">
+                                                    <i class="fa-solid ${dbStatus ?'fa-hand':'fa-hand-sparkles'}"></i>
+                                                </button>
+                                                <span class="tooltip-text">${dbStatus ?'Pause Raising':'Resume Raising'}</span>
+                                            </div>
+                                            
+                                            ${viewButton('requests', 'fa-user-shield', 'Requests', true, pendingRequests.length)}
+                                            ${viewButton('roster', 'fa-users', 'Roster', false)}
+                                            ${viewButton('settings', 'fa-gear', 'Settings', true)}
+                                        </div>
+                                    </div>
+                                    <div class="mt-4">
+                                        <div class="text-sm font-semibold p-3 rounded-lg border flex items-center ${effectiveStatus.enabled ? (effectiveStatus.override ? 'bg-green-100 text-green-700 border-green-300' : 'bg-blue-100 text-blue-700 border-blue-300') : (effectiveStatus.override ? 'bg-red-100 text-red-700 border-red-300' : 'bg-yellow-100 text-yellow-700 border-yellow-300')}">
+                                            <i class="fa-solid ${effectiveStatus.enabled ? 'fa-circle-check' : 'fa-hand-slash'} mr-3"></i>
+                                            <span>Hand Raising Status: <strong>${effectiveStatus.enabled ? 'Enabled' : 'Paused'}</strong></span>
+                                            <span class="ml-3 font-medium text-xs">${effectiveStatus.message || (effectiveStatus.enabled ? 'Based on DB setting' : 'Based on DB setting')}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -541,30 +901,34 @@
                                     (() => {
                                         if (view === 'settings' && isOwner) return `
                                             <div id="settings-panel" class="space-y-6 fade-enter-active">
-                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
-                                                        <div class="space-y-3">
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.code)}</span><span class="tooltip-text">Copy Student Code</span></div></div>
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.coTeacherCode)}</span><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
-                                                        </div>
-                                                    </div>
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
-                                                        <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                                                    <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
+                                                    <div class="space-y-3">
+                                                        <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.code)}</span><span class="tooltip-text">Copy Student Code</span></div></div>
+                                                        <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.coTeacherCode)}</span><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
                                                     </div>
                                                 </div>
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                    <div class="flex justify-between items-center"><h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3></div>
+                                                    <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
+                                                    <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
+                                                </div>
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4 relative">
+                                                    <div class="flex justify-between items-start">
+                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3>
+                                                        ${cls.schedule?.disableAt ? 
+                                                            `<span class="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-green-100 text-green-700">Schedule Active</span>` : 
+                                                            `<span class="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-gray-100 text-gray-500">Inactive</span>`
+                                                        }
+                                                    </div>
                                                     <p class="text-sm text-gray-500 -mt-2">Automatically pause hand raising and lower all hands at a set time.</p>
-                                                    <div id="schedule-form" class="space-y-4">
-                                                        <div class="grid grid-cols-2 gap-4">
+                                                    <div id="schedule-form" class="space-y-4 border-t pt-4">
+                                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                             ${timePicker('enable-time-input', 'Enable at (Optional)', cls.schedule?.enableAt)}
                                                             ${timePicker('disable-time-input', 'Disable at', cls.schedule?.disableAt)}
                                                         </div>
-                                                        <div class="flex justify-end space-x-2">
-                                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear</button>
-                                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button>
+                                                        <div class="flex justify-end space-x-2 pt-4 border-t mt-4">
+                                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear Schedule</button>
+                                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save Changes</button>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -575,7 +939,6 @@
                                             </div>`;
                                         if (view === 'roster') return `
                                             <div id="roster-panel" class="space-y-6 fade-enter-active">
-                                                <div class="bg-white p-6 rounded-2xl shadow-sm border"><h3 class="text-xl font-bold text-gray-800 font-poppins">Class Roster</h3></div>
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border">
                                                     <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Teachers</h4>
                                                     <ul class="space-y-3">
@@ -592,16 +955,48 @@
                                             </div>`;
                                         if (view === 'requests' && isOwner) return `
                                             <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
-                                                <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${requests.length}</span></h3>
-                                                <div id="requests-list" class="mt-5">${requests.length>0?`<ul class="space-y-3">${requests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div><div class="flex items-center space-x-2"><button data-requester-id="${req.id}" class="deny-request-btn px-3 py-1.5 bg-red-100 text-red-700 text-sm font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Deny</button><button data-requester-id="${req.id}" class="accept-request-btn px-3 py-1.5 bg-green-100 text-green-700 text-sm font-semibold rounded-lg hover:bg-green-200 btn-bubbly">Accept</button></div></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
+                                                <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${pendingRequests.length}</span></h3>
+                                                <div id="requests-list" class="mt-5">${pendingRequests.length>0?`<ul class="space-y-3">${pendingRequests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div>
+                                                    <div class="request-action-group">
+                                                        <button data-requester-doc-id="${req.id}" data-action="accept" class="request-action-btn bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 btn-bubbly"><i class="fa-solid fa-check mr-1"></i> Accept</button>
+                                                        <div class="comment-split-btn">
+                                                            <button data-requester-doc-id="${req.id}" data-action="comment-edit" class="request-action-btn bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 btn-bubbly"><i class="fa-solid fa-pencil mr-1"></i> Edit</button>
+                                                            <button data-requester-doc-id="${req.id}" data-action="comment-delete" class="request-action-btn bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 btn-bubbly"><i class="fa-solid fa-trash mr-1"></i> Delete</button>
+                                                        </div>
+                                                        <button data-requester-doc-id="${req.id}" data-action="deny" class="request-action-btn bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-times mr-1"></i> Deny</button>
+                                                    </div>
+                                                </li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
                                             </div>`;
-                                        // Default to overview
-                                        return `<div id="overview-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active"><h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3><div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex items-start"><div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div><button data-student-id="${hand.id}" class="teacher-lower-hand-btn px-3 py-1.5 bg-slate-200 text-gray-700 text-sm font-semibold rounded-lg hover:bg-red-100 hover:text-red-700 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower</button></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
+                                        // Default to overview (now full width)
+                                        return `<div id="overview-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active"><h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3><div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex items-start"><div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div>
+                                                    <div class="request-action-group">
+                                                        <button data-student-id="${hand.id}" data-action="accept-hand" class="queue-action-btn bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 btn-bubbly"><i class="fa-solid fa-check mr-1"></i> Accept</button>
+                                                        <div class="comment-split-btn">
+                                                            <button data-student-id="${hand.id}" data-action="comment-edit-hand" class="queue-action-btn bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 btn-bubbly"><i class="fa-solid fa-pencil mr-1"></i> Edit</button>
+                                                            <button data-student-id="${hand.id}" data-action="comment-delete-hand" class="queue-action-btn bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 btn-bubbly"><i class="fa-solid fa-trash mr-1"></i> Delete</button>
+                                                        </div>
+                                                        <button data-student-id="${hand.id}" data-action="deny-hand" class="queue-action-btn bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-times mr-1"></i> Deny</button>
+                                                    </div>
+                                                </li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
                                     })()
                                 }</div>
                             </div>
                         `;
-                        const studentView = `<div class="fade-enter-active space-y-6"><div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200"><h2 class="text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.name)}</h2><p class="text-sm text-gray-500 mt-1">Welcome! Raise your hand below if you have a question.</p></div><div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">${(()=>{const myHand=queue.find(h=>h.id===user.uid);const myQueuePosition=queue.findIndex(h=>h.id===user.uid)+1;if(!cls.handRaisingEnabled){return`<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently paused.</h3><p class="mt-1 text-gray-600">Your teacher will resume it shortly.</p>`}else if(myHand){return`<i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3><p class="mt-1 text-lg text-gray-600">You are <span class="font-bold text-blue-600">#${myQueuePosition}</span> in the queue.</p>${myHand.question?`<p class="mt-2 text-gray-500 italic">Your question: "${escapeHtml(myHand.question)}"</p>`:''}<div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>`}else{return`<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Have a Question?</h3><p class="mt-1 text-gray-600">Click below to raise your hand.</p><div class="mt-6"><button id="raise-hand-action-btn" class="raise-hand-btn px-8 py-4 bg-blue-600 text-white font-bold text-lg rounded-xl hover:bg-blue-700 btn-bubbly"><i class="fa-solid fa-hand mr-3"></i> Raise My Hand</button></div>`}})()}</div></div>`;
+                        const studentView = `<div class="fade-enter-active space-y-6"><div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200"><h2 class="text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.name)}</h2><p class="text-sm text-gray-500 mt-1">Welcome! Raise your hand below if you have a question.</p></div><div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">${(()=>{
+                            const effectiveEnabled = getEffectiveHandRaisingStatus(cls, false).enabled;
+                            const statusMessage = getEffectiveHandRaisingStatus(cls, false).message;
+
+                            if(!effectiveEnabled){
+                                return`<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently paused.</h3><p class="mt-1 text-gray-600">${statusMessage || 'Your teacher will resume it shortly.'}</p>`
+                            } else {
+                                const myHand=queue.find(h=>h.id===user.uid);
+                                const myQueuePosition=queue.findIndex(h=>h.id===user.uid)+1;
+                                if(myHand){
+                                    return`<i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3><p class="mt-1 text-lg text-gray-600">You are <span class="font-bold text-blue-600">#${myQueuePosition}</span> in the queue.</p>${myHand.question?`<p class="mt-2 text-gray-500 italic">Your question: "${escapeHtml(myHand.question)}"</p>`:''}<div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>`
+                                } else {
+                                    return`<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Have a Question?</h3><p class="mt-1 text-gray-600">Click below to raise your hand.</p><div class="mt-6"><button id="raise-hand-action-btn" class="raise-hand-btn px-8 py-4 bg-blue-600 text-white font-bold text-lg rounded-xl hover:bg-blue-700 btn-bubbly"><i class="fa-solid fa-hand mr-3"></i> Raise My Hand</button></div>`
+                                }
+                            }})()}</div></div>`;
                         return isAnyTeacher ? teacherView : studentView;
                     },
                     newClassChoiceModal:(user)=>`
@@ -650,7 +1045,9 @@
                 document.body.addEventListener('mainContentRendered', () => {
                     const timeInputs = document.querySelectorAll('.schedule-time-input');
                     timeInputs.forEach(input => {
-                        input.dataset.digits = (input.value.replace(':', '') || '0800');
+                        // Initialize digits from the 12hr value (or empty string)
+                        input.dataset.digits = (input.value.replace(':', '') || '');
+
                         input.addEventListener('input', (e) => {
                             const isBackspace = e.inputType === 'deleteContentBackward';
                             let currentDigits = input.dataset.digits || '';
@@ -665,28 +1062,75 @@
                             }
                             
                             input.dataset.digits = currentDigits;
+
+                            if (currentDigits.length === 0) {
+                                input.value = '';
+                                input.dataset.time24hr = '';
+                                const periodBtns = input.closest('.schedule-time-input-container').querySelectorAll('.period-btn');
+                                periodBtns.forEach(btn => btn.classList.remove('active'));
+                                return;
+                            }
+                            
                             const padded = currentDigits.padStart(4, '0');
 
                             let h_str = padded.slice(0, 2);
                             let m_str = padded.slice(2, 4);
                             
-                            if (parseInt(h_str, 10) > 12) h_str = '12';
-                            if (parseInt(h_str, 10) === 0) h_str = '00';
+                            // Adjusting for 12-hour clock display logic
+                            let h_num = parseInt(h_str, 10);
+                            let final_h12_num = h_num;
+                            
+                            if (h_num === 0) final_h12_num = 12; // 00:xx maps to 12:xx AM
+                            if (h_num > 12) final_h12_num = 12;
+
                             if (parseInt(m_str, 10) > 59) m_str = '59';
 
-                            const formattedValue = `${h_str}:${m_str}`;
+                            const formattedValue = `${String(final_h12_num).padStart(2,'0')}:${m_str}`;
+                            
+                            // Only update if value is different to avoid cursor jump
                             if (input.value !== formattedValue) {
                                 input.value = formattedValue;
+                            }
+                            
+                            // Immediately update period button if digits are fully entered (4 digits)
+                            if(currentDigits.length === 4){
+                                const periodBtns = input.closest('.schedule-time-input-container').querySelectorAll('.period-btn');
+                                const periodToActivate = h_num >= 12 ? 'PM' : 'AM';
+                                periodBtns.forEach(btn => {
+                                    if(btn.dataset.value === periodToActivate) btn.classList.add('active');
+                                    else btn.classList.remove('active');
+                                });
+                                // Also update 24hr data attribute
+                                const h24 = h_num;
+                                input.dataset.time24hr = `${String(h24).padStart(2,'0')}:${String(m_str).padStart(2,'0')}`;
                             }
                         });
 
                         input.addEventListener('blur', (e) => {
+                            if (!e.target.value) {
+                                e.target.dataset.time24hr = '';
+                                e.target.dataset.digits = '';
+                                const periodBtns = e.target.closest('.schedule-time-input-container').querySelectorAll('.period-btn');
+                                periodBtns.forEach(btn => btn.classList.remove('active'));
+                                return;
+                            }
+                            
                             let [h, m] = e.target.value.split(':').map(Number);
+                            
+                            // Clean up based on 12-hour display logic
                             if (isNaN(h) || h < 1 || h > 12) h = 12;
                             if (isNaN(m) || m < 0 || m > 59) m = 0;
                             const finalValue = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
                             e.target.value = finalValue;
                             input.dataset.digits = finalValue.replace(':', '');
+                            
+                            // Crucial: Update the 24hr time on blur
+                            const periodEl = e.target.closest('.schedule-time-input-container').querySelector('.period-btn.active');
+                            const period = periodEl ? periodEl.dataset.value : 'AM'; // Default to AM if none active
+                            let h24 = h;
+                            if (period === 'PM' && h !== 12) h24 += 12;
+                            if (period === 'AM' && h === 12) h24 = 0;
+                            input.dataset.time24hr = `${String(h24).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
                         });
                     });
                 });
