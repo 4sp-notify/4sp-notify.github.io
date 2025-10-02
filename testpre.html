@@ -99,7 +99,7 @@
         .period-btn { padding: 0.75rem 1rem; border: none; background-color: #f9fafb; color: #6b7280; cursor: pointer; transition: background-color 0.2s, color 0.2s; font-family: 'Inter', sans-serif;}
         .period-btn.active { background-color: #3b82f6; color: white; }
 
-        /* Custom styles for the new co-teacher request buttons */
+        /* Custom styles for the new co-teacher request and hand queue action buttons */
         .request-action-group {
             display: flex;
             flex-direction: column;
@@ -128,6 +128,13 @@
         .comment-split-btn button:last-child {
             border-bottom-left-radius: 0.5rem;
             border-bottom-right-radius: 0.5rem;
+        }
+        /* Style for the fixed settings view content */
+        .settings-content-wrapper {
+            max-width: 700px; /* Max width for stability */
+            margin-left: auto;
+            margin-right: auto;
+            padding: 0 1rem; /* Consistent padding to prevent scrollbar shifting content */
         }
     </style>
 </head>
@@ -472,7 +479,37 @@
                 async function raiseHand(id,q){await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).set({studentName:userData.username,studentPhotoURL:currentUser.photoURL||'',question:q||'',raisedAt:FieldValue.serverTimestamp()});hideModal();}
                 async function lowerHand(id,studentId=currentUser.uid){await db.collection('classes').doc(id).collection('raisedHands').doc(studentId).delete();}
                 async function lowerAllHands(id){const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();}
-                async function toggleHandRaising(id,status){await db.collection('classes').doc(id).update({handRaisingEnabled:status});}
+                
+                // UPDATED: toggleHandRaising for instant DOM update
+                async function toggleHandRaising(id, status) {
+                    // 1. Immediate DOM Update (Instant feedback)
+                    const btn = document.getElementById('toggle-hand-raising-btn');
+                    const icon = btn ? btn.querySelector('i') : null;
+                    
+                    if (btn && icon) {
+                        // Toggle local state immediately
+                        allLoadedClasses[id].handRaisingEnabled = !status;
+                        const newState = !status;
+
+                        // Change button appearance instantly
+                        btn.classList.toggle('bg-yellow-100', newState);
+                        btn.classList.toggle('text-yellow-600', newState);
+                        btn.classList.toggle('hover:bg-yellow-200', newState);
+                        btn.classList.toggle('bg-gray-200', !newState);
+                        btn.classList.toggle('text-gray-600', !newState);
+                        btn.classList.toggle('hover:bg-gray-300', !newState);
+                        
+                        icon.classList.remove('fa-hand', 'fa-hand-sparkles');
+                        icon.classList.add(newState ? 'fa-hand' : 'fa-hand-sparkles');
+                        
+                        const tooltip = btn.closest('.tooltip-container').querySelector('.tooltip-text');
+                        if (tooltip) tooltip.textContent = newState ? 'Pause Raising' : 'Resume Raising';
+                    }
+
+                    // 2. Database Update (Async)
+                    await db.collection('classes').doc(id).update({ handRaisingEnabled: status });
+                    // OnSnapshot listener will re-render main content, but the button feedback is instant now.
+                }
                 
                 async function handleChangeClassName(id,name){const today=new Date().toISOString().split('T')[0];const key=`classNameChanges_${id}`;let changes;try{changes=JSON.parse(localStorage.getItem(key))||{};}catch(e){changes={};}if(changes.date!==today){changes={date:today,count:0};}if(changes.count>=3){showModal(TPL.messageModal('Limit Reached','You can only change the class name 3 times per day.','red'));return;}await db.collection('classes').doc(id).update({name});changes.count++;localStorage.setItem(key,JSON.stringify(changes));showModal(TPL.messageModal('Success','Class name updated!','green'));}
                 async function handleSaveSchedule(id,enable,disable){await db.collection('classes').doc(id).update({schedule:{enableAt:enable,disableAt:disable}, scheduleLastActionDate: ''});showModal(TPL.messageModal('Success','Schedule saved!','green'));}
@@ -584,8 +621,10 @@
                     if (target.id === 'raise-hand-action-btn') showModal(TPL.raiseHandModal(currentClassId));
                     if (target.id === 'lower-hand-action-btn') lowerHand(currentClassId);
                     if (target.id === 'lower-all-hands-btn') lowerAllHands(currentClassId);
-                    if (target.matches('.teacher-lower-hand-btn')) lowerHand(currentClassId, target.dataset.studentId);
-                    if (target.id === 'toggle-hand-raising-btn') toggleHandRaising(currentClassId, !allLoadedClasses[currentClassId].handRaisingEnabled);
+                    
+                    // OLD BUTTON LOGIC REMOVED: if (target.matches('.teacher-lower-hand-btn')) lowerHand(currentClassId, target.dataset.studentId);
+                    
+                    if (target.id === 'toggle-hand-raising-btn') toggleHandRaising(currentClassId, allLoadedClasses[currentClassId].handRaisingEnabled);
                     
                     // NEW: Updated view tab logic
                     if(target.matches('.class-view-tab')) { 
@@ -603,12 +642,28 @@
                         handleCoTeacherRequest(currentClassId, requesterId, action); 
                     }
                     
+                    // NEW: Updated hand queue action button logic
+                    if(target.matches('.queue-action-btn')) { 
+                        const action = target.dataset.action;
+                        const studentId = target.dataset.studentId; 
+                        
+                        if (action === 'accept-hand' || action === 'deny-hand') {
+                            lowerHand(currentClassId, studentId); // Both actions lower the hand
+                            // Use setTimeout to allow lowerHand async call to start before showing modal
+                            setTimeout(() => {
+                                showModal(TPL.messageModal('Hand Lowered', `The student's hand was ${action === 'accept-hand' ? 'accepted and lowered' : 'denied and lowered'}.`, action === 'accept-hand' ? 'green' : 'red'));
+                            }, 50);
+                        } else if (action.startsWith('comment-')) {
+                            showModal(TPL.messageModal('Feature Update', 'Commenting on raised hands is a planned feature! This button is currently for demonstration.', 'yellow'));
+                        }
+                    }
+
                     if(target.matches('.schedule-action-btn')) {
                         const action = target.dataset.action;
                         if (action === 'save') {
                             const formatTime = (time, period) => { let [h, m] = time.split(':').map(Number); if (period === 'PM' && h !== 12) h += 12; if (period === 'AM' && h === 12) h = 0; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; };
                             const enableTime = document.getElementById('enable-time-input').value; const enablePeriod = document.querySelector('#enable-period-selector .active').dataset.value;
-                            const disableTime = document.getElementById('disable-time-input').value; const disablePeriod = document.querySelector('#disable-period-selector .active').dataset.value;
+                            const disableTime = document.getElementById('disable-time-input').value; const disablePeriod = document.querySelector('#disable-time-period-selector .active').dataset.value;
                             handleSaveSchedule(currentClassId, formatTime(enableTime, enablePeriod), formatTime(disableTime, disablePeriod));
                         } else if (action === 'clear') { deleteSchedule(currentClassId); }
                     }
@@ -647,7 +702,8 @@
                             const period = h24 >= 12 ? 'PM' : 'AM';
                             let h12 = h24 % 12; if (h12 === 0) h12 = 12;
                             const timeString = `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input"><div id="${id.replace('-input', '-period-selector')}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
+                            const periodId = id.replace('-input', '-period-selector');
+                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input"><div id="${periodId}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
                         };
                         
                         // Helper to generate a view button. If a view is active, it becomes the overview button.
@@ -688,31 +744,35 @@
                                 <div id="teacher-view-content" class="min-h-[60vh]">${
                                     (() => {
                                         if (view === 'settings' && isOwner) return `
-                                            <div id="settings-panel" class="space-y-6 fade-enter-active">
-                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
-                                                        <div class="space-y-3">
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.code)}</span><span class="tooltip-text">Copy Student Code</span></div></div>
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.coTeacherCode)}</span><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
-                                                        </div>
-                                                    </div>
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
-                                                        <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
+                                            <div id="settings-panel" class="settings-content-wrapper space-y-6 fade-enter-active">
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                                                    <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
+                                                    <div class="space-y-3">
+                                                        <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.code)}</span><span class="tooltip-text">Copy Student Code</span></div></div>
+                                                        <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.coTeacherCode)}</span><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
                                                     </div>
                                                 </div>
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                    <div class="flex justify-between items-center"><h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3></div>
+                                                    <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
+                                                    <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
+                                                </div>
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4 relative">
+                                                    <div class="flex justify-between items-start">
+                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3>
+                                                        ${cls.schedule?.disableAt && (cls.schedule.disableAt !== cls.schedule.enableAt || cls.schedule.enableAt === '00:00' && cls.schedule.disableAt === '00:00') ? 
+                                                            `<span class="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-green-100 text-green-700">Schedule Active</span>` : 
+                                                            `<span class="text-xs font-bold uppercase tracking-wider px-3 py-1 rounded-full bg-gray-100 text-gray-500">Inactive</span>`
+                                                        }
+                                                    </div>
                                                     <p class="text-sm text-gray-500 -mt-2">Automatically pause hand raising and lower all hands at a set time.</p>
-                                                    <div id="schedule-form" class="space-y-4">
-                                                        <div class="grid grid-cols-2 gap-4">
+                                                    <div id="schedule-form" class="space-y-4 border-t pt-4">
+                                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                             ${timePicker('enable-time-input', 'Enable at (Optional)', cls.schedule?.enableAt)}
                                                             ${timePicker('disable-time-input', 'Disable at', cls.schedule?.disableAt)}
                                                         </div>
-                                                        <div class="flex justify-end space-x-2">
-                                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear</button>
-                                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button>
+                                                        <div class="flex justify-end space-x-2 pt-4 border-t mt-4">
+                                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear Schedule</button>
+                                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save Changes</button>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -722,7 +782,7 @@
                                                 </div>
                                             </div>`;
                                         if (view === 'roster') return `
-                                            <div id="roster-panel" class="space-y-6 fade-enter-active">
+                                            <div id="roster-panel" class="settings-content-wrapper space-y-6 fade-enter-active">
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border"><h3 class="text-xl font-bold text-gray-800 font-poppins">Class Roster</h3></div>
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border">
                                                     <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Teachers</h4>
@@ -739,7 +799,7 @@
                                                 </div>
                                             </div>`;
                                         if (view === 'requests' && isOwner) return `
-                                            <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
+                                            <div id="requests-panel" class="settings-content-wrapper bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
                                                 <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${pendingRequests.length}</span></h3>
                                                 <div id="requests-list" class="mt-5">${pendingRequests.length>0?`<ul class="space-y-3">${pendingRequests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div>
                                                     <div class="request-action-group">
@@ -753,7 +813,16 @@
                                                 </li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
                                             </div>`;
                                         // Default to overview
-                                        return `<div id="overview-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active"><h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3><div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex items-start"><div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div><button data-student-id="${hand.id}" class="teacher-lower-hand-btn px-3 py-1.5 bg-slate-200 text-gray-700 text-sm font-semibold rounded-lg hover:bg-red-100 hover:text-red-700 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower</button></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
+                                        return `<div id="overview-panel" class="settings-content-wrapper bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active"><h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3><div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex items-start"><div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div>
+                                                    <div class="request-action-group">
+                                                        <button data-student-id="${hand.id}" data-action="accept-hand" class="queue-action-btn bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 btn-bubbly"><i class="fa-solid fa-check mr-1"></i> Accept</button>
+                                                        <div class="comment-split-btn">
+                                                            <button data-student-id="${hand.id}" data-action="comment-edit-hand" class="queue-action-btn bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 btn-bubbly"><i class="fa-solid fa-pencil mr-1"></i> Edit</button>
+                                                            <button data-student-id="${hand.id}" data-action="comment-delete-hand" class="queue-action-btn bg-blue-100 text-blue-700 font-semibold hover:bg-blue-200 btn-bubbly"><i class="fa-solid fa-trash mr-1"></i> Delete</button>
+                                                        </div>
+                                                        <button data-student-id="${hand.id}" data-action="deny-hand" class="queue-action-btn bg-red-500 text-white font-semibold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-times mr-1"></i> Deny</button>
+                                                    </div>
+                                                </li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
                                     })()
                                 }</div>
                             </div>
