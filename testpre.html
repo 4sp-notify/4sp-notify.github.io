@@ -3,121 +3,1177 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Firebase Setup Template</title>
-    <!-- Load Tailwind CSS -->
+    <title>Notify | Dashboard</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <script href="../firebase-config.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- Font Awesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+    <!-- Fonts: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
     <style>
-        body { font-family: 'Inter', sans-serif; }
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f8fafc; /* Slate-50 */
+        }
+        .time-input-container {
+            position: relative;
+            display: inline-block;
+        }
+        /* Custom styles for squircle action buttons */
+        .squircle {
+            border-radius: 30%; /* Approximates a squircle shape */
+        }
+        /* Custom styles for split comment button */
+        .split-button-container {
+            border-radius: 0.75rem; /* Rounded edges for the container */
+            overflow: hidden;
+            width: 4rem; /* Fixed width for the button group */
+            height: 4rem; /* Fixed height for the button group */
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        }
+        .split-button-top {
+            height: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.3); /* Separator */
+        }
+        .split-button-bottom {
+            height: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        /* Ensure the main action buttons are appropriately sized */
+        .action-button {
+            width: 4rem;
+            height: 4rem;
+        }
     </style>
 </head>
-<body class="bg-gray-100 min-h-screen p-8">
-
-    <div id="app" class="max-w-xl mx-auto bg-white p-6 rounded-xl shadow-lg">
-        <h1 class="text-2xl font-bold text-gray-800 mb-4">Firebase Initialization Status</h1>
-        <div id="status-message" class="text-sm p-4 rounded-lg bg-indigo-50 text-indigo-700">Initializing Firebase...</div>
-        <div class="mt-4 p-4 border border-gray-200 rounded-lg space-y-2 text-sm text-gray-700">
-            <p><strong>App ID (Used in Firestore paths):</strong> <code id="display-app-id" class="font-mono bg-gray-100 p-1 rounded">Loading...</code></p>
-            <p><strong>User ID (Authenticated User):</strong> <code id="display-user-id" class="font-mono bg-gray-100 p-1 rounded">Loading...</code></p>
-        </div>
-        <button id="test-button" class="mt-6 w-full bg-indigo-600 text-white py-2 rounded-lg font-semibold hover:bg-indigo-700 transition duration-150" disabled>
-            (Wait for Auth)
-        </button>
+<body>
+    <div id="app" class="min-h-screen flex flex-col items-center">
+        <!-- Content will be rendered here -->
     </div>
 
-    <!-- Firebase SDK Imports -->
+    <!-- Modals for Commenting, Deletion, etc. -->
+    <div id="modal-container"></div>
+    <!-- Message container for toasts -->
+    <div id="message-container" class="fixed top-4 right-4 z-50"></div>
+
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
-
-        // Set log level to Debug for visibility in the console (optional but helpful)
-        setLogLevel('Debug');
-
-        // --- MANDATORY Firebase Configuration Retrieval ---
-        // We MUST use the global variables provided by the environment.
+        import { getFirestore, doc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, arrayUnion, arrayRemove, getDoc, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // --- Global Variables (Mandatory Canvas Setup) ---
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
         
-        let firebaseConfig = {};
-        try {
-            // The configuration is passed as a JSON string in the global variable.
-            firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
-        } catch (e) {
-            console.error("Error parsing __firebase_config:", e);
-        }
+        let app, db, auth;
+        let userId = null;
+        let userRole = null; // 'teacher', 'coTeacher', 'student', 'pending'
+        let currentClassId = null;
+        let currentView = 'dashboard';
+        let classData = null;
+        let classRequests = [];
+        let currentFilter = 'Pending'; // 'Pending', 'Accepted', 'Denied', 'Commented'
+        let unsubscribeRequests = null;
+        let unsubscribeClass = null;
 
-        // Check if config is available
-        if (Object.keys(firebaseConfig).length === 0) {
-            console.error("Firebase configuration is missing or invalid. Check the environment variables.");
-            document.getElementById('status-message').textContent = "ERROR: Firebase config missing.";
-        }
-        // ----------------------------------------------------
+        // --- Utility Functions ---
 
-
-        // 1. Initialize Firebase App
-        const app = initializeApp(firebaseConfig);
-        const db = getFirestore(app);
-        const auth = getAuth(app);
+        // Local storage for student's custom class name (Rule 7)
+        const getLocalClassName = (classId) => localStorage.getItem(`class_name_${classId}`) || 'My Class';
+        const setLocalClassName = (classId, name) => localStorage.setItem(`class_name_${classId}`, name);
         
-        // References to DOM elements
-        const statusMessage = document.getElementById('status-message');
-        const displayAppId = document.getElementById('display-app-id');
-        const displayUserId = document.getElementById('display-user-id');
-        const testButton = document.getElementById('test-button');
+        // Helper to format timestamps
+        const formatTimestamp = (timestamp) => {
+            if (!timestamp) return 'No Time';
+            const date = timestamp.toDate();
+            return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        };
+        
+        // Helper to format time only (for schedule)
+        const formatTime = (date) => {
+            const h = String(date.getHours()).padStart(2, '0');
+            const m = String(date.getMinutes()).padStart(2, '0');
+            return `${h}:${m}`;
+        };
 
-        let isAuthReady = false;
+        // Function to update the document title based on unanswered requests (Rule 8)
+        const updateDocumentTitle = (unansweredCount) => {
+            const baseTitle = 'Notify | Dashboard';
+            document.title = unansweredCount > 0 
+                ? `(${unansweredCount}) ${baseTitle}` 
+                : baseTitle;
+        };
 
-        // 2. Handle Authentication
-        async function handleAuth() {
+        // --- Firestore Paths ---
+        const getClassPath = (id) => `artifacts/${appId}/public/data/classes/${id}`;
+        const getRequestsCollectionPath = (classId) => `artifacts/${appId}/public/data/classes/${classId}/requests`;
+
+        // --- Core Functions ---
+
+        const initializeAuth = async () => {
             try {
-                // We MUST use the __initial_auth_token if it exists.
-                if (typeof __initial_auth_token !== 'undefined') {
-                    await signInWithCustomToken(auth, __initial_auth_token);
+                if (initialAuthToken) {
+                    await signInWithCustomToken(auth, initialAuthToken);
                 } else {
-                    // Fallback to anonymous sign-in if the custom token is not available
                     await signInAnonymously(auth);
                 }
+                console.log("Authentication successful.");
             } catch (error) {
-                console.error("Firebase Auth error:", error);
-                statusMessage.textContent = `Authentication failed: ${error.message}`;
-                statusMessage.classList.replace('bg-indigo-50', 'bg-red-100');
-                statusMessage.classList.replace('text-indigo-700', 'text-red-700');
+                console.error("Auth initialization failed:", error);
             }
-        }
+        };
 
-        // 3. Set up Auth State Listener
-        onAuthStateChanged(auth, (user) => {
-            isAuthReady = true;
-            displayAppId.textContent = appId;
+        const initializeFirebase = () => {
+            try {
+                if (Object.keys(firebaseConfig).length === 0) {
+                    console.error("Firebase config is empty. Cannot initialize.");
+                    return;
+                }
+                app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                auth = getAuth(app);
+                setLogLevel('debug');
+
+                onAuthStateChanged(auth, async (user) => {
+                    if (user) {
+                        userId = user.uid;
+                        await initializeAuth();
+                        await checkUserRole();
+                        renderApp();
+                    } else {
+                        userId = null;
+                        userRole = null;
+                        renderLogin();
+                    }
+                });
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+            }
+        };
+
+        // --- Role and Class Management (Simplified from original for context, preserved logic) ---
+
+        const checkUserRole = async () => {
+            if (!userId) return;
+
+            // 1. Check if user is a teacher
+            const teacherDocRef = doc(db, `artifacts/${appId}/users/${userId}/profile/teacher`);
+            const teacherDoc = await getDoc(teacherDocRef);
+
+            if (teacherDoc.exists()) {
+                userRole = 'teacher';
+                currentClassId = teacherDoc.data().currentClassId;
+                if (!currentClassId) {
+                    currentView = 'classSelector';
+                } else {
+                    await subscribeToClass(currentClassId);
+                }
+                return;
+            }
+
+            // 2. Check if user is a co-teacher or student
+            const classesRef = collection(db, `artifacts/${appId}/public/data/classes`);
+            const q = query(classesRef, where("members", "array-contains", userId));
+            const snapshot = await getDocs(q);
+
+            if (!snapshot.empty) {
+                const classDoc = snapshot.docs[0];
+                currentClassId = classDoc.id;
+                await subscribeToClass(currentClassId);
+                
+                const data = classDoc.data();
+                if (data.coTeachers && data.coTeachers.includes(userId)) {
+                    userRole = 'coTeacher';
+                } else {
+                    userRole = 'student';
+                }
+                return;
+            }
+
+            // 3. User is new
+            userRole = 'pending';
+            currentClassId = null;
+            currentView = 'classSelector';
+        };
+
+        const subscribeToClass = async (classId) => {
+            if (unsubscribeClass) { unsubscribeClass(); }
+            if (unsubscribeRequests) { unsubscribeRequests(); }
+
+            currentClassId = classId;
+            const classDocRef = doc(db, getClassPath(classId));
+            unsubscribeClass = onSnapshot(classDocRef, (docSnap) => {
+                if (docSnap.exists()) {
+                    classData = docSnap.data();
+                    
+                    // Re-check role for dynamic updates (e.g., promoted/demoted)
+                    const newRole = (classData.teacherId === userId) ? 'teacher' : 
+                                    (classData.coTeachers && classData.coTeachers.includes(userId)) ? 'coTeacher' : 
+                                    (classData.members && classData.members.includes(userId)) ? 'student' : 'pending';
+                    
+                    userRole = newRole;
+                    
+                    if (userRole === 'pending') {
+                        // User was removed from the class
+                        currentClassId = null;
+                        navigate('classSelector');
+                        return;
+                    }
+
+                    subscribeToRequests(classId);
+                    renderApp(); // Rerender on class data change (e.g., schedule change)
+                } else {
+                    console.warn(`Class ${classId} not found/deleted.`);
+                    classData = null;
+                    if (userRole === 'teacher') { updateDoc(doc(db, `artifacts/${appId}/users/${userId}/profile/teacher`), { currentClassId: null }); }
+                    currentClassId = null;
+                    navigate('classSelector');
+                }
+            });
+        };
+
+        const subscribeToRequests = (classId) => {
+            if (unsubscribeRequests) { unsubscribeRequests(); }
+            const requestsRef = collection(db, getRequestsCollectionPath(classId));
+            const q = userRole === 'student'
+                ? query(requestsRef, where("requesterId", "==", userId))
+                : query(requestsRef); // Teacher/co-teacher sees all
+
+            unsubscribeRequests = onSnapshot(q, (snapshot) => {
+                classRequests = snapshot.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => b.timestamp.toMillis() - a.timestamp.toMillis());
+                
+                // Update tab title for teacher/co-teacher (Rule 8)
+                if (userRole === 'teacher' || userRole === 'coTeacher') {
+                    const unansweredCount = classRequests.filter(req => req.status === 'Pending').length;
+                    updateDocumentTitle(unansweredCount);
+                }
+
+                renderDashboard(); // Rerender the dashboard with new requests
+            }, (error) => {
+                console.error("Error listening to requests:", error);
+            });
+        };
+
+        // --- Navigation and Routing ---
+
+        const navigate = (newView, classId = null) => {
+            currentView = newView;
+            if (classId) {
+                currentClassId = classId;
+                if (userRole === 'teacher') {
+                    setDoc(doc(db, `artifacts/${appId}/users/${userId}/profile/teacher`), { currentClassId: classId }, { merge: true });
+                }
+                subscribeToClass(classId);
+            }
+            renderApp();
+        };
+
+        const goHome = () => {
+            currentView = 'dashboard';
+            renderApp();
+        };
+        
+        // --- Schedule & Hand Raising Logic (Rule 5) ---
+
+        const checkHandRaisingSchedule = () => {
+            const defaultEnabled = classData?.handRaisingEnabled === true;
+
+            if (!classData || classData.isScheduleEnabled !== true) {
+                return defaultEnabled; // Manual control only
+            }
             
-            if (user) {
-                const userId = user.uid;
-                statusMessage.textContent = `SUCCESS! Firebase and Auth initialized. You are signed in.`;
-                statusMessage.classList.replace('bg-indigo-50', 'bg-green-100');
-                statusMessage.classList.replace('text-indigo-700', 'text-green-700');
-                displayUserId.textContent = userId;
-                testButton.textContent = 'Auth Ready!';
-                testButton.disabled = false;
-                
-                // Now you can use 'db' and 'userId' to perform Firestore operations
-                console.log(`Current User ID: ${userId}`);
-                console.log(`Database instance ready:`, db);
+            const start = classData.scheduleStart; // e.g., "09:00"
+            const end = classData.scheduleEnd;     // e.g., "15:00"
+            
+            if (!start || !end) return defaultEnabled;
 
-            } else {
-                // User is signed out (this should ideally not happen if signInWithCustomToken succeeds)
-                displayUserId.textContent = 'Not Signed In';
-                statusMessage.textContent = 'Auth state changed: User is signed out.';
-                statusMessage.classList.replace('bg-indigo-50', 'bg-yellow-100');
-                statusMessage.classList.replace('text-indigo-700', 'text-yellow-700');
-                
-                // If signed out, try to sign in again immediately
-                handleAuth();
+            const now = new Date();
+            const currentTime = formatTime(now); // "HH:MM"
+            
+            // Hand raising is ON if currentTime is between start (inclusive) and end (exclusive)
+            const isWithinSchedule = currentTime >= start && currentTime < end;
+            
+            // The DB value must be kept consistent with the schedule to prevent teacher confusion
+            if (defaultEnabled !== isWithinSchedule) {
+                // If the scheduled status doesn't match the DB, update DB silently
+                updateDoc(doc(db, getClassPath(currentClassId)), {
+                    handRaisingEnabled: isWithinSchedule
+                });
             }
-        });
 
-        // Initial sign-in attempt
-        handleAuth();
+            return isWithinSchedule;
+        };
+        
+        const toggleHandRaising = async () => {
+            if (!currentClassId || userRole === 'student') return;
+
+            // Immediately call the schedule check to ensure the DB state is synced before toggling
+            const isEnabledBySchedule = classData?.isScheduleEnabled && checkHandRaisingSchedule(); 
+            const currentStatus = classData?.handRaisingEnabled;
+
+            if (classData?.isScheduleEnabled) {
+                 renderMessage('Hand raising status is currently under automatic schedule control and cannot be toggled manually.', 'warning');
+                 return;
+            }
+
+            try {
+                const classRef = doc(db, getClassPath(currentClassId));
+                await updateDoc(classRef, {
+                    handRaisingEnabled: !currentStatus
+                });
+            } catch (error) {
+                console.error("Error toggling hand raising:", error);
+                renderMessage('Failed to toggle hand raising. Check console for details.', 'error');
+            }
+        };
+
+        const saveSchedule = async (start, end, isEnabled) => {
+            if (!currentClassId || userRole !== 'teacher') return;
+            
+            try {
+                const classRef = doc(db, getClassPath(currentClassId));
+                await updateDoc(classRef, {
+                    scheduleStart: start,
+                    scheduleEnd: end,
+                    isScheduleEnabled: isEnabled,
+                    // Ensure handRaisingEnabled is updated based on the new schedule immediately
+                    handRaisingEnabled: isEnabled ? (formatTime(new Date()) >= start && formatTime(new Date()) < end) : classData?.handRaisingEnabled,
+                });
+                renderMessage('Schedule settings saved successfully! Hand raising status updated.', 'success');
+            } catch (error) {
+                console.error("Error saving schedule:", error);
+                renderMessage('Failed to save schedule settings. Check console for details.', 'error');
+            }
+        };
+
+        // --- Request Actions ---
+        
+        const raiseHand = async (message) => {
+            if (!currentClassId || userRole !== 'student' || !classData || !classData.handRaisingEnabled) {
+                renderMessage('Cannot raise hand at this time. Hand raising is paused.', 'warning');
+                return;
+            }
+
+            try {
+                const requestsRef = collection(db, getRequestsCollectionPath(currentClassId));
+                await addDoc(requestsRef, {
+                    requesterId: userId,
+                    requesterName: getLocalClassName(currentClassId), 
+                    requestMessage: message,
+                    timestamp: new Date(),
+                    status: 'Pending', 
+                    comment: null,
+                    commenterId: null
+                });
+                renderMessage('Request submitted successfully! Instructor has been notified.', 'success');
+            } catch (error) {
+                console.error("Error raising hand:", error);
+                renderMessage('Failed to submit request. Check console for details.', 'error');
+            }
+        };
+        
+        const handleRequestAction = async (requestId, status, comment = null) => {
+            if (!currentClassId || userRole === 'student') return;
+
+            const requestRef = doc(db, getRequestsCollectionPath(currentClassId), requestId);
+            
+            try {
+                const updateData = {
+                    status: status,
+                    commenterId: userId,
+                };
+                
+                if (status === 'Commented') {
+                    updateData.comment = comment;
+                } else if (status === 'Accepted' || status === 'Denied') {
+                    // Clear comment if accepting/denying
+                    updateData.comment = null; 
+                }
+                
+                await updateDoc(requestRef, updateData);
+                renderMessage(`Request status updated to ${status.toLowerCase()}!`, 'success');
+                
+            } catch (error) {
+                console.error(`Error performing ${status} action:`, error);
+                renderMessage(`Failed to perform action. Check console for details.`, 'error');
+            }
+            document.getElementById('modal-container').innerHTML = ''; // Close modal
+        };
+
+        const showCommentModal = (requestId, existingComment = null) => {
+            const isEditing = existingComment !== null;
+            const title = isEditing ? 'Edit Comment' : 'Add Comment';
+            const actionText = isEditing ? 'Save Changes' : 'Submit Comment';
+            
+            const modalHtml = `
+                <div class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md">
+                        <h3 class="text-xl font-semibold text-gray-800 mb-4">${title}</h3>
+                        <textarea id="comment-input" rows="4" 
+                            class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-700 resize-none" 
+                            placeholder="Type your comment here...">
+                            ${existingComment || ''}
+                        </textarea>
+                        <div class="flex justify-end space-x-3 mt-4">
+                            <button onclick="document.getElementById('modal-container').innerHTML = ''" 
+                                class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition duration-150">
+                                Cancel
+                            </button>
+                            <button id="modal-action-btn" 
+                                class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition duration-150">
+                                ${actionText}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('modal-container').innerHTML = modalHtml;
+            document.getElementById('modal-action-btn').onclick = () => {
+                const comment = document.getElementById('comment-input').value.trim();
+                if (comment) {
+                    handleRequestAction(requestId, 'Commented', comment);
+                } else {
+                    renderMessage('Comment cannot be empty.', 'error');
+                }
+            };
+        };
+
+        const showDeleteCommentModal = (requestId) => {
+            const modalHtml = `
+                <div class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md">
+                        <h3 class="text-xl font-semibold text-red-600 mb-4">Confirm Comment Deletion</h3>
+                        <p class="text-gray-600 mb-6">Are you sure you want to delete this comment? The request status will revert to Unanswered.</p>
+                        <div class="flex justify-end space-x-3 mt-4">
+                            <button onclick="document.getElementById('modal-container').innerHTML = ''" 
+                                class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition duration-150">
+                                Cancel
+                            </button>
+                            <button onclick="deleteComment('${requestId}')"
+                                class="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition duration-150">
+                                Delete Comment
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('modal-container').innerHTML = modalHtml;
+        };
+        
+        const deleteComment = async (requestId) => {
+            if (!currentClassId || userRole === 'student') return;
+
+            const requestRef = doc(db, getRequestsCollectionPath(currentClassId), requestId);
+            
+            try {
+                await updateDoc(requestRef, {
+                    comment: null,
+                    commenterId: null,
+                    status: 'Pending' // Revert to pending
+                });
+                renderMessage('Comment deleted. Request reverted to Unanswered.', 'success');
+            } catch (error) {
+                console.error("Error deleting comment:", error);
+                renderMessage('Failed to delete comment. Check console for details.', 'error');
+            }
+            document.getElementById('modal-container').innerHTML = '';
+        };
+
+        // --- Class Management ---
+
+        const deleteClass = async () => {
+            if (!currentClassId || userRole !== 'teacher') return; 
+            
+            const confirmDelete = async () => {
+                try {
+                    // 1. Delete all requests
+                    const requestsSnapshot = await getDocs(collection(db, getRequestsCollectionPath(currentClassId)));
+                    const deletePromises = requestsSnapshot.docs.map(d => deleteDoc(d.ref));
+                    await Promise.all(deletePromises);
+
+                    // 2. Delete the class document
+                    await deleteDoc(doc(db, getClassPath(currentClassId)));
+                    
+                    // 3. Update teacher profile
+                    await updateDoc(doc(db, `artifacts/${appId}/users/${userId}/profile/teacher`), { currentClassId: null });
+
+                    renderMessage('Class deleted successfully.', 'success');
+                    navigate('classSelector');
+                } catch (error) {
+                    console.error("Error deleting class:", error);
+                    renderMessage('Failed to delete class. Check console for details.', 'error');
+                }
+                document.getElementById('modal-container').innerHTML = '';
+            };
+
+            const modalHtml = `
+                <div class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md">
+                        <h3 class="text-xl font-semibold text-red-600 mb-4">Confirm Class Deletion</h3>
+                        <p class="text-gray-600 mb-6">Are you sure you want to delete the class: <strong>${classData?.className}</strong>? This will delete all associated data and cannot be undone.</p>
+                        <div class="flex justify-end space-x-3 mt-4">
+                            <button onclick="document.getElementById('modal-container').innerHTML = ''" 
+                                class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition duration-150">
+                                Cancel
+                            </button>
+                            <button id="confirm-delete-btn"
+                                class="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition duration-150">
+                                Delete Class
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('modal-container').innerHTML = modalHtml;
+            document.getElementById('confirm-delete-btn').onclick = confirmDelete;
+        };
+
+        const leaveClass = async () => {
+            if (!currentClassId || userRole === 'teacher' || userRole === 'coTeacher') return;
+
+            const confirmLeave = async () => {
+                try {
+                    const classRef = doc(db, getClassPath(currentClassId));
+                    await updateDoc(classRef, {
+                        members: arrayRemove(userId)
+                    });
+                    
+                    // Cleanup local storage for this class
+                    localStorage.removeItem(`class_name_${currentClassId}`);
+
+                    renderMessage('You have left the class.', 'success');
+                    // The onSnapshot listener will handle the navigation to classSelector
+                } catch (error) {
+                    console.error("Error leaving class:", error);
+                    renderMessage('Failed to leave class. Check console for details.', 'error');
+                }
+                document.getElementById('modal-container').innerHTML = '';
+            };
+
+            const modalHtml = `
+                <div class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md">
+                        <h3 class="text-xl font-semibold text-red-600 mb-4">Confirm Leave Class</h3>
+                        <p class="text-gray-600 mb-6">Are you sure you want to leave the class: <strong>${classData?.className}</strong>?</p>
+                        <div class="flex justify-end space-x-3 mt-4">
+                            <button onclick="document.getElementById('modal-container').innerHTML = ''" 
+                                class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition duration-150">
+                                Cancel
+                            </button>
+                            <button id="confirm-leave-btn"
+                                class="px-4 py-2 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition duration-150">
+                                Leave Class
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            document.getElementById('modal-container').innerHTML = modalHtml;
+            document.getElementById('confirm-leave-btn').onclick = confirmLeave;
+        };
+
+        // --- UI Components and Rendering ---
+
+        const renderMessage = (message, type = 'info') => {
+            const container = document.getElementById('message-container');
+            if (!container) return; // Should not happen
+
+            const colorMap = {
+                success: 'bg-green-100 border-green-400 text-green-700',
+                error: 'bg-red-100 border-red-400 text-red-700',
+                warning: 'bg-yellow-100 border-yellow-400 text-yellow-700',
+                info: 'bg-blue-100 border-blue-400 text-blue-700',
+            };
+
+            const messageHtml = `
+                <div class="border p-4 rounded-xl shadow-lg mt-2 transform transition-all duration-300 ease-out opacity-100 ${colorMap[type]}" role="alert">
+                    <p class="font-medium">${message}</p>
+                </div>
+            `;
+            // Prepend new message
+            container.insertAdjacentHTML('afterbegin', messageHtml);
+            const newMessage = container.firstElementChild;
+
+
+            // Auto-hide after 3 seconds
+            setTimeout(() => {
+                newMessage.classList.remove('opacity-100');
+                newMessage.classList.add('opacity-0', 'scale-90');
+                setTimeout(() => {
+                    newMessage.remove();
+                }, 300);
+            }, 3000);
+        };
+
+        const renderHeader = () => {
+            let className = classData ? classData.className : 'Loading Class...';
+            if (userRole === 'student' && currentClassId) {
+                className = getLocalClassName(currentClassId);
+            }
+
+            // Determine if the navigation buttons should become 'Home' buttons (Rule 2)
+            const isSubView = ['settings', 'coTeachers', 'classes'].includes(currentView);
+
+            // Determine hand raising button state (Rule 1)
+            const isEnabled = checkHandRaisingSchedule();
+            const isPaused = !isEnabled;
+            const iconClass = isPaused ? 'fa-play' : 'fa-pause';
+            const buttonText = isPaused ? 'Resume Raising' : 'Pause Raising';
+            const buttonColor = isPaused ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700';
+            const handRaisingControl = (userRole === 'teacher' || userRole === 'coTeacher') ? `
+                <button onclick="window.toggleHandRaising()" title="${buttonText}"
+                    class="action-button p-4 ${buttonColor} text-white rounded-full shadow-lg transition duration-150 squircle flex items-center justify-center text-xl">
+                    <i class="fa-solid ${iconClass}"></i>
+                </button>
+            ` : '';
+
+            // Student request button (Rule 7)
+            const studentRequestButton = (userRole === 'student' && currentView === 'dashboard') ? `
+                <button onclick="showRaiseHandModal()" title="Create New Request"
+                    class="action-button p-4 bg-blue-600 hover:bg-blue-700 text-white rounded-full shadow-lg transition duration-150 squircle flex items-center justify-center text-xl">
+                    <i class="fa-solid fa-plus"></i>
+                </button>
+            ` : '';
+            
+            const getClassButton = (viewName, icon, title) => {
+                const isCurrentSubView = currentView === viewName;
+                const isHomeButton = isSubView && isCurrentSubView;
+                
+                let buttonIcon = isHomeButton ? 'fa-home' : icon;
+                let buttonTitle = isHomeButton ? 'Go Back Home' : title;
+                let buttonAction = isHomeButton ? 'window.goHome()' : `window.navigate('${viewName}')`;
+                let buttonColorClasses = isHomeButton ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-white hover:bg-gray-100 text-gray-700 shadow-md';
+
+                // Co-teachers cannot delete class, so hide the class button if they are navigating to 'classes' (Rule 6)
+                if (viewName === 'classes' && userRole === 'coTeacher') return '';
+
+                return `
+                    <button onclick="${buttonAction}" title="${buttonTitle}"
+                        class="action-button p-4 ${buttonColorClasses} rounded-xl transition duration-150 flex items-center justify-center squircle text-lg font-medium">
+                        <i class="fa-solid ${buttonIcon}"></i>
+                    </button>
+                `;
+            };
+
+            // Navigation buttons
+            const navButtons = (userRole === 'teacher' || userRole === 'coTeacher') ? `
+                ${getClassButton('settings', 'fa-gear', 'Settings')}
+                ${getClassButton('coTeachers', 'fa-user-tie', 'Co-Teachers')}
+                ${userRole === 'teacher' ? getClassButton('classes', 'fa-trash-can', 'Delete Class') : ''}
+            ` : (userRole === 'student') ? `
+                ${studentRequestButton}
+                ${getClassButton('settings', 'fa-gear', 'Settings')}
+            ` : '';
+
+            return `
+                <div class="w-full max-w-4xl p-4 bg-white shadow-xl rounded-b-3xl sticky top-0 z-10">
+                    <div class="flex items-center justify-between mb-4">
+                        <h1 class="text-3xl font-bold text-gray-800">${className}</h1>
+                        <p class="text-sm font-medium text-gray-500 rounded-full bg-gray-100 px-3 py-1">
+                            ${userRole === 'teacher' ? 'Teacher' : userRole === 'coTeacher' ? 'Co-Teacher' : 'Student'}
+                        </p>
+                    </div>
+                    
+                    <div class="flex justify-center space-x-4">
+                        ${handRaisingControl}
+                        ${navButtons}
+                    </div>
+                </div>
+            `;
+        };
+
+        const renderRequestItem = (request) => {
+            const { id, requesterName, requestMessage, timestamp, status, comment } = request;
+            
+            let statusClasses = '';
+            let statusText = '';
+            switch (status) {
+                case 'Accepted':
+                    statusClasses = 'bg-green-100 text-green-700 border-green-400';
+                    statusText = 'Accepted';
+                    break;
+                case 'Denied':
+                    statusClasses = 'bg-red-100 text-red-700 border-red-400';
+                    statusText = 'Denied';
+                    break;
+                case 'Commented':
+                    statusClasses = 'bg-yellow-100 text-yellow-700 border-yellow-400';
+                    statusText = 'Commented On';
+                    break;
+                default:
+                    statusClasses = 'bg-blue-100 text-blue-700 border-blue-400';
+                    statusText = 'Unanswered';
+                    break;
+            }
+            
+            const isActionable = (userRole === 'teacher' || userRole === 'coTeacher');
+            
+            // Teacher/Co-teacher action buttons (Rule 3 & 4)
+            const actionButtons = (isActionable) ? `
+                <div class="flex flex-col space-y-2 mt-4 ml-4">
+                    ${comment
+                        ? // Split Comment Button (Rule 4)
+                          `<div class="split-button-container bg-blue-100">
+                                <button onclick="window.showCommentModal('${id}', \`${comment.replace(/'/g, "\\'")}\`)" title="Edit Comment"
+                                    class="split-button-top hover:bg-blue-200 text-gray-700 transition duration-150">
+                                    <i class="fa-solid fa-pen text-lg"></i>
+                                </button>
+                                <button onclick="window.showDeleteCommentModal('${id}')" title="Delete Comment"
+                                    class="split-button-bottom hover:bg-blue-200 text-gray-700 transition duration-150">
+                                    <i class="fa-solid fa-trash-can text-lg"></i>
+                                </button>
+                            </div>`
+                        : // Single Comment Button (Rule 3 - Comment)
+                          `<button onclick="window.showCommentModal('${id}')" title="Comment"
+                              class="action-button p-4 bg-white hover:bg-gray-100 text-gray-700 rounded-xl shadow-md transition duration-150 squircle flex items-center justify-center text-xl">
+                              <i class="fa-solid fa-comment-dots"></i>
+                          </button>`
+                    }
+                    ${status === 'Pending' ? `
+                        <button onclick="window.handleRequestAction('${id}', 'Accepted')" title="Accept"
+                            class="action-button p-4 bg-green-500 hover:bg-green-600 text-white rounded-xl shadow-md transition duration-150 squircle flex items-center justify-center text-xl">
+                            <i class="fa-solid fa-thumbs-up"></i>
+                        </button>
+                        <button onclick="window.handleRequestAction('${id}', 'Denied')" title="Deny"
+                            class="action-button p-4 bg-red-500 hover:bg-red-600 text-white rounded-xl shadow-md transition duration-150 squircle flex items-center justify-center text-xl">
+                            <i class="fa-solid fa-thumbs-down"></i>
+                        </button>
+                    ` : ''}
+                </div>
+            ` : '';
+            
+            const commentDisplay = comment ? `
+                <div class="mt-3 p-3 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-600">
+                    <p class="font-medium text-gray-700 mb-1">Instructor Comment:</p>
+                    <p>${comment}</p>
+                </div>
+            ` : '';
+
+            return `
+                <div class="bg-white p-4 rounded-xl shadow-lg flex items-start justify-between">
+                    <div class="flex-grow">
+                        <div class="flex justify-between items-start mb-2">
+                            <h4 class="text-lg font-semibold text-gray-800">${requesterName}</h4>
+                            <span class="text-xs font-medium border ${statusClasses} px-3 py-1 rounded-full">${statusText}</span>
+                        </div>
+                        <p class="text-gray-600 mb-2">${requestMessage}</p>
+                        <p class="text-xs text-gray-400">${formatTimestamp(timestamp)}</p>
+                        ${commentDisplay}
+                    </div>
+                    ${actionButtons}
+                </div>
+            `;
+        };
+        
+        const renderRequestFilterButtons = () => {
+            // Rule 9: Categories
+            const filters = ['Pending', 'Accepted', 'Denied', 'Commented'];
+            const filterMap = {
+                'Pending': 'Unanswered',
+                'Accepted': 'Accepted',
+                'Denied': 'Denied',
+                'Commented': 'Commented on'
+            };
+            
+            return `
+                <div class="flex flex-wrap justify-center space-x-2 space-y-2 sm:space-y-0 p-4 bg-white shadow-inner rounded-xl mb-4">
+                    ${filters.map(filter => {
+                        const isActive = currentFilter === filter;
+                        const bgColor = isActive ? 'bg-blue-600 text-white shadow-lg' : 'bg-gray-200 text-gray-700 hover:bg-gray-300';
+                        const filterText = filterMap[filter];
+                        
+                        // Calculate count for the filter
+                        const count = classRequests.filter(req => req.status === filter).length;
+
+                        return `
+                            <button onclick="window.currentFilter = '${filter}'; window.renderDashboard()"
+                                class="px-4 py-2 text-sm font-medium rounded-full transition duration-150 ${bgColor}">
+                                ${filterText} (${count})
+                            </button>
+                        `;
+                    }).join('')}
+                </div>
+            `;
+        };
+
+        const renderDashboard = () => {
+            const container = document.getElementById('app');
+            if (!classData) {
+                container.innerHTML = `<p class="mt-10 text-center text-gray-500">Loading class data...</p>`;
+                return;
+            }
+
+            // Rule 9: Filtering
+            const filteredRequests = classRequests.filter(req => req.status === currentFilter);
+
+            const isEnabled = checkHandRaisingSchedule();
+            const enabledText = isEnabled ? 'ON' : 'PAUSED';
+            const enabledColor = isEnabled ? 'bg-green-500' : 'bg-red-500';
+            const statusIndicator = `<span class="text-sm font-medium text-white ${enabledColor} px-3 py-1 rounded-full shadow-md">Hand Raising: ${enabledText}</span>`;
+
+
+            // Teacher/Co-teacher View
+            if (userRole === 'teacher' || userRole === 'coTeacher') {
+                container.innerHTML = renderHeader() + `
+                    <div class="w-full max-w-4xl p-4 mt-4">
+                        <div class="flex justify-between items-center mb-6">
+                            <h2 class="text-2xl font-semibold text-gray-800">Requests</h2>
+                            ${statusIndicator}
+                        </div>
+                        
+                        ${renderRequestFilterButtons()}
+
+                        <div class="space-y-4">
+                            ${filteredRequests.length > 0
+                                ? filteredRequests.map(renderRequestItem).join('')
+                                : `<p class="text-center text-gray-500 py-10 bg-white rounded-xl shadow-lg">No requests found in the ${currentFilter === 'Pending' ? 'Unanswered' : currentFilter} category.</p>`
+                            }
+                        </div>
+                    </div>
+                `;
+            } 
+            // Student View (Rule 7)
+            else if (userRole === 'student') {
+                container.innerHTML = renderHeader() + `
+                    <div class="w-full max-w-4xl p-4 mt-4">
+                        <div class="bg-white p-6 rounded-xl shadow-xl mb-6 flex justify-between items-center">
+                            <h2 class="text-2xl font-semibold text-gray-800">Your Today's Requests</h2>
+                            ${statusIndicator}
+                        </div>
+                        
+                        ${renderRequestFilterButtons()}
+
+                        <div class="space-y-4">
+                            ${filteredRequests.length > 0
+                                ? filteredRequests.map(renderRequestItem).join('')
+                                : `<p class="text-center text-gray-500 py-10 bg-white rounded-xl shadow-lg">No requests found in the ${currentFilter === 'Pending' ? 'Unanswered' : currentFilter} category.</p>`
+                            }
+                        </div>
+                    </div>
+                `;
+            }
+        };
+
+        const showRaiseHandModal = () => {
+            if (!classData || !classData.handRaisingEnabled) {
+                 renderMessage('Hand raising is currently paused by the instructor.', 'warning');
+                 return;
+            }
+
+            const modalHtml = `
+                <div class="fixed inset-0 bg-gray-600 bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div class="bg-white rounded-xl shadow-2xl p-6 w-full max-w-md">
+                        <h3 class="text-xl font-semibold text-gray-800 mb-4">What do you need help with?</h3>
+                        <textarea id="request-message-input" rows="4" 
+                            class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-700 resize-none" 
+                            placeholder="Type your request message here..."></textarea>
+                        <div class="flex justify-end space-x-3 mt-4">
+                            <button onclick="document.getElementById('modal-container').innerHTML = ''" 
+                                class="px-4 py-2 text-sm font-medium text-gray-700 bg-gray-200 rounded-lg hover:bg-gray-300 transition duration-150">
+                                Cancel
+                            </button>
+                            <button id="raise-hand-btn" 
+                                class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition duration-150">
+                                Send Request
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            
+            document.getElementById('modal-container').innerHTML = modalHtml;
+            document.getElementById('raise-hand-btn').onclick = () => {
+                const message = document.getElementById('request-message-input').value.trim();
+                if (message) {
+                    raiseHand(message);
+                    document.getElementById('modal-container').innerHTML = ''; // Close modal
+                } else {
+                    renderMessage('Request message cannot be empty.', 'error');
+                }
+            };
+        };
+
+        const renderSettings = () => {
+            const container = document.getElementById('app');
+            let content = '';
+            
+            // Teacher/Co-teacher settings
+            if (userRole === 'teacher' || userRole === 'coTeacher') {
+                const classIdInput = `<input type="text" value="${currentClassId}" class="w-full p-3 border border-gray-300 rounded-lg bg-gray-100 text-gray-600 font-mono" readonly>`;
+                
+                // Schedule Inputs (Rule 5)
+                const start = classData?.scheduleStart || '09:00';
+                const end = classData?.scheduleEnd || '15:00';
+                const isEnabled = classData?.isScheduleEnabled || false;
+
+                const scheduleSection = (userRole === 'teacher') ? `
+                    <div class="bg-white p-6 rounded-xl shadow-xl space-y-4">
+                        <h3 class="text-xl font-semibold text-gray-800 mb-4 border-b pb-2">Hand Raising Schedule</h3>
+                        <div class="flex items-center justify-between">
+                            <label for="schedule-toggle" class="text-lg font-medium text-gray-700">Enable Automatic Schedule:</label>
+                            <input type="checkbox" id="schedule-toggle" ${isEnabled ? 'checked' : ''}
+                                class="h-6 w-6 text-blue-600 border-gray-300 rounded focus:ring-blue-500">
+                        </div>
+                        <!-- Added font and padding as requested (Rule 5) -->
+                        <div class="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
+                            <div>
+                                <label for="schedule-start" class="block text-sm font-medium text-gray-500 mb-1">Start Time (24h HH:MM)</label>
+                                <input type="time" id="schedule-start" value="${start}" 
+                                    class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-700 font-mono">
+                            </div>
+                            <div>
+                                <label for="schedule-end" class="block text-sm font-medium text-gray-500 mb-1">End Time (24h HH:MM)</label>
+                                <input type="time" id="schedule-end" value="${end}" 
+                                    class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-700 font-mono">
+                            </div>
+                        </div>
+                        <button onclick="
+                            const start = document.getElementById('schedule-start').value;
+                            const end = document.getElementById('schedule-end').value;
+                            const enabled = document.getElementById('schedule-toggle').checked;
+                            window.saveSchedule(start, end, enabled);
+                        " class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-150">
+                            Save Schedule Settings
+                        </button>
+                        <p class="text-xs text-gray-500 pt-2">Hand raising will be automatically $\\text{ON}$ during the schedule period (start to end) and $\\text{PAUSED}$ otherwise.</p>
+                    </div>
+                ` : `<p class="text-center text-gray-500 py-4">Only the main teacher can manage the schedule.</p>`;
+                
+                content = `
+                    <div class="w-full max-w-xl p-4 mt-4 space-y-6">
+                        <div class="bg-white p-6 rounded-xl shadow-xl">
+                            <h3 class="text-xl font-semibold text-gray-800 mb-4 border-b pb-2">Class Info</h3>
+                            <label class="block text-sm font-medium text-gray-500 mb-1">Class ID</label>
+                            ${classIdInput}
+                        </div>
+                        ${scheduleSection}
+                    </div>
+                `;
+            } 
+            // Student Settings (Rule 7)
+            else if (userRole === 'student') {
+                const currentLocalName = getLocalClassName(currentClassId);
+                content = `
+                    <div class="w-full max-w-xl p-4 mt-4 space-y-6">
+                        <!-- Local Class Name -->
+                        <div class="bg-white p-6 rounded-xl shadow-xl">
+                            <h3 class="text-xl font-semibold text-gray-800 mb-4 border-b pb-2">Personal Settings</h3>
+                            <label for="local-class-name" class="block text-sm font-medium text-gray-500 mb-1">Local Class Name</label>
+                            <input type="text" id="local-class-name" value="${currentLocalName}" 
+                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-700" 
+                                placeholder="Enter a personal name for this class">
+                            <p class="text-xs text-gray-500 mt-1">This name is only visible to you. It is used in your requests.</p>
+                            <button onclick="
+                                const newName = document.getElementById('local-class-name').value.trim();
+                                if (newName) {
+                                    window.setLocalClassName('${currentClassId}', newName);
+                                    window.renderMessage('Local class name saved!', 'success');
+                                    window.renderApp(); // Rerender header to show new name
+                                } else {
+                                    window.renderMessage('Name cannot be empty.', 'error');
+                                }
+                            " class="w-full mt-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-150">
+                                Save Local Name
+                            </button>
+                        </div>
+
+                        <!-- Leave Class -->
+                        <div class="bg-white p-6 rounded-xl shadow-xl">
+                            <h3 class="text-xl font-semibold text-red-600 mb-4 border-b pb-2">Class Actions</h3>
+                            <button onclick="window.leaveClass()"
+                                class="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-md transition duration-150">
+                                Leave Class
+                            </button>
+                            <p class="text-xs text-gray-500 mt-1">Leaving this class will remove you from the member list.</p>
+                        </div>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = renderHeader() + `<div class="flex justify-center">${content}</div>`;
+        };
+
+        const renderCoTeachers = () => {
+            const container = document.getElementById('app');
+            const coTeachers = classData?.coTeachers || [];
+            
+            // ... (Co-Teacher List Rendering is largely unchanged, kept for completeness) ...
+            
+            const coTeacherList = coTeachers.map(id => `
+                <li class="p-3 bg-gray-50 rounded-lg flex justify-between items-center">
+                    <span class="font-mono text-sm text-gray-700 break-all">${id}</span>
+                    ${userRole === 'teacher' ? `
+                        <button onclick="removeCoTeacher('${id}')" class="text-red-500 hover:text-red-700 ml-4 p-2 rounded-full hover:bg-red-50 transition duration-150" title="Remove Co-Teacher">
+                            <i class="fa-solid fa-user-minus"></i>
+                        </button>
+                    ` : ''}
+                </li>
+            `).join('');
+
+            container.innerHTML = renderHeader() + `
+                <div class="w-full max-w-xl p-4 mt-4">
+                    <div class="bg-white p-6 rounded-xl shadow-xl space-y-4">
+                        <h2 class="text-2xl font-semibold text-gray-800 mb-4 border-b pb-2">Manage Co-Teachers</h2>
+                        
+                        ${userRole === 'teacher' ? `
+                            <div class="flex space-x-2">
+                                <input type="text" id="co-teacher-id-input" placeholder="Enter Co-Teacher User ID" 
+                                    class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-700">
+                                <button onclick="addCoTeacher(document.getElementById('co-teacher-id-input').value)"
+                                    class="px-4 py-3 bg-green-500 hover:bg-green-600 text-white font-semibold rounded-lg shadow-md transition duration-150">
+                                    Add
+                                </button>
+                            </div>
+                        ` : ''}
+
+                        <ul class="space-y-2 pt-4">
+                            ${coTeachers.length > 0 ? coTeacherList : '<p class="text-gray-500">No co-teachers added yet.</p>'}
+                        </ul>
+                    </div>
+                </div>
+            `;
+        };
+        
+        const renderClasses = () => {
+            // Rule 6: Only teacher can delete, and the "Classes" button itself implies deletion in the teacher view.
+            if (userRole !== 'teacher') {
+                goHome();
+                return;
+            }
+
+            const container = document.getElementById('app');
+            container.innerHTML = renderHeader() + `
+                <div class="w-full max-w-md p-4 mt-4">
+                    <div class="bg-white p-6 rounded-xl shadow-xl space-y-4 text-center">
+                        <h2 class="text-2xl font-semibold text-red-600 mb-4 border-b pb-2">Danger Zone</h2>
+                        <p class="text-gray-600">This action will permanently delete the class, all requests, and associated data.</p>
+                        <button onclick="window.deleteClass()"
+                            class="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-semibold rounded-lg shadow-md transition duration-150">
+                            Delete Class: ${classData?.className}
+                        </button>
+                    </div>
+                </div>
+            `;
+        };
+        
+        const renderClassSelector = () => {
+            // ... (Class Selector is largely unchanged, kept for completeness) ...
+            
+            const container = document.getElementById('app');
+            const isTeacher = userRole === 'teacher';
+            const headline = isTeacher ? 'Create or Select Class' : 'Join a Class';
+
+            container.innerHTML = `
+                <div class="w-full max-w-md p-4 mt-10">
+                    <div class="bg-white p-8 rounded-xl shadow-2xl space-y-6">
+                        <h2 class="text-3xl font-bold text-center text-gray-800">${headline}</h2>
+                        
+                        ${isTeacher ? `
+                            <!-- Teacher: Create New Class -->
+                            <h3 class="text-xl font-semibold text-gray-700 border-b pb-2">Create New Class</h3>
+                            <input type="text" id="new-class-name" placeholder="Enter New Class Name"
+                                class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-700">
+                            <button onclick="createClass(document.getElementById('new-class-name').value)"
+                                class="w-full py-3 bg-green-600 hover:bg-green-700 text-white font-semibold rounded-lg shadow-md transition duration-150">
+                                Create Class
+                            </button>
+                            <div class="relative flex items-center py-5">
+                                <div class="flex-grow border-t border-gray-300"></div>
+                                <span class="flex-shrink mx-4 text-gray-400">OR</span>
+                                <div class="flex-grow border-t border-gray-300"></div>
+                            </div>
+                        ` : ''}
+
+                        <!-- Join Existing Class -->
+                        <h3 class="text-xl font-semibold text-gray-700 border-b pb-2">Join Existing Class</h3>
+                        <input type="text" id="existing-class-id" placeholder="Enter Class ID to Join"
+                            class="w-full p-3 border border-gray-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-gray-700">
+                        <button onclick="joinClass(document.getElementById('existing-class-id').value)"
+                            class="w-full py-3 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg shadow-md transition duration-150">
+                            Join Class
+                        </button>
+                    </div>
+                </div>
+            `;
+        };
+
+        const renderApp = () => {
+            // Check if essential data is available before rendering dashboard/sub-views
+            if (currentClassId && !classData && currentView !== 'classSelector') {
+                document.getElementById('app').innerHTML = `<p class="mt-10 text-center text-gray-500">Initializing class data...</p>`;
+                return;
+            }
+
+            switch (currentView) {
+                case 'dashboard':
+                    renderDashboard();
+                    break;
+                case 'settings':
+                    renderSettings();
+                    break;
+                case 'coTeachers':
+                    renderCoTeachers();
+                    break;
+                case 'classes':
+                    renderClasses();
+                    break;
+                case 'classSelector':
+                    renderClassSelector();
+                    break;
+                default:
+                    renderDashboard();
+            }
+        };
+
+        const renderLogin = () => {
+            document.getElementById('app').innerHTML = `
+                <div class="w-full max-w-md p-4 mt-20 text-center">
+                    <h2 class="text-2xl font-bold text-gray-800">Please Wait</h2>
+                    <p class="text-gray-600 mt-2">Authenticating user...</p>
+                </div>
+            `;
+        };
+        
+        // --- Expose functions to global scope for inline onclick handlers ---
+        window.navigate = navigate;
+        window.goHome = goHome;
+        window.toggleHandRaising = toggleHandRaising;
+        window.handleRequestAction = handleRequestAction;
+        window.showCommentModal = showCommentModal;
+        window.showDeleteCommentModal = showDeleteCommentModal;
+        window.deleteComment = deleteComment;
+        window.deleteClass = deleteClass;
+        window.createClass = createClass;
+        window.joinClass = joinClass;
+        window.addCoTeacher = addCoTeacher;
+        window.removeCoTeacher = removeCoTeacher;
+        window.saveSchedule = saveSchedule;
+        window.renderDashboard = renderDashboard; 
+        window.showRaiseHandModal = showRaiseHandModal;
+        window.renderApp = renderApp; 
+        window.setLocalClassName = setLocalClassName;
+        window.leaveClass = leaveClass;
+        window.renderMessage = renderMessage; 
+
+        // --- Initialization ---
+        initializeFirebase();
+
+        // Check schedule every minute to enforce automatic ON/PAUSE
+        setInterval(checkHandRaisingSchedule, 60000); 
+
     </script>
 </body>
 </html>
