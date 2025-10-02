@@ -71,7 +71,16 @@
         .hand-status-card { background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); }
         .raise-hand-btn { box-shadow: 0 4px 15px 0 rgba(59, 130, 246, 0.4); transition: all 0.3s ease; }
         .raise-hand-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px 0 rgba(59, 130, 246, 0.5); }
-        .class-notification-badge { position: absolute; top: 4px; right: 8px; min-width: 1.5rem; height: 1.5rem; border-radius: 9999px; background-color: #ef4444; color: white; font-size: 0.75rem; font-weight: bold; display: inline-flex; align-items: center; justify-content: center; padding: 0 0.375rem; }
+        
+        /* Combined notification badge */
+        .class-notification-badge {
+            position: absolute; top: 4px; right: 8px; min-width: 1.5rem; height: 1.5rem; border-radius: 9999px;
+            color: white; font-size: 0.75rem; font-weight: bold; display: inline-flex; align-items: center;
+            justify-content: center; padding: 0 0.375rem;
+        }
+        .badge-hands { background-color: #ef4444; /* red-500 */ }
+        .badge-requests { background-color: #8b5cf6; /* violet-500 */ }
+        .badge-multiple { background: linear-gradient(45deg, #ef4444, #8b5cf6); }
 
         /* Icon button with tooltip styles */
         .tooltip-container { position: relative; display: flex; flex-direction: column; align-items: center; }
@@ -164,7 +173,7 @@
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             let currentUser = null, userData = null, currentClassId = null, currentRoster = null;
-            let allLoadedClasses = {}, classQueues = {}, unsubscribes = [], queueUnsubscribers = {};
+            let allLoadedClasses = {}, classQueues = {}, classRequests = {}, unsubscribes = [], queueUnsubscribers = {};
             let currentClassView = 'overview';
 
             const mainContentArea = document.getElementById('main-content-area');
@@ -191,6 +200,7 @@
                         updateProfileUI(currentUser, userData);
                         listenForClasses(uid);
                         renderMainContent();
+                        initializeScheduleChecker();
                     } else { auth.signOut(); }
                 }
                 
@@ -216,16 +226,20 @@
                 }
                 
                 function updateDocumentTitle() {
-                    let count = 0;
-                    if (userData && allLoadedClasses && classQueues) {
-                        for (const id in classQueues) {
+                    let handsCount = 0, requestsCount = 0;
+                    if (userData && allLoadedClasses && classQueues && classRequests) {
+                        for (const id in allLoadedClasses) {
                             const cls = allLoadedClasses[id];
-                            if (cls && (cls.teacherId === userData.uid || (cls.teacherIds || []).includes(userData.uid))) {
-                               count += (classQueues[id] || []).length;
+                            if (cls) {
+                                const isOwner = cls.teacherId === userData.uid;
+                                const isCoTeacher = (cls.teacherIds || []).includes(userData.uid);
+                                if(isOwner || isCoTeacher) handsCount += (classQueues[id] || []).length;
+                                if(isOwner) requestsCount += (classRequests[id] || []).length;
                             }
                         }
                     }
-                    document.title = count > 0 ? `(${count}) Notify | Dashboard` : 'Notify | Dashboard';
+                    const totalCount = handsCount + requestsCount;
+                    document.title = totalCount > 0 ? `(${totalCount}) Notify | Dashboard` : 'Notify | Dashboard';
                 }
 
                 function listenForClasses(uid) {
@@ -237,15 +251,24 @@
                         snapshot.docChanges().forEach(change => {
                             const id = change.doc.id, data = { id, ...change.doc.data() };
                             if (change.type === 'removed') {
-                                delete allLoadedClasses[id]; delete classQueues[id];
+                                delete allLoadedClasses[id]; delete classQueues[id]; delete classRequests[id];
                                 if (queueUnsubscribers[id]) { queueUnsubscribers[id](); delete queueUnsubscribers[id]; }
                             } else {
                                 allLoadedClasses[id] = data;
-                                const isTeacher = data.teacherId === uid || (data.teacherIds || []).includes(uid);
-                                if (isTeacher && !queueUnsubscribers[id]) {
-                                    queueUnsubscribers[id] = db.collection('classes').doc(id).collection('raisedHands')
+                                const isOwner = data.teacherId === uid;
+                                const isCoTeacher = (data.teacherIds || []).includes(uid);
+                                if ((isOwner || isCoTeacher) && !queueUnsubscribers[`hands_${id}`]) {
+                                    queueUnsubscribers[`hands_${id}`] = db.collection('classes').doc(id).collection('raisedHands')
                                         .onSnapshot(qSnap => {
                                             classQueues[id] = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
+                                            updateGlobalUI();
+                                            if(currentClassId === id) renderMainContent();
+                                        });
+                                }
+                                if(isOwner && !queueUnsubscribers[`requests_${id}`]){
+                                    queueUnsubscribers[`requests_${id}`] = db.collection('classes').doc(id).collection('coTeacherRequests').where('status','==','pending')
+                                        .onSnapshot(rSnap => {
+                                            classRequests[id] = rSnap.docs.map(d => ({ id: d.id, ...d.data() }));
                                             updateGlobalUI();
                                             if(currentClassId === id) renderMainContent();
                                         });
@@ -266,8 +289,14 @@
                         const li = document.createElement('li');
                         const isActive = currentClassId === cls.id;
                         const activeClasses = isActive ? 'bg-blue-100 text-blue-800 font-semibold' : 'text-gray-700 hover:bg-slate-100 hover:text-gray-900';
-                        const count = classQueues[cls.id]?.length || 0;
-                        const badge = count > 0 ? `<span class="class-notification-badge">${count}</span>` : '';
+                        
+                        const handsCount = classQueues[cls.id]?.length || 0;
+                        const reqCount = classRequests[cls.id]?.length || 0;
+                        let badge = '';
+                        if(handsCount > 0 && reqCount > 0) badge = `<span class="class-notification-badge badge-multiple">${handsCount + reqCount}</span>`;
+                        else if(handsCount > 0) badge = `<span class="class-notification-badge badge-hands">${handsCount}</span>`;
+                        else if(reqCount > 0) badge = `<span class="class-notification-badge badge-requests">${reqCount}</span>`;
+
                         li.innerHTML = `<button data-class-id="${cls.id}" class="w-full text-left px-3 py-2.5 rounded-md font-medium text-sm transition-colors btn-bubbly relative flex justify-between items-center ${activeClasses}"><span>${escapeHtml(cls.name)}</span>${badge}</button>`;
                         classListEl.appendChild(li);
                     });
@@ -281,17 +310,24 @@
 
                 async function fetchRosterData(data) {
                     if (!data) return;
-                    const ids = [data.teacherId, ...data.teacherIds, ...data.studentIds].filter(id => id);
+                    const ids = [data.teacherId, ...(data.teacherIds || []), ...(data.studentIds || [])].filter(id => id);
                     if (ids.length === 0) { currentRoster = { owner: {}, coTeachers: [], students: [] }; return; }
                     
-                    const docs = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', ids).get();
+                    const userBatches = [];
+                    for (let i = 0; i < ids.length; i += 10) {
+                        userBatches.push(ids.slice(i, i + 10));
+                    }
+
                     const users = {};
-                    docs.forEach(doc => { users[doc.id] = doc.data(); });
+                    for(const batch of userBatches){
+                        const docs = await db.collection('users').where(firebase.firestore.FieldPath.documentId(), 'in', batch).get();
+                        docs.forEach(doc => { users[doc.id] = doc.data(); });
+                    }
 
                     currentRoster = {
                         owner: { id: data.teacherId, ...users[data.teacherId] },
-                        coTeachers: data.teacherIds.map(id => ({ id, ...users[id] })),
-                        students: data.studentIds.map(id => ({ id, ...users[id] }))
+                        coTeachers: (data.teacherIds || []).map(id => ({ id, ...users[id] })),
+                        students: (data.studentIds || []).map(id => ({ id, ...users[id] }))
                     };
                 }
 
@@ -299,8 +335,10 @@
                     if (currentClassId && allLoadedClasses[currentClassId]) {
                         const data = allLoadedClasses[currentClassId];
                         const queue = classQueues[currentClassId] || [];
-                        const isTeacher = data.teacherId === userData.uid || (data.teacherIds || []).includes(userData.uid);
-                        mainContentArea.innerHTML = TPL.classView(data, userData, isTeacher, queue, currentClassView, currentRoster);
+                        const requests = classRequests[currentClassId] || [];
+                        const isOwner = data.teacherId === userData.uid;
+                        const isCoTeacher = (data.teacherIds || []).includes(userData.uid);
+                        mainContentArea.innerHTML = TPL.classView(data, userData, isOwner, isCoTeacher, queue, requests, currentClassView, currentRoster);
                         document.body.dispatchEvent(new CustomEvent('mainContentRendered'));
                     } else { mainContentArea.innerHTML = TPL.emptyState(userData); }
                 }
@@ -309,19 +347,93 @@
                 function hideModal() { const d=modalContainer.firstElementChild; if(d){d.classList.add('fade-leave-to');modalBackdrop.classList.add('fade-leave-to');setTimeout(() => {modalContainer.innerHTML='';modalBackdrop.classList.add('hidden');modalBackdrop.classList.remove('fade-leave-to');}, 200);}}
                 function escapeHtml(text) { if(typeof text!=='string')return'';const d=document.createElement('div');d.textContent=text;return d.innerHTML; }
                 
-                async function createNewClass(name) { const code=Math.random().toString(36).substring(2,10).toUpperCase();await db.collection('classes').add({name,teacherId:currentUser.uid,teacherIds:[],code,studentIds:[],pendingStudentEmails:[],handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''},createdAt:firebase.firestore.FieldValue.serverTimestamp()});hideModal();}
-                async function joinClass(code) { const q=await db.collection('classes').where('code','==',code).limit(1).get();if(q.empty){showModal(TPL.messageModal('Error','Invalid class code.','red'));return;}const d=q.docs[0];const id=d.id;const data=d.data();const isMember=(data.studentIds||[]).includes(currentUser.uid)||(data.teacherIds||[]).includes(currentUser.uid)||data.teacherId===currentUser.uid;if(isMember){showModal(TPL.messageModal('Already Enrolled',`You are already a member of ${data.name}.`,'yellow'));return;}if(userData.role==='teacher'){showModal(TPL.joinClassAsTeacherConfirm(id,data.name));}else{await db.collection('classes').doc(id).update({studentIds:firebase.firestore.FieldValue.arrayUnion(currentUser.uid)});hideModal();showModal(TPL.messageModal('Success',`Successfully joined class: ${data.name}!`,'green'));}}
-                async function joinClassAsTeacher(id,name){await db.collection('classes').doc(id).update({teacherIds:firebase.firestore.FieldValue.arrayUnion(currentUser.uid)});hideModal();showModal(TPL.messageModal('Success',`Joined ${name} as co-teacher!`,'green'));}
+                async function createNewClass(name) { const code=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name,teacherId:currentUser.uid,teacherIds:[],code,coTeacherCode,studentIds:[],pendingStudentEmails:[],handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''},scheduleLastActionDate:'',createdAt:firebase.firestore.FieldValue.serverTimestamp()});hideModal();}
+                async function joinClass(code) {
+                    const studentQuery = db.collection('classes').where('code', '==', code).limit(1).get();
+                    const teacherQuery = db.collection('classes').where('coTeacherCode', '==', code).limit(1).get();
+                    const [studentSnap, teacherSnap] = await Promise.all([studentQuery, teacherQuery]);
+                    
+                    if (teacherSnap.empty && studentSnap.empty) { showModal(TPL.messageModal('Error','Invalid class code.','red')); return; }
+                    
+                    if (!teacherSnap.empty) { // Co-teacher join
+                        const classDoc = teacherSnap.docs[0];
+                        const classData = classDoc.data();
+                        if (userData.role !== 'teacher') { showModal(TPL.messageModal('Access Denied', 'Only users with a teacher account can join with this code.', 'red')); return; }
+                        const isMember = classData.teacherId === currentUser.uid || (classData.teacherIds || []).includes(currentUser.uid);
+                        if (isMember) { showModal(TPL.messageModal('Already Enrolled', `You are already a teacher in ${classData.name}.`, 'yellow')); return; }
+                        hideModal();
+                        showModal(TPL.requestCoTeacherModal(classDoc.id, classData.name));
+                    } else { // Student join
+                        const classDoc = studentSnap.docs[0];
+                        const classData = classDoc.data();
+                        const isMember = classData.teacherId === currentUser.uid || (classData.teacherIds || []).includes(currentUser.uid) || (classData.studentIds || []).includes(currentUser.uid);
+                        if(isMember){ showModal(TPL.messageModal('Already Enrolled',`You are already a member of ${classData.name}.`,'yellow')); return; }
+                        
+                        // Any user type can join as a student with the student code
+                        await db.collection('classes').doc(classDoc.id).update({studentIds:firebase.firestore.FieldValue.arrayUnion(currentUser.uid)});
+                        hideModal();
+                        showModal(TPL.messageModal('Success',`Successfully joined class: ${classData.name} as a student!`,'green'));
+                    }
+                }
+
+                async function requestCoTeacher(classId, comment) {
+                    await db.collection('classes').doc(classId).collection('coTeacherRequests').doc(currentUser.uid).set({
+                        requesterName: userData.username,
+                        comment: comment,
+                        status: 'pending',
+                        requestedAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                    hideModal();
+                    showModal(TPL.messageModal('Request Sent', 'Your request to join as a co-teacher has been sent to the class owner.', 'green'));
+                }
+
+                async function handleCoTeacherRequest(classId, requesterId, action) {
+                    const requestRef = db.collection('classes').doc(classId).collection('coTeacherRequests').doc(requesterId);
+                    if(action === 'accept'){
+                        await db.collection('classes').doc(classId).update({ teacherIds: firebase.firestore.FieldValue.arrayUnion(requesterId) });
+                        await requestRef.update({ status: 'accepted' });
+                    } else {
+                        await requestRef.update({ status: 'denied' });
+                    }
+                }
+                
                 async function raiseHand(id,q){await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).set({studentName:userData.username,studentPhotoURL:currentUser.photoURL||'',question:q||'',raisedAt:firebase.firestore.FieldValue.serverTimestamp()});hideModal();}
                 async function lowerHand(id,studentId=currentUser.uid){await db.collection('classes').doc(id).collection('raisedHands').doc(studentId).delete();}
                 async function lowerAllHands(id){const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();}
                 async function toggleHandRaising(id,status){await db.collection('classes').doc(id).update({handRaisingEnabled:status});}
                 
                 async function handleChangeClassName(id,name){const today=new Date().toISOString().split('T')[0];const key=`classNameChanges_${id}`;let changes;try{changes=JSON.parse(localStorage.getItem(key))||{};}catch(e){changes={};}if(changes.date!==today){changes={date:today,count:0};}if(changes.count>=3){showModal(TPL.messageModal('Limit Reached','You can only change the class name 3 times per day.','red'));return;}await db.collection('classes').doc(id).update({name});changes.count++;localStorage.setItem(key,JSON.stringify(changes));showModal(TPL.messageModal('Success','Class name updated!','green'));}
-                async function handleSaveSchedule(id,enable,disable){await db.collection('classes').doc(id).update({schedule:{enableAt:enable,disableAt:disable}});showModal(TPL.messageModal('Success','Schedule saved!','green'));}
+                async function handleSaveSchedule(id,enable,disable){await db.collection('classes').doc(id).update({schedule:{enableAt:enable,disableAt:disable}, scheduleLastActionDate: ''});showModal(TPL.messageModal('Success','Schedule saved!','green'));}
                 async function deleteSchedule(id) { await db.collection('classes').doc(id).update({ 'schedule.enableAt': '', 'schedule.disableAt': '' }); showModal(TPL.messageModal('Success', 'Schedule has been removed.', 'green')); }
-                async function removeUserFromClass(id, userId) { const data = allLoadedClasses[id]; if (data.teacherIds.includes(userId)) { await db.collection('classes').doc(id).update({ teacherIds: firebase.firestore.FieldValue.arrayRemove(userId) }); } else if (data.studentIds.includes(userId)) { await db.collection('classes').doc(id).update({ studentIds: firebase.firestore.FieldValue.arrayRemove(userId) }); } await fetchRosterData(allLoadedClasses[id]); renderMainContent(); }
+                async function removeUserFromClass(id, userId) { const data = allLoadedClasses[id]; if ((data.teacherIds || []).includes(userId)) { await db.collection('classes').doc(id).update({ teacherIds: firebase.firestore.FieldValue.arrayRemove(userId) }); } else if ((data.studentIds || []).includes(userId)) { await db.collection('classes').doc(id).update({ studentIds: firebase.firestore.FieldValue.arrayRemove(userId) }); } await fetchRosterData(allLoadedClasses[id]); renderMainContent(); }
                 async function handleDeleteClass(id){const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));b.delete(db.collection('classes').doc(id));await b.commit();hideModal();selectClass(null);}
+
+                let scheduleInterval = null;
+                function initializeScheduleChecker() {
+                    if (scheduleInterval) clearInterval(scheduleInterval);
+                    scheduleInterval = setInterval(() => {
+                        const now = new Date();
+                        const todayStr = now.toISOString().split('T')[0];
+                        if (!userData || userData.role !== 'teacher') return;
+
+                        for (const classId in allLoadedClasses) {
+                            const cls = allLoadedClasses[classId];
+                            if (cls.teacherId === userData.uid && cls.schedule?.disableAt && cls.handRaisingEnabled) {
+                                if (cls.scheduleLastActionDate === todayStr) continue;
+
+                                const [hours, minutes] = cls.schedule.disableAt.split(':');
+                                const disableTime = new Date();
+                                disableTime.setHours(hours, minutes, 0, 0);
+
+                                if (now > disableTime) {
+                                    console.log(`Auto-disabling for ${cls.name}`);
+                                    db.collection('classes').doc(classId).update({ scheduleLastActionDate: todayStr, handRaisingEnabled: false });
+                                    lowerAllHands(classId);
+                                }
+                            }
+                        }
+                    }, 60000); // Check every minute
+                }
                 
                 let gapiLoaded=false,googleAuth=null;
                 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest';
@@ -330,7 +442,7 @@
                 function requestAccessToken(){return new Promise((resolve,reject)=>{try{googleAuth.callback=async(res)=>{if(res.error)return reject(new Error(res.error));gapi.client.setToken({access_token:res.access_token});try{await listGoogleCourses();resolve();}catch(e){reject(e);}};googleAuth.requestAccessToken();}catch(e){reject(e);}});}
                 async function handleGoogleImportClick(){showModal(TPL.googleImportModal());const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');loadingEl.classList.remove('hidden');errorEl.classList.add('hidden');try{const secretsDoc=await db.collection('secrets').doc('wUTBTbjuNLueOFhgHXEE').get();if(!secretsDoc.exists)throw new Error("Secrets document not found.");const{GoogleClassroomAPIKey:apiKey,GoogleClientID:clientId}=secretsDoc.data();if(!apiKey||!clientId)throw new Error("Missing API Key or Client ID in secrets document.");await initializeGAPI(apiKey,clientId);await requestAccessToken();}catch(e){console.error('Google Classroom init error:',e);loadingEl.classList.add('hidden');errorEl.textContent=`Error: ${e.message}`;errorEl.classList.remove('hidden');}}
                 async function listGoogleCourses(){const listEl=document.getElementById('g-import-list');const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');try{loadingEl.textContent='Loading courses...';const response=await gapi.client.classroom.courses.list({teacherId:'me',courseStates:'ACTIVE'});loadingEl.classList.add('hidden');const courses=response.result.courses||[];const notifyClassesSnapshot=await db.collection('classes').where('teacherId','==',currentUser.uid).get();const existingGoogleIds=new Set();notifyClassesSnapshot.forEach(doc=>{const data=doc.data();if(data.googleCourseId)existingGoogleIds.add(data.googleCourseId);});if(courses.length>0){listEl.innerHTML=courses.map(course=>{const isImported=existingGoogleIds.has(course.id);const buttonHtml=isImported?'<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>':`<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`;return`<li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><div class="flex-1"><p class="font-bold text-gray-800">${escapeHtml(course.name)}</p><p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section||'No section')}</p></div>${buttonHtml}</li>`;}).join('');document.querySelectorAll('.import-g-class-btn').forEach(button=>{button.addEventListener('click',()=>importGoogleClass(button.dataset.courseId,button.dataset.courseName));});}else{listEl.innerHTML='<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom that you are the primary teacher of.</p>';}}catch(e){console.error('Error listing courses:',e);loadingEl.classList.add('hidden');let errorMessage='Failed to load courses.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}errorEl.textContent=`Error: ${errorMessage}`;errorEl.classList.remove('hidden');}}
-                async function importGoogleClass(googleCourseId,googleCourseName){const importBtn=document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);if(importBtn){importBtn.textContent='Importing...';importBtn.disabled=true;}try{const existingClass=await db.collection('classes').where('googleCourseId','==',googleCourseId).limit(1).get();if(!existingClass.empty){showModal(TPL.messageModal('Duplicate','This class has already been imported.','yellow'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}return;}const studentsResponse=await gapi.client.classroom.courses.students.list({courseId:googleCourseId});const students=studentsResponse.result.students||[];const studentEmails=students.map(s=>s.profile.emailAddress);const existingStudentUids=[];const pendingEmails=[];if(studentEmails.length>0){const batchSize=10;for(let i=0;i<studentEmails.length;i+=batchSize){const batchEmails=studentEmails.slice(i,i+batchSize);const usersSnapshot=await db.collection('users').where('email','in',batchEmails).get();const existingEmailsBatch=new Set();usersSnapshot.forEach(doc=>{existingStudentUids.push(doc.id);existingEmailsBatch.add(doc.data().email);});batchEmails.forEach(email=>{if(!existingEmailsBatch.has(email)){pendingEmails.push(email);}});}}const classCode=Math.random().toString(36).substring(2,10).toUpperCase();await db.collection('classes').add({name:googleCourseName,teacherId:currentUser.uid,teacherIds:[],code:classCode,googleCourseId:googleCourseId,studentIds:existingStudentUids,pendingStudentEmails:pendingEmails,createdAt:firebase.firestore.FieldValue.serverTimestamp(),handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''}});hideModal();showModal(TPL.messageModal('Import Successful',`Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`,'green'));}catch(e){console.error("Error importing Google Classroom:",e);let errorMessage='Failed to import class. Please ensure Google Classroom API is enabled for your account.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}showModal(TPL.messageModal('Import Failed',errorMessage,'red'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}}}
+                async function importGoogleClass(googleCourseId,googleCourseName){const importBtn=document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);if(importBtn){importBtn.textContent='Importing...';importBtn.disabled=true;}try{const existingClass=await db.collection('classes').where('googleCourseId','==',googleCourseId).limit(1).get();if(!existingClass.empty){showModal(TPL.messageModal('Duplicate','This class has already been imported.','yellow'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}return;}const studentsResponse=await gapi.client.classroom.courses.students.list({courseId:googleCourseId});const students=studentsResponse.result.students||[];const studentEmails=students.map(s=>s.profile?.emailAddress).filter(Boolean);const existingStudentUids=[];const pendingEmails=[];if(studentEmails.length>0){const batchSize=10;for(let i=0;i<studentEmails.length;i+=batchSize){const batchEmails=studentEmails.slice(i,i+batchSize);const usersSnapshot=await db.collection('users').where('email','in',batchEmails).get();const existingEmailsBatch=new Set();usersSnapshot.forEach(doc=>{existingStudentUids.push(doc.id);existingEmailsBatch.add(doc.data().email);});batchEmails.forEach(email=>{if(!existingEmailsBatch.has(email)){pendingEmails.push(email);}});}}const classCode=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name:googleCourseName,teacherId:currentUser.uid,teacherIds:[],code:classCode,coTeacherCode,googleCourseId:googleCourseId,studentIds:existingStudentUids,pendingStudentEmails:pendingEmails,createdAt:firebase.firestore.FieldValue.serverTimestamp(),handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''}, scheduleLastActionDate:''});hideModal();showModal(TPL.messageModal('Import Successful',`Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`,'green'));}catch(e){console.error("Error importing Google Classroom:",e);let errorMessage='Failed to import class. Please ensure Google Classroom API is enabled for your account.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}showModal(TPL.messageModal('Import Failed',errorMessage,'red'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}}}
 
                 document.body.addEventListener('click', async e => {
                     const target = e.target.closest('button, a, [role="button"]');
@@ -347,7 +459,7 @@
                     if(target.id === 'create-manual-btn') showModal(TPL.createClassModal());
                     if(target.id === 'import-gclass-btn') handleGoogleImportClick();
                     if(target.classList.contains('modal-cancel-btn') || e.target.id === 'modal-backdrop' || target.classList.contains('modal-close-btn')) hideModal();
-                    if(target.id === 'confirm-join-teacher-btn') joinClassAsTeacher(target.dataset.classId, target.dataset.className);
+
                     if (target.id === 'raise-hand-action-btn') showModal(TPL.raiseHandModal(currentClassId));
                     if (target.id === 'lower-hand-action-btn') lowerHand(currentClassId);
                     if (target.id === 'lower-all-hands-btn') lowerAllHands(currentClassId);
@@ -357,6 +469,8 @@
                     if(target.id === 'delete-class-btn') { showModal(TPL.deleteClassConfirmModal(currentClassId, allLoadedClasses[currentClassId].name)); }
                     if(target.id === 'confirm-delete-class-btn') { handleDeleteClass(target.dataset.classId); }
                     if(target.matches('.remove-user-btn')) { removeUserFromClass(currentClassId, target.dataset.userId); }
+                    if(target.matches('.accept-request-btn')) { handleCoTeacherRequest(currentClassId, target.dataset.requesterId, 'accept'); }
+                    if(target.matches('.deny-request-btn')) { handleCoTeacherRequest(currentClassId, target.dataset.requesterId, 'deny'); }
                     
                     if(target.matches('.schedule-action-btn')) {
                         const action = target.dataset.action;
@@ -371,7 +485,7 @@
                         const code = target.dataset.classCode;
                         navigator.clipboard.writeText(code).then(() => {
                             const tooltip = target.querySelector('.tooltip-text');
-                            if (tooltip) { tooltip.textContent = 'Copied!'; setTimeout(() => { tooltip.textContent = 'Copy Code'; }, 2000); }
+                            if (tooltip) { tooltip.textContent = 'Copied!'; setTimeout(() => { tooltip.textContent = target.dataset.tooltipText; }, 2000); }
                         });
                     }
                     if (target.matches('.period-btn')) {
@@ -387,12 +501,14 @@
                     if(e.target.id === 'join-class-form') { const code = e.target.querySelector('#class-code-input').value.trim().toUpperCase(); if(code) joinClass(code); }
                     if(e.target.id === 'raise-hand-form') { const q = e.target.querySelector('#hand-raise-question').value.trim(); raiseHand(e.target.dataset.classId, q); }
                     if(e.target.id === 'change-class-name-form') { const newName = e.target.querySelector('#class-name-input').value.trim(); if (newName && currentClassId) handleChangeClassName(currentClassId, newName); }
+                    if(e.target.id === 'request-co-teacher-form') { const comment = e.target.querySelector('#co-teacher-request-comment').value.trim(); requestCoTeacher(e.target.dataset.classId, comment); }
                 });
 
                 const TPL = {
                     messageModal: (title, message, color = 'blue') => { const c = {'blue':{i:'fa-circle-info',b:'bg-blue-600',t:'text-blue-700',d:'border-blue-400'},'green':{i:'fa-circle-check',b:'bg-green-600',t:'text-green-700',d:'border-green-400'},'red':{i:'fa-triangle-exclamation',b:'bg-red-600',t:'text-red-700',d:'border-red-400'},'yellow':{i:'fa-exclamation',b:'bg-yellow-600',t:'text-yellow-700',d:'border-yellow-400'}}[color]||c['blue']; return `<div class="relative bg-white w-full max-w-sm p-6 rounded-xl shadow-2xl pointer-events-auto text-center border-t-4 ${c.d}"><div class="flex flex-col items-center justify-center"><i class="fa-solid ${c.i} fa-3x ${c.t}"></i><h3 class="mt-4 text-xl font-bold text-gray-800 font-poppins">${escapeHtml(title)}</h3><p class="mt-2 text-gray-600">${escapeHtml(message)}</p></div><div class="mt-6"><button type="button" class="modal-close-btn px-6 py-2 ${c.b} text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly">OK</button></div></div>`; },
                     emptyState: (user) => `<div class="h-full flex items-center justify-center text-center fade-enter-active"><div><svg class="w-12 h-12 mx-auto text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15.172 7l-6.586 6.586a2 2 0 102.828 2.828l6.414-6.586a4 4 0 00-5.656-5.656l-6.415 6.585a6 6 0 108.486 8.486L20.5 13"></path></svg><h2 class="mt-4 text-xl font-semibold font-poppins text-gray-700">Welcome, ${escapeHtml(user?.username||'')}!</h2><p class="mt-1 text-gray-500">Select a class or get started below.</p><div class="mt-6 flex flex-col items-center space-y-4">${user.role==='teacher'?`<button id="new-class-btn" class="bg-blue-600 text-white font-semibold py-2 px-4 rounded-lg hover:bg-blue-700 flex items-center space-x-2 btn-bubbly"><i class="fa-solid fa-plus w-5 h-5"></i><span>New Class</span></button>`:''} <button id="join-class-btn-main" class="bg-green-500 text-white font-semibold py-2 px-4 rounded-lg hover:bg-green-600 btn-bubbly flex items-center space-x-2"><i class="fa-solid fa-user-plus w-5 h-5"></i><span>Join Class</span></button></div></div></div>`,
-                    classView: (cls, user, isTeacher, queue, view, roster) => {
+                    classView: (cls, user, isOwner, isCoTeacher, queue, requests, view, roster) => {
+                        const isAnyTeacher = isOwner || isCoTeacher;
                         const nameChangesLeft = () => { const today=new Date().toISOString().split('T')[0]; const key=`classNameChanges_${cls.id}`; let changes; try { changes=JSON.parse(localStorage.getItem(key))||{}; } catch(e){changes={};} return (changes.date===today)?3-changes.count:3; };
                         const timePicker = (id, label, value) => {
                             const [h24, m] = (value || '08:00').split(':').map(Number);
@@ -405,42 +521,50 @@
                             <div class="fade-enter-active space-y-6">
                                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
                                     <div class="flex flex-wrap justify-between items-center gap-4">
-                                        <div class="flex items-center gap-4">
-                                            <h2 class="text-3xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
-                                            <div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}">
-                                                <span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">Code: ${escapeHtml(cls.code)}</span>
-                                                <span class="tooltip-text">Copy Code</span>
-                                            </div>
-                                        </div>
+                                        <h2 class="text-3xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
                                         <div class="flex items-center space-x-2">
-                                            <div class="tooltip-container"><button id="toggle-hand-raising-btn" class="tooltip-button btn-bubbly ${cls.handRaisingEnabled ?'bg-yellow-100 text-yellow-600 hover:bg-yellow-200':'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid ${cls.handRaisingEnabled ?'fa-hand':'fa-hand-sparkles'}"></i></button><span class="tooltip-text">${cls.handRaisingEnabled ?'Disable Raising':'Enable Raising'}</span></div>
+                                            <div class="tooltip-container"><button id="toggle-hand-raising-btn" class="tooltip-button btn-bubbly ${cls.handRaisingEnabled ?'bg-yellow-100 text-yellow-600 hover:bg-yellow-200':'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid ${cls.handRaisingEnabled ?'fa-hand':'fa-hand-sparkles'}"></i></button><span class="tooltip-text">${cls.handRaisingEnabled ?'Pause Raising':'Resume Raising'}</span></div>
                                             <div class="tooltip-container"><button id="lower-all-hands-btn" class="tooltip-button btn-bubbly bg-red-100 text-red-600 hover:bg-red-200"><i class="fa-solid fa-hands-clapping"></i></button><span class="tooltip-text">Lower All Hands</span></div>
-                                            <div class="tooltip-container"><button data-view="${view === 'roster' ? 'overview' : 'roster'}" class="class-view-tab tooltip-button btn-bubbly ${view === 'roster' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid ${view === 'roster' ? 'fa-home' : 'fa-users'}"></i></button><span class="tooltip-text">${view === 'roster' ? 'Back to Queue' : 'Roster'}</span></div>
-                                            <div class="tooltip-container"><button data-view="${view === 'settings' ? 'overview' : 'settings'}" class="class-view-tab tooltip-button btn-bubbly ${view === 'settings' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid ${view === 'settings' ? 'fa-home' : 'fa-gear'}"></i></button><span class="tooltip-text">${view === 'settings' ? 'Back to Queue' : 'Settings'}</span></div>
+                                            ${isOwner ? `<div class="tooltip-container relative">
+                                                    <button data-view="requests" class="class-view-tab tooltip-button btn-bubbly ${view === 'requests' ? 'bg-violet-100 text-violet-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">
+                                                        <i class="fa-solid fa-user-shield"></i>
+                                                        ${requests.length > 0 ? `<span class="absolute -top-1 -right-1 flex h-4 w-4"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-violet-500 text-white text-xs items-center justify-center">${requests.length}</span></span>` : ''}
+                                                    </button>
+                                                    <span class="tooltip-text">Requests</span>
+                                                </div>` : ''}
+                                            <div class="tooltip-container"><button data-view="roster" class="class-view-tab tooltip-button btn-bubbly ${view === 'roster' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid fa-users"></i></button><span class="tooltip-text">Roster</span></div>
+                                            ${isOwner ? `<div class="tooltip-container"><button data-view="settings" class="class-view-tab tooltip-button btn-bubbly ${view === 'settings' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid fa-gear"></i></button><span class="tooltip-text">Settings</span></div>` : ''}
                                         </div>
                                     </div>
                                 </div>
                                 <div id="teacher-view-content" class="min-h-[60vh]">${
                                     (() => {
-                                        if (view === 'settings') return `
+                                        if (view === 'settings' && isOwner) return `
                                             <div id="settings-panel" class="space-y-6 fade-enter-active">
                                                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
+                                                        <div class="space-y-3">
+                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.code)}</span><span class="tooltip-text">Copy Student Code</span></div></div>
+                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.coTeacherCode)}</span><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
+                                                        </div>
+                                                    </div>
                                                     <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
                                                         <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
                                                         <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
                                                     </div>
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <div class="flex justify-between items-center"><h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3></div>
-                                                        <p class="text-sm text-gray-500 -mt-2">Automatically manage hand raising.</p>
-                                                        <div id="schedule-form" class="space-y-4">
-                                                            <div class="grid grid-cols-2 gap-4">
-                                                                ${timePicker('enable-time-input', 'Enable at', cls.schedule?.enableAt)}
-                                                                ${timePicker('disable-time-input', 'Disable at', cls.schedule?.disableAt)}
-                                                            </div>
-                                                            <div class="flex justify-end space-x-2">
-                                                                <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear</button>
-                                                                <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button>
-                                                            </div>
+                                                </div>
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                                                    <div class="flex justify-between items-center"><h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3></div>
+                                                    <p class="text-sm text-gray-500 -mt-2">Automatically pause hand raising and lower all hands at a set time.</p>
+                                                    <div id="schedule-form" class="space-y-4">
+                                                        <div class="grid grid-cols-2 gap-4">
+                                                            ${timePicker('enable-time-input', 'Enable at (Optional)', cls.schedule?.enableAt)}
+                                                            ${timePicker('disable-time-input', 'Disable at', cls.schedule?.disableAt)}
+                                                        </div>
+                                                        <div class="flex justify-end space-x-2">
+                                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear</button>
+                                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button>
                                                         </div>
                                                     </div>
                                                 </div>
@@ -456,15 +580,20 @@
                                                     <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Teachers</h4>
                                                     <ul class="space-y-3">
                                                         <li class="flex items-center justify-between p-2"><div class="flex items-center"><span class="font-semibold text-gray-800">${escapeHtml(roster?.owner?.username || '...')}</span><span class="ml-3 text-xs font-bold uppercase bg-purple-100 text-purple-700 px-2 py-1 rounded-full">Owner</span></div></li>
-                                                        ${roster?.coTeachers?.map(t => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="font-semibold text-gray-700">${escapeHtml(t.username)}</span><button data-user-id="${t.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button></li>`).join('')}
+                                                        ${roster?.coTeachers?.map(t => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="font-semibold text-gray-700">${escapeHtml(t.username)}</span> ${isOwner ? `<button data-user-id="${t.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('')}
                                                     </ul>
                                                 </div>
                                                  <div class="bg-white p-6 rounded-2xl shadow-sm border">
                                                     <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Students (${roster?.students?.length || 0})</h4>
                                                     <ul class="space-y-3 max-h-96 overflow-y-auto custom-scrollbar pr-2">
-                                                        ${roster?.students?.length > 0 ? roster.students.map(s => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="text-gray-700">${escapeHtml(s.username)}</span><button data-user-id="${s.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button></li>`).join('') : '<p class="text-sm text-gray-500 p-2">No students have joined yet.</p>'}
+                                                        ${roster?.students?.length > 0 ? roster.students.map(s => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="text-gray-700">${escapeHtml(s.username)}</span> ${isOwner ? `<button data-user-id="${s.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('') : '<p class="text-sm text-gray-500 p-2">No students have joined yet.</p>'}
                                                     </ul>
                                                 </div>
+                                            </div>`;
+                                        if (view === 'requests' && isOwner) return `
+                                            <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
+                                                <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${requests.length}</span></h3>
+                                                <div id="requests-list" class="mt-5">${requests.length>0?`<ul class="space-y-3">${requests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div><div class="flex items-center space-x-2"><button data-requester-id="${req.id}" class="deny-request-btn px-3 py-1.5 bg-red-100 text-red-700 text-sm font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Deny</button><button data-requester-id="${req.id}" class="accept-request-btn px-3 py-1.5 bg-green-100 text-green-700 text-sm font-semibold rounded-lg hover:bg-green-200 btn-bubbly">Accept</button></div></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
                                             </div>`;
                                         // Default to overview
                                         return `<div id="overview-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active"><h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3><div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex items-start"><div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div><div class="ml-4"><p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p></div></div><button data-student-id="${hand.id}" class="teacher-lower-hand-btn px-3 py-1.5 bg-slate-200 text-gray-700 text-sm font-semibold rounded-lg hover:bg-red-100 hover:text-red-700 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower</button></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
@@ -472,8 +601,8 @@
                                 }</div>
                             </div>
                         `;
-                        const studentView = `<div class="fade-enter-active space-y-6"><div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200"><h2 class="text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.name)}</h2><p class="text-sm text-gray-500 mt-1">Welcome! Raise your hand below if you have a question.</p></div><div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">${(()=>{const myHand=queue.find(h=>h.id===user.uid);const myQueuePosition=queue.findIndex(h=>h.id===user.uid)+1;if(!cls.handRaisingEnabled){return`<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently disabled.</h3><p class="mt-1 text-gray-600">Your teacher will enable it when it's time.</p>`}else if(myHand){return`<i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3><p class="mt-1 text-lg text-gray-600">You are <span class="font-bold text-blue-600">#${myQueuePosition}</span> in the queue.</p>${myHand.question?`<p class="mt-2 text-gray-500 italic">Your question: "${escapeHtml(myHand.question)}"</p>`:''}<div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>`}else{return`<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Have a Question?</h3><p class="mt-1 text-gray-600">Click below to raise your hand.</p><div class="mt-6"><button id="raise-hand-action-btn" class="raise-hand-btn px-8 py-4 bg-blue-600 text-white font-bold text-lg rounded-xl hover:bg-blue-700 btn-bubbly"><i class="fa-solid fa-hand mr-3"></i> Raise My Hand</button></div>`}})()}</div></div>`;
-                        return isTeacher ? teacherView : studentView;
+                        const studentView = `<div class="fade-enter-active space-y-6"><div class="bg-white p-5 rounded-xl shadow-sm border border-gray-200"><h2 class="text-2xl font-bold font-poppins text-gray-800">${escapeHtml(cls.name)}</h2><p class="text-sm text-gray-500 mt-1">Welcome! Raise your hand below if you have a question.</p></div><div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">${(()=>{const myHand=queue.find(h=>h.id===user.uid);const myQueuePosition=queue.findIndex(h=>h.id===user.uid)+1;if(!cls.handRaisingEnabled){return`<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently paused.</h3><p class="mt-1 text-gray-600">Your teacher will resume it shortly.</p>`}else if(myHand){return`<i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3><p class="mt-1 text-lg text-gray-600">You are <span class="font-bold text-blue-600">#${myQueuePosition}</span> in the queue.</p>${myHand.question?`<p class="mt-2 text-gray-500 italic">Your question: "${escapeHtml(myHand.question)}"</p>`:''}<div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>`}else{return`<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Have a Question?</h3><p class="mt-1 text-gray-600">Click below to raise your hand.</p><div class="mt-6"><button id="raise-hand-action-btn" class="raise-hand-btn px-8 py-4 bg-blue-600 text-white font-bold text-lg rounded-xl hover:bg-blue-700 btn-bubbly"><i class="fa-solid fa-hand mr-3"></i> Raise My Hand</button></div>`}})()}</div></div>`;
+                        return isAnyTeacher ? teacherView : studentView;
                     },
                     newClassChoiceModal:(user)=>`
                         <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
@@ -499,11 +628,11 @@
                             <div class="text-center">
                                 <i class="fa-solid fa-link fa-3x text-green-600 mb-4"></i>
                                 <h3 class="text-2xl font-bold text-gray-800 font-poppins">Join a Class</h3>
-                                <p class="text-gray-500 mt-2">Enter the class code to join your teacher or co-teacher's class.</p>
+                                <p class="text-gray-500 mt-2">Enter the 8-digit Student Code or Co-Teacher Code.</p>
                             </div>
                             <form id="join-class-form" class="mt-6 space-y-6">
                                 <div>
-                                    <label for="class-code-input" class="block text-sm font-medium text-gray-700 text-left mb-1">Class Code (8 Digits)</label>
+                                    <label for="class-code-input" class="block text-sm font-medium text-gray-700 text-left mb-1">Class Code</label>
                                     <input type="text" id="class-code-input" required minlength="8" maxlength="8" class="block w-full app-input text-center font-bold tracking-widest uppercase text-lg" placeholder="e.g., ABC12345">
                                 </div>
                                 <div class="flex justify-end space-x-3">
@@ -512,7 +641,7 @@
                                 </div>
                             </form>
                         </div>`,
-                    joinClassAsTeacherConfirm:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><div class="text-center"><i class="fa-solid fa-user-tie fa-3x text-indigo-600 mb-4"></i><h3 class="text-xl font-semibold font-poppins text-gray-800">Confirm Co-Teacher Role</h3></div><p class="mt-4 text-gray-600 text-center">Join <strong>${escapeHtml(name)}</strong> as a Co-Teacher?</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-join-teacher-btn" data-class-id="${id}" data-class-name="${escapeHtml(name)}" class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 btn-bubbly">Confirm</button></div></div>`,
+                    requestCoTeacherModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Request to be a Co-Teacher</h3><p class="text-gray-600 mt-1">For class: <strong>${escapeHtml(name)}</strong></p><form id="request-co-teacher-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="co-teacher-request-comment" class="block text-sm font-medium text-gray-700">Add a comment (optional)</label><textarea id="co-teacher-request-comment" rows="3" class="mt-1 block w-full app-input" placeholder="e.g., I'm the other section's teacher."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Send Request</button></div></form></div>`,
                     googleImportModal:()=>`<div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto"><div class="flex items-center justify-center mb-4"><img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4"><h3 class="text-2xl font-bold font-poppins text-gray-800">Import from Classroom</h3></div><p class="text-center text-gray-500 mb-6">Select a class you own to import it into Notify.</p><div id="g-import-content"><div id="g-import-loading" class="text-center py-8"><i class="fa-solid fa-spinner fa-spin fa-2x text-blue-600 mb-2"></i><p class="text-gray-600">Connecting to Google Classroom...</p></div><p id="g-import-error" class="text-center text-red-600 bg-red-50 p-3 rounded-md hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul></div><div class="flex justify-center mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
                     raiseHandModal:(id)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Raise Your Hand</h3><form id="raise-hand-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="hand-raise-question" class="block text-sm font-medium text-gray-700">Ask a question (optional)</label><textarea id="hand-raise-question" rows="3" class="mt-1 block w-full app-input" placeholder="Type your question here..."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Confirm Raise Hand</button></div></form></div>`,
                     deleteClassConfirmModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><div class="text-center"><i class="fa-solid fa-triangle-exclamation fa-3x text-red-500 mb-4"></i><h3 class="text-xl font-semibold font-poppins text-gray-800">Delete Class</h3></div><p class="mt-4 text-gray-600 text-center">Are you sure you want to permanently delete <strong>${escapeHtml(name)}</strong>? This action cannot be undone.</p><div class="mt-6 flex justify-end space-x-3"><button class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button id="confirm-delete-class-btn" data-class-id="${id}" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Confirm Delete</button></div></div>`,
@@ -566,4 +695,3 @@
     </script>
 </body>
 </html>
-
