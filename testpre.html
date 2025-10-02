@@ -478,35 +478,11 @@
                 async function lowerHand(id,studentId=currentUser.uid){await db.collection('classes').doc(id).collection('raisedHands').doc(studentId).delete();}
                 async function lowerAllHands(id){const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();}
                 
-                // UPDATED: toggleHandRaising for instant DOM update
+                // FIXED: toggleHandRaising to only update DB to the *opposite* state, relying on onSnapshot for UI sync.
                 async function toggleHandRaising(id, status) {
-                    // 1. Immediate DOM Update (Instant feedback)
-                    const btn = document.getElementById('toggle-hand-raising-btn');
-                    const icon = btn ? btn.querySelector('i') : null;
-                    
-                    if (btn && icon) {
-                        // Toggle local state immediately
-                        allLoadedClasses[id].handRaisingEnabled = !status;
-                        const newState = !status;
-
-                        // Change button appearance instantly
-                        btn.classList.toggle('bg-yellow-100', newState);
-                        btn.classList.toggle('text-yellow-600', newState);
-                        btn.classList.toggle('hover:bg-yellow-200', newState);
-                        btn.classList.toggle('bg-gray-200', !newState);
-                        btn.classList.toggle('text-gray-600', !newState);
-                        btn.classList.toggle('hover:bg-gray-300', !newState);
-                        
-                        icon.classList.remove('fa-hand', 'fa-hand-sparkles');
-                        icon.classList.add(newState ? 'fa-hand' : 'fa-hand-sparkles');
-                        
-                        const tooltip = btn.closest('.tooltip-container').querySelector('.tooltip-text');
-                        if (tooltip) tooltip.textContent = newState ? 'Pause Raising' : 'Resume Raising';
-                    }
-
-                    // 2. Database Update (Async)
-                    await db.collection('classes').doc(id).update({ handRaisingEnabled: status });
-                    // OnSnapshot listener will re-render main content, but the button feedback is instant now.
+                    // status is the OLD state, we update the DB to the NEW state, which is !status
+                    await db.collection('classes').doc(id).update({ handRaisingEnabled: !status });
+                    // onSnapshot listener will handle the full re-render and UI changes.
                 }
                 
                 async function handleChangeClassName(id,name){const today=new Date().toISOString().split('T')[0];const key=`classNameChanges_${id}`;let changes;try{changes=JSON.parse(localStorage.getItem(key))||{};}catch(e){changes={};}if(changes.date!==today){changes={date:today,count:0};}if(changes.count>=3){showModal(TPL.messageModal('Limit Reached','You can only change the class name 3 times per day.','red'));return;}await db.collection('classes').doc(id).update({name});changes.count++;localStorage.setItem(key,JSON.stringify(changes));showModal(TPL.messageModal('Success','Class name updated!','green'));}
@@ -626,7 +602,7 @@
 
                     if (target.id === 'raise-hand-action-btn') showModal(TPL.raiseHandModal(currentClassId));
                     if (target.id === 'lower-hand-action-btn') lowerHand(currentClassId);
-                    if (target.id === 'lower-all-hands-btn') lowerAllHands(currentClassId);
+                    // REMOVED: if (target.id === 'lower-all-hands-btn') lowerAllHands(currentClassId);
                     
                     // OLD BUTTON LOGIC REMOVED: if (target.matches('.teacher-lower-hand-btn')) lowerHand(currentClassId, target.dataset.studentId);
                     
@@ -765,7 +741,7 @@
                                         <h2 class="text-3xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
                                         <div class="flex items-center space-x-2">
                                             <div class="tooltip-container"><button id="toggle-hand-raising-btn" class="tooltip-button btn-bubbly ${cls.handRaisingEnabled ?'bg-yellow-100 text-yellow-600 hover:bg-yellow-200':'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid ${cls.handRaisingEnabled ?'fa-hand':'fa-hand-sparkles'}"></i></button><span class="tooltip-text">${cls.handRaisingEnabled ?'Pause Raising':'Resume Raising'}</span></div>
-                                            <div class="tooltip-container"><button id="lower-all-hands-btn" class="tooltip-button btn-bubbly bg-red-100 text-red-600 hover:bg-red-200"><i class="fa-solid fa-hands-clapping"></i></button><span class="tooltip-text">Lower All Hands</span></div>
+                                            
                                             ${viewButton('requests', 'fa-user-shield', 'Requests', true, pendingRequests.length)}
                                             ${viewButton('roster', 'fa-users', 'Roster', false)}
                                             ${viewButton('settings', 'fa-gear', 'Settings', true)}
@@ -775,7 +751,7 @@
                                 <div id="teacher-view-content" class="min-h-[60vh]">${
                                     (() => {
                                         if (view === 'settings' && isOwner) return `
-                                            <div id="settings-panel" class="max-w-4xl mx-auto space-y-6 fade-enter-active">
+                                            <div id="settings-panel" class="space-y-6 fade-enter-active">
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
                                                     <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
                                                     <div class="space-y-3">
@@ -813,8 +789,7 @@
                                                 </div>
                                             </div>`;
                                         if (view === 'roster') return `
-                                            <div id="roster-panel" class="max-w-4xl mx-auto space-y-6 fade-enter-active">
-                                                <div class="bg-white p-6 rounded-2xl shadow-sm border"><h3 class="text-xl font-bold text-gray-800 font-poppins">Class Roster</h3></div>
+                                            <div id="roster-panel" class="space-y-6 fade-enter-active">
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border">
                                                     <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Teachers</h4>
                                                     <ul class="space-y-3">
@@ -830,7 +805,7 @@
                                                 </div>
                                             </div>`;
                                         if (view === 'requests' && isOwner) return `
-                                            <div id="requests-panel" class="max-w-4xl mx-auto bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
+                                            <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
                                                 <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${pendingRequests.length}</span></h3>
                                                 <div id="requests-list" class="mt-5">${pendingRequests.length>0?`<ul class="space-y-3">${pendingRequests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div>
                                                     <div class="request-action-group">
