@@ -302,7 +302,7 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged, signOut } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, addDoc, getDocs, Timestamp, setLogLevel, limit } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, addDoc, getDocs, Timestamp, setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         
         // NEW: Set log level for debugging
         setLogLevel('debug');
@@ -498,7 +498,6 @@
             endTime.setHours(endH, endM, 0, 0);
             
             // Handle cross-day schedule (e.g., 23:00 to 01:00). Assuming start < end for simplicity for now.
-            // If the user wants cross-day, 00:00-08:00 would be the start-end of the day period.
             
             const isWithinSchedule = now >= startTime && now <= endTime;
             const newPausedState = !isWithinSchedule;
@@ -696,7 +695,7 @@
                  listEl.appendChild(document.getElementById(noMessageId));
                  return;
             }
-            document.getElementById(noMessageId).style.display = 'none';
+            document.getElementById(noRequestsMessageId).style.display = 'none';
 
             requests.forEach(req => {
                 const statusColor = {
@@ -742,7 +741,7 @@
                          // Resolved states (Accepted/Denied) - just show resolution info
                          actionsHtml = `<div class="text-xs text-gray-500 flex flex-col items-end">
                             <span class="font-semibold">${req.status}</span>
-                            <span>By: ${req.resolvedBy.substring(0, 4)}...</span>
+                            <span>By: ${req.resolvedBy ? req.resolvedBy.substring(0, 4) + '...' : 'System'}</span>
                         </div>`;
                     }
                 } else {
@@ -758,7 +757,7 @@
                     <div class="flex justify-between items-center">
                         <div>
                             <p class="text-base font-medium text-gray-800">${req.requestText}</p>
-                            ${isTeacherView ? `<p class="text-xs text-gray-500 mt-1">Student: ${req.studentId.substring(0, 8)}</p>` : ''}
+                            ${isTeacherView ? `<p class="text-xs text-gray-500 mt-1">Student: ${req.studentId.substring(0, 8) + '...'}</p>` : ''}
                         </div>
                         <div class="flex flex-col items-end space-y-1">
                             <span class="text-sm font-semibold text-gray-700">${timeString}</span>
@@ -799,10 +798,6 @@
              } else if (currentFilter === 'Commented') {
                  q = query(q, where('status', '==', 'Commented'));
              }
-
-             // Ensure order by timestamp for queue/history
-             // NOTE: Firestore requires an index for this combination, but we proceed assuming one exists or JS sorting is fallback.
-             // q = query(q, orderBy('timestamp', 'asc')); 
              
              return q;
         }
@@ -869,7 +864,7 @@
             const end = endInput.value;
             const messageEl = document.getElementById('schedule-message');
             
-            // Basic format validation (should be handled by input listeners, but safety check)
+            // Basic format validation
             if (!/^\d{2}:\d{2}$/.test(start) || !/^\d{2}:\d{2}$/.test(end)) {
                  messageEl.textContent = 'Invalid time format (must be HH:MM).';
                  messageEl.classList.remove('text-green-600');
@@ -932,13 +927,10 @@
             document.getElementById('modal-action-btn').classList.remove('bg-blue-600', 'hover:bg-blue-700');
             document.getElementById('modal-action-btn').classList.add('bg-red-600', 'hover:bg-red-700');
             document.getElementById('modal-action-btn').onclick = async () => {
-                // In a real app, this would involve deleting the user's membership record.
-                // For this structure, we'll just sign them out and clear local data.
                 closeModal();
                 try {
                     localStorage.removeItem(`notify_local_class_name_${CLASS_ID}`);
                     await signOut(auth);
-                    // The onAuthStateChanged listener will handle the UI update (reload or show signup)
                 } catch (e) {
                     console.error("Error leaving class:", e);
                     alert("Could not leave class due to an error.");
@@ -967,11 +959,8 @@
                     // Delete the class document
                     await deleteDoc(doc(db, CLASS_COLLECTION_PATH, CLASS_ID));
                     
-                    // In a real app, you would also delete all related requests, coTeachers, etc.
-                    
                     // After deletion, sign out the user
                     await signOut(auth);
-                    // UI will reload or redirect
                     alert("Class deleted successfully.");
                 } catch (e) {
                     console.error("Error deleting class:", e);
@@ -1005,6 +994,30 @@
 
                         const classRef = doc(db, CLASS_COLLECTION_PATH, CLASS_ID);
                         
+                        // --- FIX: Check/Create Class Document to prevent stuck loading ---
+                        try {
+                            const docSnap = await getDoc(classRef);
+                            if (!docSnap.exists()) {
+                                console.log("Class document missing. Creating a new class...");
+                                // Set initial data for a new class (the current user is the owner)
+                                await setDoc(classRef, {
+                                    className: "Default Class",
+                                    ownerId: userId,
+                                    coTeachers: [],
+                                    isPaused: true, // Start paused
+                                    schedule: { start: '09:00', end: '10:00' }, // Default schedule
+                                    createdAt: Timestamp.fromDate(new Date())
+                                });
+                                // Setting the class here ensures the onSnapshot listener below will fire successfully
+                            }
+                        } catch (e) {
+                             console.error("Error checking/creating class. Firestore connection issue?", e);
+                             document.getElementById('loading-screen').innerHTML = `<div class="text-xl font-medium text-red-500">Initialization Error: Could not connect to database.</div>`;
+                             return; // Stop execution if we can't create the class
+                        }
+                        // --- END FIX ---
+
+
                         // Set up a real-time listener for class data
                         onSnapshot(classRef, (docSnap) => {
                             if (docSnap.exists()) {
@@ -1036,14 +1049,16 @@
                                 
                                 // Check and run schedule automation (Teacher/Co-Teacher only)
                                 if (isTeacher || isCoTeacher) {
+                                    document.getElementById('schedule-start-time').value = classData.schedule?.start || '09:00';
+                                    document.getElementById('schedule-end-time').value = classData.schedule?.end || '10:00';
+                                    
                                     if (classData.schedule) {
-                                         // Update schedule inputs in settings
-                                        document.getElementById('schedule-start-time').value = classData.schedule.start;
-                                        document.getElementById('schedule-end-time').value = classData.schedule.end;
                                         checkScheduleAndSetHandRaising(classData.schedule);
                                         // Set an interval to run this check every minute
                                         // Note: For a true background service, a server is required, but this is a browser-side compromise.
-                                        setInterval(() => checkScheduleAndSetHandRaising(classData.schedule), 60000); 
+                                        // Clear previous interval if it exists to prevent duplicates
+                                        if (window.scheduleInterval) clearInterval(window.scheduleInterval);
+                                        window.scheduleInterval = setInterval(() => checkScheduleAndSetHandRaising(classData.schedule), 60000); 
                                     }
                                 }
 
@@ -1082,16 +1097,18 @@
                                 }
                             } else {
                                 // Class doesn't exist (e.g., deleted), log out.
+                                console.warn("Class document does not exist. Signing out.");
                                 await signOut(auth);
-                                alert("Class not found. Signing out.");
+                                alert("Class not found or deleted. Please refresh.");
                             }
                         }, (error) => console.error("Error listening to class data:", error));
 
                     } else {
-                        // User logged out/no user. Show login/signup screen (or just a message).
-                        document.getElementById('loading-screen').innerHTML = '<div class="text-xl font-medium text-red-500">You are logged out or the initial token was invalid. Please restart the environment.</div>';
+                        // User logged out/no user. 
+                        document.getElementById('loading-screen').innerHTML = '<div class="text-xl font-medium text-red-500">Authentication Failed. Please refresh or check your environment settings.</div>';
                         document.getElementById('loading-screen').classList.remove('hidden');
                         document.getElementById('app-container').classList.add('hidden');
+                        // Reset global state
                         userId = null;
                         isTeacher = false;
                         isCoTeacher = false;
@@ -1101,7 +1118,7 @@
 
             } catch (error) {
                 console.error("Initialization Error:", error);
-                document.getElementById('loading-screen').innerHTML = `<div class="text-xl font-medium text-red-500">Error initializing: ${error.message}</div>`;
+                document.getElementById('loading-screen').innerHTML = `<div class="text-xl font-medium text-red-500">Fatal Initialization Error: ${error.message}</div>`;
             }
         };
         
