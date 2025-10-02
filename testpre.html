@@ -226,7 +226,14 @@
             const modalContainer = document.getElementById('modal-container');
             const modalBackdrop = document.getElementById('modal-backdrop');
 
-            function onFirebaseReady(callback) { const i = setInterval(() => { if (typeof firebase !== 'undefined') { clearInterval(i); callback(); } }, 50); }
+            function onFirebaseReady(callback) { 
+                const i = setInterval(() => { 
+                    if (typeof firebase !== 'undefined') { 
+                        clearInterval(i); 
+                        callback(); 
+                    } 
+                }, 50); 
+            }
 
             onFirebaseReady(() => {
                 const app = firebase.initializeApp(firebaseConfig);
@@ -245,7 +252,7 @@
                         updateProfileUI(currentUser, userData);
                         listenForClasses(uid);
                         renderMainContent();
-                        initializeScheduleChecker(); // Initialize schedule checker logic
+                        initializeScheduleChecker();
                     } else { auth.signOut(); }
                 }
                 
@@ -278,7 +285,7 @@
                             if (cls) {
                                 const isOwner = cls.teacherId === userData.uid;
                                 const isCoTeacher = (cls.teacherIds || []).includes(userData.uid);
-                                if(isOwner || isCoTeacher) handsCount += (classQueues[id] || []).length;
+                                if(isOwner || isCoTeacher) handsCount += (classQueues[id] || []).filter(h => !h.status || h.status === 'pending').length; // Count only pending hands for teacher notification
                                 if(isOwner) requestsCount += (classRequests[id] || []).length;
                             }
                         }
@@ -298,6 +305,7 @@
                             if (change.type === 'removed') {
                                 delete allLoadedClasses[id]; delete classQueues[id]; delete classRequests[id];
                                 if (queueUnsubscribers[id]) { queueUnsubscribers[id](); delete queueUnsubscribers[id]; }
+                                if (queueUnsubscribers[`${id}_student_listen`]) { queueUnsubscribers[`${id}_student_listen`](); delete queueUnsubscribers[`${id}_student_listen`]; }
                             } else {
                                 allLoadedClasses[id] = data;
                                 const isOwner = data.teacherId === uid;
@@ -306,7 +314,7 @@
                                 // Listen for Raised Hands for Teachers/Co-teachers
                                 if ((isOwner || isCoTeacher) && !queueUnsubscribers[`hands_${id}`]) {
                                     queueUnsubscribers[`hands_${id}`] = db.collection('classes').doc(id).collection('raisedHands')
-                                        .orderBy('raisedAt', 'asc') // Keep order for queue
+                                        .orderBy('raisedAt', 'asc')
                                         .onSnapshot(qSnap => {
                                             classQueues[id] = qSnap.docs.map(d => ({ id: d.id, ...d.data() }));
                                             updateGlobalUI();
@@ -323,11 +331,11 @@
                                             if(currentClassId === id) renderMainContent();
                                         });
                                 }
-                                // Student view logic for hands
-                                if((!isOwner && !isCoTeacher) && classQueues[`${id}_student_listen`] === undefined){
+                                // Student view logic for hands - Listen for changes to *their own* hand
+                                if((!isOwner && !isCoTeacher) && !queueUnsubscribers[`${id}_student_listen`]){
                                      queueUnsubscribers[`${id}_student_listen`] = db.collection('classes').doc(id).collection('raisedHands').doc(uid)
                                         .onSnapshot(dSnap => {
-                                            if(currentClassId === id) renderMainContent(); // Rerender to update local hand status UI
+                                            if(currentClassId === id) renderMainContent();
                                         });
                                 }
                             }
@@ -347,7 +355,7 @@
                         const isActive = currentClassId === cls.id;
                         const activeClasses = isActive ? 'bg-blue-100 text-blue-800 font-semibold' : 'text-gray-700 hover:bg-slate-100 hover:text-gray-900';
                         
-                        const handsCount = classQueues[cls.id]?.length || 0;
+                        const handsCount = (classQueues[cls.id] || []).filter(h => !h.status || h.status === 'pending').length; // Count only pending hands for sidebar badge
                         const reqCount = classRequests[cls.id]?.length || 0;
                         let badge = '';
                         if(handsCount > 0 && reqCount > 0) badge = `<span class="class-notification-badge badge-multiple">${handsCount + reqCount}</span>`;
@@ -469,27 +477,27 @@
                         disableTime.setHours(hours, minutes, 0, 0);
                         if (now > disableTime) {
                             isScheduledOff = true;
-                            console.log(`Schedule auto-disabled hand raising for ${cls.name} at ${cls.schedule.disableAt}. Rejecting raise hand.`);
+                            console.log(`Schedule auto-disabling for ${cls.name} at ${cls.schedule.disableAt}. Rejecting raise hand.`);
                             await db.collection('classes').doc(id).update({ scheduleLastActionDate: todayStr, handRaisingEnabled: false });
                             lowerAllHands(id);
                         }
                     }
 
                     if (!isEnabled || isScheduledOff) {
-                        showModal(TPL.messageModal('Hand Raising Paused', isScheduledOff ? 'Hand raising is currently paused due to the class schedule. Check back later!' : 'Hand raising is currently paused by the teacher.', 'yellow'));
+                        showModal(TPL.messageModal('Hand Raising Paused', isScheduledOff ? 'Hand raising is currently paused due to the class schedule.' : 'Hand raising is currently paused by the teacher.', 'yellow'));
                         return;
                     }
 
-                    // NEW: Check for student's own existing hand
+                    // NEW: Check for student's own existing hand (to Update instead of re-create)
                     const existingHand = await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).get();
                     if(existingHand.exists){
-                        await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).update({ question: q || '', raisedAt: firebase.firestore.FieldValue.serverTimestamp() });
+                        await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).update({ question: q || '', raisedAt: firebase.firestore.FieldValue.serverTimestamp(), status: 'pending' }); // Reset status if updating existing
                         showModal(TPL.messageModal('Hand Updated', 'Your existing raised hand question has been updated.', 'green'));
                         hideModal();
                         return;
                     }
                     
-                    await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).set({studentName:userData.username,studentPhotoURL:currentUser.photoURL||'',question:q||'',raisedAt:firebase.firestore.FieldValue.serverTimestamp()});hideModal();}
+                    await db.collection('classes').doc(id).collection('raisedHands').doc(currentUser.uid).set({studentName:userData.username,studentPhotoURL:currentUser.photoURL||'',question:q||'',raisedAt:firebase.firestore.FieldValue.serverTimestamp(), status: 'pending'});hideModal();}
 
                 async function lowerHand(id,studentId=currentUser.uid){await db.collection('classes').doc(id).collection('raisedHands').doc(studentId).delete();}
                 async function lowerAllHands(id){const s=await db.collection('classes').doc(id).collection('raisedHands').get();const b=db.batch();s.docs.forEach(d=>b.delete(d.ref));await b.commit();}
@@ -543,28 +551,33 @@
 
                         for (const classId in allLoadedClasses) {
                             const cls = allLoadedClasses[classId];
-                            if (cls.teacherId === userData.uid && cls.schedule?.disableAt && cls.handRaisingEnabled) {
-                                if (cls.scheduleLastActionDate === todayStr) continue;
+                            if (cls.teacherId === userData.uid) {
+                                
+                                // 1. Check for Auto-Disable (End Period)
+                                if (cls.schedule?.disableAt && cls.handRaisingEnabled) {
+                                    if (cls.scheduleLastActionDate === todayStr) continue;
 
-                                const [hours, minutes] = cls.schedule.disableAt.split(':');
-                                const disableTime = new Date();
-                                disableTime.setHours(hours, minutes, 0, 0);
+                                    const [hours, minutes] = cls.schedule.disableAt.split(':');
+                                    const disableTime = new Date();
+                                    disableTime.setHours(hours, minutes, 0, 0);
 
-                                if (now > disableTime) {
-                                    console.log(`Auto-disabling for ${cls.name} at ${cls.schedule.disableAt}`);
-                                    db.collection('classes').doc(classId).update({ scheduleLastActionDate: todayStr, handRaisingEnabled: false });
-                                    lowerAllHands(classId);
+                                    if (now > disableTime) {
+                                        console.log(`Auto-disabling for ${cls.name} at ${cls.schedule.disableAt}`);
+                                        db.collection('classes').doc(classId).update({ scheduleLastActionDate: todayStr, handRaisingEnabled: false });
+                                        lowerAllHands(classId);
+                                    }
                                 }
-                            }
-                            // NEW: Auto-enable at start period if scheduled
-                            if (cls.teacherId === userData.uid && cls.schedule?.enableAt && cls.schedule?.disableAt && cls.scheduleLastActionDate !== todayStr) {
-                                const [enableHours, enableMinutes] = cls.schedule.enableAt.split(':');
-                                const enableTime = new Date();
-                                enableTime.setHours(enableHours, enableMinutes, 0, 0);
 
-                                if (now > enableTime && !cls.handRaisingEnabled) {
-                                     console.log(`Auto-enabling for ${cls.name} at ${cls.schedule.enableAt}`);
-                                     db.collection('classes').doc(classId).update({ scheduleLastActionDate: todayStr, handRaisingEnabled: true });
+                                // 2. Check for Auto-Enable (Start Period)
+                                if (cls.schedule?.enableAt && cls.schedule?.disableAt && cls.scheduleLastActionDate !== todayStr) {
+                                    const [enableHours, enableMinutes] = cls.schedule.enableAt.split(':');
+                                    const enableTime = new Date();
+                                    enableTime.setHours(enableHours, enableMinutes, 0, 0);
+
+                                    if (now >= enableTime && !cls.handRaisingEnabled) {
+                                         console.log(`Auto-enabling for ${cls.name} at ${cls.schedule.enableAt}`);
+                                         db.collection('classes').doc(classId).update({ scheduleLastActionDate: todayStr, handRaisingEnabled: true });
+                                    }
                                 }
                             }
                         }
@@ -574,29 +587,54 @@
                 let gapiLoaded=false,googleAuth=null;
                 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest';
                 const SCOPES = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
-                async function initializeGAPI(apiKey,clientId){if(gapiLoaded)return Promise.resolve();return new Promise((resolve,reject)=>{const checkGAPI=()=>{if(typeof gapi!=='undefined'&&gapi.load){gapi.load('client',async()=>{try{await gapi.client.init({apiKey,discoveryDocs:[DISCOVERY_DOC]});googleAuth=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:SCOPES,callback:''});gapiLoaded=true;resolve();}catch(e){reject(e);}});}else{setTimeout(checkGAPI,100);}};checkGAPI();});}
+                async function initializeGAPI(apiKey,clientId){
+                    if(gapiLoaded)return Promise.resolve();
+                    return new Promise((resolve,reject)=>{
+                        const checkGAPI=()=>{
+                            if(typeof gapi!=='undefined'&&gapi.load){
+                                gapi.load('client',async()=>{
+                                    try{
+                                        await gapi.client.init({apiKey,discoveryDocs:[DISCOVERY_DOC]});
+                                        googleAuth=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:SCOPES,callback:''});
+                                        gapiLoaded=true;
+                                        resolve();
+                                    }catch(e){
+                                        reject(e);
+                                    }
+                                });
+                            }else{
+                                setTimeout(checkGAPI,100);
+                            }
+                        };
+                        checkGAPI();
+                    });
+                }
                 function requestAccessToken(){return new Promise((resolve,reject)=>{try{googleAuth.callback=async(res)=>{if(res.error)return reject(new Error(res.error));gapi.client.setToken({access_token:res.access_token});try{await listGoogleCourses();}catch(e){reject(e);}}};googleAuth.requestAccessToken();}catch(e){reject(e);}});}
-                async function handleGoogleImportClick(){showModal(TPL.googleImportModal());const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');loadingEl.classList.remove('hidden');errorEl.classList.add('hidden');try{const secretsDoc=await db.collection('secrets').doc('wUTBTbjuNLueOFhgHXEE').get();if(!secretsDoc.exists)throw new Error("Secrets document not found.");const{GoogleClassroomAPIKey:apiKey,GoogleClientID:clientId}=secretsDoc.data();if(!apiKey||!clientId)throw new Error("Missing API Key or Client ID in secrets document.");await initializeGAPI(apiKey,clientId);await requestAccessToken();}catch(e){console.error('Google Classroom init error:',e);loadingEl.classList.add('hidden');errorEl.textContent=`Error: ${e.message}`;errorEl.classList.remove('hidden');}}
                 async function listGoogleCourses(){const listEl=document.getElementById('g-import-list');const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');try{loadingEl.textContent='Loading courses...';const response=await gapi.client.classroom.courses.list({teacherId:'me',courseStates:'ACTIVE'});loadingEl.classList.add('hidden');const courses=response.result.courses||[];const notifyClassesSnapshot=await db.collection('classes').where('teacherId','==',currentUser.uid).get();const existingGoogleIds=new Set();notifyClassesSnapshot.forEach(doc=>{const data=doc.data();if(data.googleCourseId)existingGoogleIds.add(data.googleCourseId);});if(courses.length>0){listEl.innerHTML=courses.map(course=>{const isImported=existingGoogleIds.has(course.id);const buttonHtml=isImported?'<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-full text-sm">Imported</button>':`<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-lg text-sm hover:bg-blue-700 btn-bubbly">Import</button>`;return`<li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><div class="flex-1"><p class="font-bold text-gray-800">${escapeHtml(course.name)}</p><p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section||'No section')}</p></div>${buttonHtml}</li>`;}).join('');document.querySelectorAll('.import-g-class-btn').forEach(button=>{button.addEventListener('click',()=>importGoogleClass(button.dataset.courseId,button.dataset.courseName));});}else{listEl.innerHTML='<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom that you are the primary teacher of.</p>';}}catch(e){console.error('Error listing courses:',e);loadingEl.classList.add('hidden');let errorMessage='Failed to load courses.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}errorEl.textContent=`Error: ${errorMessage}`;errorEl.classList.remove('hidden');}}
                 async function importGoogleClass(googleCourseId,googleCourseName){const importBtn=document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);if(importBtn){importBtn.textContent='Importing...';importBtn.disabled=true;}try{const existingClass=await db.collection('classes').where('googleCourseId','==',googleCourseId).limit(1).get();if(!existingClass.empty){showModal(TPL.messageModal('Duplicate','This class has already been imported.','yellow'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}return;}const studentsResponse=await gapi.client.classroom.courses.students.list({courseId:googleCourseId});const students=studentsResponse.result.students||[];const studentEmails=students.map(s=>s.profile?.emailAddress).filter(Boolean);const existingStudentUids=[];const pendingEmails=[];if(studentEmails.length>0){const batchSize=10;for(let i=0;i<studentEmails.length;i+=batchSize){const batchEmails=studentEmails.slice(i,i+batchSize);const usersSnapshot=await db.collection('users').where('email','in',batchEmails).get();const existingEmailsBatch=new Set();usersSnapshot.forEach(doc=>{existingStudentUids.push(doc.id);existingEmailsBatch.add(doc.data().email);});batchEmails.forEach(email=>{if(!existingEmailsBatch.has(email)){pendingEmails.push(email);}});}}const classCode=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name:googleCourseName,teacherId:currentUser.uid,teacherIds:[],code:classCode,coTeacherCode,googleCourseId:googleCourseId,studentIds:existingStudentUids,pendingStudentEmails:pendingEmails,createdAt:firebase.firestore.FieldValue.serverTimestamp(),handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''}, scheduleLastActionDate:''});hideModal();showModal(TPL.messageModal('Import Successful',`Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`,'green'));}catch(e){console.error("Error importing Google Classroom:",e);let errorMessage='Failed to import class. Please ensure Google Classroom API is enabled for your account.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}showModal(TPL.messageModal('Import Failed',errorMessage,'red'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}}}
 
-                // NEW: Comment/Edit/Delete logic
                 async function handleAction(classId, studentId, action, commentText = null) {
-                    const requestRef = db.collection('classes').doc(classId).collection('raisedHands').doc(studentId);
+                    const handRef = db.collection('classes').doc(classId).collection('raisedHands').doc(studentId);
+                    
                     if (action === 'accept') {
-                        await requestRef.update({ status: 'accepted', response: 'Accepted', respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
+                        await handRef.update({ status: 'accepted', response: 'Accepted', respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
                     } else if (action === 'deny') {
-                        await requestRef.update({ status: 'denied', response: 'Denied', respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
+                        await handRef.update({ status: 'denied', response: 'Denied', respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
                     } else if (action === 'comment' && commentText) {
-                        await requestRef.update({ status: 'commented', response: commentText, respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
+                        await handRef.update({ status: 'commented', response: commentText, respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
                     } else if (action === 'edit' && commentText) {
-                        await requestRef.update({ response: commentText, respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
+                        await handRef.update({ response: commentText, respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
                     } else if (action === 'delete_comment') {
-                        await requestRef.update({ status: 'answered', response: null, respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
+                        await handRef.update({ status: 'answered', response: null, respondedAt: firebase.firestore.FieldValue.serverTimestamp() });
                     }
-                    if(currentClassView === 'overview') renderMainContent(); // Only re-render overview to update status
+                    if(currentClassView === 'overview') renderMainContent();
                 }
 
+                async function handleStudentNameSave(classId, newName) {
+                    await db.collection('users').doc(currentUser.uid).update({ [`localNameForClass.${classId}`]: newName || firebase.firestore.FieldValue.delete() });
+                    userData.localName = newName || null; // Simplified update for this example
+                    showModal(TPL.messageModal('Success','Local name updated!','green'));
+                }
 
                 document.body.addEventListener('click', async e => {
                     const target = e.target.closest('button, a, [role="button"]');
@@ -630,6 +668,8 @@
 
                     // NEW: Student Request Button (+)
                     if (target.id === 'student-request-btn') showModal(TPL.raiseHandModal(currentClassId)); 
+                    if(target.id === 'student-settings-btn') { showModal(TPL.studentSettingsModal(allLoadedClasses[currentClassId], userData)); }
+
 
                     if(target.matches('.class-view-tab')) { currentClassView = target.dataset.view; renderMainContent(); }
                     if(target.id === 'delete-class-btn') { 
@@ -645,20 +685,23 @@
                     // NEW: Category Filter Buttons (Student/Teacher)
                     if(target.matches('.request-category-btn')) {
                         const category = target.dataset.category;
-                        const isStudentView = target.closest('#overview-panel')?.querySelector('#student-request-btn');
-                        if(isStudentView) {
-                            // Student: View their own requests
-                            db.collection('classes').doc(currentClassId).collection('raisedHands')
-                                .where('id', '==', userData.uid)
-                                .where('status', 'in', category === 'Unanswered' ? ['pending'] : ['accepted', 'denied', 'commented']) // Simplified student view for now
-                                .get().then(snap => console.log('Filtered Student Hands:', snap.docs.map(d=>d.data())));
-                        } else {
-                            // Teacher: Filter the queue list (This requires a major template re-render/logic change which is complex for simple HTML injection, but we'll handle the state change logic for the template)
-                            target.closest('.category-filters').querySelectorAll('.request-category-btn').forEach(btn => btn.classList.remove('bg-blue-500', 'text-white'));
-                            target.classList.add('bg-blue-500', 'text-white');
-                            document.body.dispatchEvent(new CustomEvent('categoryFilterChanged', { detail: category }));
+                        // Teacher/Co-teacher filtering (updates view state implicitly by rerendering)
+                        target.closest('.category-filters').querySelectorAll('.request-category-btn').forEach(btn => {
+                            btn.classList.remove('bg-blue-500', 'text-white');
+                            btn.classList.add('bg-gray-100', 'text-gray-700', 'hover:bg-gray-200');
+                        });
+                        target.classList.add('bg-blue-500', 'text-white');
+                        target.classList.remove('bg-gray-100', 'text-gray-700', 'hover:bg-gray-200');
+                        
+                        // If student, we need a separate listener/logic to fetch student-specific requests based on category
+                        if(target.closest('#overview-panel')?.querySelector('#student-request-btn')) {
+                             console.log(`Student filtering by category: ${category}`);
+                             // For students, the queue only contains their own hand, so categories map differently.
+                             // Pending/Unanswered -> No response or status pending
+                             // Accepted/Denied/Commented -> Status set
+                             // Actual filtering UI update will happen on re-render based on currentClassView logic
                         }
-                        if(currentClassView === 'overview') renderMainContent(); // Force re-render to show filtered view if applicable
+                        if(currentClassView === 'overview') renderMainContent();
                     }
 
                     // NEW: Action Buttons (Accept/Comment/Deny) for Teacher/Co-Teacher
@@ -672,20 +715,34 @@
 
                     // NEW: Split Comment Button Actions
                     if (target.matches('.edit-half')) {
-                        const studentId = target.closest('.comment-split-btn').dataset.studentId;
-                        const currentComment = target.closest('.comment-split-btn').dataset.currentComment;
+                        const container = target.closest('.comment-split-btn');
+                        const studentId = container.dataset.studentId;
+                        const currentComment = container.dataset.currentComment;
                         showModal(TPL.commentModal(currentClassId, studentId, 'edit', currentComment));
                     }
                     if (target.matches('.delete-half')) {
-                        const studentId = target.closest('.comment-split-btn').dataset.studentId;
+                        const container = target.closest('.comment-split-btn');
+                        const studentId = container.dataset.studentId;
                         showModal(TPL.deleteCommentConfirmModal(currentClassId, studentId));
                     }
+                    if(target.id === 'confirm-delete-comment-btn') {
+                        const id = target.dataset.classId;
+                        const studentId = target.dataset.studentId;
+                        handleAction(id, studentId, 'delete_comment');
+                        hideModal();
+                    }
+
 
                     if(target.matches('.schedule-action-btn')) {
                         const action = target.dataset.action;
                         if (action === 'save') {
-                            const formatTime = (time, period) => { let [h, m] = time.split(':').map(Number); if (period === 'PM' && h !== 12) h += 12; if (period === 'AM' && h === 12) h = 0; return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; };
-                            const enableTime = document.getElementById('enable-time-input').value; const enablePeriod = document.querySelector('#enable-time-selector .active').dataset.value;
+                            const formatTime = (time, period) => { 
+                                let [h, m] = time.split(':').map(Number); 
+                                if (period === 'PM' && h !== 12) h += 12; 
+                                if (period === 'AM' && h === 12) h = 0; 
+                                return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}`; 
+                            };
+                            const enableTime = document.getElementById('enable-time-input').value; const enablePeriod = document.querySelector('#enable-time-period-selector .active').dataset.value;
                             const disableTime = document.getElementById('disable-time-input').value; const disablePeriod = document.querySelector('#disable-period-selector .active').dataset.value;
                             handleSaveSchedule(currentClassId, formatTime(enableTime, enablePeriod), formatTime(disableTime, disablePeriod));
                         } else if (action === 'clear') { deleteSchedule(currentClassId); }
@@ -721,6 +778,12 @@
                         else handleAction(classId, studentId, 'comment', commentText);
                         hideModal();
                     }
+                    if(e.target.id === 'student-display-name-form') {
+                        const form = e.target;
+                        const newName = form.querySelector('#student-local-name-input').value.trim();
+                        await handleStudentNameSave(currentClassId, newName);
+                        hideModal();
+                    }
                 });
 
                 const TPL = {
@@ -734,70 +797,118 @@
                             const period = h24 >= 12 ? 'PM' : 'AM';
                             let h12 = h24 % 12; if (h12 === 0) h12 = 12;
                             const timeString = `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input"><div id="${id.replace('-input', '-period-selector')}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
+                            return `<div><label class="block text-sm font-medium text-gray-600 mb-2">${label}</label><div class="schedule-time-input-container"><input type="text" id="${id}" value="${timeString}" class="app-input schedule-time-input" data-initial-value="${value}" data-digits="${value.replace(':','')||'0800'}"><div id="${id.replace('-input', '-period-selector')}" class="period-selector"><button type="button" data-value="AM" class="period-btn ${period === 'AM' ? 'active' : ''}">AM</button><button type="button" data-value="PM" class="period-btn ${period === 'PM' ? 'active' : ''}">PM</button></div></div></div>`;
                         };
                         
-                        // NEW: Teacher/Co-Teacher Overview Tab Content
+                        // Teacher/Co-Teacher Default View (Queue)
                         const teacherOverview = `
                             <div id="overview-panel" class="space-y-6">
                                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                                    <div class="flex justify-between items-center mb-4">
-                                        <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3>
-                                        <!-- Dynamic Hand Raising Status Toggle (NEW) -->
-                                        <div class="tooltip-container">
-                                            <button id="toggle-hand-raising-btn" class="raise-hand-btn px-4 py-2 text-white font-semibold rounded-lg transition-all duration-300 ${cls.handRaisingEnabled ? 'bg-yellow-600 hover:bg-yellow-700' : 'bg-gray-500 hover:bg-gray-600'}">
-                                                <i class="fa-solid ${cls.handRaisingEnabled ? 'fa-hand' : 'fa-hand-sparkles'} mr-2"></i> 
-                                                ${cls.handRaisingEnabled ? 'Pause Raising' : 'Resume Raising'}
-                                            </button>
-                                            <span class="tooltip-text">${cls.handRaisingEnabled ? 'Pause Raising' : 'Resume Raising'}</span>
+                                    <div class="flex flex-wrap justify-between items-center gap-4">
+                                        <h2 class="text-3xl font-bold text-gray-800 font-poppins">${escapeHtml(cls.name)}</h2>
+                                        <div class="flex items-center space-x-2">
+                                            <!-- Dynamic Hand Raising Status Toggle (NEW) -->
+                                            <div class="tooltip-container">
+                                                <button id="toggle-hand-raising-btn" class="raise-hand-btn ${cls.handRaisingEnabled ? 'bg-yellow-600 text-white hover:bg-yellow-700' : 'bg-gray-300 text-gray-700 hover:bg-gray-400'} px-4 py-2 font-semibold rounded-lg transition-all duration-300">
+                                                    <i class="fa-solid ${cls.handRaisingEnabled ? 'fa-hand' : 'fa-hand-sparkles'} mr-2"></i> 
+                                                    ${cls.handRaisingEnabled ? 'Pause Raising' : 'Resume Raising'}
+                                                </button>
+                                                <span class="tooltip-text">${cls.handRaisingEnabled ? 'Pause Raising' : 'Resume Raising'}</span>
+                                            </div>
+                                            <div class="tooltip-container"><button id="lower-all-hands-btn" class="tooltip-button btn-bubbly bg-red-100 text-red-600 hover:bg-red-200"><i class="fa-solid fa-hands-clapping"></i></button><span class="tooltip-text">Lower All Hands</span></div>
+                                            ${isOwner ? `<div class="tooltip-container relative">
+                                                    <button data-view="requests" class="class-view-tab tooltip-button btn-bubbly ${view === 'requests' ? 'bg-violet-100 text-violet-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}">
+                                                        <i class="fa-solid fa-user-shield"></i>
+                                                        ${requests.length > 0 ? `<span class="absolute -top-1 -right-1 flex h-4 w-4"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-violet-500 text-white text-xs items-center justify-center">${requests.length}</span></span>` : ''}
+                                                    </button>
+                                                    <span class="tooltip-text">Requests</span>
+                                                </div>` : ''}
+                                            <div class="tooltip-container"><button data-view="roster" class="class-view-tab tooltip-button btn-bubbly ${view === 'roster' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid fa-users"></i></button><span class="tooltip-text">Roster</span></div>
+                                            ${isOwner ? `<div class="tooltip-container"><button data-view="settings" class="class-view-tab tooltip-button btn-bubbly ${view === 'settings' ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300'}"><i class="fa-solid fa-gear"></i></button><span class="tooltip-text">Settings</span></div>` : ''}
                                         </div>
                                     </div>
-
-                                    <!-- NEW: Category Filters for Teachers -->
-                                    <div class="category-filters flex space-x-2 mb-4 border-b pb-3">
-                                        <button data-category="Unanswered" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-full bg-blue-500 text-white">Unanswered (${queue.filter(h => !h.status).length})</button>
-                                        <button data-category="Commented" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Commented On (${queue.filter(h => h.status === 'commented').length})</button>
-                                        <button data-category="Accepted" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Accepted (${queue.filter(h => h.status === 'accepted').length})</button>
-                                        <button data-category="Denied" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Denied (${queue.filter(h => h.status === 'denied').length})</button>
-                                    </div>
-
-                                    <div id="hand-raise-queue">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => {
-                                        const status = hand.status || 'pending';
-                                        const statusMap = { 'pending':'bg-yellow-500', 'commented':'bg-purple-500', 'accepted':'bg-green-500', 'denied':'bg-red-500' };
-                                        const statusLabel = status.charAt(0).toUpperCase() + status.slice(1);
-                                        const currentComment = hand.response ? hand.response.replace(/"/g, '&quot;') : '';
-                                        const showCommentButton = status === 'commented' || status === 'accepted' || status === 'denied';
-                                        
-                                        return `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md border-l-4 ${statusMap[status]}">
-                                            <div class="flex items-start w-full">
-                                                <div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div>
-                                                <div class="ml-4 flex-grow">
-                                                    <p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>
-                                                    ${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}
-                                                    ${showCommentButton ? `<p class="text-xs mt-2 font-medium text-gray-700">Response: ${hand.response ? `<span class="font-normal text-gray-600">${escapeHtml(hand.response.substring(0, 50) + (hand.response.length > 50 ? '...' : ''))}</span>` : 'None'}</p>` : ''}
-                                                    <p class="text-xs text-gray-400 mt-1">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p>
-                                                </div>
-                                                <div class="flex-shrink-0 flex flex-col space-y-2 ml-4 w-40">
-                                                    ${status === 'pending' ? `
-                                                        <button data-student-id="${hand.id}" data-action="accept" class="teacher-action-btn accept"><i class="fa-solid fa-thumbs-up"></i> Accept</button>
-                                                        <button data-student-id="${hand.id}" data-action="comment" data-current-comment="" class="teacher-action-btn comment"><i class="fa-solid fa-comment"></i> Comment</button>
-                                                        <button data-student-id="${hand.id}" data-action="deny" class="teacher-action-btn deny"><i class="fa-solid fa-thumbs-down"></i> Deny</button>
-                                                    ` : status === 'commented' || status === 'accepted' || status === 'denied' ? `
-                                                        <!-- NEW: Teacher Action Buttons (NEW) -->
-                                                        <div class="action-btn comment-split-btn" data-student-id="${hand.id}" data-current-comment="${currentComment}" data-response-status="${status}">
-                                                            <div class="edit-half bg-white hover:bg-gray-50 flex items-center justify-center text-gray-700 font-semibold text-sm"><i class="fa-solid fa-pen-to-square mr-1"></i> Edit</div>
-                                                            <div class="delete-half bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-600 font-semibold text-sm"><i class="fa-solid fa-trash-can mr-1"></i> Delete Response</div>
-                                                        </div>
-                                                    ` : ''}
-                                                    ${status === 'pending' ? `<button data-student-id="${hand.id}" class="teacher-lower-hand-btn ${isOwner ? 'text-red-500 hover:text-red-700' : 'text-gray-400 cursor-default'} text-xs mt-2 ml-auto">Remove (Owner Only)</button>` : ''}
-                                                </div>
-                                            </div>
-                                        </li>`
-                                    }).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-hands-clapping fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No hands are currently raised.</p></div>`}
                                 </div>
+                                <div id="teacher-view-content" class="min-h-[60vh]">${
+                                    (() => {
+                                        if (view === 'settings' && isOwner) return `
+                                            <div id="settings-panel" class="space-y-6 fade-enter-active">
+                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
+                                                        <div class="space-y-3">
+                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.code)}</span><span class="tooltip-text">Copy Student Code</span></div></div>
+                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.coTeacherCode)}</span><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
+                                                        <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
+                                                    </div>
+                                                </div>
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                                                    <div class="flex justify-between items-center"><h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3></div>
+                                                    <p class="text-sm text-gray-500 -mt-2">Automatically enable/disable hand raising based on time. Changes are applied for the current day.</p>
+                                                    <div id="schedule-form" class="space-y-4">
+                                                        <div class="grid grid-cols-2 gap-4">
+                                                            ${timePicker('enable-time-input', 'Enable Hand Raising at (Optional)', cls.schedule?.enableAt)}
+                                                            ${timePicker('disable-time-input', 'Disable Hand Raising at', cls.schedule?.disableAt)}
+                                                        </div>
+                                                        <div class="flex justify-end space-x-2">
+                                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear Schedule</button>
+                                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border-2 border-dashed border-red-300">
+                                                    <h4 class="text-lg font-bold text-red-700 font-poppins">Danger Zone</h4>
+                                                    <div class="mt-4 flex justify-between items-center"><p class="text-sm text-gray-600 max-w-md">Permanently delete this class and all its data. This action is irreversible.</p><button id="delete-class-btn" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 btn-bubbly whitespace-nowrap">Delete Class</button></div>
+                                                </div>
+                                            </div>`;
+                                        if (view === 'roster') return `
+                                            <div id="roster-panel" class="space-y-6 fade-enter-active">
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border"><h3 class="text-xl font-bold text-gray-800 font-poppins">Class Roster</h3></div>
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border">
+                                                    <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Teachers</h4>
+                                                    <ul class="space-y-3">
+                                                        <li class="flex items-center justify-between p-2"><div class="flex items-center"><span class="font-semibold text-gray-800">${escapeHtml(roster?.owner?.username || '...')}</span><span class="ml-3 text-xs font-bold uppercase bg-purple-100 text-purple-700 px-2 py-1 rounded-full">Owner</span></div></li>
+                                                        ${roster?.coTeachers?.map(t => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="font-semibold text-gray-700">${escapeHtml(t.username)}</span> ${isOwner ? `<button data-user-id="${t.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('')}
+                                                    </ul>
+                                                </div>
+                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border">
+                                                    <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Students (${roster?.students?.length || 0})</h4>
+                                                    <ul class="space-y-3 max-h-96 overflow-y-auto custom-scrollbar pr-2">
+                                                        ${roster?.students?.length > 0 ? roster.students.map(s => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="text-gray-700">${escapeHtml(s.username)}</span> ${isOwner ? `<button data-user-id="${s.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('') : '<p class="text-sm text-gray-500 p-2">No students have joined yet.</p>'}
+                                                    </ul>
+                                                </div>
+                                            </div>`;
+                                        // Default to overview
+                                        return `<div id="overview-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active"><h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-stream mr-3 text-blue-500"></i>Raised Hands Queue <span class="ml-3 bg-blue-100 text-blue-800 text-sm font-semibold px-3 py-1 rounded-full">${queue.length}</span></h3><div id="hand-raise-queue" class="mt-5">${queue.length>0?`<ul class="space-y-3">${queue.map((hand, index) => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md border-l-4 ${hand.status === 'accepted' ? 'border-green-500' : hand.status === 'denied' ? 'border-red-500' : hand.status === 'commented' ? 'border-purple-500' : 'border-yellow-500'}"><div class="flex items-start w-full">
+                                                    <div class="text-xl font-bold font-poppins text-blue-600 w-8 text-center pt-0.5">${index+1}</div>
+                                                    <div class="ml-4 flex-grow">
+                                                        <p class="font-semibold text-gray-800">${escapeHtml(hand.studentName)}</p>
+                                                        ${hand.question?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(hand.question)}"</p>`:''}
+                                                        ${hand.response ? `<p class="text-xs mt-2 font-medium text-gray-700">Response: <span class="font-normal text-gray-600">${escapeHtml(hand.response.substring(0, 50) + (hand.response.length > 50 ? '...' : ''))}</span></p>` : ''}
+                                                        <p class="text-xs text-gray-400 mt-1">Raised at: ${new Date(hand.raisedAt?.toDate()).toLocaleTimeString()}</p>
+                                                    </div>
+                                                    <div class="flex-shrink-0 flex flex-col space-y-2 ml-4 w-40">
+                                                        ${hand.status === 'pending' ? `
+                                                            <button data-student-id="${hand.id}" data-action="accept" class="teacher-action-btn accept"><i class="fa-solid fa-thumbs-up"></i> Accept</button>
+                                                            <button data-student-id="${hand.id}" data-action="comment" data-current-comment="" class="teacher-action-btn comment"><i class="fa-solid fa-comment icon-color"></i> Comment</button>
+                                                            <button data-student-id="${hand.id}" data-action="deny" class="teacher-action-btn deny"><i class="fa-solid fa-thumbs-down"></i> Deny</button>
+                                                        ` : `
+                                                            <div class="action-btn comment-split-btn" data-student-id="${hand.id}" data-current-comment="${hand.response ? hand.response.replace(/"/g, '&quot;') : ''}" data-response-status="${hand.status}">
+                                                                <div class="edit-half bg-white hover:bg-gray-50 flex items-center justify-center text-gray-700 font-semibold text-sm"><i class="fa-solid fa-pen-to-square mr-1"></i> Edit</div>
+                                                                <div class="delete-half bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-600 font-semibold text-sm"><i class="fa-solid fa-trash-can mr-1"></i> Delete Response</div>
+                                                            </div>
+                                                        `}
+                                                        ${isOwner ? `<button data-student-id="${hand.id}" class="teacher-lower-hand-btn text-xs mt-2 ml-auto text-red-500 hover:text-red-700">Remove Hand</button>` : ''}
+                                                    </div>
+                                                </div></li>`
+                                    ).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-person-rays fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">The queue is empty.</p></div>`}</div></div>`;
+                                    })()
+                                }</div>
                             </div>
                         `;
-
                         // NEW: Student Overview Tab Content
                         const studentOverview = `
                             <div id="overview-panel" class="space-y-6">
@@ -811,43 +922,51 @@
                                         <i class="fa-solid fa-plus text-xl"></i>
                                         <span class="tooltip-text">Create Request</span>
                                     </button>
+                                    <!-- NEW: Student Settings Button -->
+                                    <button id="student-settings-btn" class="tooltip-container ml-2 w-10 h-10 bg-gray-200 text-gray-700 rounded-full hover:bg-gray-300 flex items-center justify-center btn-bubbly">
+                                        <i class="fa-solid fa-sliders"></i>
+                                        <span class="tooltip-text">Settings</span>
+                                    </button>
                                 </div>
                                 
-                                <div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">
-                                    ${(()=>{
-                                        const myHand = queue.find(h => h.id === user.uid);
-                                        const myRequestStatus = myHand ? (myHand.status || 'pending') : 'none';
-                                        const myQueuePosition = queue.findIndex(h => h.id === user.uid) + 1;
-                                        const myQuestion = myHand?.question;
-                                        const myResponse = myHand?.response;
+                                <div class="bg-white p-8 rounded-xl shadow-sm border border-gray-200 text-center hand-status-card">${(()=>{
+                                    const myHand = queue.find(h => h.id === user.uid);
+                                    const myQueuePosition = queue.findIndex(h => h.id === user.uid) + 1;
+                                    const myResponse = myHand?.response;
+                                    const status = myHand?.status || 'none';
 
-                                        if(!cls.handRaisingEnabled) {
-                                            return `<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently paused.</h3><p class="mt-1 text-gray-600">Your teacher will resume it shortly, or check the schedule below for active times.</p>`
-                                        }
+                                    if(!cls.handRaisingEnabled) {
+                                        return `<i class="fa-solid fa-hand fa-3x text-yellow-500"></i><h3 class="mt-4 text-xl font-bold font-poppins text-gray-700">Hand raising is currently paused.</h3><p class="mt-1 text-gray-600">Your teacher will resume it shortly, or check the schedule below for active times.</p>`
+                                    }
+                                    
+                                    if(myHand) {
+                                        let statusColor = 'text-blue-600', statusText = 'In Queue';
+                                        if (status === 'accepted') { statusColor = 'text-green-600'; statusText = 'Accepted'; }
+                                        else if (status === 'denied') { statusColor = 'text-red-600'; statusText = 'Denied'; }
+                                        else if (status === 'commented') { statusColor = 'text-purple-600'; statusText = 'Awaiting Feedback'; }
                                         
-                                        if(myHand) {
-                                            return `
-                                                <i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i>
-                                                <h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3>
-                                                <p class="mt-1 text-lg text-gray-600">Status: <span class="font-bold text-blue-600">${myResponse ? 'Awaiting Feedback' : 'In Queue'}</span></p>
-                                                <p class="text-sm text-gray-500">You are #${myQueuePosition} in line.</p>
-                                                ${myQuestion ? `<p class="mt-3 p-3 bg-blue-50 rounded-lg italic text-gray-700 border-l-4 border-blue-400 max-w-md mx-auto">Question: "${escapeHtml(myQuestion)}"</p>` : ''}
-                                                ${myResponse ? `<p class="mt-3 p-3 bg-green-50 rounded-lg text-gray-700 border-l-4 border-green-400 max-w-md mx-auto">Teacher Response: ${escapeHtml(myResponse)}</p>` : ''}
-                                                <div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>
-                                            `;
-                                        }
-                                        
-                                        // Student has no hand raised
-                                        return `<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">All Clear</h3><p class="mt-1 text-gray-600">Click the '+' button on the top right to create a new request.</p>`;
-                                    })()}
-                                </div>
-
+                                        return `
+                                            <i class="fa-solid fa-hand-back-fist fa-3x text-green-500 animate-pulse"></i>
+                                            <h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">Your hand is raised!</h3>
+                                            <p class="mt-1 text-lg text-gray-600">Status: <span class="font-bold ${statusColor}">${statusText}</span></p>
+                                            <p class="text-sm text-gray-500">You are #${myQueuePosition} in line.</p>
+                                            ${myHand.question ? `<p class="mt-3 p-3 bg-blue-50 rounded-lg italic text-gray-700 border-l-4 border-blue-400 max-w-md mx-auto">Question: "${escapeHtml(myHand.question)}"</p>` : ''}
+                                            ${myResponse ? `<p class="mt-3 p-3 bg-green-50 rounded-lg text-gray-700 border-l-4 border-green-400 max-w-md mx-auto">Teacher Response: ${escapeHtml(myResponse)}</p>` : ''}
+                                            <div class="mt-6"><button id="lower-hand-action-btn" class="px-8 py-3 bg-red-500 text-white font-bold rounded-lg hover:bg-red-600 btn-bubbly"><i class="fa-solid fa-hand-sparkles mr-2"></i> Lower My Hand</button></div>
+                                        `;
+                                    }
+                                    
+                                    // Student has no hand raised
+                                    return `<i class="fa-solid fa-hand-point-up fa-3x text-blue-500"></i><h3 class="mt-4 text-2xl font-bold font-poppins text-gray-800">All Clear</h3><p class="mt-1 text-gray-600">Click the '+' button to raise your hand for help.</p>`;
+                                })()}</div></div>
+                                
                                 <!-- NEW: Student Request History/View -->
                                 <div class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
-                                    <h3 class="text-xl font-bold text-gray-800 font-poppins mb-4">My Activity Today</h3>
+                                    <h3 class="text-xl font-bold text-gray-800 font-poppins mb-2">My Activity Today</h3>
+                                    <p class="text-sm text-gray-500 mb-4">Filter requests you have made today.</p>
                                     <div class="category-filters flex space-x-2 mb-4 border-b pb-3">
                                         <button data-category="Unanswered" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-full bg-blue-500 text-white">Unanswered</button>
-                                        <button data-category="Commented" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Commented</button>
+                                        <button data-category="Commented" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Commented On</button>
                                         <button data-category="Accepted" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Accepted</button>
                                         <button data-category="Denied" data-action="filter" class="request-category-btn px-3 py-1.5 text-sm font-medium rounded-lg bg-gray-100 text-gray-700 hover:bg-gray-200">Denied</button>
                                     </div>
@@ -861,79 +980,6 @@
                         // Teacher/Co-Teacher Default View (Queue)
                         const defaultView = isAnyTeacher ? teacherOverview : studentOverview;
 
-                        if (view === 'requests' && isOwner) return `
-                            <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
-                                <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${requests.length}</span></h3>
-                                <div id="requests-list" class="mt-5">${requests.length>0?`<ul class="space-y-3">${requests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div><div class="flex items-center space-x-2"><button data-requester-id="${req.id}" class="deny-request-btn px-3 py-1.5 bg-red-100 text-red-700 text-sm font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Deny</button><button data-requester-id="${req.id}" class="accept-request-btn px-3 py-1.5 bg-green-100 text-green-700 text-sm font-semibold rounded-lg hover:bg-green-200 btn-bubbly">Accept</button></div></li>`).join('')}</ul>`:`<div class="text-center py-16"><i class="fa-solid fa-inbox fa-3x text-slate-300"></i><p class="mt-4 text-gray-500">No pending requests.</p></div>`}</div>
-                            </div>`;
-                        if (view === 'roster') return `
-                            <div id="roster-panel" class="space-y-6 fade-enter-active">
-                                <div class="bg-white p-6 rounded-2xl shadow-sm border"><h3 class="text-xl font-bold text-gray-800 font-poppins">Class Roster</h3></div>
-                                <div class="bg-white p-6 rounded-2xl shadow-sm border">
-                                    <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Teachers</h4>
-                                    <ul class="space-y-3">
-                                        <li class="flex items-center justify-between p-2"><div class="flex items-center"><span class="font-semibold text-gray-800">${escapeHtml(roster?.owner?.username || '...')}</span><span class="ml-3 text-xs font-bold uppercase bg-purple-100 text-purple-700 px-2 py-1 rounded-full">Owner</span></div></li>
-                                        ${roster?.coTeachers?.map(t => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="font-semibold text-gray-700">${escapeHtml(t.username)}</span> ${isOwner ? `<button data-user-id="${t.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('')}
-                                    </ul>
-                                </div>
-                                 <div class="bg-white p-6 rounded-2xl shadow-sm border">
-                                    <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Students (${roster?.students?.length || 0})</h4>
-                                    <ul class="space-y-3 max-h-96 overflow-y-auto custom-scrollbar pr-2">
-                                        ${roster?.students?.length > 0 ? roster.students.map(s => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="text-gray-700">${escapeHtml(s.username)}</span> ${isOwner ? `<button data-user-id="${s.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('') : '<p class="text-sm text-gray-500 p-2">No students have joined yet.</p>'}
-                                    </ul>
-                                </div>
-                            </div>`;
-                        if (view === 'settings' && isOwner) return `
-                            <div id="settings-panel" class="space-y-6 fade-enter-active">
-                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
-                                        <div class="space-y-3">
-                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.code)}</span><span class="tooltip-text">Copy Student Code</span></div></div>
-                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.coTeacherCode)}</span><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
-                                        </div>
-                                    </div>
-                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
-                                        <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
-                                    </div>
-                                </div>
-                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                    <div class="flex justify-between items-center"><h3 class="text-xl font-bold text-gray-800 font-poppins">Scheduling</h3></div>
-                                    <p class="text-sm text-gray-500 -mt-2">Automatically enable/disable hand raising based on time. Changes are applied for the current day.</p>
-                                    <div id="schedule-form" class="space-y-4">
-                                        <div class="grid grid-cols-2 gap-4">
-                                            ${timePicker('enable-time-input', 'Enable Hand Raising at (Optional)', cls.schedule?.enableAt)}
-                                            ${timePicker('disable-time-input', 'Disable Hand Raising at', cls.schedule?.disableAt)}
-                                        </div>
-                                        <div class="flex justify-end space-x-2">
-                                            <button data-action="clear" class="schedule-action-btn px-4 py-2 bg-red-100 text-red-700 font-semibold rounded-lg hover:bg-red-200 btn-bubbly">Clear Schedule</button>
-                                            <button data-action="save" class="schedule-action-btn px-4 py-2 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save Schedule</button>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="bg-white p-6 rounded-2xl shadow-sm border-2 border-dashed border-red-300">
-                                    <h4 class="text-lg font-bold text-red-700 font-poppins">Danger Zone</h4>
-                                    <div class="mt-4 flex justify-between items-center"><p class="text-sm text-gray-600 max-w-md">Permanently delete this class and all its data. This action is irreversible.</p><button id="delete-class-btn" class="px-4 py-2 bg-red-600 text-white font-semibold rounded-lg hover:bg-red-700 btn-bubbly whitespace-nowrap">Delete Class</button></div>
-                                </div>
-                            </div>`;
-                        if (view === 'roster') return `
-                            <div id="roster-panel" class="space-y-6 fade-enter-active">
-                                <div class="bg-white p-6 rounded-2xl shadow-sm border"><h3 class="text-xl font-bold text-gray-800 font-poppins">Class Roster</h3></div>
-                                <div class="bg-white p-6 rounded-2xl shadow-sm border">
-                                    <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Teachers</h4>
-                                    <ul class="space-y-3">
-                                        <li class="flex items-center justify-between p-2"><div class="flex items-center"><span class="font-semibold text-gray-800">${escapeHtml(roster?.owner?.username || '...')}</span><span class="ml-3 text-xs font-bold uppercase bg-purple-100 text-purple-700 px-2 py-1 rounded-full">Owner</span></div></li>
-                                        ${roster?.coTeachers?.map(t => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="font-semibold text-gray-700">${escapeHtml(t.username)}</span> ${isOwner ? `<button data-user-id="${t.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('')}
-                                    </ul>
-                                </div>
-                                 <div class="bg-white p-6 rounded-2xl shadow-sm border">
-                                    <h4 class="text-lg font-semibold text-gray-800 mb-4 font-poppins">Students (${roster?.students?.length || 0})</h4>
-                                    <ul class="space-y-3 max-h-96 overflow-y-auto custom-scrollbar pr-2">
-                                        ${roster?.students?.length > 0 ? roster.students.map(s => `<li class="flex items-center justify-between p-2 rounded-lg hover:bg-slate-50"><span class="text-gray-700">${escapeHtml(s.username)}</span> ${isOwner ? `<button data-user-id="${s.id}" class="remove-user-btn text-xs text-red-500 hover:text-red-700 font-semibold">Remove</button>` : ''}</li>`).join('') : '<p class="text-sm text-gray-500 p-2">No students have joined yet.</p>'}
-                                    </ul>
-                                </div>
-                            </div>`;
                         if (view === 'requests' && isOwner) return `
                             <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
                                 <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${requests.length}</span></h3>
@@ -983,7 +1029,6 @@
                     requestCoTeacherModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Request to be a Co-Teacher</h3><p class="text-gray-600 mt-1">For class: <strong>${escapeHtml(name)}</strong></p><form id="request-co-teacher-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="co-teacher-request-comment" class="block text-sm font-medium text-gray-700">Add a comment (optional)</label><textarea id="co-teacher-request-comment" rows="3" class="mt-1 block w-full app-input" placeholder="e.g., I'm the other section's teacher."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Send Request</button></div></form></div>`,
                     googleImportModal:()=>`<div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto"><div class="flex items-center justify-center mb-4"><img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4"><h3 class="text-2xl font-bold font-poppins text-gray-800">Import from Classroom</h3></div><p class="text-center text-gray-500 mb-6">Select a class you own to import it into Notify.</p><div id="g-import-content"><div id="g-import-loading" class="text-center py-8"><i class="fa-solid fa-spinner fa-spin fa-2x text-blue-600 mb-2"></i><p class="text-gray-600">Connecting to Google Classroom...</p></div><p id="g-import-error" class="text-center text-red-600 bg-red-50 p-3 rounded-md hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul></div><div class="flex justify-center mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
                     
-                    // NEW: Student Settings Modal (Settings View for Students)
                     studentSettingsModal:(cls, user) => `
                         <div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto">
                             <div class="flex items-center justify-between border-b pb-3 mb-4">
@@ -994,7 +1039,7 @@
                                 <div class="bg-gray-50 p-4 rounded-lg">
                                     <h4 class="font-semibold text-gray-700 mb-2">Local Display Name</h4>
                                     <form id="student-display-name-form" class="flex space-x-2">
-                                        <input type="text" id="student-local-name-input" class="app-input flex-grow" value="${escapeHtml(user.localName || '')}" placeholder="Optional: Set a temporary local name">
+                                        <input type="text" id="student-local-name-input" class="app-input flex-grow" value="${escapeHtml(user.localNameForClass?.[cls.id] || '')}" placeholder="Optional: Set a temporary local name">
                                         <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly text-sm">Save</button>
                                     </form>
                                     <p class="text-xs text-gray-500 mt-1">This only changes how teachers see you in this class.</p>
@@ -1019,7 +1064,7 @@
                         const defaultText = isEdit ? currentComment : '';
                         return `
                             <div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto">
-                                <h3 class="text-xl font-semibold font-poppins text-gray-800">${title} for ${studentId}</h3>
+                                <h3 class="text-xl font-semibold font-poppins text-gray-800">${title}</h3>
                                 <form id="comment-action-form" data-class-id="${classId}" data-student-id="${studentId}" data-action="${action}" class="mt-4 space-y-4">
                                     <div>
                                         <label for="comment-text-input" class="block text-sm font-medium text-gray-700">Your ${isEdit ? 'Edited' : 'New'} Response</label>
@@ -1042,35 +1087,40 @@
                                 <button data-class-id="${classId}" data-student-id="${studentId}" id="confirm-delete-comment-btn" class="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 btn-bubbly">Confirm Delete</button>
                             </div>
                         </div>
-                    `
+                    `,
                 };
                 
                 document.body.addEventListener('mainContentRendered', () => {
                     // --- Feature: Dynamic Hand Raising Button Toggle (Teacher/Co-teacher View) ---
                     const toggleBtn = document.getElementById('toggle-hand-raising-btn');
-                    if (toggleBtn) {
+                    if (toggleBtn && currentClassId && allLoadedClasses[currentClassId]) {
                         const cls = allLoadedClasses[currentClassId];
                         toggleBtn.innerHTML = `<i class="fa-solid ${cls.handRaisingEnabled ? 'fa-hand' : 'fa-hand-sparkles'} mr-2"></i> ${cls.handRaisingEnabled ? 'Pause Raising' : 'Resume Raising'}`;
                         toggleBtn.classList.toggle('bg-yellow-600', cls.handRaisingEnabled);
                         toggleBtn.classList.toggle('hover:bg-yellow-700', cls.handRaisingEnabled);
-                        toggleBtn.classList.toggle('bg-gray-500', !cls.handRaisingEnabled);
-                        toggleBtn.classList.toggle('hover:bg-gray-600', !cls.handRaisingEnabled);
+                        toggleBtn.classList.toggle('bg-gray-300', !cls.handRaisingEnabled);
+                        toggleBtn.classList.toggle('text-gray-700', !cls.handRaisingEnabled);
+                        toggleBtn.classList.toggle('hover:bg-gray-400', !cls.handRaisingEnabled);
+                        toggleBtn.classList.toggle('text-white', cls.handRaisingEnabled);
                     }
                     
-                    // --- Feature: Schedule Time Picker Initialization ---
+                    // --- Feature: Schedule Time Picker Initialization & Listener ---
                     const timeInputs = document.querySelectorAll('.schedule-time-input');
                     timeInputs.forEach(input => {
-                        // Store the raw HH:MM value to handle initial state correctly
-                        input.dataset.initialValue = input.value;
+                        // Initialize the period selector based on the initial 24h value stored in data-digits
+                        const initial24h = input.dataset.digits;
+                        const [h24] = initial24h.split(':').map(Number);
+                        const period = h24 >= 12 ? 'PM' : 'AM';
                         const periodSelector = document.getElementById(input.id.replace('-input', '-period-selector'));
+                        
                         if(periodSelector) {
-                            const [h24] = (input.dataset.initialValue || '08:00').split(':').map(Number);
-                            const period = h24 >= 12 ? 'PM' : 'AM';
                             periodSelector.querySelectorAll('.period-btn').forEach(btn => btn.classList.remove('active'));
                             periodSelector.querySelector(`[data-value="${period}"]`).classList.add('active');
                         }
 
-                        input.addEventListener('input', (e) => {
+                        // Input event listener for live updating digits
+                        input.removeEventListener('input', input.oninputHandler); // Prevent re-attaching multiple listeners
+                        input.oninputHandler = (e) => {
                             let currentDigits = input.dataset.digits || '';
                             const isBackspace = e.inputType === 'deleteContentBackward';
 
@@ -1089,7 +1139,6 @@
                             let h_str = padded.slice(0, 2);
                             let m_str = padded.slice(2, 4);
                             
-                            // Basic validation to keep 12-hour format visually sane during typing
                             if (parseInt(h_str, 10) > 12) h_str = '12';
                             if (parseInt(h_str, 10) === 0) h_str = '00';
                             if (parseInt(m_str, 10) > 59) m_str = '59';
@@ -1098,29 +1147,35 @@
                             if (input.value !== formattedValue) {
                                 input.value = formattedValue;
                             }
-                        });
+                        };
+                        input.addEventListener('input', input.oninputHandler);
 
-                        input.addEventListener('blur', (e) => {
+                        // Blur listener for final 24hr conversion storage
+                        input.removeEventListener('blur', input.onblurHandler);
+                        input.onblurHandler = (e) => {
                             let [h, m] = e.target.value.split(':').map(Number);
-                            // Handle empty or invalid input on blur by defaulting or fixing
-                            if (isNaN(h) || h === 0) h = 1; // Default to 1 AM if blank or 00
+                            if (isNaN(h) || h === 0) h = 1; 
                             if (h > 12) h = 12;
                             if (isNaN(m) || m < 0 || m > 59) m = 0;
 
                             const period = document.querySelector(`#${input.id.replace('-input', '-period-selector')} .period-btn.active`)?.dataset.value || 'AM';
                             let h24 = h % 12;
                             if (period === 'PM' && h !== 12) h24 += 12;
-                            if (period === 'AM' && h === 12) h24 = 0; // Midnight is 00:xx
+                            if (period === 'AM' && h === 12) h24 = 0; 
 
                             const finalValue = `${String(h24).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-                            e.target.value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`; // Keep 12hr format visible
-                            input.dataset.digits = finalValue.replace(':', ''); // Store 24hr format for backend saving
-                        });
+                            e.target.value = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+                            input.dataset.digits = finalValue.replace(':', '');
+                        };
+                        input.addEventListener('blur', input.onblurHandler);
                     });
+
 
                     // --- Feature: Dynamic Action Buttons (Accept/Comment/Deny) ---
                     document.querySelectorAll('.teacher-action-btn').forEach(btn => {
-                        const statusDiv = btn.closest('li').querySelector('.border-l-4');
+                        const li = btn.closest('li');
+                        if (!li) return;
+                        const statusDiv = li.querySelector('.border-l-4');
                         const status = statusDiv ? statusDiv.className.match(/border-(.+)-500/)?.[1] : null;
                         
                         btn.classList.remove('accept', 'deny', 'comment');
@@ -1148,49 +1203,47 @@
                         const currentCommentText = container.dataset.currentComment;
                         
                         container.innerHTML = `
-                            <div class="edit-half bg-white ${isCommented ? 'hover:bg-gray-50' : 'bg-gray-100 hover:bg-gray-200'} flex items-center justify-center text-gray-700 font-semibold text-sm">
+                            <div class="edit-half ${isCommented && currentCommentText ? 'hover:bg-gray-50' : 'opacity-50 cursor-not-allowed'} flex items-center justify-center text-gray-700 font-semibold text-sm">
                                 <i class="fa-solid fa-pen-to-square mr-1"></i> Edit
                             </div>
                             <div class="delete-half bg-red-50 hover:bg-red-100 flex items-center justify-center text-red-600 font-semibold text-sm">
                                 <i class="fa-solid fa-trash-can mr-1"></i> Delete Response
                             </div>
                         `;
-                        // Ensure edit button is disabled if there is no actual comment yet (e.g., only accepted/denied status but no response text)
                         if (!isCommented || !currentCommentText) {
-                            container.querySelector('.edit-half').classList.add('opacity-50', 'cursor-not-allowed');
-                            container.querySelector('.edit-half').classList.remove('hover:bg-gray-50');
                             container.querySelector('.edit-half').setAttribute('disabled', 'true');
                         }
                     });
-
-                    // --- Feature: Student Settings Update Local Name ---
+                    
+                    // --- Feature: Student Settings Initialization ---
                     const studentNameForm = document.getElementById('student-display-name-form');
                     if (studentNameForm) {
                         studentNameForm.onsubmit = async (e) => {
                             e.preventDefault();
                             const newName = document.getElementById('student-local-name-input').value.trim();
                             await db.collection('users').doc(userData.uid).update({ [`localNameForClass.${currentClassId}`]: newName || firebase.firestore.FieldValue.delete() });
-                            userData.localName = newName || null; // Update local user data cache
+                            userData.localNameForClass = userData.localNameForClass || {};
+                            userData.localNameForClass[currentClassId] = newName || null;
                             showModal(TPL.messageModal('Success','Local name updated!','green'));
+                            hideModal();
+                            renderMainContent(); // Re-render student view to show update
                         };
                     }
 
                     // --- Feature: Student Leave Class ---
-                    const leaveClassBtn = document.getElementById('confirm-leave-class-btn');
-                    if (leaveClassBtn) {
-                        leaveClassBtn.onclick = async () => {
-                            await db.collection('classes').doc(currentClassId).update({ studentIds: firebase.firestore.FieldValue.arrayRemove(userData.uid) });
-                            hideModal();
-                            selectClass(null);
-                            showModal(TPL.messageModal('Success', 'You have successfully left the class.', 'green'));
-                        };
-                    }
+                    document.getElementById('confirm-leave-class-btn')?.onclick = async (e) => {
+                        const id = e.target.dataset.classId;
+                        await db.collection('classes').doc(id).update({ studentIds: firebase.firestore.FieldValue.arrayRemove(userData.uid) });
+                        hideModal();
+                        selectClass(null);
+                        showModal(TPL.messageModal('Success', 'You have successfully left the class.', 'green'));
+                    };
 
                     // --- Feature: Delete Comment Logic ---
                     document.getElementById('confirm-delete-comment-btn')?.onclick = (e) => {
                         const id = e.target.dataset.classId;
                         const studentId = e.target.dataset.studentId;
-                        handleAction(id, studentId, 'delete_comment'); // Revert status/response
+                        handleAction(id, studentId, 'delete_comment');
                         hideModal();
                     };
                 });
