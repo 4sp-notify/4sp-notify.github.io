@@ -134,7 +134,7 @@
         #main-content-area {
             padding-right: 18px; /* Fixed padding to account for potential scrollbar width */
         }
-
+        
         /* NEW: Pulsing animation for teacher request button */
         @keyframes pulse-border {
             0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
@@ -718,13 +718,120 @@
                 let gapiLoaded=false,googleAuth=null;
                 const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/classroom/v1/rest';
                 const SCOPES = 'https://www.googleapis.com/auth/classroom.courses.readonly https://www.googleapis.com/auth/classroom.rosters.readonly';
-                async function initializeGAPI(apiKey,clientId){if(gapiLoaded)return Promise.resolve();return new Promise((resolve,reject)=>{const checkGAPI=()=>{if(typeof gapi!=='undefined'&&gapi.load){gapi.load('client',async()=>{try{await gapi.client.init({apiKey,discoveryDocs:[DISCOVERY_DOC]});googleAuth=google.accounts.oauth2.initTokenClient({client_id:clientId,scope:SCOPES,callback:''});gapiLoaded=true;resolve();}catch(e){reject(e);}});}else{setTimeout(checkGAPI,100);}};checkGAPI();});}
-                function requestAccessToken(){return new Promise((resolve,reject)=>{try{googleAuth.callback=async(res)=>{if(res.error)return reject(new Error(res.error));gapi.client.setToken({access_token:res.access_token});try{await listGoogleCourses();resolve();}catch(e){reject(e);}};}catch(e){reject(e);}});}
-                async function handleGoogleImportClick(){showModal(TPL.googleImportModal());const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');loadingEl.classList.remove('hidden');errorEl.classList.add('hidden');try{const secretsDoc=await db.collection('secrets').doc('wUTBTbjuNLueOFhgHXEE').get();if(!secretsDoc.exists)throw new Error("Secrets document not found.");const{GoogleClassroomAPIKey:apiKey,GoogleClientID:clientId}=secretsDoc.data();if(!apiKey||!clientId)throw new Error("Missing API Key or Client ID in secrets document.");await initializeGAPI(apiKey,clientId);await requestAccessToken();}catch(e){console.error('Google Classroom init error:',e);loadingEl.classList.add('hidden');errorEl.textContent=`Error: ${e.message}`;errorEl.classList.remove('hidden');}}
-                async function listGoogleCourses(){const listEl=document.getElementById('g-import-list');const loadingEl=document.getElementById('g-import-loading');const errorEl=document.getElementById('g-import-error');try{loadingEl.textContent='Loading courses...';const response=await gapi.client.classroom.courses.list({teacherId:'me',courseStates:'ACTIVE'});loadingEl.classList.add('hidden');const courses=response.result.courses||[];const notifyClassesSnapshot=await db.collection('classes').where('teacherId','==',currentUser.uid).get();const existingGoogleIds=new Set();notifyClassesSnapshot.forEach(doc=>{const data=doc.data();if(data.googleCourseId)existingGoogleIds.add(data.googleCourseId);});if(courses.length>0){listEl.innerHTML=courses.map(course=>{const isImported=existingGoogleIds.has(course.id);
-                        // UPDATED: Import button style (rounded-md and font-poppins)
-                        const buttonHtml=isImported?'<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-md text-sm font-poppins">Imported</button>':`<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-700 btn-bubbly font-poppins">Import</button>`;
-                        return`<li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><div class="flex-1"><p class="font-bold text-gray-800">${escapeHtml(course.name)}</p><p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section||'No section')}</p></div>${buttonHtml}</li>`;}).join('');document.querySelectorAll('.import-g-class-btn').forEach(button=>{button.addEventListener('click',()=>importGoogleClass(button.dataset.courseId,button.dataset.courseName));});}else{listEl.innerHTML='<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom that you are the primary teacher of.</p>';}}catch(e){console.error('Error listing courses:',e);loadingEl.classList.add('hidden');let errorMessage='Failed to load courses.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}errorEl.textContent=`Error: ${errorMessage}`;errorEl.classList.remove('hidden');}}
+                
+                // *** CRITICAL FIX: Ensure GAPI/OAuth initialization is robust ***
+                async function initializeGAPI(apiKey,clientId){
+                    if(gapiLoaded) return Promise.resolve();
+                    return new Promise((resolve,reject)=>{
+                        const checkGAPI=()=>{
+                            if(typeof gapi!=='undefined'&&gapi.load){
+                                gapi.load('client:auth2',async()=>{ // Added 'auth2' for better token handling
+                                    try{
+                                        await gapi.client.init({apiKey,discoveryDocs:[DISCOVERY_DOC]});
+                                        
+                                        // Check if Google accounts client is available
+                                        if(typeof google === 'undefined' || typeof google.accounts === 'undefined' || typeof google.accounts.oauth2 === 'undefined') {
+                                            throw new Error("Google Accounts Client library failed to load.");
+                                        }
+                                        
+                                        googleAuth = google.accounts.oauth2.initTokenClient({
+                                            client_id: clientId,
+                                            scope: SCOPES,
+                                            callback: '' // Will be set in requestAccessToken
+                                        });
+                                        gapiLoaded=true;
+                                        resolve();
+                                    }catch(e){
+                                        reject(e);
+                                    }
+                                });
+                            } else {
+                                setTimeout(checkGAPI,100);
+                            }
+                        };
+                        checkGAPI();
+                    });
+                }
+
+                function requestAccessToken(){
+                    return new Promise((resolve,reject)=>{
+                        try{
+                            googleAuth.callback = async(res) => {
+                                if(res.error) return reject(new Error(res.error));
+                                
+                                // CRITICAL: Set the token immediately after receiving it
+                                gapi.client.setToken({access_token:res.access_token});
+                                
+                                try{
+                                    await listGoogleCourses();
+                                    resolve();
+                                }catch(e){
+                                    reject(e);
+                                }
+                            };
+                            // This line is what should trigger the pop-up/consent window
+                            googleAuth.requestAccessToken(); 
+                        }catch(e){
+                            reject(e);
+                        }
+                    });
+                }
+                // *** END CRITICAL FIX ***
+
+                async function handleGoogleImportClick(){
+                    showModal(TPL.googleImportModal());
+                    const loadingEl=document.getElementById('g-import-loading');
+                    const errorEl=document.getElementById('g-import-error');
+                    loadingEl.classList.remove('hidden');
+                    errorEl.classList.add('hidden');
+                    
+                    try{
+                        const secretsDoc=await db.collection('secrets').doc('wUTBTbjuNLueOFhgHXEE').get();
+                        if(!secretsDoc.exists)throw new Error("Secrets document not found.");
+                        const{GoogleClassroomAPIKey:apiKey,GoogleClientID:clientId}=secretsDoc.data();
+                        if(!apiKey||!clientId)throw new Error("Missing API Key or Client ID in secrets document.");
+                        
+                        await initializeGAPI(apiKey,clientId);
+                        await requestAccessToken(); // This triggers the popup
+                    }catch(e){
+                        console.error('Google Classroom init error:',e);
+                        loadingEl.classList.add('hidden');
+                        errorEl.textContent=`Error initializing import: ${e.message}. Check browser console for details.`;
+                        errorEl.classList.remove('hidden');
+                    }
+                }
+                
+                async function listGoogleCourses(){
+                    const listEl=document.getElementById('g-import-list');
+                    const loadingEl=document.getElementById('g-import-loading');
+                    const errorEl=document.getElementById('g-import-error');
+                    try{
+                        loadingEl.textContent='Loading courses...';
+                        const response=await gapi.client.classroom.courses.list({teacherId:'me',courseStates:'ACTIVE'});
+                        loadingEl.classList.add('hidden');
+                        const courses=response.result.courses||[];
+                        const notifyClassesSnapshot=await db.collection('classes').where('teacherId','==',currentUser.uid).get();
+                        const existingGoogleIds=new Set();
+                        notifyClassesSnapshot.forEach(doc=>{const data=doc.data();if(data.googleCourseId)existingGoogleIds.add(data.googleCourseId);});
+                        if(courses.length>0){
+                            listEl.innerHTML=courses.map(course=>{const isImported=existingGoogleIds.has(course.id);
+                                const buttonHtml=isImported?'<button disabled class="bg-gray-400 text-white px-3 py-1 rounded-md text-sm font-poppins">Imported</button>':`<button data-course-id="${course.id}" data-course-name="${escapeHtml(course.name)}" class="import-g-class-btn bg-blue-600 text-white px-3 py-1 rounded-md text-sm hover:bg-blue-700 btn-bubbly font-poppins">Import</button>`;
+                                return`<li class="flex justify-between items-center p-3 bg-gray-50 rounded-lg"><div class="flex-1"><p class="font-bold text-gray-800">${escapeHtml(course.name)}</p><p class="text-xs text-gray-500 mt-1">${escapeHtml(course.section||'No section')}</p></div>${buttonHtml}</li>`;
+                            }).join('');
+                            document.querySelectorAll('.import-g-class-btn').forEach(button=>{button.addEventListener('click',()=>importGoogleClass(button.dataset.courseId,button.dataset.courseName));});
+                        } else {
+                            listEl.innerHTML='<p class="text-center text-gray-500 py-8">No active courses found in your Google Classroom that you are the primary teacher of.</p>';
+                        }
+                    }catch(e){
+                        console.error('Error listing courses:',e);
+                        loadingEl.classList.add('hidden');
+                        let errorMessage='Failed to load courses.';
+                        if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}
+                        else if(e.message){errorMessage=e.message;}
+                        errorEl.textContent=`Error: ${errorMessage}`;
+                        errorEl.classList.remove('hidden');
+                    }
+                }
                 async function importGoogleClass(googleCourseId,googleCourseName){const importBtn=document.querySelector(`.import-g-class-btn[data-course-id="${googleCourseId}"]`);if(importBtn){importBtn.textContent='Importing...';importBtn.disabled=true;}try{const existingClass=await db.collection('classes').where('googleCourseId','==',googleCourseId).limit(1).get();if(!existingClass.empty){showModal(TPL.messageModal('Duplicate','This class has already been imported.','yellow'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}return;}const studentsResponse=await gapi.client.classroom.courses.students.list({courseId:googleCourseId});const students=studentsResponse.result.students||[];const studentEmails=students.map(s=>s.profile?.emailAddress).filter(Boolean);const existingStudentUids=[];const pendingEmails=[];if(studentEmails.length>0){const batchSize=10;for(let i=0;i<studentEmails.length;i+=batchSize){const batchEmails=studentEmails.slice(i,i+batchSize);const usersSnapshot=await db.collection('users').where('email','in',batchEmails).get();const existingEmailsBatch=new Set();usersSnapshot.forEach(doc=>{existingStudentUids.push(doc.id);existingEmailsBatch.add(doc.data().email);});batchEmails.forEach(email=>{if(!existingEmailsBatch.has(email)){pendingEmails.push(email);}});}}const classCode=Math.random().toString(36).substring(2,10).toUpperCase(); const coTeacherCode = 'T' + Math.random().toString(36).substring(2,9).toUpperCase(); await db.collection('classes').add({name:googleCourseName,teacherId:currentUser.uid,teacherIds:[],code:classCode,coTeacherCode,googleCourseId:googleCourseId,studentIds:existingStudentUids,pendingStudentEmails:pendingEmails,createdAt:FieldValue.serverTimestamp(),handRaisingEnabled:true,schedule:{enableAt:'',disableAt:''}, scheduleLastActionDate:''});hideModal();showModal(TPL.messageModal('Import Successful',`Class "${googleCourseName}" has been imported with ${existingStudentUids.length} existing students and ${pendingEmails.length} pending emails!`,'green'));}catch(e){console.error("Error importing Google Classroom:",e);let errorMessage='Failed to import class. Please ensure Google Classroom API is enabled for your account.';if(e.result&&e.result.error){errorMessage=e.result.error.message||errorMessage;}else if(e.message){errorMessage=e.message;}showModal(TPL.messageModal('Import Failed',errorMessage,'red'));if(importBtn){importBtn.textContent='Import';importBtn.disabled=false;}}}
 
                 document.body.addEventListener('click', async e => {
@@ -951,7 +1058,7 @@
                                                     </div>
                                                     <p class="text-sm text-gray-500 -mt-2">Automatically pause hand raising and lower all hands at a set time.</p>
                                                     <div id="schedule-form" class="space-y-4 border-t pt-4">
-                                                        <div class="grid grid-cols-2 gap-4">
+                                                        <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                                                             ${timePicker('enable-time-input', 'Enable at (Optional)', cls.schedule?.enableAt)}
                                                             ${timePicker('disable-time-input', 'Disable at', cls.schedule?.disableAt)}
                                                         </div>
