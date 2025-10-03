@@ -220,6 +220,7 @@
             let currentUser = null, userData = null, currentClassId = null, currentRoster = null;
             let allLoadedClasses = {}, classQueues = {}, classRequests = {}, unsubscribes = [], queueUnsubscribers = {};
             let currentClassView = 'overview';
+            let classDocUnsubscribe = null; // Listener for the current class document
 
             const mainContentArea = document.getElementById('main-content-area');
             const classListEl = document.getElementById('class-list');
@@ -353,8 +354,26 @@
                 }
                 
                 async function selectClass(id) {
+                    // Cleanup previous class listener
+                    if (classDocUnsubscribe) classDocUnsubscribe();
+                    classDocUnsubscribe = null;
+                    
                     currentClassId = id; currentClassView = 'overview'; currentRoster = null;
-                    if (id) await fetchRosterData(allLoadedClasses[id]);
+                    if (id) {
+                        await fetchRosterData(allLoadedClasses[id]);
+                        // Setup listener for the class document itself (for settings/toggle changes)
+                        classDocUnsubscribe = db.collection('classes').doc(id).onSnapshot(docSnap => {
+                            if(docSnap.exists) {
+                                allLoadedClasses[id] = {id, ...docSnap.data()};
+                                updateGlobalUI(); // Update list count if needed
+                                if (currentClassId === id) renderMainContent(); // Re-render current view if data changed
+                            } else {
+                                // Class deleted remotely
+                                delete allLoadedClasses[id];
+                                selectClass(null);
+                            }
+                        });
+                    }
                     renderMainContent();
                 }
 
@@ -410,7 +429,7 @@
 
                 function getEffectiveHandRaisingStatus(cls, isOwner) {
                     const hasSchedule = cls.schedule?.enableAt && cls.schedule?.disableAt;
-                    const dbEnabled = cls.handRaisingEnabled;
+                    const dbEnabled = cls.handRaisingEnabled === undefined ? true : cls.handRaisingEnabled; // Default to true if undefined
 
                     if (!hasSchedule) {
                         return { 
@@ -956,7 +975,7 @@
                         
                         // NEW: Calculate the effective status for teacher/student views
                         const effectiveStatus = getEffectiveHandRaisingStatus(cls, isOwner);
-                        const dbStatus = cls.handRaisingEnabled;
+                        const dbStatus = cls.handRaisingEnabled === undefined ? true : cls.handRaisingEnabled; // Handle undefined case
                         const pendingRequestCount = pendingRequests.length;
 
                         // UPDATED: timePicker to handle empty values and use placeholder
@@ -1023,11 +1042,11 @@
                                             ${viewButton('settings', 'fa-gear', 'Settings', true)}
                                         </div>
                                     </div>
-                                    <div class="mt-4">
+                                    <div id="hand-status-indicator" class="mt-4 ${effectiveStatus.enabled && !effectiveStatus.override ? 'hidden' : 'block'}">
                                         <div class="text-sm font-semibold p-3 rounded-lg border flex items-center ${effectiveStatus.enabled ? (effectiveStatus.override ? 'bg-green-100 text-green-700 border-green-300' : 'bg-blue-100 text-blue-700 border-blue-300') : (effectiveStatus.override ? 'bg-red-100 text-red-700 border-red-300' : 'bg-yellow-100 text-yellow-700 border-yellow-300')}">
                                             <i class="fa-solid ${effectiveStatus.enabled ? 'fa-circle-check' : 'fa-hand-slash'} mr-3"></i>
                                             <span>Hand Raising Status: <strong>${effectiveStatus.enabled ? 'Enabled' : 'Paused'}</strong></span>
-                                            <span class="ml-3 font-medium text-xs">${effectiveStatus.message || (effectiveStatus.enabled ? 'Based on DB setting' : 'Based on DB setting')}</span>
+                                            <span class="ml-3 font-medium text-xs">${effectiveStatus.message || (effectiveStatus.enabled ? 'Enabled' : 'Paused')}</span>
                                         </div>
                                     </div>
                                 </div>
@@ -1035,18 +1054,16 @@
                                     (() => {
                                         if (view === 'settings' && isOwner) return `
                                             <div id="settings-panel" class="space-y-6 fade-enter-active">
-                                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
-                                                        <div class="space-y-3">
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.code)}</span><span class="tooltip-text">Copy Student Code</span></div></div>
-                                                            <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.coTeacherCode)}</span><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
-                                                        </div>
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                                                    <h3 class="text-xl font-bold text-gray-800 font-poppins">Invite Codes</h3>
+                                                    <div class="space-y-3">
+                                                        <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Student Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.code)}" data-tooltip-text="Copy Student Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.code)}</span><span class="tooltip-text">Copy Student Code</span></div></div>
+                                                        <div class="flex items-center justify-between"><p class="font-medium text-gray-600">Co-Teacher Code:</p><div class="tooltip-container copy-code-btn" role="button" tabindex="0" data-class-code="${escapeHtml(cls.coTeacherCode)}" data-tooltip-text="Copy Co-Teacher Code"><span class="font-poppins text-sm text-gray-500 bg-slate-100 px-3 py-1.5 rounded-lg cursor-pointer hover:bg-slate-200 transition">${escapeHtml(cls.coTeacherCode)}</span><span class="tooltip-text">Copy Co-Teacher Code</span></div></div>
                                                     </div>
-                                                    <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
-                                                        <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
-                                                        <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
-                                                    </div>
+                                                </div>
+                                                <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4">
+                                                    <h3 class="text-xl font-bold text-gray-800 font-poppins">Class Name</h3>
+                                                    <form id="change-class-name-form" class="space-y-2"><label for="class-name-input" class="block text-sm font-medium text-gray-600">Name</label><div class="flex items-center space-x-3"><input type="text" id="class-name-input" class="app-input flex-grow" value="${escapeHtml(cls.name)}"><button type="submit" class="px-5 py-2.5 bg-blue-600 text-white font-semibold rounded-lg hover:bg-blue-700 btn-bubbly">Save</button></div><p class="text-xs text-gray-500">Changes left today: <span class="font-semibold">${nameChangesLeft()}</span></p></form>
                                                 </div>
                                                 <div class="bg-white p-6 rounded-2xl shadow-sm border space-y-4 relative">
                                                     <div class="flex justify-between items-start">
@@ -1180,6 +1197,29 @@
                 };
                 
                 document.body.addEventListener('mainContentRendered', () => {
+                    // Re-attach event listeners specific to settings/schedule that need DOM elements
+                    if (currentClassId && allLoadedClasses[currentClassId] && currentClassView === 'settings' && userData.role === 'teacher') {
+                        // Ensure time input data attributes are correctly set on initial render of the setting panel
+                        document.querySelectorAll('.schedule-time-input').forEach(input => {
+                            const time12hr = input.value;
+                            const periodSelector = input.closest('.schedule-time-input-container').querySelector('.period-selector');
+                            const activePeriodBtn = periodSelector.querySelector('.period-btn.active');
+                            
+                            if(time12hr && activePeriodBtn) {
+                                const period = activePeriodBtn.dataset.value;
+                                let [h, m] = time12hr.split(':').map(Number);
+                                if(isNaN(h)) h=12; if(isNaN(m)) m=0;
+                                let h24 = h;
+                                if (period === 'PM' && h !== 12) h24 += 12;
+                                if (period === 'AM' && h === 12) h24 = 0;
+                                input.dataset.time24hr = `${String(h24).padStart(2,'0')}:${String(m).padStart(2,'0')}`;
+                            } else {
+                                input.dataset.time24hr = '';
+                            }
+                        });
+                    }
+
+
                     const timeInputs = document.querySelectorAll('.schedule-time-input');
                     timeInputs.forEach(input => {
                         // Initialize digits from the 12hr value (or empty string)
