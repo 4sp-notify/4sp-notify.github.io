@@ -134,6 +134,14 @@
         #main-content-area {
             padding-right: 18px; /* Fixed padding to account for potential scrollbar width */
         }
+        /* NEW: Pulsing animation for teacher request button */
+        @keyframes pulse-border {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.7); }
+            50% { box-shadow: 0 0 0 6px rgba(59, 130, 246, 0); }
+        }
+        .request-pulse {
+            animation: pulse-border 2s infinite;
+        }
     </style>
 </head>
 <body class="bg-slate-100 h-screen overflow-hidden">
@@ -477,8 +485,11 @@
                         
                         const isMember = classData.teacherId === currentUser.uid || (classData.teacherIds || []).includes(currentUser.uid);
                         if (isMember) { showModal(TPL.messageModal('Already Enrolled', `You are already a teacher in ${classData.name}.`, 'yellow')); return; }
+                        
+                        // *** NEW: Show confirmation request sent instead of instant join ***
                         hideModal();
-                        showModal(TPL.requestCoTeacherModal(classDoc.id, classData.name));
+                        showModal(TPL.requestConfirmationModal(classDoc.id, classData.name));
+                        
                     } else { // Student join
                         const classDoc = studentSnap.docs[0];
                         const classData = classDoc.data();
@@ -520,7 +531,6 @@
                         comment: comment, // This can now be an empty string
                         status: 'pending',
                         requestedAt: FieldValue.serverTimestamp(),
-                        // NEW: Ensure all fields are set for a fresh request, even if recycling
                         requesterEmail: currentUser.email, // Good to have for the teacher
                         requesterId: currentUser.uid // Store actual requester ID
                     };
@@ -838,7 +848,8 @@
                         // NEW: Calculate the effective status for teacher/student views
                         const effectiveStatus = getEffectiveHandRaisingStatus(cls, isOwner);
                         const dbStatus = cls.handRaisingEnabled;
-                        
+                        const pendingRequestCount = pendingRequests.length;
+
                         // UPDATED: timePicker to handle empty values and use placeholder
                         const timePicker = (id, label, value) => {
                             const internalValue = value || '00:00'; 
@@ -867,12 +878,18 @@
                             const buttonText = isActive ? 'Overview' : tooltipText;
                             const buttonClass = isActive ? 'bg-blue-100 text-blue-600' : 'bg-gray-200 text-gray-600 hover:bg-gray-300';
                             const target = isActive && !isOverview ? 'overview' : targetView;
-                            const badge = badgeCount > 0 && !isActive ? `<span class="absolute -top-1 -right-1 flex h-4 w-4"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-violet-400 opacity-75"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-violet-500 text-white text-xs items-center justify-center">${badgeCount}</span></span>` : '';
+                            
+                            let badgeHtml = '';
+                            if(targetView === 'requests' && badgeCount > 0) {
+                                const badgeText = badgeCount > 99 ? '99+' : badgeCount;
+                                const pulseClass = isActive ? '' : 'request-pulse'; // Pulse only when not on the active tab
+                                badgeHtml = `<span class="absolute -top-1 -right-1 flex h-4 w-4"><span class="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75 ${pulseClass}"></span><span class="relative inline-flex rounded-full h-4 w-4 bg-blue-500 text-white text-xs items-center justify-center">${badgeText}</span></span>`;
+                            }
 
                             return `<div class="tooltip-container">
                                 <button data-view="${target}" class="class-view-tab tooltip-button btn-bubbly ${buttonClass} relative">
                                     <i class="fa-solid ${buttonIcon}"></i>
-                                    ${targetView === 'requests' ? badge : ''}
+                                    ${badgeHtml}
                                 </button>
                                 <span class="tooltip-text">${buttonText}</span>
                             </div>`;
@@ -892,7 +909,7 @@
                                                 <span class="tooltip-text">${dbStatus ?'Pause Raising':'Resume Raising'}</span>
                                             </div>
                                             
-                                            ${viewButton('requests', 'fa-user-shield', 'Requests', true, pendingRequests.length)}
+                                            ${viewButton('requests', 'fa-user-shield', 'Requests', true, pendingRequestCount)}
                                             ${viewButton('roster', 'fa-users', 'Roster', false)}
                                             ${viewButton('settings', 'fa-gear', 'Settings', true)}
                                         </div>
@@ -963,8 +980,8 @@
                                             </div>`;
                                         if (view === 'requests' && isOwner) return `
                                             <div id="requests-panel" class="bg-white p-6 rounded-2xl shadow-sm border border-gray-200 fade-enter-active">
-                                                <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${pendingRequests.length}</span></h3>
-                                                <div id="requests-list" class="mt-5">${pendingRequests.length>0?`<ul class="space-y-3">${pendingRequests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div>
+                                                <h3 class="text-xl font-bold text-gray-800 font-poppins flex items-center"><i class="fa-solid fa-user-shield mr-3 text-violet-500"></i>Co-Teacher Requests <span class="ml-3 bg-violet-100 text-violet-800 text-sm font-semibold px-3 py-1 rounded-full">${pendingRequestCount}</span></h3>
+                                                <div id="requests-list" class="mt-5">${pendingRequestCount>0?`<ul class="space-y-3">${pendingRequests.map(req => `<li class="bg-slate-50 p-4 rounded-lg flex items-start justify-between transition hover:shadow-md"><div class="flex-1"><p class="font-semibold text-gray-800">${escapeHtml(req.requesterName)}</p>${req.comment?`<p class="text-sm text-gray-600 mt-1.5 italic">"${escapeHtml(req.comment)}"</p>`:''}<p class="text-xs text-gray-400 mt-2.5">Requested at: ${new Date(req.requestedAt?.toDate()).toLocaleString()}</p></div>
                                                     <div class="request-action-group">
                                                         <button data-requester-doc-id="${req.id}" data-action="accept" class="request-action-btn bg-green-500 text-white font-semibold rounded-lg hover:bg-green-600 btn-bubbly"><i class="fa-solid fa-check mr-1"></i> Accept</button>
                                                         <div class="comment-split-btn">
@@ -1044,6 +1061,7 @@
                                 </div>
                             </form>
                         </div>`,
+                    requestConfirmationModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto text-center"><div class="flex justify-center text-5xl text-blue-500 mb-3"><i class="fa-solid fa-clock-rotate-left fa-spin"></i></div><h3 class="text-xl font-semibold font-poppins text-gray-800">Request Sent!</h3><p class="text-gray-600 mt-2">You have requested to join <strong>${escapeHtml(name)}</strong> as a Co-Teacher for:</p><p class="text-lg font-bold text-blue-600 mt-1">"${escapeHtml(name)}"</p><p class="text-sm text-gray-500 mt-4">The class owner will review your request. You will be notified when they accept or deny.</p><div class="mt-6"><button type="button" class="modal-close-btn px-6 py-2 bg-blue-600 text-white rounded-lg hover:opacity-90 transition-opacity btn-bubbly">OK</button></div></div>`,
                     requestCoTeacherModal:(id,name)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Request to be a Co-Teacher</h3><p class="text-gray-600 mt-1">For class: <strong>${escapeHtml(name)}</strong></p><form id="request-co-teacher-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="co-teacher-request-comment" class="block text-sm font-medium text-gray-700">Add a reason (optional)</label><textarea id="co-teacher-request-comment" rows="3" class="mt-1 block w-full app-input" placeholder="e.g., I'm the other section's teacher..."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Send Request</button></div></form></div>`,
                     googleImportModal:()=>`<div class="relative bg-white w-full max-w-lg p-6 rounded-xl shadow-xl pointer-events-auto"><div class="flex items-center justify-center mb-4"><img src="../images/google-classroom.png" alt="Google Classroom icon" class="h-10 w-10 mr-4"><h3 class="text-2xl font-bold font-poppins text-gray-800">Import from Classroom</h3></div><p class="text-center text-gray-500 mb-6">Select a class you own to import it into Notify.</p><div id="g-import-content"><div id="g-import-loading" class="text-center py-8"><i class="fa-solid fa-spinner fa-spin fa-2x text-blue-600 mb-2"></i><p class="text-gray-600">Connecting to Google Classroom...</p></div><p id="g-import-error" class="text-center text-red-600 bg-red-50 p-3 rounded-md hidden"></p><ul id="g-import-list" class="mt-4 max-h-80 overflow-y-auto space-y-2 custom-scrollbar"></ul></div><div class="flex justify-center mt-6"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Close</button></div></div>`,
                     raiseHandModal:(id)=>`<div class="relative bg-white w-full max-w-md p-6 rounded-xl shadow-xl pointer-events-auto"><h3 class="text-xl font-semibold font-poppins text-gray-800">Raise Your Hand</h3><form id="raise-hand-form" data-class-id="${id}" class="mt-4 space-y-4"><div><label for="hand-raise-question" class="block text-sm font-medium text-gray-700">Ask a question (optional)</label><textarea id="hand-raise-question" rows="3" class="mt-1 block w-full app-input" placeholder="Type your question here..."></textarea></div><div class="flex justify-end space-x-3"><button type="button" class="modal-cancel-btn px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 btn-bubbly">Cancel</button><button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 btn-bubbly">Confirm Raise Hand</button></div></form></div>`,
